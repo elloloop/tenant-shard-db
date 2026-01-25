@@ -1,0 +1,80 @@
+%% EntDB Data Model
+%% Node and Edge relationships
+
+erDiagram
+    NODE {
+        string id PK
+        int type_id FK
+        string tenant_id
+        json payload
+        string owner_actor
+        timestamp created_at
+        timestamp updated_at
+        bool deleted
+        int version
+    }
+
+    EDGE {
+        string id PK
+        int edge_type_id FK
+        string tenant_id
+        string from_id FK
+        string to_id FK
+        string owner_actor
+        timestamp created_at
+        json payload
+    }
+
+    NODE_VISIBILITY {
+        string node_id PK,FK
+        string tenant_id
+        string principal
+    }
+
+    APPLIED_EVENTS {
+        string tenant_id PK
+        string idempotency_key PK
+        json result
+        timestamp applied_at
+    }
+
+    MAILBOX_ITEM {
+        string id PK
+        string tenant_id
+        string user_id
+        int node_type_id
+        string node_id FK
+        string preview_text
+        bool is_read
+        timestamp created_at
+    }
+
+    NODE_TYPE {
+        int type_id PK
+        string name
+        bool deprecated
+    }
+
+    FIELD_DEF {
+        int field_id PK
+        int type_id FK
+        string name
+        string kind
+        bool required
+        json default_value
+    }
+
+    EDGE_TYPE {
+        int edge_id PK
+        string name
+        int from_type FK
+        int to_type FK
+    }
+
+    NODE ||--o{ NODE_VISIBILITY : "has"
+    NODE ||--o{ EDGE : "from"
+    NODE ||--o{ EDGE : "to"
+    NODE ||--o{ MAILBOX_ITEM : "referenced by"
+    NODE_TYPE ||--o{ NODE : "type of"
+    NODE_TYPE ||--o{ FIELD_DEF : "has"
+    EDGE_TYPE ||--o{ EDGE : "type of"

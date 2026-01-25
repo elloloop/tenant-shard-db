@@ -1,0 +1,85 @@
+%% EntDB AWS Deployment Architecture
+%% Production deployment on AWS
+
+flowchart TB
+    subgraph Internet["Internet"]
+        USERS["Users / Applications"]
+    end
+
+    subgraph AWS["AWS Cloud"]
+        subgraph VPC["VPC"]
+            subgraph Public["Public Subnets"]
+                ALB["Application Load Balancer<br/>(gRPC + HTTP)"]
+            end
+
+            subgraph Private["Private Subnets"]
+                subgraph ECS["ECS Fargate Cluster"]
+                    SVC1["EntDB Server 1"]
+                    SVC2["EntDB Server 2"]
+                    SVC3["EntDB Server 3"]
+                end
+
+                subgraph MSK["Amazon MSK"]
+                    BROKER1["Kafka Broker 1"]
+                    BROKER2["Kafka Broker 2"]
+                    BROKER3["Kafka Broker 3"]
+                end
+            end
+        end
+
+        subgraph Storage["Storage"]
+            S3_ARCHIVE["S3 Archive Bucket"]
+            S3_SNAP["S3 Snapshot Bucket"]
+        end
+
+        subgraph Monitoring["Monitoring"]
+            CW["CloudWatch"]
+            CW_LOGS["CloudWatch Logs"]
+        end
+
+        subgraph Secrets["Secrets"]
+            SM["Secrets Manager"]
+        end
+    end
+
+    %% Connections
+    USERS --> ALB
+    ALB --> SVC1
+    ALB --> SVC2
+    ALB --> SVC3
+
+    SVC1 --> BROKER1
+    SVC1 --> BROKER2
+    SVC1 --> BROKER3
+    SVC2 --> BROKER1
+    SVC2 --> BROKER2
+    SVC2 --> BROKER3
+    SVC3 --> BROKER1
+    SVC3 --> BROKER2
+    SVC3 --> BROKER3
+
+    SVC1 --> S3_ARCHIVE
+    SVC1 --> S3_SNAP
+    SVC2 --> S3_ARCHIVE
+    SVC2 --> S3_SNAP
+    SVC3 --> S3_ARCHIVE
+    SVC3 --> S3_SNAP
+
+    SVC1 --> CW
+    SVC2 --> CW
+    SVC3 --> CW
+    SVC1 --> CW_LOGS
+    SVC2 --> CW_LOGS
+    SVC3 --> CW_LOGS
+
+    SVC1 -.-> SM
+    SVC2 -.-> SM
+    SVC3 -.-> SM
+
+    classDef aws fill:#FF9900,color:#fff
+    classDef storage fill:#569A31,color:#fff
+    classDef monitoring fill:#759C3E,color:#fff
+
+    class ALB,ECS,MSK aws
+    class S3_ARCHIVE,S3_SNAP storage
+    class CW,CW_LOGS monitoring

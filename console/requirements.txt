@@ -1,0 +1,19 @@
+# EntDB HTTP Gateway dependencies
+
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# EntDB SDK (installed from parent)
+# entdb-sdk
+
+# HTTP client for health checks
+httpx>=0.26.0
+
+# ASGI middleware
+python-multipart>=0.0.6
+
+# Static files
+aiofiles>=23.2.0
