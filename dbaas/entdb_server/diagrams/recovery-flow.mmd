@@ -1,0 +1,43 @@
+%% EntDB Recovery Flow
+%% Disaster recovery and point-in-time restore
+
+flowchart TD
+    subgraph Source["Data Sources"]
+        WAL["WAL Stream<br/>(Kafka)"]
+        ARCHIVE["S3 Archive<br/>(JSONL.gz)"]
+        SNAPSHOT["S3 Snapshot<br/>(SQLite files)"]
+    end
+
+    subgraph Recovery["Recovery Process"]
+        RESTORE["Restore Tool"]
+        TEMP["Temp SQLite"]
+        VERIFY["Verify Integrity"]
+    end
+
+    subgraph Target["Target"]
+        FINAL["Restored Database"]
+    end
+
+    %% Normal archiving
+    WAL --> |"Continuous archive"| ARCHIVE
+    WAL --> |"Periodic snapshot"| SNAPSHOT
+
+    %% Recovery flow
+    SNAPSHOT --> |"1. Download latest<br/>snapshot before target time"| RESTORE
+    RESTORE --> |"2. Extract SQLite files"| TEMP
+    ARCHIVE --> |"3. Replay events<br/>from checkpoint to target"| RESTORE
+    RESTORE --> |"4. Apply events"| TEMP
+    TEMP --> |"5. Verify checksums<br/>and referential integrity"| VERIFY
+    VERIFY --> |"6. Move to final location"| FINAL
+
+    subgraph Legend["Recovery Types"]
+        L1["Full Recovery<br/>Latest snapshot + all events"]
+        L2["Point-in-Time<br/>Snapshot + events to target time"]
+        L3["Fast Recovery<br/>Latest snapshot only"]
+    end
+
+    style WAL fill:#f3e5f5
+    style ARCHIVE fill:#e3f2fd
+    style SNAPSHOT fill:#e3f2fd
+    style RESTORE fill:#fff3e0
+    style FINAL fill:#e8f5e9

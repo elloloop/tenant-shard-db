@@ -1,0 +1,405 @@
+// EntDB gRPC Service Definition
+//
+// This file defines the gRPC API for the EntDB database service.
+// The API supports node/edge graph operations with tenant isolation.
+//
+// Key concepts:
+// - Every operation requires tenant_id and actor
+// - Writes are atomic via ExecuteAtomic RPC
+// - Reads are eventually consistent from SQLite views
+//
+// Compatibility rules:
+// - Field numbers are immutable
+// - New fields should be optional
+// - Deprecated fields should be marked but kept
+
+syntax = "proto3";
+
+package entdb.v1;
+
+option go_package = "github.com/example/entdb/proto/v1";
+
+// EntDB Service - Main API for database operations
+service EntDBService {
+    // Execute an atomic transaction containing one or more operations
+    // Returns a receipt that can be used to check application status
+    rpc ExecuteAtomic(ExecuteAtomicRequest) returns (ExecuteAtomicResponse);
+
+    // Get the status of a previously submitted transaction
+    rpc GetReceiptStatus(GetReceiptStatusRequest) returns (GetReceiptStatusResponse);
+
+    // Get a node by ID
+    rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+
+    // Get multiple nodes by IDs
+    rpc GetNodes(GetNodesRequest) returns (GetNodesResponse);
+
+    // Query nodes by type with optional filters
+    rpc QueryNodes(QueryNodesRequest) returns (QueryNodesResponse);
+
+    // Get outgoing edges from a node
+    rpc GetEdgesFrom(GetEdgesRequest) returns (GetEdgesResponse);
+
+    // Get incoming edges to a node
+    rpc GetEdgesTo(GetEdgesRequest) returns (GetEdgesResponse);
+
+    // Search mailbox with full-text search
+    rpc SearchMailbox(SearchMailboxRequest) returns (SearchMailboxResponse);
+
+    // Get mailbox items for a user
+    rpc GetMailbox(GetMailboxRequest) returns (GetMailboxResponse);
+
+    // Get server health and status
+    rpc Health(HealthRequest) returns (HealthResponse);
+
+    // Get schema information
+    rpc GetSchema(GetSchemaRequest) returns (GetSchemaResponse);
+}
+
+// Common message types
+
+message RequestContext {
+    // Tenant identifier (required)
+    string tenant_id = 1;
+
+    // Actor performing the operation (required)
+    // Format: "user:ID", "system:NAME", etc.
+    string actor = 2;
+
+    // Optional trace ID for distributed tracing
+    string trace_id = 3;
+}
+
+message Receipt {
+    // Tenant identifier
+    string tenant_id = 1;
+
+    // Idempotency key for the transaction
+    string idempotency_key = 2;
+
+    // Stream position where the event was written
+    string stream_position = 3;
+}
+
+// Execute Atomic - Write operations
+
+message ExecuteAtomicRequest {
+    // Request context (required)
+    RequestContext context = 1;
+
+    // Idempotency key (optional, generated if not provided)
+    string idempotency_key = 2;
+
+    // Schema fingerprint for validation
+    string schema_fingerprint = 3;
+
+    // List of operations to execute atomically
+    repeated Operation operations = 4;
+
+    // Whether to wait for the event to be applied before returning
+    bool wait_applied = 5;
+
+    // Timeout for wait_applied in milliseconds
+    int32 wait_timeout_ms = 6;
+}
+
+message Operation {
+    oneof op {
+        CreateNodeOp create_node = 1;
+        UpdateNodeOp update_node = 2;
+        DeleteNodeOp delete_node = 3;
+        CreateEdgeOp create_edge = 4;
+        DeleteEdgeOp delete_edge = 5;
+    }
+}
+
+message CreateNodeOp {
+    // Node type ID (required)
+    int32 type_id = 1;
+
+    // Node ID (optional, generated if not provided)
+    string id = 2;
+
+    // Payload as JSON string
+    string data_json = 3;
+
+    // ACL entries as JSON array string
+    string acl_json = 4;
+
+    // Alias for referencing this node in subsequent operations
+    string as = 5;
+
+    // Users to fanout this node to
+    repeated string fanout_to = 6;
+}
+
+message UpdateNodeOp {
+    // Node type ID (required for validation)
+    int32 type_id = 1;
+
+    // Node ID or reference (required)
+    string id = 2;
+
+    // Patch payload as JSON string
+    string patch_json = 3;
+
+    // Field mask for partial updates
+    repeated string field_mask = 4;
+}
+
+message DeleteNodeOp {
+    // Node type ID
+    int32 type_id = 1;
+
+    // Node ID (required)
+    string id = 2;
+}
+
+message CreateEdgeOp {
+    // Edge type ID (required)
+    int32 edge_id = 1;
+
+    // Source node reference
+    NodeRef from = 2;
+
+    // Target node reference
+    NodeRef to = 3;
+
+    // Edge properties as JSON string
+    string props_json = 4;
+}
+
+message DeleteEdgeOp {
+    // Edge type ID (required)
+    int32 edge_id = 1;
+
+    // Source node reference
+    NodeRef from = 2;
+
+    // Target node reference
+    NodeRef to = 3;
+}
+
+message NodeRef {
+    oneof ref {
+        // Direct node ID
+        string id = 1;
+
+        // Reference to aliased node (e.g., "$task.id")
+        string alias_ref = 2;
+
+        // Type ID + node ID
+        TypedNodeRef typed = 3;
+    }
+}
+
+message TypedNodeRef {
+    int32 type_id = 1;
+    string id = 2;
+}
+
+message ExecuteAtomicResponse {
+    // Whether the operation succeeded
+    bool success = 1;
+
+    // Receipt for tracking (present on success)
+    Receipt receipt = 2;
+
+    // Error message (present on failure)
+    string error = 3;
+
+    // Error code for programmatic handling
+    string error_code = 4;
+
+    // IDs of created nodes (in order of operations)
+    repeated string created_node_ids = 5;
+
+    // Application status (if wait_applied was true)
+    ReceiptStatus applied_status = 6;
+}
+
+// Receipt Status
+
+message GetReceiptStatusRequest {
+    RequestContext context = 1;
+    string idempotency_key = 2;
+}
+
+message GetReceiptStatusResponse {
+    ReceiptStatus status = 1;
+    string error = 2;
+}
+
+enum ReceiptStatus {
+    RECEIPT_STATUS_UNKNOWN = 0;
+    RECEIPT_STATUS_PENDING = 1;
+    RECEIPT_STATUS_APPLIED = 2;
+    RECEIPT_STATUS_FAILED = 3;
+}
+
+// Read operations
+
+message GetNodeRequest {
+    RequestContext context = 1;
+    int32 type_id = 2;
+    string node_id = 3;
+}
+
+message GetNodeResponse {
+    Node node = 1;
+    bool found = 2;
+}
+
+message GetNodesRequest {
+    RequestContext context = 1;
+    int32 type_id = 2;
+    repeated string node_ids = 3;
+}
+
+message GetNodesResponse {
+    repeated Node nodes = 1;
+    repeated string missing_ids = 2;
+}
+
+message QueryNodesRequest {
+    RequestContext context = 1;
+    int32 type_id = 2;
+
+    // Filter conditions as JSON
+    string filter_json = 3;
+
+    // Pagination
+    int32 limit = 4;
+    int32 offset = 5;
+
+    // Sort order
+    string order_by = 6;
+    bool descending = 7;
+}
+
+message QueryNodesResponse {
+    repeated Node nodes = 1;
+    int32 total_count = 2;
+    bool has_more = 3;
+}
+
+message Node {
+    string tenant_id = 1;
+    string node_id = 2;
+    int32 type_id = 3;
+    string payload_json = 4;
+    int64 created_at = 5;
+    int64 updated_at = 6;
+    string owner_actor = 7;
+    string acl_json = 8;
+}
+
+// Edge operations
+
+message GetEdgesRequest {
+    RequestContext context = 1;
+    string node_id = 2;
+
+    // Optional edge type filter
+    int32 edge_type_id = 3;
+
+    // Pagination
+    int32 limit = 4;
+    int32 offset = 5;
+}
+
+message GetEdgesResponse {
+    repeated Edge edges = 1;
+    bool has_more = 2;
+}
+
+message Edge {
+    string tenant_id = 1;
+    int32 edge_type_id = 2;
+    string from_node_id = 3;
+    string to_node_id = 4;
+    string props_json = 5;
+    int64 created_at = 6;
+}
+
+// Mailbox operations
+
+message SearchMailboxRequest {
+    RequestContext context = 1;
+
+    // User whose mailbox to search
+    string user_id = 2;
+
+    // Search query
+    string query = 3;
+
+    // Optional type filter
+    repeated int32 source_type_ids = 4;
+
+    // Pagination
+    int32 limit = 5;
+    int32 offset = 6;
+}
+
+message SearchMailboxResponse {
+    repeated MailboxSearchResult results = 1;
+    bool has_more = 2;
+}
+
+message MailboxSearchResult {
+    MailboxItem item = 1;
+    float rank = 2;
+    string highlights = 3;
+}
+
+message GetMailboxRequest {
+    RequestContext context = 1;
+    string user_id = 2;
+
+    // Filters
+    int32 source_type_id = 3;
+    string thread_id = 4;
+    bool unread_only = 5;
+
+    // Pagination
+    int32 limit = 6;
+    int32 offset = 7;
+}
+
+message GetMailboxResponse {
+    repeated MailboxItem items = 1;
+    int32 unread_count = 2;
+    bool has_more = 3;
+}
+
+message MailboxItem {
+    string item_id = 1;
+    string ref_id = 2;
+    int32 source_type_id = 3;
+    string source_node_id = 4;
+    string thread_id = 5;
+    int64 ts = 6;
+    string state_json = 7;
+    string snippet = 8;
+    string metadata_json = 9;
+}
+
+// Health and Schema
+
+message HealthRequest {}
+
+message HealthResponse {
+    bool healthy = 1;
+    string version = 2;
+    map<string, string> components = 3;
+}
+
+message GetSchemaRequest {
+    // Optional: get schema for specific type
+    int32 type_id = 1;
+}
+
+message GetSchemaResponse {
+    string schema_json = 1;
+    string fingerprint = 2;
+}

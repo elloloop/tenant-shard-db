@@ -1,0 +1,60 @@
+%% EntDB Read Path
+%% Detailed flow of read operations
+
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant ACL as ACL Manager
+    participant DB as SQLite
+    participant FTS as FTS5 Index
+
+    C->>S: GetNode(tenant_id, actor, node_id)
+    activate S
+
+    S->>DB: SELECT from nodes
+    activate DB
+    DB-->>S: Node data
+    deactivate DB
+
+    S->>ACL: Check permission(actor, owner, principals)
+    activate ACL
+    ACL-->>S: Allowed/Denied
+    deactivate ACL
+
+    alt Permission denied
+        S-->>C: Error: PermissionDenied
+    else Allowed
+        S-->>C: Node
+    end
+    deactivate S
+
+    Note over C,S: Query multiple nodes
+
+    C->>S: QueryNodes(tenant_id, actor, type_id, filters)
+    activate S
+
+    S->>DB: SELECT with filters
+    activate DB
+    DB-->>S: Node list
+    deactivate DB
+
+    S->>ACL: Filter visible nodes
+    activate ACL
+    ACL-->>S: Visible subset
+    deactivate ACL
+
+    S-->>C: Filtered nodes
+    deactivate S
+
+    Note over C,S: Full-text search
+
+    C->>S: SearchMailbox(tenant_id, user_id, query)
+    activate S
+
+    S->>FTS: FTS5 MATCH query
+    activate FTS
+    FTS-->>S: Matching items with scores
+    deactivate FTS
+
+    S-->>C: Search results
+    deactivate S

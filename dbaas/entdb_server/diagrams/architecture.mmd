@@ -1,0 +1,80 @@
+%% EntDB System Architecture
+%% Main system components and data flow
+
+flowchart TB
+    subgraph Clients["Clients"]
+        SDK["Python SDK"]
+        GRPC_CLIENT["gRPC Client"]
+        HTTP_CLIENT["HTTP Client"]
+    end
+
+    subgraph Server["EntDB Server"]
+        GRPC["gRPC Server<br/>:50051"]
+        HTTP["HTTP Server<br/>:8080"]
+        SCHEMA["Schema Registry"]
+        ACL["ACL Manager"]
+    end
+
+    subgraph WAL["Write-Ahead Log"]
+        KAFKA["Kafka / Redpanda<br/>(or Kinesis)"]
+    end
+
+    subgraph Apply["Apply Layer"]
+        APPLIER["Applier<br/>(Idempotent)"]
+        CANONICAL["Canonical Store<br/>(SQLite)"]
+        MAILBOX["Mailbox Store<br/>(SQLite + FTS5)"]
+    end
+
+    subgraph Archive["Archive Layer"]
+        ARCHIVER["Archiver"]
+        SNAPSHOTTER["Snapshotter"]
+        S3["S3 Storage"]
+    end
+
+    %% Client connections
+    SDK --> GRPC
+    GRPC_CLIENT --> GRPC
+    HTTP_CLIENT --> HTTP
+
+    %% Server to WAL
+    GRPC --> |"1. Validate & Append"| KAFKA
+    HTTP --> |"1. Validate & Append"| KAFKA
+
+    %% WAL to Apply
+    KAFKA --> |"2. Consume Events"| APPLIER
+    APPLIER --> |"3. Apply to SQLite"| CANONICAL
+    APPLIER --> |"3. Fanout to Mailbox"| MAILBOX
+
+    %% Read path
+    GRPC -.-> |"Read Path"| CANONICAL
+    HTTP -.-> |"Read Path"| CANONICAL
+    GRPC -.-> |"Search"| MAILBOX
+    HTTP -.-> |"Search"| MAILBOX
+
+    %% Archive
+    KAFKA --> |"Archive Events"| ARCHIVER
+    ARCHIVER --> S3
+    CANONICAL --> |"Periodic Snapshot"| SNAPSHOTTER
+    SNAPSHOTTER --> S3
+
+    %% Schema registry
+    GRPC --> SCHEMA
+    HTTP --> SCHEMA
+    APPLIER --> SCHEMA
+
+    %% ACL
+    GRPC --> ACL
+    HTTP --> ACL
+    APPLIER --> ACL
+
+    classDef client fill:#e1f5fe
+    classDef server fill:#fff3e0
+    classDef wal fill:#f3e5f5
+    classDef apply fill:#e8f5e9
+    classDef archive fill:#fce4ec
+
+    class SDK,GRPC_CLIENT,HTTP_CLIENT client
+    class GRPC,HTTP,SCHEMA,ACL server
+    class KAFKA wal
+    class APPLIER,CANONICAL,MAILBOX apply
+    class ARCHIVER,SNAPSHOTTER,S3 archive
