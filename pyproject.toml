@@ -76,6 +76,15 @@ include = ["dbaas*", "sdk*"]
 [tool.ruff]
 target-version = "py310"
 line-length = 100
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+]
+
+[tool.ruff.lint]
 select = [
     "E",      # pycodestyle errors
     "W",      # pycodestyle warnings
@@ -89,20 +98,16 @@ select = [
 ]
 ignore = [
     "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top of file
     "B008",   # do not perform function calls in argument defaults
+    "B904",   # raise without from in except (sometimes intentional)
     "C901",   # too complex
     "ARG001", # unused function argument
     "ARG002", # unused method argument
-]
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
-    "build",
-    "dist",
+    "SIM102", # nested if (sometimes clearer)
 ]
 
-[tool.ruff.isort]
+[tool.ruff.lint.isort]
 known-first-party = ["dbaas", "sdk", "entdb_sdk", "entdb_server"]
 
 # =============================================================================

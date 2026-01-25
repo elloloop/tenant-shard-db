@@ -21,20 +21,20 @@ Environment:
 from __future__ import annotations
 
 import os
-from contextlib import asynccontextmanager
-from typing import Any, Dict, List, Optional
-
-from fastapi import FastAPI, HTTPException, Header, Query
-from pydantic import BaseModel
 
 # Import SDK
 import sys
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Header, HTTPException, Query
+from pydantic import BaseModel
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
 from sdk.entdb_sdk import (
     DbClient,
-    NodeTypeDef,
     EdgeTypeDef,
+    NodeTypeDef,
     field,
     get_registry,
 )
@@ -90,9 +90,7 @@ AssignedTo = EdgeTypeDef(
     name="AssignedTo",
     from_type=Task,
     to_type=User,
-    props=(
-        field(1, "role", "enum", enum_values=("primary", "reviewer", "observer")),
-    ),
+    props=(field(1, "role", "enum", enum_values=("primary", "reviewer", "observer")),),
 )
 
 MemberOf = EdgeTypeDef(
@@ -100,9 +98,7 @@ MemberOf = EdgeTypeDef(
     name="MemberOf",
     from_type=User,
     to_type=Team,
-    props=(
-        field(1, "role", "enum", enum_values=("owner", "admin", "member")),
-    ),
+    props=(field(1, "role", "enum", enum_values=("owner", "admin", "member")),),
 )
 
 SentTo = EdgeTypeDef(
@@ -126,26 +122,27 @@ registry.register_edge_type(SentTo)
 # Pydantic Models
 # =============================================================================
 
+
 class CreateTaskRequest(BaseModel):
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     status: str = "todo"
-    priority: Optional[str] = "medium"
-    assigned_to: Optional[str] = None
-    role: Optional[str] = "primary"
+    priority: str | None = "medium"
+    assigned_to: str | None = None
+    role: str | None = "primary"
 
 
 class UpdateTaskRequest(BaseModel):
-    title: Optional[str] = None
-    description: Optional[str] = None
-    status: Optional[str] = None
-    priority: Optional[str] = None
+    title: str | None = None
+    description: str | None = None
+    status: str | None = None
+    priority: str | None = None
 
 
 class CreateTeamRequest(BaseModel):
     name: str
-    description: Optional[str] = None
-    members: Optional[List[str]] = None
+    description: str | None = None
+    members: list[str] | None = None
 
 
 class AddMemberRequest(BaseModel):
@@ -156,16 +153,16 @@ class AddMemberRequest(BaseModel):
 class CreateMessageRequest(BaseModel):
     subject: str
     body: str
-    to_user_ids: List[str]
-    thread_id: Optional[str] = None
+    to_user_ids: list[str]
+    thread_id: str | None = None
 
 
 class TaskResponse(BaseModel):
     id: str
     title: str
-    description: Optional[str]
+    description: str | None
     status: str
-    priority: Optional[str]
+    priority: str | None
     created_at: int
     updated_at: int
 
@@ -173,7 +170,7 @@ class TaskResponse(BaseModel):
 class TeamResponse(BaseModel):
     id: str
     name: str
-    description: Optional[str]
+    description: str | None
     created_at: int
 
 
@@ -193,7 +190,7 @@ ENTDB_ADDRESS = os.getenv("ENTDB_ADDRESS", "http://localhost:8081")
 DEFAULT_TENANT = os.getenv("TENANT_ID", "demo_tenant")
 
 # Global client
-db: Optional[DbClient] = None
+db: DbClient | None = None
 
 
 @asynccontextmanager
@@ -225,6 +222,7 @@ def get_context(
 # =============================================================================
 # Task Endpoints
 # =============================================================================
+
 
 @app.post("/tasks", response_model=TaskResponse, tags=["Tasks"])
 async def create_task(
@@ -346,7 +344,7 @@ async def update_task(
     )
 
 
-@app.get("/tasks", response_model=List[TaskResponse], tags=["Tasks"])
+@app.get("/tasks", response_model=list[TaskResponse], tags=["Tasks"])
 async def list_tasks(
     limit: int = Query(default=20, le=100),
     offset: int = Query(default=0, ge=0),
@@ -373,6 +371,7 @@ async def list_tasks(
 # =============================================================================
 # Team Endpoints
 # =============================================================================
+
 
 @app.post("/teams", response_model=TeamResponse, tags=["Teams"])
 async def create_team(
@@ -441,6 +440,7 @@ async def add_team_member(
 # Message Endpoints
 # =============================================================================
 
+
 @app.post("/messages", tags=["Messages"])
 async def create_message(
     request: CreateMessageRequest,
@@ -488,7 +488,8 @@ async def create_message(
 # Search Endpoints
 # =============================================================================
 
-@app.get("/search", response_model=List[SearchResultResponse], tags=["Search"])
+
+@app.get("/search", response_model=list[SearchResultResponse], tags=["Search"])
 async def search(
     q: str = Query(..., min_length=1),
     user_id: str = Query(...),
@@ -520,6 +521,7 @@ async def search(
 # Health Endpoint
 # =============================================================================
 
+
 @app.get("/health", tags=["Health"])
 async def health():
     """Health check endpoint."""
@@ -528,4 +530,5 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

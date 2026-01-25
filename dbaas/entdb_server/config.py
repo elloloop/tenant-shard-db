@@ -17,17 +17,17 @@ How to change safely:
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
-import logging
 
 logger = logging.getLogger(__name__)
 
 
 class WalBackend(Enum):
     """Supported WAL stream backends."""
+
     KAFKA = "kafka"
     KINESIS = "kinesis"
 
@@ -42,6 +42,7 @@ class GrpcConfig:
         max_message_size: Maximum message size in bytes
         reflection_enabled: Whether to enable gRPC reflection for debugging
     """
+
     bind_address: str = "0.0.0.0:50051"
     max_workers: int = 10
     max_message_size: int = 64 * 1024 * 1024  # 64MB
@@ -67,6 +68,7 @@ class HttpConfig:
         bind_address: Address to bind HTTP server (host:port)
         cors_origins: Allowed CORS origins (comma-separated)
     """
+
     enabled: bool = False
     bind_address: str = "0.0.0.0:8081"
     cors_origins: tuple[str, ...] = ("*",)
@@ -101,16 +103,17 @@ class KafkaConfig:
         enable_idempotence: Enable idempotent producer
         max_in_flight: Maximum in-flight requests per connection
     """
+
     brokers: str = "localhost:9092"
     topic: str = "entdb-wal"
     consumer_group: str = "entdb-applier"
-    sasl_mechanism: Optional[str] = None
-    sasl_username: Optional[str] = None
-    sasl_password: Optional[str] = None
+    sasl_mechanism: str | None = None
+    sasl_username: str | None = None
+    sasl_password: str | None = None
     security_protocol: str = "PLAINTEXT"
-    ssl_cafile: Optional[str] = None
-    ssl_certfile: Optional[str] = None
-    ssl_keyfile: Optional[str] = None
+    ssl_cafile: str | None = None
+    ssl_certfile: str | None = None
+    ssl_keyfile: str | None = None
     # Producer durability settings
     acks: str = "all"
     enable_idempotence: bool = True
@@ -152,9 +155,10 @@ class KinesisConfig:
         max_records_per_get: Maximum records per GetRecords call
         iterator_type: Shard iterator type (TRIM_HORIZON, LATEST, etc.)
     """
+
     stream_name: str = "entdb-wal"
     region: str = "us-east-1"
-    endpoint_url: Optional[str] = None
+    endpoint_url: str | None = None
     max_records_per_get: int = 1000
     iterator_type: str = "TRIM_HORIZON"
 
@@ -183,13 +187,14 @@ class S3Config:
         access_key_id: AWS access key ID (optional, uses AWS credential chain)
         secret_access_key: AWS secret access key (optional)
     """
+
     bucket: str = "entdb-storage"
     region: str = "us-east-1"
-    endpoint_url: Optional[str] = None
+    endpoint_url: str | None = None
     archive_prefix: str = "archive"
     snapshot_prefix: str = "snapshots"
-    access_key_id: Optional[str] = None
-    secret_access_key: Optional[str] = None
+    access_key_id: str | None = None
+    secret_access_key: str | None = None
 
     @classmethod
     def from_env(cls) -> S3Config:
@@ -217,6 +222,7 @@ class StorageConfig:
         busy_timeout_ms: SQLite busy timeout in milliseconds
         cache_size_pages: SQLite cache size in pages (negative = KB)
     """
+
     data_dir: str = "/var/lib/entdb"
     tenant_db_pattern: str = "tenant_{tenant_id}.db"
     mailbox_db_pattern: str = "mailbox_{tenant_id}_{user_id}.db"
@@ -247,6 +253,7 @@ class ApplierConfig:
         retry_delay_ms: Delay between retries on transient errors
         max_retries: Maximum retries for transient errors
     """
+
     batch_size: int = 100
     commit_interval_ms: int = 1000
     retry_delay_ms: int = 100
@@ -274,6 +281,7 @@ class ArchiverConfig:
         max_segment_events: Maximum events per segment
         compression: Compression algorithm (gzip, none)
     """
+
     enabled: bool = True
     flush_interval_seconds: int = 60
     max_segment_size_bytes: int = 100 * 1024 * 1024  # 100MB
@@ -286,7 +294,9 @@ class ArchiverConfig:
         return cls(
             enabled=os.getenv("ARCHIVER_ENABLED", "true").lower() == "true",
             flush_interval_seconds=int(os.getenv("ARCHIVE_FLUSH_SECONDS", "60")),
-            max_segment_size_bytes=int(os.getenv("ARCHIVE_MAX_SEGMENT_BYTES", str(100 * 1024 * 1024))),
+            max_segment_size_bytes=int(
+                os.getenv("ARCHIVE_MAX_SEGMENT_BYTES", str(100 * 1024 * 1024))
+            ),
             max_segment_events=int(os.getenv("ARCHIVE_MAX_SEGMENT_EVENTS", "10000")),
             compression=os.getenv("ARCHIVE_COMPRESSION", "gzip"),
         )
@@ -303,6 +313,7 @@ class SnapshotConfig:
         compression: Compression algorithm (gzip, none)
         max_concurrent: Maximum concurrent snapshot uploads
     """
+
     enabled: bool = True
     interval_seconds: int = 3600  # 1 hour
     min_events_since_last: int = 1000
@@ -332,6 +343,7 @@ class ObservabilityConfig:
         metrics_port: Port for metrics endpoint
         trace_sampling_rate: OpenTelemetry trace sampling rate (0.0-1.0)
     """
+
     log_level: str = "INFO"
     log_format: str = "json"
     metrics_enabled: bool = True
@@ -369,6 +381,7 @@ class ServerConfig:
         snapshot: Snapshot configuration
         observability: Observability configuration
     """
+
     wal_backend: WalBackend = WalBackend.KAFKA
     grpc: GrpcConfig = field(default_factory=GrpcConfig)
     http: HttpConfig = field(default_factory=HttpConfig)
@@ -395,9 +408,7 @@ class ServerConfig:
         try:
             wal_backend = WalBackend(backend_str)
         except ValueError:
-            raise ValueError(
-                f"Invalid WAL_BACKEND '{backend_str}'. Must be one of: kafka, kinesis"
-            )
+            raise ValueError(f"Invalid WAL_BACKEND '{backend_str}'. Must be one of: kafka, kinesis")
 
         config = cls(
             wal_backend=wal_backend,
@@ -439,6 +450,7 @@ class ServerConfig:
 
         # Validate storage directory exists or can be created
         import os
+
         if not os.path.exists(self.storage.data_dir):
             logger.warning(
                 f"Data directory does not exist: {self.storage.data_dir}. "
@@ -454,13 +466,17 @@ class ServerConfig:
                 "grpc_bind": self.grpc.bind_address,
                 "http_enabled": self.http.enabled,
                 "http_bind": self.http.bind_address if self.http.enabled else None,
-                "kafka_brokers": self.kafka.brokers if self.wal_backend == WalBackend.KAFKA else None,
+                "kafka_brokers": self.kafka.brokers
+                if self.wal_backend == WalBackend.KAFKA
+                else None,
                 "kafka_topic": self.kafka.topic if self.wal_backend == WalBackend.KAFKA else None,
-                "kinesis_stream": self.kinesis.stream_name if self.wal_backend == WalBackend.KINESIS else None,
+                "kinesis_stream": self.kinesis.stream_name
+                if self.wal_backend == WalBackend.KINESIS
+                else None,
                 "s3_bucket": self.s3.bucket,
                 "data_dir": self.storage.data_dir,
                 "archiver_enabled": self.archiver.enabled,
                 "snapshot_enabled": self.snapshot.enabled,
                 "log_level": self.observability.log_level,
-            }
+            },
         )

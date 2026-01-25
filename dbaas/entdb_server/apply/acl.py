@@ -20,17 +20,17 @@ How to change safely:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Set
-import logging
-import re
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class Permission(Enum):
     """Permission levels for access control."""
+
     READ = "read"
     WRITE = "write"
     DELETE = "delete"
@@ -45,7 +45,7 @@ class AccessDeniedError(Exception):
         actor: str,
         node_id: str,
         permission: Permission,
-        message: Optional[str] = None,
+        message: str | None = None,
     ):
         self.actor = actor
         self.node_id = node_id
@@ -69,6 +69,7 @@ class Principal:
         type: Principal type (user, role, group, tenant, system)
         id: Principal identifier
     """
+
     type: str
     id: str
 
@@ -140,10 +141,11 @@ class AclEntry:
         principal: Who gets access
         permission: What level of access
     """
+
     principal: Principal
     permission: Permission
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         """Convert to dictionary for storage."""
         return {
             "principal": str(self.principal),
@@ -151,7 +153,7 @@ class AclEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> AclEntry:
+    def from_dict(cls, data: dict[str, Any]) -> AclEntry:
         """Create from dictionary."""
         return cls(
             principal=Principal.parse(data["principal"]),
@@ -191,7 +193,7 @@ class AclManager:
     def check_permission(
         self,
         actor: str,
-        acl: List[Dict[str, str]],
+        acl: list[dict[str, str]],
         required: Permission,
         owner_actor: str,
     ) -> bool:
@@ -241,7 +243,7 @@ class AclManager:
         self,
         actor: str,
         node_id: str,
-        acl: List[Dict[str, str]],
+        acl: list[dict[str, str]],
         required: Permission,
         owner_actor: str,
     ) -> None:
@@ -262,9 +264,9 @@ class AclManager:
 
     def extract_principals(
         self,
-        acl: List[Dict[str, str]],
+        acl: list[dict[str, str]],
         owner_actor: str,
-    ) -> Set[str]:
+    ) -> set[str]:
         """Extract all principals from an ACL for visibility indexing.
 
         Args:
@@ -288,9 +290,9 @@ class AclManager:
 
     def merge_acls(
         self,
-        base_acl: List[Dict[str, str]],
-        additional_acl: List[Dict[str, str]],
-    ) -> List[Dict[str, str]]:
+        base_acl: list[dict[str, str]],
+        additional_acl: list[dict[str, str]],
+    ) -> list[dict[str, str]]:
         """Merge two ACLs, with additional entries taking precedence.
 
         Args:
@@ -301,7 +303,7 @@ class AclManager:
             Merged ACL
         """
         # Index base ACL by principal
-        by_principal: Dict[str, Dict[str, str]] = {}
+        by_principal: dict[str, dict[str, str]] = {}
         for entry in base_acl:
             principal = entry.get("principal")
             if principal:
@@ -315,7 +317,7 @@ class AclManager:
 
         return list(by_principal.values())
 
-    def validate_acl(self, acl: List[Dict[str, str]]) -> List[str]:
+    def validate_acl(self, acl: list[dict[str, str]]) -> list[str]:
         """Validate an ACL for correctness.
 
         Args:
@@ -348,7 +350,9 @@ class AclManager:
                     Permission(permission_str)
                 except ValueError:
                     valid = [p.value for p in Permission]
-                    errors.append(f"Entry {i}: invalid permission '{permission_str}', must be one of {valid}")
+                    errors.append(
+                        f"Entry {i}: invalid permission '{permission_str}', must be one of {valid}"
+                    )
 
         return errors
 
@@ -356,7 +360,7 @@ class AclManager:
         self,
         owner_actor: str,
         tenant_readable: bool = False,
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """Create a default ACL for a new node.
 
         Args:
@@ -374,17 +378,19 @@ class AclManager:
         ]
 
         if tenant_readable:
-            acl.append({
-                "principal": "tenant:*",
-                "permission": Permission.READ.value,
-            })
+            acl.append(
+                {
+                    "principal": "tenant:*",
+                    "permission": Permission.READ.value,
+                }
+            )
 
         return acl
 
     def can_modify_acl(
         self,
         actor: str,
-        acl: List[Dict[str, str]],
+        acl: list[dict[str, str]],
         owner_actor: str,
     ) -> bool:
         """Check if actor can modify the ACL.
@@ -403,7 +409,7 @@ class AclManager:
 
 
 # Default ACL manager instance
-_default_manager: Optional[AclManager] = None
+_default_manager: AclManager | None = None
 
 
 def get_acl_manager() -> AclManager:

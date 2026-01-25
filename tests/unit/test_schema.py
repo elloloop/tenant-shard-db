@@ -10,11 +10,12 @@ Tests cover:
 """
 
 import pytest
+
 from dbaas.entdb_server.schema.types import (
-    FieldDef,
-    NodeTypeDef,
     EdgeTypeDef,
+    FieldDef,
     FieldKind,
+    NodeTypeDef,
     field,
 )
 

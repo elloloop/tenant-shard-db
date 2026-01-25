@@ -23,27 +23,28 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
-import traceback
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
 import logging
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
-from ..wal.base import WalStream, StreamRecord, StreamPos
-from .canonical_store import CanonicalStore, Node, Edge
-from .mailbox_store import MailboxStore
+from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
+from .canonical_store import CanonicalStore, Edge, Node
+from .mailbox_store import MailboxStore
 
 logger = logging.getLogger(__name__)
 
 
 class ApplierError(Exception):
     """Error during event application."""
+
     pass
 
 
 class SchemaFingerprintMismatch(ApplierError):
     """Event schema doesn't match server schema."""
+
     pass
 
 
@@ -75,16 +76,19 @@ class TransactionEvent:
             ]
         }
     """
+
     tenant_id: str
     actor: str
     idempotency_key: str
-    schema_fingerprint: Optional[str]
+    schema_fingerprint: str | None
     ts_ms: int
-    ops: List[Dict[str, Any]]
-    stream_pos: Optional[StreamPos] = None
+    ops: list[dict[str, Any]]
+    stream_pos: StreamPos | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any], stream_pos: Optional[StreamPos] = None) -> TransactionEvent:
+    def from_dict(
+        cls, data: dict[str, Any], stream_pos: StreamPos | None = None
+    ) -> TransactionEvent:
         """Create from dictionary representation.
 
         Args:
@@ -125,11 +129,12 @@ class ApplyResult:
         error: Error message if failed
         skipped: Whether the event was skipped (already applied)
     """
+
     success: bool
     event: TransactionEvent
-    created_nodes: List[str] = field(default_factory=list)
-    created_edges: List[tuple] = field(default_factory=list)
-    error: Optional[str] = None
+    created_nodes: list[str] = field(default_factory=list)
+    created_edges: list[tuple] = field(default_factory=list)
+    error: str | None = None
     skipped: bool = False
 
 
@@ -142,8 +147,9 @@ class MailboxFanoutConfig:
         node_types: Node types that trigger fanout
         recipient_extractor: Function to extract recipients from node
     """
+
     enabled: bool = True
-    node_types: Set[int] = field(default_factory=set)
+    node_types: set[int] = field(default_factory=set)
 
 
 class Applier:
@@ -172,9 +178,9 @@ class Applier:
         mailbox_store: MailboxStore,
         topic: str = "entdb-wal",
         group_id: str = "entdb-applier",
-        schema_fingerprint: Optional[str] = None,
-        acl_manager: Optional[AclManager] = None,
-        fanout_config: Optional[MailboxFanoutConfig] = None,
+        schema_fingerprint: str | None = None,
+        acl_manager: AclManager | None = None,
+        fanout_config: MailboxFanoutConfig | None = None,
     ) -> None:
         """Initialize the applier.
 
@@ -200,8 +206,8 @@ class Applier:
         self._running = False
         self._processed_count = 0
         self._error_count = 0
-        self._last_position: Optional[StreamPos] = None
-        self._node_alias_map: Dict[str, str] = {}  # For $ref resolution
+        self._last_position: StreamPos | None = None
+        self._node_alias_map: dict[str, str] = {}  # For $ref resolution
 
     async def start(self) -> None:
         """Start the applier loop.
@@ -213,10 +219,7 @@ class Applier:
             return
 
         self._running = True
-        logger.info(
-            "Starting applier",
-            extra={"topic": self.topic, "group_id": self.group_id}
-        )
+        logger.info("Starting applier", extra={"topic": self.topic, "group_id": self.group_id})
 
         try:
             async for record in self.wal.subscribe(self.topic, self.group_id):
@@ -234,7 +237,7 @@ class Applier:
                             "idempotency_key": result.event.idempotency_key,
                             "nodes": len(result.created_nodes),
                             "edges": len(result.created_edges),
-                        }
+                        },
                     )
                 elif result.skipped:
                     logger.debug(
@@ -242,7 +245,7 @@ class Applier:
                         extra={
                             "tenant_id": result.event.tenant_id,
                             "idempotency_key": result.event.idempotency_key,
-                        }
+                        },
                     )
                 else:
                     self._error_count += 1
@@ -252,7 +255,7 @@ class Applier:
                             "tenant_id": result.event.tenant_id,
                             "idempotency_key": result.event.idempotency_key,
                             "error": result.error,
-                        }
+                        },
                     )
 
                 # Commit the position
@@ -385,7 +388,7 @@ class Applier:
             logger.error(f"Error processing record: {e}", exc_info=True)
             # Create a minimal event for error reporting
             try:
-                data = json.loads(record.value.decode('utf-8'))
+                data = json.loads(record.value.decode("utf-8"))
                 event = TransactionEvent(
                     tenant_id=data.get("tenant_id", "unknown"),
                     actor=data.get("actor", "unknown"),
@@ -415,7 +418,7 @@ class Applier:
     async def _apply_create_node(
         self,
         event: TransactionEvent,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> Node:
         """Apply a create_node operation."""
         type_id = op["type_id"]
@@ -436,8 +439,8 @@ class Applier:
     async def _apply_update_node(
         self,
         event: TransactionEvent,
-        op: Dict[str, Any],
-    ) -> Optional[Node]:
+        op: dict[str, Any],
+    ) -> Node | None:
         """Apply an update_node operation."""
         node_id = self._resolve_ref(op.get("id", ""))
         patch = op.get("patch", {})
@@ -452,7 +455,7 @@ class Applier:
     async def _apply_delete_node(
         self,
         event: TransactionEvent,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> bool:
         """Apply a delete_node operation."""
         node_id = self._resolve_ref(op.get("id", ""))
@@ -465,7 +468,7 @@ class Applier:
     async def _apply_create_edge(
         self,
         event: TransactionEvent,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> Edge:
         """Apply a create_edge operation."""
         edge_type_id = op["edge_id"]
@@ -489,7 +492,7 @@ class Applier:
     async def _apply_delete_edge(
         self,
         event: TransactionEvent,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> bool:
         """Apply a delete_edge operation."""
         edge_type_id = op["edge_id"]
@@ -544,7 +547,7 @@ class Applier:
         self,
         event: TransactionEvent,
         node: Node,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> None:
         """Fanout a node to user mailboxes.
 
@@ -586,10 +589,10 @@ class Applier:
                             "tenant_id": event.tenant_id,
                             "user_id": user_id,
                             "node_id": node.node_id,
-                        }
+                        },
                     )
 
-    def _generate_snippet(self, payload: Dict[str, Any]) -> str:
+    def _generate_snippet(self, payload: dict[str, Any]) -> str:
         """Generate searchable snippet from payload.
 
         Extracts text content from common field names.
@@ -607,7 +610,7 @@ class Applier:
         return " ".join(snippet_parts)[:1000]  # Limit snippet length
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get applier statistics."""
         return {
             "running": self._running,

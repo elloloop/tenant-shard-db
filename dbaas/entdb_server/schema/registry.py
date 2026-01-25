@@ -33,26 +33,28 @@ from __future__ import annotations
 
 import hashlib
 import json
-import threading
-from typing import Dict, Iterator, Optional, Union
 import logging
+import threading
+from collections.abc import Iterator
 
-from .types import NodeTypeDef, EdgeTypeDef
+from .types import EdgeTypeDef, NodeTypeDef
 
 logger = logging.getLogger(__name__)
 
 # Global registry instance
-_global_registry: Optional[SchemaRegistry] = None
+_global_registry: SchemaRegistry | None = None
 _registry_lock = threading.Lock()
 
 
 class RegistryFrozenError(Exception):
     """Raised when attempting to modify a frozen registry."""
+
     pass
 
 
 class DuplicateRegistrationError(Exception):
     """Raised when attempting to register a duplicate type/edge ID."""
+
     pass
 
 
@@ -83,12 +85,12 @@ class SchemaRegistry:
 
     def __init__(self) -> None:
         """Initialize an empty, mutable registry."""
-        self._node_types: Dict[int, NodeTypeDef] = {}
-        self._edge_types: Dict[int, EdgeTypeDef] = {}
-        self._node_types_by_name: Dict[str, NodeTypeDef] = {}
-        self._edge_types_by_name: Dict[str, EdgeTypeDef] = {}
+        self._node_types: dict[int, NodeTypeDef] = {}
+        self._edge_types: dict[int, EdgeTypeDef] = {}
+        self._node_types_by_name: dict[str, NodeTypeDef] = {}
+        self._edge_types_by_name: dict[str, EdgeTypeDef] = {}
         self._frozen = False
-        self._fingerprint: Optional[str] = None
+        self._fingerprint: str | None = None
         self._lock = threading.Lock()
 
     @property
@@ -97,7 +99,7 @@ class SchemaRegistry:
         return self._frozen
 
     @property
-    def fingerprint(self) -> Optional[str]:
+    def fingerprint(self) -> str | None:
         """Schema fingerprint (available after freeze)."""
         return self._fingerprint
 
@@ -134,9 +136,7 @@ class SchemaRegistry:
 
             self._node_types[node_type.type_id] = node_type
             self._node_types_by_name[node_type.name] = node_type
-            logger.debug(
-                f"Registered node type: {node_type.name} (type_id={node_type.type_id})"
-            )
+            logger.debug(f"Registered node type: {node_type.name} (type_id={node_type.type_id})")
 
     def register_edge_type(self, edge_type: EdgeTypeDef) -> None:
         """Register an edge type definition.
@@ -185,11 +185,9 @@ class SchemaRegistry:
 
             self._edge_types[edge_type.edge_id] = edge_type
             self._edge_types_by_name[edge_type.name] = edge_type
-            logger.debug(
-                f"Registered edge type: {edge_type.name} (edge_id={edge_type.edge_id})"
-            )
+            logger.debug(f"Registered edge type: {edge_type.name} (edge_id={edge_type.edge_id})")
 
-    def get_node_type(self, type_id_or_name: Union[int, str]) -> Optional[NodeTypeDef]:
+    def get_node_type(self, type_id_or_name: int | str) -> NodeTypeDef | None:
         """Get a node type by ID or name.
 
         Args:
@@ -206,7 +204,7 @@ class SchemaRegistry:
             return self._node_types.get(type_id_or_name)
         return self._node_types_by_name.get(type_id_or_name)
 
-    def get_edge_type(self, edge_id_or_name: Union[int, str]) -> Optional[EdgeTypeDef]:
+    def get_edge_type(self, edge_id_or_name: int | str) -> EdgeTypeDef | None:
         """Get an edge type by ID or name.
 
         Args:
@@ -267,8 +265,8 @@ class SchemaRegistry:
         """
         schema_dict = self.to_dict()
         # Sort for determinism
-        canonical = json.dumps(schema_dict, sort_keys=True, separators=(',', ':'))
-        hash_bytes = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        canonical = json.dumps(schema_dict, sort_keys=True, separators=(",", ":"))
+        hash_bytes = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return f"sha256:{hash_bytes}"
 
     def to_dict(self) -> dict:
@@ -280,16 +278,14 @@ class SchemaRegistry:
         """
         return {
             "node_types": [
-                self._node_types[tid].to_dict()
-                for tid in sorted(self._node_types.keys())
+                self._node_types[tid].to_dict() for tid in sorted(self._node_types.keys())
             ],
             "edge_types": [
-                self._edge_types[eid].to_dict()
-                for eid in sorted(self._edge_types.keys())
+                self._edge_types[eid].to_dict() for eid in sorted(self._edge_types.keys())
             ],
         }
 
-    def to_json(self, indent: Optional[int] = 2) -> str:
+    def to_json(self, indent: int | None = 2) -> str:
         """Convert registry to JSON string.
 
         Args:

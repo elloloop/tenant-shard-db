@@ -8,14 +8,15 @@ Tests cover:
 """
 
 import pytest
-from dbaas.entdb_server.schema.types import NodeTypeDef, EdgeTypeDef, field
-from dbaas.entdb_server.schema.registry import SchemaRegistry
+
 from dbaas.entdb_server.schema.compat import (
-    check_compatibility,
-    CompatibilityError,
     ChangeKind,
+    CompatibilityError,
+    check_compatibility,
     validate_breaking_changes,
 )
+from dbaas.entdb_server.schema.registry import SchemaRegistry
+from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
 
 
 def make_registry(*node_types, edge_types=None):
@@ -23,7 +24,7 @@ def make_registry(*node_types, edge_types=None):
     registry = SchemaRegistry()
     for nt in node_types:
         registry.register_node_type(nt)
-    for et in (edge_types or []):
+    for et in edge_types or []:
         registry.register_edge_type(et)
     return registry
 
@@ -72,10 +73,14 @@ class TestCompatibilityChecking:
     def test_add_field(self):
         """Adding a field is allowed."""
         UserV1 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "email", "str"),))
-        UserV2 = NodeTypeDef(type_id=1, name="User", fields=(
-            field(1, "email", "str"),
-            field(2, "name", "str"),
-        ))
+        UserV2 = NodeTypeDef(
+            type_id=1,
+            name="User",
+            fields=(
+                field(1, "email", "str"),
+                field(2, "name", "str"),
+            ),
+        )
 
         old = make_registry(UserV1)
         new = make_registry(UserV2)
@@ -88,10 +93,14 @@ class TestCompatibilityChecking:
 
     def test_remove_field_is_breaking(self):
         """Removing a field is breaking."""
-        UserV1 = NodeTypeDef(type_id=1, name="User", fields=(
-            field(1, "email", "str"),
-            field(2, "name", "str"),
-        ))
+        UserV1 = NodeTypeDef(
+            type_id=1,
+            name="User",
+            fields=(
+                field(1, "email", "str"),
+                field(2, "name", "str"),
+            ),
+        )
         UserV2 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "email", "str"),))
 
         old = make_registry(UserV1)
@@ -134,7 +143,9 @@ class TestCompatibilityChecking:
     def test_deprecate_field_allowed(self):
         """Deprecating a field is allowed."""
         UserV1 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "email", "str"),))
-        UserV2 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "email", "str", deprecated=True),))
+        UserV2 = NodeTypeDef(
+            type_id=1, name="User", fields=(field(1, "email", "str", deprecated=True),)
+        )
 
         old = make_registry(UserV1)
         new = make_registry(UserV2)
@@ -147,12 +158,16 @@ class TestCompatibilityChecking:
 
     def test_add_enum_value_allowed(self):
         """Adding enum value is allowed."""
-        StatusV1 = NodeTypeDef(type_id=1, name="Task", fields=(
-            field(1, "status", "enum", enum_values=("todo", "done")),
-        ))
-        StatusV2 = NodeTypeDef(type_id=1, name="Task", fields=(
-            field(1, "status", "enum", enum_values=("todo", "doing", "done")),
-        ))
+        StatusV1 = NodeTypeDef(
+            type_id=1,
+            name="Task",
+            fields=(field(1, "status", "enum", enum_values=("todo", "done")),),
+        )
+        StatusV2 = NodeTypeDef(
+            type_id=1,
+            name="Task",
+            fields=(field(1, "status", "enum", enum_values=("todo", "doing", "done")),),
+        )
 
         old = make_registry(StatusV1)
         new = make_registry(StatusV2)
@@ -164,12 +179,16 @@ class TestCompatibilityChecking:
 
     def test_remove_enum_value_is_breaking(self):
         """Removing enum value is breaking."""
-        StatusV1 = NodeTypeDef(type_id=1, name="Task", fields=(
-            field(1, "status", "enum", enum_values=("todo", "doing", "done")),
-        ))
-        StatusV2 = NodeTypeDef(type_id=1, name="Task", fields=(
-            field(1, "status", "enum", enum_values=("todo", "done")),
-        ))
+        StatusV1 = NodeTypeDef(
+            type_id=1,
+            name="Task",
+            fields=(field(1, "status", "enum", enum_values=("todo", "doing", "done")),),
+        )
+        StatusV2 = NodeTypeDef(
+            type_id=1,
+            name="Task",
+            fields=(field(1, "status", "enum", enum_values=("todo", "done")),),
+        )
 
         old = make_registry(StatusV1)
         new = make_registry(StatusV2)
@@ -182,7 +201,9 @@ class TestCompatibilityChecking:
     def test_make_optional_required_is_breaking(self):
         """Making an optional field required is breaking."""
         UserV1 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "name", "str"),))
-        UserV2 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "name", "str", required=True),))
+        UserV2 = NodeTypeDef(
+            type_id=1, name="User", fields=(field(1, "name", "str", required=True),)
+        )
 
         old = make_registry(UserV1)
         new = make_registry(UserV2)

@@ -22,14 +22,16 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Try to import aiohttp
 try:
     from aiohttp import web
+
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
@@ -39,14 +41,15 @@ except ImportError:
 @dataclass
 class HttpConfig:
     """HTTP server configuration."""
+
     host: str = "0.0.0.0"
     port: int = 8081
-    cors_origins: Tuple[str, ...] = ("*",)
+    cors_origins: tuple[str, ...] = ("*",)
 
 
 def create_http_app(
     servicer: Any,
-    config: Optional[HttpConfig] = None,
+    config: HttpConfig | None = None,
 ) -> Any:
     """Create an HTTP application for EntDB.
 
@@ -61,17 +64,16 @@ def create_http_app(
         ImportError: If aiohttp is not installed
     """
     if not AIOHTTP_AVAILABLE:
-        raise ImportError(
-            "aiohttp is required for HTTP server. "
-            "Install with: pip install aiohttp"
-        )
+        raise ImportError("aiohttp is required for HTTP server. Install with: pip install aiohttp")
 
     config = config or HttpConfig()
     app = web.Application()
 
     # Add routes
     app.router.add_post("/v1/execute", lambda r: handle_execute(r, servicer))
-    app.router.add_get("/v1/receipt/{idempotency_key}", lambda r: handle_receipt_status(r, servicer))
+    app.router.add_get(
+        "/v1/receipt/{idempotency_key}", lambda r: handle_receipt_status(r, servicer)
+    )
     app.router.add_get("/v1/nodes/{node_id}", lambda r: handle_get_node(r, servicer))
     app.router.add_get("/v1/nodes", lambda r: handle_query_nodes(r, servicer))
     app.router.add_get("/v1/nodes/{node_id}/edges/from", lambda r: handle_edges_from(r, servicer))
@@ -97,7 +99,9 @@ def create_http_app(
         if "*" in config.cors_origins or origin in config.cors_origins:
             response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "Content-Type, X-Tenant-ID, X-Actor, X-Trace-ID"
+        response.headers["Access-Control-Allow-Headers"] = (
+            "Content-Type, X-Tenant-ID, X-Actor, X-Trace-ID"
+        )
 
         return response
 
@@ -122,7 +126,7 @@ def create_http_app(
     return app
 
 
-def extract_context(request: web.Request) -> Tuple[str, str, Optional[str]]:
+def extract_context(request: web.Request) -> tuple[str, str, str | None]:
     """Extract request context from headers.
 
     Args:
@@ -214,9 +218,7 @@ async def handle_query_nodes(request: web.Request, servicer: Any) -> web.Respons
     limit = int(request.query.get("limit", 100))
     offset = int(request.query.get("offset", 0))
 
-    result = await servicer.query_nodes(
-        tenant_id, actor, type_id, limit=limit, offset=offset
-    )
+    result = await servicer.query_nodes(tenant_id, actor, type_id, limit=limit, offset=offset)
     return web.json_response(result)
 
 
@@ -228,7 +230,9 @@ async def handle_edges_from(request: web.Request, servicer: Any) -> web.Response
     limit = int(request.query.get("limit", 100))
 
     result = await servicer.get_edges_from(
-        tenant_id, actor, node_id,
+        tenant_id,
+        actor,
+        node_id,
         edge_type_id=int(edge_type_id) if edge_type_id else None,
         limit=limit,
     )
@@ -243,7 +247,9 @@ async def handle_edges_to(request: web.Request, servicer: Any) -> web.Response:
     limit = int(request.query.get("limit", 100))
 
     result = await servicer.get_edges_to(
-        tenant_id, actor, node_id,
+        tenant_id,
+        actor,
+        node_id,
         edge_type_id=int(edge_type_id) if edge_type_id else None,
         limit=limit,
     )
@@ -263,9 +269,13 @@ async def handle_search_mailbox(request: web.Request, servicer: Any) -> web.Resp
         source_type_ids = [int(x) for x in request.query["source_type_ids"].split(",")]
 
     result = await servicer.search_mailbox(
-        tenant_id, actor, user_id, query,
+        tenant_id,
+        actor,
+        user_id,
+        query,
         source_type_ids=source_type_ids,
-        limit=limit, offset=offset,
+        limit=limit,
+        offset=offset,
     )
     return web.json_response(result)
 
@@ -281,11 +291,14 @@ async def handle_get_mailbox(request: web.Request, servicer: Any) -> web.Respons
     offset = int(request.query.get("offset", 0))
 
     result = await servicer.get_mailbox(
-        tenant_id, actor, user_id,
+        tenant_id,
+        actor,
+        user_id,
         source_type_id=int(source_type_id) if source_type_id else None,
         thread_id=thread_id,
         unread_only=unread_only,
-        limit=limit, offset=offset,
+        limit=limit,
+        offset=offset,
     )
     return web.json_response(result)
 
@@ -301,9 +314,7 @@ async def handle_schema(request: web.Request, servicer: Any) -> web.Response:
     """Handle GET /v1/schema - Get schema information."""
     type_id = request.query.get("type_id")
 
-    result = await servicer.get_schema(
-        type_id=int(type_id) if type_id else None
-    )
+    result = await servicer.get_schema(type_id=int(type_id) if type_id else None)
     return web.json_response(result)
 
 

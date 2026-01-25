@@ -16,7 +16,7 @@ Invariants:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class EntDbError(Exception):
@@ -31,8 +31,8 @@ class EntDbError(Exception):
     def __init__(
         self,
         message: str,
-        code: Optional[str] = None,
-        details: Optional[Dict[str, Any]] = None,
+        code: str | None = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -52,7 +52,7 @@ class ConnectionError(EntDbError):
     def __init__(
         self,
         message: str,
-        address: Optional[str] = None,
+        address: str | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -74,8 +74,8 @@ class ValidationError(EntDbError):
     def __init__(
         self,
         message: str,
-        field_name: Optional[str] = None,
-        errors: Optional[List[str]] = None,
+        field_name: str | None = None,
+        errors: list[str] | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -98,8 +98,8 @@ class SchemaError(EntDbError):
     def __init__(
         self,
         message: str,
-        expected_fingerprint: Optional[str] = None,
-        actual_fingerprint: Optional[str] = None,
+        expected_fingerprint: str | None = None,
+        actual_fingerprint: str | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -128,7 +128,7 @@ class UnknownFieldError(EntDbError):
         self,
         field_name: str,
         type_name: str,
-        suggestions: Optional[List[str]] = None,
+        suggestions: list[str] | None = None,
     ) -> None:
         suggestions = suggestions or []
         msg = f"Unknown field '{field_name}' in type '{type_name}'"
@@ -189,7 +189,7 @@ class AccessDeniedError(EntDbError):
         message: str,
         actor: str,
         resource_id: str,
-        required_permission: Optional[str] = None,
+        required_permission: str | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -217,7 +217,7 @@ class TransactionError(EntDbError):
     def __init__(
         self,
         message: str,
-        idempotency_key: Optional[str] = None,
+        idempotency_key: str | None = None,
     ) -> None:
         super().__init__(
             message,

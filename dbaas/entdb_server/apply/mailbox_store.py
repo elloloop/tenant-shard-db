@@ -42,15 +42,15 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
-import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -70,15 +70,16 @@ class MailboxItem:
         snippet: Searchable text snippet
         metadata: Additional metadata
     """
+
     item_id: str
     ref_id: str
     source_type_id: int
     source_node_id: str
-    thread_id: Optional[str]
+    thread_id: str | None
     ts: int
-    state: Dict[str, Any]
+    state: dict[str, Any]
     snippet: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -90,9 +91,10 @@ class SearchResult:
         rank: Search relevance score
         highlights: Highlighted snippet matches
     """
+
     item: MailboxItem
     rank: float
-    highlights: Optional[str] = None
+    highlights: str | None = None
 
 
 class MailboxStore:
@@ -248,12 +250,12 @@ class MailboxStore:
         source_type_id: int,
         source_node_id: str,
         snippet: str,
-        ref_id: Optional[str] = None,
-        thread_id: Optional[str] = None,
-        state: Optional[Dict[str, Any]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        ts: Optional[int] = None,
-        item_id: Optional[str] = None,
+        ref_id: str | None = None,
+        thread_id: str | None = None,
+        state: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        ts: int | None = None,
+        item_id: str | None = None,
     ) -> MailboxItem:
         """Add an item to a user's mailbox.
 
@@ -288,8 +290,15 @@ class MailboxStore:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    item_id, ref_id, source_type_id, source_node_id, thread_id,
-                    ts, json.dumps(state), snippet, json.dumps(metadata),
+                    item_id,
+                    ref_id,
+                    source_type_id,
+                    source_node_id,
+                    thread_id,
+                    ts,
+                    json.dumps(state),
+                    snippet,
+                    json.dumps(metadata),
                 ),
             )
 
@@ -300,7 +309,7 @@ class MailboxStore:
                 "user_id": user_id,
                 "item_id": item_id,
                 "source_node_id": source_node_id,
-            }
+            },
         )
 
         return MailboxItem(
@@ -320,7 +329,7 @@ class MailboxStore:
         tenant_id: str,
         user_id: str,
         item_id: str,
-    ) -> Optional[MailboxItem]:
+    ) -> MailboxItem | None:
         """Get a mailbox item by ID.
 
         Args:
@@ -350,8 +359,8 @@ class MailboxStore:
         tenant_id: str,
         user_id: str,
         item_id: str,
-        state_patch: Dict[str, Any],
-    ) -> Optional[MailboxItem]:
+        state_patch: dict[str, Any],
+    ) -> MailboxItem | None:
         """Update an item's state.
 
         Args:
@@ -437,10 +446,10 @@ class MailboxStore:
         user_id: str,
         limit: int = 50,
         offset: int = 0,
-        thread_id: Optional[str] = None,
-        source_type_id: Optional[int] = None,
+        thread_id: str | None = None,
+        source_type_id: int | None = None,
         unread_only: bool = False,
-    ) -> List[MailboxItem]:
+    ) -> list[MailboxItem]:
         """List mailbox items with optional filters.
 
         Args:
@@ -458,7 +467,7 @@ class MailboxStore:
         try:
             with self._get_connection(tenant_id, user_id, create=False) as conn:
                 query = "SELECT * FROM mailbox_items WHERE 1=1"
-                params: List[Any] = []
+                params: list[Any] = []
 
                 if thread_id:
                     query += " AND thread_id = ?"
@@ -487,8 +496,8 @@ class MailboxStore:
         query: str,
         limit: int = 20,
         offset: int = 0,
-        source_type_ids: Optional[List[int]] = None,
-    ) -> List[SearchResult]:
+        source_type_ids: list[int] | None = None,
+    ) -> list[SearchResult]:
         """Full-text search in mailbox.
 
         Args:
@@ -511,7 +520,7 @@ class MailboxStore:
                     JOIN fts_mailbox fts ON m.rowid = fts.rowid
                     WHERE fts_mailbox MATCH ?
                 """
-                params: List[Any] = [query]
+                params: list[Any] = [query]
 
                 if source_type_ids:
                     placeholders = ",".join("?" * len(source_type_ids))
@@ -526,11 +535,13 @@ class MailboxStore:
                 results = []
                 for row in cursor.fetchall():
                     item = self._row_to_item(row)
-                    results.append(SearchResult(
-                        item=item,
-                        rank=row["rank"],
-                        highlights=row["highlights"],
-                    ))
+                    results.append(
+                        SearchResult(
+                            item=item,
+                            rank=row["rank"],
+                            highlights=row["highlights"],
+                        )
+                    )
 
                 return results
 
@@ -548,7 +559,7 @@ class MailboxStore:
         tenant_id: str,
         user_id: str,
         thread_id: str,
-    ) -> List[MailboxItem]:
+    ) -> list[MailboxItem]:
         """Get all items in a thread.
 
         Args:
@@ -577,7 +588,7 @@ class MailboxStore:
         self,
         tenant_id: str,
         user_id: str,
-        item_ids: List[str],
+        item_ids: list[str],
     ) -> int:
         """Mark multiple items as read.
 
@@ -648,10 +659,7 @@ class MailboxStore:
         """
         with self._get_connection(tenant_id, user_id) as conn:
             conn.execute("INSERT INTO fts_mailbox(fts_mailbox) VALUES('rebuild')")
-            logger.info(
-                "Rebuilt FTS index",
-                extra={"tenant_id": tenant_id, "user_id": user_id}
-            )
+            logger.info("Rebuilt FTS index", extra={"tenant_id": tenant_id, "user_id": user_id})
 
     async def delete_by_source(
         self,

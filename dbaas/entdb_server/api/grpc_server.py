@@ -24,9 +24,8 @@ import json
 import logging
 import time
 import uuid
-from concurrent import futures
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +33,7 @@ logger = logging.getLogger(__name__)
 try:
     import grpc
     from grpc import aio as grpc_aio
+
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
@@ -44,19 +44,21 @@ except ImportError:
 @dataclass
 class RequestContext:
     """Parsed request context."""
+
     tenant_id: str
     actor: str
-    trace_id: Optional[str] = None
+    trace_id: str | None = None
 
 
 @dataclass
 class Receipt:
     """Transaction receipt."""
+
     tenant_id: str
     idempotency_key: str
-    stream_position: Optional[str] = None
+    stream_position: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "tenant_id": self.tenant_id,
             "idempotency_key": self.idempotency_key,
@@ -100,19 +102,19 @@ class EntDBServicer:
         self.mailbox_store = mailbox_store
         self.schema_registry = schema_registry
         self.topic = topic
-        self._pending_receipts: Dict[str, asyncio.Event] = {}
-        self._receipt_results: Dict[str, Tuple[bool, Optional[str]]] = {}
+        self._pending_receipts: dict[str, asyncio.Event] = {}
+        self._receipt_results: dict[str, tuple[bool, str | None]] = {}
 
     async def execute_atomic(
         self,
         tenant_id: str,
         actor: str,
-        operations: List[Dict[str, Any]],
-        idempotency_key: Optional[str] = None,
-        schema_fingerprint: Optional[str] = None,
+        operations: list[dict[str, Any]],
+        idempotency_key: str | None = None,
+        schema_fingerprint: str | None = None,
         wait_applied: bool = False,
         wait_timeout_ms: int = 30000,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute an atomic transaction.
 
         Args:
@@ -129,11 +131,23 @@ class EntDBServicer:
         """
         # Validate inputs
         if not tenant_id:
-            return {"success": False, "error": "tenant_id is required", "error_code": "INVALID_ARGUMENT"}
+            return {
+                "success": False,
+                "error": "tenant_id is required",
+                "error_code": "INVALID_ARGUMENT",
+            }
         if not actor:
-            return {"success": False, "error": "actor is required", "error_code": "INVALID_ARGUMENT"}
+            return {
+                "success": False,
+                "error": "actor is required",
+                "error_code": "INVALID_ARGUMENT",
+            }
         if not operations:
-            return {"success": False, "error": "operations list is empty", "error_code": "INVALID_ARGUMENT"}
+            return {
+                "success": False,
+                "error": "operations list is empty",
+                "error_code": "INVALID_ARGUMENT",
+            }
 
         # Generate idempotency key if not provided
         if not idempotency_key:
@@ -160,7 +174,7 @@ class EntDBServicer:
 
         try:
             # Append to WAL
-            event_bytes = json.dumps(event).encode('utf-8')
+            event_bytes = json.dumps(event).encode("utf-8")
             stream_pos = await self.wal.append(
                 self.topic,
                 tenant_id,  # Partition key
@@ -205,7 +219,7 @@ class EntDBServicer:
                 "error_code": "INTERNAL",
             }
 
-    def _convert_operations(self, operations: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_operations(self, operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert operation format from API to internal format."""
         result = []
 
@@ -229,43 +243,51 @@ class EntDBServicer:
 
             elif "update_node" in op:
                 update = op["update_node"]
-                result.append({
-                    "op": "update_node",
-                    "type_id": update.get("type_id"),
-                    "id": update.get("id"),
-                    "patch": json.loads(update.get("patch_json", "{}")),
-                })
+                result.append(
+                    {
+                        "op": "update_node",
+                        "type_id": update.get("type_id"),
+                        "id": update.get("id"),
+                        "patch": json.loads(update.get("patch_json", "{}")),
+                    }
+                )
 
             elif "delete_node" in op:
                 delete = op["delete_node"]
-                result.append({
-                    "op": "delete_node",
-                    "type_id": delete.get("type_id"),
-                    "id": delete.get("id"),
-                })
+                result.append(
+                    {
+                        "op": "delete_node",
+                        "type_id": delete.get("type_id"),
+                        "id": delete.get("id"),
+                    }
+                )
 
             elif "create_edge" in op:
                 create = op["create_edge"]
-                result.append({
-                    "op": "create_edge",
-                    "edge_id": create.get("edge_id"),
-                    "from": self._convert_node_ref(create.get("from", {})),
-                    "to": self._convert_node_ref(create.get("to", {})),
-                    "props": json.loads(create.get("props_json", "{}")),
-                })
+                result.append(
+                    {
+                        "op": "create_edge",
+                        "edge_id": create.get("edge_id"),
+                        "from": self._convert_node_ref(create.get("from", {})),
+                        "to": self._convert_node_ref(create.get("to", {})),
+                        "props": json.loads(create.get("props_json", "{}")),
+                    }
+                )
 
             elif "delete_edge" in op:
                 delete = op["delete_edge"]
-                result.append({
-                    "op": "delete_edge",
-                    "edge_id": delete.get("edge_id"),
-                    "from": self._convert_node_ref(delete.get("from", {})),
-                    "to": self._convert_node_ref(delete.get("to", {})),
-                })
+                result.append(
+                    {
+                        "op": "delete_edge",
+                        "edge_id": delete.get("edge_id"),
+                        "from": self._convert_node_ref(delete.get("from", {})),
+                        "to": self._convert_node_ref(delete.get("to", {})),
+                    }
+                )
 
         return result
 
-    def _convert_node_ref(self, ref: Dict[str, Any]) -> Any:
+    def _convert_node_ref(self, ref: dict[str, Any]) -> Any:
         """Convert node reference from API format."""
         if "id" in ref:
             return ref["id"]
@@ -299,7 +321,7 @@ class EntDBServicer:
         self,
         tenant_id: str,
         idempotency_key: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get the status of a transaction receipt."""
         try:
             applied = await self.canonical_store.check_idempotency(tenant_id, idempotency_key)
@@ -314,7 +336,7 @@ class EntDBServicer:
         actor: str,
         type_id: int,
         node_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get a node by ID."""
         try:
             node = await self.canonical_store.get_node(tenant_id, node_id)
@@ -345,7 +367,7 @@ class EntDBServicer:
         type_id: int,
         limit: int = 100,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query nodes by type."""
         try:
             nodes = await self.canonical_store.get_nodes_by_type(
@@ -377,14 +399,12 @@ class EntDBServicer:
         tenant_id: str,
         actor: str,
         node_id: str,
-        edge_type_id: Optional[int] = None,
+        edge_type_id: int | None = None,
         limit: int = 100,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get outgoing edges from a node."""
         try:
-            edges = await self.canonical_store.get_edges_from(
-                tenant_id, node_id, edge_type_id
-            )
+            edges = await self.canonical_store.get_edges_from(tenant_id, node_id, edge_type_id)
 
             return {
                 "edges": [
@@ -409,14 +429,12 @@ class EntDBServicer:
         tenant_id: str,
         actor: str,
         node_id: str,
-        edge_type_id: Optional[int] = None,
+        edge_type_id: int | None = None,
         limit: int = 100,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get incoming edges to a node."""
         try:
-            edges = await self.canonical_store.get_edges_to(
-                tenant_id, node_id, edge_type_id
-            )
+            edges = await self.canonical_store.get_edges_to(tenant_id, node_id, edge_type_id)
 
             return {
                 "edges": [
@@ -442,15 +460,18 @@ class EntDBServicer:
         actor: str,
         user_id: str,
         query: str,
-        source_type_ids: Optional[List[int]] = None,
+        source_type_ids: list[int] | None = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Search mailbox with full-text search."""
         try:
             results = await self.mailbox_store.search(
-                tenant_id, user_id, query,
-                limit=limit, offset=offset,
+                tenant_id,
+                user_id,
+                query,
+                limit=limit,
+                offset=offset,
                 source_type_ids=source_type_ids,
             )
 
@@ -484,17 +505,19 @@ class EntDBServicer:
         tenant_id: str,
         actor: str,
         user_id: str,
-        source_type_id: Optional[int] = None,
-        thread_id: Optional[str] = None,
+        source_type_id: int | None = None,
+        thread_id: str | None = None,
         unread_only: bool = False,
         limit: int = 50,
         offset: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get mailbox items for a user."""
         try:
             items = await self.mailbox_store.list_items(
-                tenant_id, user_id,
-                limit=limit, offset=offset,
+                tenant_id,
+                user_id,
+                limit=limit,
+                offset=offset,
                 source_type_id=source_type_id,
                 thread_id=thread_id,
                 unread_only=unread_only,
@@ -524,13 +547,13 @@ class EntDBServicer:
             logger.error(f"GetMailbox failed: {e}", exc_info=True)
             return {"items": [], "unread_count": 0, "error": str(e)}
 
-    async def health(self) -> Dict[str, Any]:
+    async def health(self) -> dict[str, Any]:
         """Get server health status."""
         components = {}
 
         # Check WAL connection
         try:
-            wal_healthy = self.wal.is_connected if hasattr(self.wal, 'is_connected') else True
+            wal_healthy = self.wal.is_connected if hasattr(self.wal, "is_connected") else True
             components["wal"] = "healthy" if wal_healthy else "unhealthy"
         except Exception:
             components["wal"] = "unknown"
@@ -546,7 +569,7 @@ class EntDBServicer:
             "components": components,
         }
 
-    async def get_schema(self, type_id: Optional[int] = None) -> Dict[str, Any]:
+    async def get_schema(self, type_id: int | None = None) -> dict[str, Any]:
         """Get schema information."""
         try:
             schema_dict = self.schema_registry.to_dict()
@@ -554,11 +577,11 @@ class EntDBServicer:
             if type_id is not None:
                 # Filter to specific type
                 schema_dict["node_types"] = [
-                    t for t in schema_dict.get("node_types", [])
-                    if t.get("type_id") == type_id
+                    t for t in schema_dict.get("node_types", []) if t.get("type_id") == type_id
                 ]
                 schema_dict["edge_types"] = [
-                    e for e in schema_dict.get("edge_types", [])
+                    e
+                    for e in schema_dict.get("edge_types", [])
                     if e.get("from_type_id") == type_id or e.get("to_type_id") == type_id
                 ]
 
@@ -629,7 +652,7 @@ class GrpcServer:
                 "host": self.host,
                 "port": self.port,
                 "max_workers": self.max_workers,
-            }
+            },
         )
 
         self._running = True

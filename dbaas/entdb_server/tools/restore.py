@@ -28,22 +28,21 @@ import asyncio
 import gzip
 import hashlib
 import json
-import os
+import logging
 import shutil
 import sqlite3
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Try to import aiobotocore for S3
 try:
     from aiobotocore.session import get_session
+
     S3_AVAILABLE = True
 except ImportError:
     S3_AVAILABLE = False
@@ -66,17 +65,18 @@ class RestoreConfig:
         skip_archive: If True, only restore snapshot
         stream_config: Optional stream config for tail replay
     """
+
     tenant_id: str
     data_dir: str
     s3_bucket: str
     s3_region: str = "us-east-1"
-    s3_endpoint: Optional[str] = None
+    s3_endpoint: str | None = None
     s3_prefix_snapshot: str = "snapshots"
     s3_prefix_archive: str = "archive"
     dry_run: bool = False
     verify: bool = True
     skip_archive: bool = False
-    stream_config: Optional[Dict[str, Any]] = None
+    stream_config: dict[str, Any] | None = None
 
 
 @dataclass
@@ -91,12 +91,13 @@ class RestoreResult:
         duration_ms: Total restore duration
         error: Error message if failed
     """
+
     success: bool
-    snapshot_used: Optional[str]
+    snapshot_used: str | None
     events_replayed: int
-    final_stream_pos: Optional[str]
+    final_stream_pos: str | None
     duration_ms: int
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class RestoreTool:
@@ -222,7 +223,7 @@ class RestoreTool:
             await self._s3_ctx.__aexit__(None, None, None)
             self._s3_client = None
 
-    async def _find_latest_snapshot(self) -> Optional[Dict[str, Any]]:
+    async def _find_latest_snapshot(self) -> dict[str, Any] | None:
         """Find the latest snapshot for the tenant."""
         prefix = f"{self.config.s3_prefix_snapshot}/tenant={self.config.tenant_id}/"
 
@@ -233,8 +234,7 @@ class RestoreTool:
             )
 
             manifests = [
-                obj for obj in response.get("Contents", [])
-                if obj["Key"].endswith(".manifest.json")
+                obj for obj in response.get("Contents", []) if obj["Key"].endswith(".manifest.json")
             ]
 
             if not manifests:
@@ -257,7 +257,7 @@ class RestoreTool:
 
     async def _restore_snapshot(
         self,
-        snapshot: Dict[str, Any],
+        snapshot: dict[str, Any],
         db_path: Path,
     ) -> None:
         """Download and restore a snapshot.
@@ -283,11 +283,9 @@ class RestoreTool:
         if snapshot["s3_key"].endswith(".gz"):
             content = gzip.decompress(content)
 
-        # Verify checksum
-        checksum = f"sha256:{hashlib.sha256(content).hexdigest()}"
-        # Note: checksum in manifest is of compressed file, so we skip this check
-        # if snapshot["checksum"] != checksum:
-        #     raise ValueError("Snapshot checksum mismatch")
+        # Note: checksum in manifest is of compressed file, so we skip
+        # checksum verification for decompressed content
+        _ = f"sha256:{hashlib.sha256(content).hexdigest()}"
 
         # Write to database path
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,7 +295,7 @@ class RestoreTool:
     async def _replay_archive(
         self,
         db_path: Path,
-        last_stream_pos: Optional[str],
+        last_stream_pos: str | None,
     ) -> int:
         """Replay archived events.
 
@@ -317,7 +315,8 @@ class RestoreTool:
         )
 
         segments = [
-            obj for obj in response.get("Contents", [])
+            obj
+            for obj in response.get("Contents", [])
             if obj["Key"].endswith(".jsonl") or obj["Key"].endswith(".jsonl.gz")
         ]
 
@@ -346,7 +345,7 @@ class RestoreTool:
                 filename = key.split("/")[-1]
                 base = filename.replace(".jsonl.gz", "").replace(".jsonl", "")
                 parts = base.split("_")
-                from_offset = int(parts[0].split("=")[1])
+                _ = int(parts[0].split("=")[1])  # from_offset, unused
                 to_offset = int(parts[1].split("=")[1])
 
                 # Skip segments before our position
@@ -418,7 +417,7 @@ class RestoreTool:
     async def _apply_event(
         self,
         conn: sqlite3.Connection,
-        event: Dict[str, Any],
+        event: dict[str, Any],
     ) -> bool:
         """Apply a single event to the database.
 
@@ -471,11 +470,12 @@ class RestoreTool:
         self,
         conn: sqlite3.Connection,
         tenant_id: str,
-        event: Dict[str, Any],
-        op: Dict[str, Any],
+        event: dict[str, Any],
+        op: dict[str, Any],
     ) -> None:
         """Apply create_node operation."""
         import uuid
+
         node_id = op.get("id") or str(uuid.uuid4())
         type_id = op["type_id"]
         data = op.get("data", {})
@@ -496,8 +496,8 @@ class RestoreTool:
         self,
         conn: sqlite3.Connection,
         tenant_id: str,
-        event: Dict[str, Any],
-        op: Dict[str, Any],
+        event: dict[str, Any],
+        op: dict[str, Any],
     ) -> None:
         """Apply update_node operation."""
         node_id = op["id"]
@@ -522,7 +522,7 @@ class RestoreTool:
         self,
         conn: sqlite3.Connection,
         tenant_id: str,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> None:
         """Apply delete_node operation."""
         node_id = op["id"]
@@ -543,8 +543,8 @@ class RestoreTool:
         self,
         conn: sqlite3.Connection,
         tenant_id: str,
-        event: Dict[str, Any],
-        op: Dict[str, Any],
+        event: dict[str, Any],
+        op: dict[str, Any],
     ) -> None:
         """Apply create_edge operation."""
         edge_type_id = op["edge_id"]
@@ -566,7 +566,7 @@ class RestoreTool:
         self,
         conn: sqlite3.Connection,
         tenant_id: str,
-        op: Dict[str, Any],
+        op: dict[str, Any],
     ) -> None:
         """Apply delete_edge operation."""
         edge_type_id = op["edge_id"]
@@ -589,7 +589,7 @@ class RestoreTool:
             return ref.get("id", ref.get("ref", ""))
         return str(ref)
 
-    async def _get_last_applied_position(self, db_path: Path) -> Optional[str]:
+    async def _get_last_applied_position(self, db_path: Path) -> str | None:
         """Get the last applied stream position."""
         if not db_path.exists():
             return None
@@ -655,7 +655,7 @@ def main() -> None:
     result = asyncio.run(tool.restore())
 
     if result.success:
-        print(f"Restore completed successfully")
+        print("Restore completed successfully")
         print(f"  Snapshot: {result.snapshot_used or 'none'}")
         print(f"  Events replayed: {result.events_replayed}")
         print(f"  Final position: {result.final_stream_pos or 'none'}")

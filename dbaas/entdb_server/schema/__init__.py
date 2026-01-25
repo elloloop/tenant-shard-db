@@ -19,22 +19,22 @@ How to change safely:
     - Use schema CLI to verify compatibility before deployment
 """
 
-from .types import (
-    FieldDef,
-    NodeTypeDef,
-    EdgeTypeDef,
-    FieldKind,
-    field,
-    AclEntry,
-    AclPermission,
-)
-from .registry import SchemaRegistry, get_registry, freeze_registry
 from .compat import (
-    SchemaChange,
     ChangeKind,
     CompatibilityError,
+    SchemaChange,
     check_compatibility,
     generate_fingerprint,
+)
+from .registry import SchemaRegistry, freeze_registry, get_registry
+from .types import (
+    AclEntry,
+    AclPermission,
+    EdgeTypeDef,
+    FieldDef,
+    FieldKind,
+    NodeTypeDef,
+    field,
 )
 
 __all__ = [

@@ -9,9 +9,11 @@ Tests cover:
 """
 
 import asyncio
+
 import pytest
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+
 from dbaas.entdb_server.wal.base import WalConnectionError
+from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 
 class TestInMemoryWalStream:
@@ -223,4 +225,3 @@ class TestInMemoryWalStream:
         # Reconnect and verify data is gone
         await wal.connect()
         assert wal.get_record_count("test") == 0
-

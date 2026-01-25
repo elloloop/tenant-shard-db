@@ -33,12 +33,13 @@ Example:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
-from enum import Enum, auto
-from typing import Any, Optional, Union, TYPE_CHECKING
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
+from enum import Enum
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from typing import Tuple
+    pass
 
 
 class FieldKind(Enum):
@@ -46,6 +47,7 @@ class FieldKind(Enum):
 
     These map to storage representations and validation rules.
     """
+
     STRING = "str"
     INTEGER = "int"
     FLOAT = "float"
@@ -81,6 +83,7 @@ class FieldKind(Enum):
 
 class AclPermission(Enum):
     """Permission levels for ACL entries."""
+
     READ = "read"
     WRITE = "write"
     DELETE = "delete"
@@ -95,6 +98,7 @@ class AclEntry:
         principal: The actor identifier (e.g., "user:42", "role:admin", "tenant:*")
         permission: The permission level granted
     """
+
     principal: str
     permission: AclPermission
 
@@ -146,13 +150,14 @@ class FieldDef:
         ...     searchable=True,
         ... )
     """
+
     field_id: int
     name: str
     kind: FieldKind
     required: bool = False
     default: Any = None
-    enum_values: Optional[tuple[str, ...]] = None
-    ref_type_id: Optional[int] = None
+    enum_values: tuple[str, ...] | None = None
+    ref_type_id: int | None = None
     indexed: bool = False
     searchable: bool = False
     deprecated: bool = False
@@ -171,7 +176,7 @@ class FieldDef:
         if self.kind == FieldKind.REFERENCE and self.ref_type_id is None:
             raise ValueError(f"ref_type_id required for REFERENCE field '{self.name}'")
 
-    def validate_value(self, value: Any) -> tuple[bool, Optional[str]]:
+    def validate_value(self, value: Any) -> tuple[bool, str | None]:
         """Validate a value against this field definition.
 
         Args:
@@ -191,23 +196,32 @@ class FieldDef:
             FieldKind.FLOAT: lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
             FieldKind.BOOLEAN: lambda v: isinstance(v, bool),
             FieldKind.TIMESTAMP: lambda v: isinstance(v, int) and v >= 0,
-            FieldKind.JSON: lambda v: True,  # Any JSON-serializable value
+            FieldKind.JSON: lambda _: True,  # Any JSON-serializable value
             FieldKind.BYTES: lambda v: isinstance(v, (str, bytes)),
-            FieldKind.LIST_STRING: lambda v: isinstance(v, list) and all(isinstance(i, str) for i in v),
-            FieldKind.LIST_INT: lambda v: isinstance(v, list) and all(isinstance(i, int) and not isinstance(i, bool) for i in v),
-            FieldKind.LIST_REF: lambda v: isinstance(v, list) and all(isinstance(i, dict) for i in v),
+            FieldKind.LIST_STRING: lambda v: isinstance(v, list)
+            and all(isinstance(i, str) for i in v),
+            FieldKind.LIST_INT: lambda v: isinstance(v, list)
+            and all(isinstance(i, int) and not isinstance(i, bool) for i in v),
+            FieldKind.LIST_REF: lambda v: isinstance(v, list)
+            and all(isinstance(i, dict) for i in v),
         }
 
         if self.kind == FieldKind.ENUM:
             if not isinstance(value, str):
                 return False, f"Field '{self.name}' must be a string, got {type(value).__name__}"
             if self.enum_values and value not in self.enum_values:
-                return False, f"Field '{self.name}' must be one of {self.enum_values}, got '{value}'"
+                return (
+                    False,
+                    f"Field '{self.name}' must be one of {self.enum_values}, got '{value}'",
+                )
             return True, None
 
         if self.kind == FieldKind.REFERENCE:
             if not isinstance(value, dict):
-                return False, f"Field '{self.name}' must be a reference dict, got {type(value).__name__}"
+                return (
+                    False,
+                    f"Field '{self.name}' must be a reference dict, got {type(value).__name__}",
+                )
             if "type_id" not in value or "id" not in value:
                 return False, f"Field '{self.name}' reference must have 'type_id' and 'id'"
             return True, None
@@ -264,12 +278,12 @@ class FieldDef:
 def field(
     field_id: int,
     name: str,
-    kind: Union[str, FieldKind],
+    kind: str | FieldKind,
     *,
     required: bool = False,
     default: Any = None,
-    enum_values: Optional[tuple[str, ...]] = None,
-    ref_type_id: Optional[int] = None,
+    enum_values: tuple[str, ...] | None = None,
+    ref_type_id: int | None = None,
     indexed: bool = False,
     searchable: bool = False,
     deprecated: bool = False,
@@ -350,6 +364,7 @@ class NodeTypeDef:
         ...     ),
         ... )
     """
+
     type_id: int
     name: str
     fields: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
@@ -376,7 +391,7 @@ class NodeTypeDef:
         if len(field_names) != len(set(field_names)):
             raise ValueError(f"Duplicate field name in node type '{self.name}'")
 
-    def get_field(self, name_or_id: Union[str, int]) -> Optional[FieldDef]:
+    def get_field(self, name_or_id: str | int) -> FieldDef | None:
         """Get a field by name or ID.
 
         Args:
@@ -451,9 +466,7 @@ class NodeTypeDef:
     def from_dict(cls, data: dict[str, Any]) -> NodeTypeDef:
         """Create from dictionary representation."""
         fields = tuple(FieldDef.from_dict(f) for f in data.get("fields", []))
-        default_acl = tuple(
-            AclEntry.from_dict(a) for a in data.get("default_acl", [])
-        )
+        default_acl = tuple(AclEntry.from_dict(a) for a in data.get("default_acl", []))
         return cls(
             type_id=data["type_id"],
             name=data["name"],
@@ -505,10 +518,11 @@ class EdgeTypeDef:
         ...     props=(field(1, "role", "enum", enum_values=("primary", "reviewer")),),
         ... )
     """
+
     edge_id: int
     name: str
-    from_type: Union[NodeTypeDef, int]
-    to_type: Union[NodeTypeDef, int]
+    from_type: NodeTypeDef | int
+    to_type: NodeTypeDef | int
     props: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
     unique_per_from: bool = False
     deprecated: bool = False
@@ -542,7 +556,7 @@ class EdgeTypeDef:
             return self.to_type.type_id
         return self.to_type
 
-    def get_prop(self, name_or_id: Union[str, int]) -> Optional[FieldDef]:
+    def get_prop(self, name_or_id: str | int) -> FieldDef | None:
         """Get a property by name or ID."""
         for p in self.props:
             if isinstance(name_or_id, int):

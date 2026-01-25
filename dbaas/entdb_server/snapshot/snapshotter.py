@@ -37,15 +37,14 @@ import asyncio
 import gzip
 import hashlib
 import json
-import os
+import logging
 import shutil
 import sqlite3
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-import logging
+from typing import Any
 
 from ..apply.canonical_store import CanonicalStore
 
@@ -54,6 +53,7 @@ logger = logging.getLogger(__name__)
 # Try to import aiobotocore for S3
 try:
     from aiobotocore.session import get_session
+
     S3_AVAILABLE = True
 except ImportError:
     S3_AVAILABLE = False
@@ -73,10 +73,11 @@ class SnapshotInfo:
         size_bytes: Compressed size in bytes
         s3_key: S3 object key
     """
+
     tenant_id: str
     snapshot_ts: int
-    last_stream_pos: Optional[str]
-    schema_fingerprint: Optional[str]
+    last_stream_pos: str | None
+    schema_fingerprint: str | None
     checksum: str
     size_bytes: int
     s3_key: str
@@ -106,7 +107,7 @@ class Snapshotter:
         self,
         canonical_store: CanonicalStore,
         s3_config: Any,
-        schema_fingerprint: Optional[str] = None,
+        schema_fingerprint: str | None = None,
         interval_seconds: int = 3600,
         min_events_since_last: int = 1000,
         compression: str = "gzip",
@@ -153,7 +154,7 @@ class Snapshotter:
             extra={
                 "bucket": self.s3_config.bucket,
                 "interval_seconds": self.interval_seconds,
-            }
+            },
         )
 
         # Initialize S3 client
@@ -220,13 +221,10 @@ class Snapshotter:
         logger.info(f"Starting snapshot cycle for {len(tenant_ids)} tenants")
 
         # Snapshot each tenant (with concurrency limit)
-        tasks = [
-            self._snapshot_tenant(tenant_id)
-            for tenant_id in tenant_ids
-        ]
+        tasks = [self._snapshot_tenant(tenant_id) for tenant_id in tenant_ids]
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _snapshot_tenant(self, tenant_id: str) -> Optional[SnapshotInfo]:
+    async def _snapshot_tenant(self, tenant_id: str) -> SnapshotInfo | None:
         """Create snapshot for a single tenant.
 
         Args:
@@ -244,10 +242,7 @@ class Snapshotter:
                 return await self._create_snapshot(tenant_id)
 
             except Exception as e:
-                logger.error(
-                    f"Failed to snapshot tenant {tenant_id}: {e}",
-                    exc_info=True
-                )
+                logger.error(f"Failed to snapshot tenant {tenant_id}: {e}", exc_info=True)
                 return None
 
     async def _should_snapshot(self, tenant_id: str) -> bool:
@@ -259,14 +254,11 @@ class Snapshotter:
 
         # Check time since last snapshot
         age_seconds = (time.time() * 1000 - latest.snapshot_ts) / 1000
-        if age_seconds >= self.interval_seconds:
-            return True
-
         # Check events since last snapshot
         # (This would require tracking event count, simplified for now)
-        return False
+        return age_seconds >= self.interval_seconds
 
-    async def _create_snapshot(self, tenant_id: str) -> Optional[SnapshotInfo]:
+    async def _create_snapshot(self, tenant_id: str) -> SnapshotInfo | None:
         """Create and upload a snapshot.
 
         Args:
@@ -319,7 +311,9 @@ class Snapshotter:
 
             # Build S3 key
             extension = ".sqlite.gz" if self.compression == "gzip" else ".sqlite"
-            s3_key = f"{self.s3_config.snapshot_prefix}/tenant={tenant_id}/ts={snapshot_ts}{extension}"
+            s3_key = (
+                f"{self.s3_config.snapshot_prefix}/tenant={tenant_id}/ts={snapshot_ts}{extension}"
+            )
 
             # Upload to S3
             file_size = upload_path.stat().st_size
@@ -368,7 +362,7 @@ class Snapshotter:
                     "snapshot_ts": snapshot_ts,
                     "size_bytes": file_size,
                     "s3_key": s3_key,
-                }
+                },
             )
 
             return snapshot_info
@@ -394,9 +388,8 @@ class Snapshotter:
 
     def _compress_file(self, source_path: str, dest_path: str) -> None:
         """Compress file with gzip."""
-        with open(source_path, "rb") as f_in:
-            with gzip.open(dest_path, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
+        with open(source_path, "rb") as f_in, gzip.open(dest_path, "wb") as f_out:
+            shutil.copyfileobj(f_in, f_out)
 
     def _compute_checksum(self, file_path: str) -> str:
         """Compute SHA-256 checksum of file."""
@@ -406,7 +399,7 @@ class Snapshotter:
                 sha256.update(chunk)
         return f"sha256:{sha256.hexdigest()}"
 
-    async def _get_latest_snapshot(self, tenant_id: str) -> Optional[SnapshotInfo]:
+    async def _get_latest_snapshot(self, tenant_id: str) -> SnapshotInfo | None:
         """Get the latest snapshot for a tenant."""
         try:
             prefix = f"{self.s3_config.snapshot_prefix}/tenant={tenant_id}/"
@@ -416,8 +409,7 @@ class Snapshotter:
             )
 
             manifests = [
-                obj for obj in response.get("Contents", [])
-                if obj["Key"].endswith(".manifest.json")
+                obj for obj in response.get("Contents", []) if obj["Key"].endswith(".manifest.json")
             ]
 
             if not manifests:
@@ -448,7 +440,7 @@ class Snapshotter:
             logger.warning(f"Failed to get latest snapshot for {tenant_id}: {e}")
             return None
 
-    async def snapshot_now(self, tenant_id: str) -> Optional[SnapshotInfo]:
+    async def snapshot_now(self, tenant_id: str) -> SnapshotInfo | None:
         """Create a snapshot immediately.
 
         Args:
@@ -467,7 +459,7 @@ class Snapshotter:
                 await self._close_s3_client()
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get snapshotter statistics."""
         return {
             "running": self._running,
@@ -478,7 +470,7 @@ class Snapshotter:
 async def list_snapshots(
     s3_config: Any,
     tenant_id: str,
-) -> List[SnapshotInfo]:
+) -> list[SnapshotInfo]:
     """List all snapshots for a tenant.
 
     Args:
@@ -513,15 +505,17 @@ async def list_snapshots(
                         content = await response["Body"].read()
                         manifest = json.loads(content.decode("utf-8"))
 
-                        snapshots.append(SnapshotInfo(
-                            tenant_id=manifest["tenant_id"],
-                            snapshot_ts=manifest["snapshot_ts"],
-                            last_stream_pos=manifest.get("last_stream_pos"),
-                            schema_fingerprint=manifest.get("schema_fingerprint"),
-                            checksum=manifest["checksum"],
-                            size_bytes=manifest["size_bytes"],
-                            s3_key=manifest["s3_key"],
-                        ))
+                        snapshots.append(
+                            SnapshotInfo(
+                                tenant_id=manifest["tenant_id"],
+                                snapshot_ts=manifest["snapshot_ts"],
+                                last_stream_pos=manifest.get("last_stream_pos"),
+                                schema_fingerprint=manifest.get("schema_fingerprint"),
+                                checksum=manifest["checksum"],
+                                size_bytes=manifest["size_bytes"],
+                                s3_key=manifest["s3_key"],
+                            )
+                        )
                     except Exception:
                         continue
 

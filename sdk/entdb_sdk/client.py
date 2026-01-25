@@ -20,28 +20,26 @@ Invariants:
 
 from __future__ import annotations
 
-import asyncio
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
-import logging
+from typing import Any
 
-from .schema import NodeTypeDef, EdgeTypeDef
-from .registry import SchemaRegistry, get_registry
 from .errors import (
-    EntDbError,
     ConnectionError,
-    ValidationError,
     UnknownFieldError,
-    NotFoundError,
+    ValidationError,
 )
+from .registry import SchemaRegistry, get_registry
+from .schema import EdgeTypeDef, NodeTypeDef
 
 logger = logging.getLogger(__name__)
 
 # Try to import HTTP client
 try:
     import aiohttp
+
     AIOHTTP_AVAILABLE = True
 except ImportError:
     AIOHTTP_AVAILABLE = False
@@ -57,12 +55,13 @@ class Receipt:
         idempotency_key: Unique transaction key
         stream_position: Position in WAL stream
     """
+
     tenant_id: str
     idempotency_key: str
-    stream_position: Optional[str] = None
+    stream_position: str | None = None
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Receipt:
+    def from_dict(cls, data: dict[str, Any]) -> Receipt:
         """Create from dictionary."""
         return cls(
             tenant_id=data["tenant_id"],
@@ -85,17 +84,18 @@ class Node:
         owner_actor: Creator
         acl: Access control list
     """
+
     tenant_id: str
     node_id: str
     type_id: int
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     created_at: int
     updated_at: int
     owner_actor: str
-    acl: List[Dict[str, str]] = field(default_factory=list)
+    acl: list[dict[str, str]] = field(default_factory=list)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Node:
+    def from_dict(cls, data: dict[str, Any]) -> Node:
         """Create from dictionary."""
         payload = data.get("payload_json")
         if isinstance(payload, str):
@@ -129,15 +129,16 @@ class Edge:
         props: Edge properties
         created_at: Creation timestamp
     """
+
     tenant_id: str
     edge_type_id: int
     from_node_id: str
     to_node_id: str
-    props: Dict[str, Any]
+    props: dict[str, Any]
     created_at: int
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> Edge:
+    def from_dict(cls, data: dict[str, Any]) -> Edge:
         """Create from dictionary."""
         props = data.get("props_json")
         if isinstance(props, str):
@@ -164,11 +165,12 @@ class CommitResult:
         applied: Whether event has been applied
         error: Error message if failed
     """
+
     success: bool
-    receipt: Optional[Receipt] = None
-    created_node_ids: List[str] = field(default_factory=list)
+    receipt: Receipt | None = None
+    created_node_ids: list[str] = field(default_factory=list)
     applied: bool = False
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class Plan:
@@ -189,7 +191,7 @@ class Plan:
         client: DbClient,
         tenant_id: str,
         actor: str,
-        idempotency_key: Optional[str] = None,
+        idempotency_key: str | None = None,
     ) -> None:
         """Initialize a plan.
 
@@ -203,16 +205,16 @@ class Plan:
         self._tenant_id = tenant_id
         self._actor = actor
         self._idempotency_key = idempotency_key or str(uuid.uuid4())
-        self._operations: List[Dict[str, Any]] = []
+        self._operations: list[dict[str, Any]] = []
 
     def create(
         self,
         node_type: NodeTypeDef,
-        data: Union[Dict[str, Any], None] = None,
+        data: dict[str, Any] | None = None,
         *,
-        acl: Optional[List[Dict[str, str]]] = None,
-        as_: Optional[str] = None,
-        fanout_to: Optional[List[str]] = None,
+        acl: list[dict[str, str]] | None = None,
+        as_: str | None = None,
+        fanout_to: list[str] | None = None,
         **kwargs: Any,
     ) -> Plan:
         """Add a create_node operation.
@@ -269,9 +271,9 @@ class Plan:
         self,
         node_type: NodeTypeDef,
         node_id: str,
-        patch: Dict[str, Any],
+        patch: dict[str, Any],
         *,
-        field_mask: Optional[List[str]] = None,
+        field_mask: list[str] | None = None,
     ) -> Plan:
         """Add an update_node operation.
 
@@ -312,20 +314,22 @@ class Plan:
         Returns:
             Self for chaining
         """
-        self._operations.append({
-            "delete_node": {
-                "type_id": node_type.type_id,
-                "id": node_id,
+        self._operations.append(
+            {
+                "delete_node": {
+                    "type_id": node_type.type_id,
+                    "id": node_id,
+                }
             }
-        })
+        )
         return self
 
     def edge_create(
         self,
         edge_type: EdgeTypeDef,
-        from_: Union[str, Dict[str, Any]],
-        to: Union[str, Dict[str, Any]],
-        props: Optional[Dict[str, Any]] = None,
+        from_: str | dict[str, Any],
+        to: str | dict[str, Any],
+        props: dict[str, Any] | None = None,
     ) -> Plan:
         """Add a create_edge operation.
 
@@ -344,7 +348,7 @@ class Plan:
             if not is_valid:
                 raise ValidationError("; ".join(errors), errors=errors)
 
-        op: Dict[str, Any] = {
+        op: dict[str, Any] = {
             "create_edge": {
                 "edge_id": edge_type.edge_id,
                 "from": self._convert_ref(from_),
@@ -361,8 +365,8 @@ class Plan:
     def edge_delete(
         self,
         edge_type: EdgeTypeDef,
-        from_: Union[str, Dict[str, Any]],
-        to: Union[str, Dict[str, Any]],
+        from_: str | dict[str, Any],
+        to: str | dict[str, Any],
     ) -> Plan:
         """Add a delete_edge operation.
 
@@ -374,16 +378,18 @@ class Plan:
         Returns:
             Self for chaining
         """
-        self._operations.append({
-            "delete_edge": {
-                "edge_id": edge_type.edge_id,
-                "from": self._convert_ref(from_),
-                "to": self._convert_ref(to),
+        self._operations.append(
+            {
+                "delete_edge": {
+                    "edge_id": edge_type.edge_id,
+                    "from": self._convert_ref(from_),
+                    "to": self._convert_ref(to),
+                }
             }
-        })
+        )
         return self
 
-    def _convert_ref(self, ref: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    def _convert_ref(self, ref: str | dict[str, Any]) -> dict[str, Any]:
         """Convert reference to API format."""
         if isinstance(ref, str):
             if ref.startswith("$"):
@@ -432,7 +438,7 @@ class DbClient:
         address: str,
         *,
         use_http: bool = False,
-        registry: Optional[SchemaRegistry] = None,
+        registry: SchemaRegistry | None = None,
     ) -> None:
         """Initialize client.
 
@@ -444,7 +450,7 @@ class DbClient:
         self.address = address
         self.use_http = use_http
         self.registry = registry or get_registry()
-        self._session: Optional[aiohttp.ClientSession] = None
+        self._session: aiohttp.ClientSession | None = None
         self._connected = False
 
     async def connect(self) -> None:
@@ -491,7 +497,7 @@ class DbClient:
         self,
         tenant_id: str,
         actor: str,
-        idempotency_key: Optional[str] = None,
+        idempotency_key: str | None = None,
     ) -> Plan:
         """Create an atomic transaction plan.
 
@@ -516,7 +522,7 @@ class DbClient:
         node_id: str,
         tenant_id: str,
         actor: str,
-    ) -> Optional[Node]:
+    ) -> Node | None:
         """Get a node by ID.
 
         Args:
@@ -545,7 +551,7 @@ class DbClient:
         actor: str,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Node]:
+    ) -> list[Node]:
         """Query nodes by type.
 
         Args:
@@ -575,8 +581,8 @@ class DbClient:
         node_id: str,
         tenant_id: str,
         actor: str,
-        edge_type: Optional[EdgeTypeDef] = None,
-    ) -> List[Edge]:
+        edge_type: EdgeTypeDef | None = None,
+    ) -> list[Edge]:
         """Get outgoing edges from a node.
 
         Args:
@@ -603,8 +609,8 @@ class DbClient:
         node_id: str,
         tenant_id: str,
         actor: str,
-        edge_type: Optional[EdgeTypeDef] = None,
-    ) -> List[Edge]:
+        edge_type: EdgeTypeDef | None = None,
+    ) -> list[Edge]:
         """Get incoming edges to a node.
 
         Args:
@@ -632,9 +638,9 @@ class DbClient:
         user_id: str,
         tenant_id: str,
         actor: str,
-        types: Optional[List[NodeTypeDef]] = None,
+        types: list[NodeTypeDef] | None = None,
         limit: int = 20,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Search user's mailbox.
 
         Args:
@@ -649,7 +655,7 @@ class DbClient:
             List of search results
         """
         url = f"{self.address}/v1/mailbox/{user_id}/search"
-        params: Dict[str, Any] = {"q": query, "limit": limit}
+        params: dict[str, Any] = {"q": query, "limit": limit}
         if types:
             params["source_type_ids"] = ",".join(str(t.type_id) for t in types)
         headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
@@ -662,7 +668,7 @@ class DbClient:
         self,
         tenant_id: str,
         actor: str,
-        operations: List[Dict[str, Any]],
+        operations: list[dict[str, Any]],
         idempotency_key: str,
         wait_applied: bool = False,
     ) -> CommitResult:

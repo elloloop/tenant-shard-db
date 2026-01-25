@@ -8,7 +8,9 @@ Tests cover:
 """
 
 import tempfile
+
 import pytest
+
 from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 
 
@@ -275,4 +277,3 @@ class TestMailboxStore:
 
         assert len(type1_items) == 2
         assert len(type2_items) == 1
-

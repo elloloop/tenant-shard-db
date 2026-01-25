@@ -20,17 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import time
-from typing import Any, AsyncIterator, Dict, Optional
-import logging
 import json
+import logging
+import time
+from collections.abc import AsyncIterator
+from typing import Any
 
 from .base import (
-    WalStream,
-    StreamRecord,
     StreamPos,
-    WalError,
+    StreamRecord,
     WalConnectionError,
+    WalError,
     WalTimeoutError,
 )
 
@@ -40,6 +40,7 @@ logger = logging.getLogger(__name__)
 try:
     from aiobotocore.session import get_session
     from botocore.exceptions import ClientError, EndpointConnectionError
+
     KINESIS_AVAILABLE = True
 except ImportError:
     KINESIS_AVAILABLE = False
@@ -77,16 +78,15 @@ class KinesisWalStream:
         """
         if not KINESIS_AVAILABLE:
             raise ImportError(
-                "aiobotocore is required for Kinesis backend. "
-                "Install with: pip install aiobotocore"
+                "aiobotocore is required for Kinesis backend. Install with: pip install aiobotocore"
             )
 
         self.config = config
         self._session = None
         self._client = None
         self._connected = False
-        self._shard_iterators: Dict[str, str] = {}
-        self._checkpoints: Dict[str, str] = {}  # shard_id -> sequence_number
+        self._shard_iterators: dict[str, str] = {}
+        self._checkpoints: dict[str, str] = {}  # shard_id -> sequence_number
 
     @property
     def is_connected(self) -> bool:
@@ -129,7 +129,7 @@ class KinesisWalStream:
                     "stream": self.config.stream_name,
                     "region": self.config.region,
                     "endpoint": self.config.endpoint_url or "AWS",
-                }
+                },
             )
 
         except EndpointConnectionError as e:
@@ -163,7 +163,7 @@ class KinesisWalStream:
         topic: str,
         key: str,
         value: bytes,
-        headers: Optional[Dict[str, bytes]] = None,
+        headers: dict[str, bytes] | None = None,
     ) -> StreamPos:
         """Append event to Kinesis stream.
 
@@ -189,15 +189,15 @@ class KinesisWalStream:
         # Embed headers in the value if present
         if headers:
             wrapped = {
-                "_headers": {k: v.decode('utf-8', errors='replace') for k, v in headers.items()},
-                "_data": value.decode('utf-8'),
+                "_headers": {k: v.decode("utf-8", errors="replace") for k, v in headers.items()},
+                "_data": value.decode("utf-8"),
             }
-            value = json.dumps(wrapped).encode('utf-8')
+            value = json.dumps(wrapped).encode("utf-8")
 
         try:
             # Use explicit hash key for consistent partitioning
             # This ensures same tenant always goes to same shard
-            hash_key = hashlib.md5(key.encode('utf-8')).hexdigest()
+            hash_key = hashlib.md5(key.encode("utf-8")).hexdigest()
             explicit_hash = str(int(hash_key[:8], 16))
 
             response = await asyncio.wait_for(
@@ -207,7 +207,7 @@ class KinesisWalStream:
                     PartitionKey=key,
                     ExplicitHashKey=explicit_hash,
                 ),
-                timeout=30.0
+                timeout=30.0,
             )
 
             # Parse shard ID to get partition number
@@ -229,7 +229,7 @@ class KinesisWalStream:
                     "key": key,
                     "shard": shard_id,
                     "sequence": seq_num,
-                }
+                },
             )
 
             return pos
@@ -246,7 +246,7 @@ class KinesisWalStream:
         self,
         topic: str,
         group_id: str,
-        start_position: Optional[StreamPos] = None,
+        start_position: StreamPos | None = None,
     ) -> AsyncIterator[StreamRecord]:
         """Subscribe to Kinesis stream.
 
@@ -277,7 +277,9 @@ class KinesisWalStream:
                 shard_id = shard["ShardId"]
 
                 # Determine starting position
-                if start_position and start_position.partition == self._parse_shard_number(shard_id):
+                if start_position and start_position.partition == self._parse_shard_number(
+                    shard_id
+                ):
                     # Start from specific sequence number
                     iterator_response = await self._client.get_shard_iterator(
                         StreamName=self.config.stream_name,
@@ -288,8 +290,7 @@ class KinesisWalStream:
                 else:
                     # Start from beginning or latest based on config
                     iterator_type = (
-                        "TRIM_HORIZON" if self.config.iterator_type == "TRIM_HORIZON"
-                        else "LATEST"
+                        "TRIM_HORIZON" if self.config.iterator_type == "TRIM_HORIZON" else "LATEST"
                     )
                     iterator_response = await self._client.get_shard_iterator(
                         StreamName=self.config.stream_name,
@@ -325,10 +326,9 @@ class KinesisWalStream:
                                 parsed = json.loads(data)
                                 if isinstance(parsed, dict) and "_headers" in parsed:
                                     headers = {
-                                        k: v.encode('utf-8')
-                                        for k, v in parsed["_headers"].items()
+                                        k: v.encode("utf-8") for k, v in parsed["_headers"].items()
                                     }
-                                    data = parsed["_data"].encode('utf-8')
+                                    data = parsed["_data"].encode("utf-8")
                             except (json.JSONDecodeError, KeyError):
                                 pass
 
@@ -337,12 +337,14 @@ class KinesisWalStream:
 
                             stream_record = StreamRecord(
                                 key=record["PartitionKey"],
-                                value=data if isinstance(data, bytes) else data.encode('utf-8'),
+                                value=data if isinstance(data, bytes) else data.encode("utf-8"),
                                 position=StreamPos(
                                     topic=self.config.stream_name,
                                     partition=shard_num,
                                     offset=int(seq_num),
-                                    timestamp_ms=int(record["ApproximateArrivalTimestamp"].timestamp() * 1000),
+                                    timestamp_ms=int(
+                                        record["ApproximateArrivalTimestamp"].timestamp() * 1000
+                                    ),
                                 ),
                                 headers=headers,
                             )
@@ -364,7 +366,9 @@ class KinesisWalStream:
                                 )
                                 self._shard_iterators[shard_id] = resp["ShardIterator"]
                             else:
-                                logger.warning(f"Lost iterator for shard {shard_id}, restarting from LATEST")
+                                logger.warning(
+                                    f"Lost iterator for shard {shard_id}, restarting from LATEST"
+                                )
                                 resp = await self._client.get_shard_iterator(
                                     StreamName=self.config.stream_name,
                                     ShardId=shard_id,
@@ -399,10 +403,10 @@ class KinesisWalStream:
             extra={
                 "shard": shard_id,
                 "sequence": record.position.offset,
-            }
+            },
         )
 
-    async def get_positions(self, topic: str, group_id: str) -> Dict[int, StreamPos]:
+    async def get_positions(self, topic: str, group_id: str) -> dict[int, StreamPos]:
         """Get checkpointed positions.
 
         Returns:
@@ -459,7 +463,7 @@ class KinesisWalStream:
                     StreamName=self.config.stream_name,
                     Limit=1,
                 ),
-                timeout=5.0
+                timeout=5.0,
             )
             return True
         except Exception:

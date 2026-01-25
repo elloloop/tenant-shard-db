@@ -9,11 +9,12 @@ Tests cover:
 """
 
 import pytest
+
 from dbaas.entdb_server.apply.acl import (
     AclManager,
     Permission,
-    parse_principal,
     PrincipalType,
+    parse_principal,
 )
 
 
@@ -239,4 +240,3 @@ class TestAclManagerFiltering:
 
         visible_ids = {n["id"] for n in visible}
         assert visible_ids == {"1"}
-

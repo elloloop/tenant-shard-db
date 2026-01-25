@@ -28,13 +28,15 @@ Example:
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 
 class FieldKind(Enum):
     """Supported field types."""
+
     STRING = "str"
     INTEGER = "int"
     FLOAT = "float"
@@ -74,13 +76,14 @@ class FieldDef:
         deprecated: Whether field is deprecated
         description: Documentation
     """
+
     field_id: int
     name: str
     kind: FieldKind
     required: bool = False
     default: Any = None
-    enum_values: Optional[Tuple[str, ...]] = None
-    ref_type_id: Optional[int] = None
+    enum_values: tuple[str, ...] | None = None
+    ref_type_id: int | None = None
     indexed: bool = False
     searchable: bool = False
     deprecated: bool = False
@@ -95,7 +98,7 @@ class FieldDef:
         if self.kind == FieldKind.ENUM and not self.enum_values:
             raise ValueError(f"enum_values required for ENUM field '{self.name}'")
 
-    def validate_value(self, value: Any) -> Tuple[bool, Optional[str]]:
+    def validate_value(self, value: Any) -> tuple[bool, str | None]:
         """Validate a value against this field."""
         if value is None:
             if self.required:
@@ -108,9 +111,9 @@ class FieldDef:
 
         return True, None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "field_id": self.field_id,
             "name": self.name,
             "kind": self.kind.value,
@@ -137,12 +140,12 @@ class FieldDef:
 def field(
     field_id: int,
     name: str,
-    kind: Union[str, FieldKind],
+    kind: str | FieldKind,
     *,
     required: bool = False,
     default: Any = None,
-    enum_values: Optional[Tuple[str, ...]] = None,
-    ref_type_id: Optional[int] = None,
+    enum_values: tuple[str, ...] | None = None,
+    ref_type_id: int | None = None,
     indexed: bool = False,
     searchable: bool = False,
     deprecated: bool = False,
@@ -211,9 +214,10 @@ class NodeTypeDef:
         ...     ),
         ... )
     """
+
     type_id: int
     name: str
-    fields: Tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
+    fields: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
     deprecated: bool = False
     description: str = ""
 
@@ -229,7 +233,7 @@ class NodeTypeDef:
         if len(field_ids) != len(set(field_ids)):
             raise ValueError(f"Duplicate field_id in node type '{self.name}'")
 
-    def get_field(self, name_or_id: Union[str, int]) -> Optional[FieldDef]:
+    def get_field(self, name_or_id: str | int) -> FieldDef | None:
         """Get field by name or ID."""
         for f in self.fields:
             if isinstance(name_or_id, int):
@@ -240,13 +244,13 @@ class NodeTypeDef:
                     return f
         return None
 
-    def get_field_names(self) -> List[str]:
+    def get_field_names(self) -> list[str]:
         """Get list of field names."""
         return [f.name for f in self.fields if not f.deprecated]
 
-    def validate_payload(self, payload: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    def validate_payload(self, payload: dict[str, Any]) -> tuple[bool, list[str]]:
         """Validate a payload against this type."""
-        errors: List[str] = []
+        errors: list[str] = []
 
         # Check for unknown fields
         known = {f.name for f in self.fields}
@@ -263,7 +267,7 @@ class NodeTypeDef:
 
         return len(errors) == 0, errors
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "type_id": self.type_id,
@@ -273,7 +277,7 @@ class NodeTypeDef:
             "description": self.description,
         }
 
-    def new(self, **kwargs: Any) -> Dict[str, Any]:
+    def new(self, **kwargs: Any) -> dict[str, Any]:
         """Create a validated payload for this type.
 
         Args:
@@ -300,7 +304,7 @@ class NodeTypeDef:
             raise TypeError(msg)
 
         # Build payload with defaults
-        payload: Dict[str, Any] = {}
+        payload: dict[str, Any] = {}
         for f in self.fields:
             if f.name in kwargs:
                 payload[f.name] = kwargs[f.name]
@@ -344,11 +348,12 @@ class EdgeTypeDef:
         ...     props=(field(1, "role", "enum", enum_values=("primary",)),),
         ... )
     """
+
     edge_id: int
     name: str
-    from_type: Union[NodeTypeDef, int]
-    to_type: Union[NodeTypeDef, int]
-    props: Tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
+    from_type: NodeTypeDef | int
+    to_type: NodeTypeDef | int
+    props: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
     unique_per_from: bool = False
     deprecated: bool = False
     description: str = ""
@@ -374,9 +379,9 @@ class EdgeTypeDef:
             return self.to_type.type_id
         return self.to_type
 
-    def validate_props(self, props: Dict[str, Any]) -> Tuple[bool, List[str]]:
+    def validate_props(self, props: dict[str, Any]) -> tuple[bool, list[str]]:
         """Validate edge properties."""
-        errors: List[str] = []
+        errors: list[str] = []
 
         known = {p.name for p in self.props}
         unknown = set(props.keys()) - known
@@ -391,7 +396,7 @@ class EdgeTypeDef:
 
         return len(errors) == 0, errors
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "edge_id": self.edge_id,
@@ -408,17 +413,18 @@ class EdgeTypeDef:
         return hash(self.edge_id)
 
 
-def _find_suggestions(unknown: str, known: List[str]) -> List[str]:
+def _find_suggestions(unknown: str, known: list[str]) -> list[str]:
     """Find similar field names for suggestions."""
     suggestions = []
     unknown_lower = unknown.lower()
 
     for name in known:
         # Check prefix match
-        if name.lower().startswith(unknown_lower[:3]) if len(unknown_lower) >= 3 else False:
-            suggestions.append(name)
-        # Check substring
-        elif unknown_lower in name.lower() or name.lower() in unknown_lower:
+        if (
+            (name.lower().startswith(unknown_lower[:3]) if len(unknown_lower) >= 3 else False)
+            or unknown_lower in name.lower()
+            or name.lower() in unknown_lower
+        ):
             suggestions.append(name)
 
     return suggestions[:3]

@@ -12,6 +12,6 @@ Invariants:
     - Only complete, consistent snapshots are uploaded
 """
 
-from .snapshotter import Snapshotter, SnapshotInfo
+from .snapshotter import SnapshotInfo, Snapshotter
 
 __all__ = ["Snapshotter", "SnapshotInfo"]

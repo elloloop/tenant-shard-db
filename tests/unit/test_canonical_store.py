@@ -8,10 +8,10 @@ Tests cover:
 - Visibility management
 """
 
-import json
-import os
 import tempfile
+
 import pytest
+
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 
 
@@ -323,4 +323,3 @@ class TestCanonicalStore:
         assert len(t2_nodes) == 1
         assert t1_nodes[0]["payload"]["name"] == "Tenant 1 User"
         assert t2_nodes[0]["payload"]["name"] == "Tenant 2 User"
-

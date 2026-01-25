@@ -8,16 +8,18 @@ Tests cover:
 - Mailbox fanout
 """
 
-import asyncio
+import contextlib
 import json
 import tempfile
+
 import pytest
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+
 from dbaas.entdb_server.apply.applier import Applier, TransactionEvent
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import NodeTypeDef, EdgeTypeDef, field
+from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 
 class TestApplierIntegration:
@@ -65,7 +67,7 @@ class TestApplierIntegration:
             edge_id=100,
             name="AssignedTo",
             from_type=2,  # Task
-            to_type=1,    # User
+            to_type=1,  # User
         )
 
         reg.register_node_type(User)
@@ -455,12 +457,9 @@ class TestApplierIntegration:
         )
 
         # Process should fail or skip
-        try:
+        with contextlib.suppress(Exception):
             await applier.process_one()
-        except Exception:
-            pass
 
         # First operation should be rolled back
         nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
         assert len(nodes) == 0
-

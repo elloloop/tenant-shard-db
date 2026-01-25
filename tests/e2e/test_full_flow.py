@@ -8,18 +8,16 @@ Tests cover:
 - Multi-tenant isolation
 """
 
-import json
-import pytest
 import asyncio
-import httpx
 import os
-from typing import Any, Dict
+
+import httpx
+import pytest
 
 # Skip if not in E2E mode
 E2E_ENABLED = os.environ.get("ENTDB_E2E_TESTS", "0") == "1"
 pytestmark = pytest.mark.skipif(
-    not E2E_ENABLED,
-    reason="E2E tests disabled. Set ENTDB_E2E_TESTS=1 to enable."
+    not E2E_ENABLED, reason="E2E tests disabled. Set ENTDB_E2E_TESTS=1 to enable."
 )
 
 
@@ -152,7 +150,7 @@ class TestFullFlow:
 
             user_id = results[0]["node_id"]
             task_id = results[1]["node_id"]
-            edge_id = results[2]["edge_id"]
+            _ = results[2]["edge_id"]  # edge_id captured but not used in assertions
 
             await asyncio.sleep(1)
 
@@ -336,6 +334,7 @@ class TestFullFlow:
     ):
         """Different tenants are isolated."""
         import uuid
+
         tenant1 = f"tenant_iso_1_{uuid.uuid4().hex[:8]}"
         tenant2 = f"tenant_iso_2_{uuid.uuid4().hex[:8]}"
 
@@ -459,11 +458,7 @@ class TestCrashRecovery:
             await asyncio.sleep(2)
 
         # Restart server (not WAL)
-        compose_file = os.path.join(
-            os.path.dirname(__file__),
-            "..", "..",
-            "docker-compose.yml"
-        )
+        compose_file = os.path.join(os.path.dirname(__file__), "..", "..", "docker-compose.yml")
         subprocess.run(
             ["docker-compose", "-f", compose_file, "restart", "dbaas"],
             check=True,
@@ -482,4 +477,3 @@ class TestCrashRecovery:
             assert get_response.status_code == 200
             node = get_response.json()
             assert node["payload"]["email"] == "recovery@example.com"
-

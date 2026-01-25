@@ -29,20 +29,18 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import signal
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
-from .config import ServerConfig, WalBackend
-from .schema import get_registry, freeze_registry
-from .wal import create_wal_stream, WalStream
-from .apply import CanonicalStore, MailboxStore, Applier
 from .api import GrpcServer
 from .api.grpc_server import EntDBServicer
+from .apply import Applier, CanonicalStore, MailboxStore
 from .archive import Archiver
+from .config import ServerConfig, WalBackend
+from .schema import freeze_registry, get_registry
 from .snapshot import Snapshotter
+from .wal import WalStream, create_wal_stream
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +57,7 @@ def setup_logging(config: ServerConfig) -> None:
         # Use JSON formatter
         try:
             import json_log_formatter
+
             formatter = json_log_formatter.JSONFormatter()
         except ImportError:
             # Fallback to simple JSON
@@ -66,9 +65,7 @@ def setup_logging(config: ServerConfig) -> None:
                 '{"time":"%(asctime)s","level":"%(levelname)s","logger":"%(name)s","message":"%(message)s"}'
             )
     else:
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 
     handler = logging.StreamHandler()
     handler.setFormatter(formatter)
@@ -105,7 +102,7 @@ class Server:
         >>> await server.stop()
     """
 
-    def __init__(self, config: Optional[ServerConfig] = None) -> None:
+    def __init__(self, config: ServerConfig | None = None) -> None:
         """Initialize the server.
 
         Args:
@@ -116,17 +113,17 @@ class Server:
         self._shutdown_event = asyncio.Event()
 
         # Components (initialized in start())
-        self.wal: Optional[WalStream] = None
-        self.canonical_store: Optional[CanonicalStore] = None
-        self.mailbox_store: Optional[MailboxStore] = None
-        self.servicer: Optional[EntDBServicer] = None
-        self.grpc_server: Optional[GrpcServer] = None
-        self.applier: Optional[Applier] = None
-        self.archiver: Optional[Archiver] = None
-        self.snapshotter: Optional[Snapshotter] = None
+        self.wal: WalStream | None = None
+        self.canonical_store: CanonicalStore | None = None
+        self.mailbox_store: MailboxStore | None = None
+        self.servicer: EntDBServicer | None = None
+        self.grpc_server: GrpcServer | None = None
+        self.applier: Applier | None = None
+        self.archiver: Archiver | None = None
+        self.snapshotter: Snapshotter | None = None
 
         # Background tasks
-        self._tasks: List[asyncio.Task] = []
+        self._tasks: list[asyncio.Task] = []
 
     async def start(self) -> None:
         """Start the server and all components."""
@@ -180,7 +177,9 @@ class Server:
                 canonical_store=self.canonical_store,
                 mailbox_store=self.mailbox_store,
                 schema_registry=registry,
-                topic=self.config.kafka.topic if self.config.wal_backend == WalBackend.KAFKA else self.config.kinesis.stream_name,
+                topic=self.config.kafka.topic
+                if self.config.wal_backend == WalBackend.KAFKA
+                else self.config.kinesis.stream_name,
             )
 
             # Start gRPC server
@@ -197,10 +196,9 @@ class Server:
             # Start HTTP server if enabled
             if self.config.http.enabled:
                 from .api.http_server import run_http_server
+
                 host, port = self.config.http.bind_address.split(":")
-                http_task = asyncio.create_task(
-                    run_http_server(self.servicer, host, int(port))
-                )
+                http_task = asyncio.create_task(run_http_server(self.servicer, host, int(port)))
                 self._tasks.append(http_task)
 
             # Start applier
@@ -214,7 +212,9 @@ class Server:
                 canonical_store=self.canonical_store,
                 mailbox_store=self.mailbox_store,
                 topic=topic,
-                group_id=self.config.kafka.consumer_group if self.config.wal_backend == WalBackend.KAFKA else "entdb-applier",
+                group_id=self.config.kafka.consumer_group
+                if self.config.wal_backend == WalBackend.KAFKA
+                else "entdb-applier",
                 schema_fingerprint=fingerprint,
             )
             applier_task = asyncio.create_task(self.applier.start())

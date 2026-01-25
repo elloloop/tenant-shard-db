@@ -7,16 +7,16 @@ Tests cover:
 - Read/unread status
 """
 
-import pytest
 import asyncio
-import httpx
 import os
+
+import httpx
+import pytest
 
 # Skip if not in E2E mode
 E2E_ENABLED = os.environ.get("ENTDB_E2E_TESTS", "0") == "1"
 pytestmark = pytest.mark.skipif(
-    not E2E_ENABLED,
-    reason="E2E tests disabled. Set ENTDB_E2E_TESTS=1 to enable."
+    not E2E_ENABLED, reason="E2E tests disabled. Set ENTDB_E2E_TESTS=1 to enable."
 )
 
 
@@ -270,4 +270,3 @@ class TestMailboxE2E:
             ids1 = {item["node_id"] for item in page1}
             ids2 = {item["node_id"] for item in page2}
             assert ids1.isdisjoint(ids2)
-

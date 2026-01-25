@@ -32,19 +32,19 @@ import gzip
 import hashlib
 import io
 import json
-import time
-from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
 import logging
+import time
+from dataclasses import dataclass, field
+from typing import Any
 
-from ..wal.base import WalStream, StreamRecord, StreamPos
+from ..wal.base import StreamRecord, WalStream
 
 logger = logging.getLogger(__name__)
 
 # Try to import aiobotocore for S3
 try:
     from aiobotocore.session import get_session
+
     S3_AVAILABLE = True
 except ImportError:
     S3_AVAILABLE = False
@@ -65,6 +65,7 @@ class ArchiveSegment:
         s3_key: S3 object key
         created_at: Creation timestamp
     """
+
     tenant_id: str
     partition: int
     from_offset: int
@@ -78,10 +79,11 @@ class ArchiveSegment:
 @dataclass
 class PendingSegment:
     """Segment being built before flush."""
+
     tenant_id: str
     partition: int
     from_offset: int
-    events: List[Dict[str, Any]] = field(default_factory=list)
+    events: list[dict[str, Any]] = field(default_factory=list)
     size_estimate: int = 0
 
 
@@ -137,7 +139,7 @@ class Archiver:
         self.compression = compression
 
         self._running = False
-        self._pending_segments: Dict[str, PendingSegment] = {}  # key = tenant:partition
+        self._pending_segments: dict[str, PendingSegment] = {}  # key = tenant:partition
         self._last_flush_time = time.time()
         self._archived_count = 0
         self._s3_client = None
@@ -160,7 +162,7 @@ class Archiver:
                 "topic": self.topic,
                 "group_id": self.group_id,
                 "bucket": self.s3_config.bucket,
-            }
+            },
         )
 
         # Initialize S3 client
@@ -249,8 +251,10 @@ class Archiver:
             segment.size_estimate += len(record.value)
 
             # Check if segment should be flushed
-            if (segment.size_estimate >= self.max_segment_size_bytes or
-                len(segment.events) >= self.max_segment_events):
+            if (
+                segment.size_estimate >= self.max_segment_size_bytes
+                or len(segment.events) >= self.max_segment_events
+            ):
                 await self._flush_segment(segment_key)
 
         except Exception as e:
@@ -268,7 +272,7 @@ class Archiver:
         for key in segment_keys:
             await self._flush_segment(key)
 
-    async def _flush_segment(self, segment_key: str) -> Optional[ArchiveSegment]:
+    async def _flush_segment(self, segment_key: str) -> ArchiveSegment | None:
         """Flush a pending segment to S3.
 
         Args:
@@ -302,7 +306,9 @@ class Archiver:
                 Bucket=self.s3_config.bucket,
                 Key=s3_key,
                 Body=content,
-                ContentType="application/x-gzip" if self.compression == "gzip" else "application/x-ndjson",
+                ContentType="application/x-gzip"
+                if self.compression == "gzip"
+                else "application/x-ndjson",
             )
 
             self._archived_count += len(segment.events)
@@ -326,7 +332,7 @@ class Archiver:
                     "events": len(segment.events),
                     "size_bytes": len(content),
                     "s3_key": s3_key,
-                }
+                },
             )
 
             return archive_segment
@@ -353,14 +359,14 @@ class Archiver:
             f"from={from_offset:020d}_to={to_offset:020d}{extension}"
         )
 
-    def _serialize_segment(self, events: List[Dict[str, Any]]) -> bytes:
+    def _serialize_segment(self, events: list[dict[str, Any]]) -> bytes:
         """Serialize events to JSONL format with optional compression."""
-        lines = [json.dumps(e, separators=(',', ':')) + '\n' for e in events]
-        content = ''.join(lines).encode('utf-8')
+        lines = [json.dumps(e, separators=(",", ":")) + "\n" for e in events]
+        content = "".join(lines).encode("utf-8")
 
         if self.compression == "gzip":
             buf = io.BytesIO()
-            with gzip.GzipFile(fileobj=buf, mode='wb') as gz:
+            with gzip.GzipFile(fileobj=buf, mode="wb") as gz:
                 gz.write(content)
             return buf.getvalue()
 
@@ -371,7 +377,7 @@ class Archiver:
         return f"sha256:{hashlib.sha256(data).hexdigest()}"
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get archiver statistics."""
         pending_events = sum(len(s.events) for s in self._pending_segments.values())
         return {
@@ -385,8 +391,8 @@ class Archiver:
 async def list_archive_segments(
     s3_config: Any,
     tenant_id: str,
-    partition: Optional[int] = None,
-) -> List[ArchiveSegment]:
+    partition: int | None = None,
+) -> list[ArchiveSegment]:
     """List archive segments for a tenant.
 
     Args:
@@ -432,16 +438,18 @@ async def list_archive_segments(
                     from_offset = int(offset_parts[0].split("=")[1])
                     to_offset = int(offset_parts[1].split("=")[1])
 
-                    segments.append(ArchiveSegment(
-                        tenant_id=tenant_id,
-                        partition=part_num,
-                        from_offset=from_offset,
-                        to_offset=to_offset,
-                        event_count=0,  # Unknown without reading
-                        size_bytes=obj["Size"],
-                        s3_key=key,
-                        created_at=int(obj["LastModified"].timestamp() * 1000),
-                    ))
+                    segments.append(
+                        ArchiveSegment(
+                            tenant_id=tenant_id,
+                            partition=part_num,
+                            from_offset=from_offset,
+                            to_offset=to_offset,
+                            event_count=0,  # Unknown without reading
+                            size_bytes=obj["Size"],
+                            s3_key=key,
+                            created_at=int(obj["LastModified"].timestamp() * 1000),
+                        )
+                    )
                 except Exception:
                     continue
 

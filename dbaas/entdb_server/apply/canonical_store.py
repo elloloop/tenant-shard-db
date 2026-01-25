@@ -61,26 +61,28 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
+import logging
 import sqlite3
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
-import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 class TenantNotFoundError(Exception):
     """Tenant database does not exist."""
+
     pass
 
 
 class IdempotencyViolationError(Exception):
     """Event has already been applied."""
+
     pass
 
 
@@ -98,14 +100,15 @@ class Node:
         owner_actor: Actor who created the node
         acl: Access control list
     """
+
     tenant_id: str
     node_id: str
     type_id: int
-    payload: Dict[str, Any]
+    payload: dict[str, Any]
     created_at: int
     updated_at: int
     owner_actor: str
-    acl: List[Dict[str, str]] = field(default_factory=list)
+    acl: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -120,11 +123,12 @@ class Edge:
         props: Edge properties
         created_at: Creation timestamp (Unix ms)
     """
+
     tenant_id: str
     edge_type_id: int
     from_node_id: str
     to_node_id: str
-    props: Dict[str, Any]
+    props: dict[str, Any]
     created_at: int
 
 
@@ -175,7 +179,7 @@ class CanonicalStore:
         self.wal_mode = wal_mode
         self.busy_timeout_ms = busy_timeout_ms
         self.cache_size_pages = cache_size_pages
-        self._connections: Dict[str, sqlite3.Connection] = {}
+        self._connections: dict[str, sqlite3.Connection] = {}
         self._lock = asyncio.Lock()
 
     def _get_db_path(self, tenant_id: str) -> Path:
@@ -337,7 +341,7 @@ class CanonicalStore:
         self,
         tenant_id: str,
         idempotency_key: str,
-        stream_pos: Optional[str] = None,
+        stream_pos: str | None = None,
     ) -> None:
         """Record that an event has been applied.
 
@@ -359,11 +363,11 @@ class CanonicalStore:
         self,
         tenant_id: str,
         type_id: int,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         owner_actor: str,
-        node_id: Optional[str] = None,
-        acl: Optional[List[Dict[str, str]]] = None,
-        created_at: Optional[int] = None,
+        node_id: str | None = None,
+        acl: list[dict[str, str]] | None = None,
+        created_at: int | None = None,
     ) -> Node:
         """Create a new node.
 
@@ -395,8 +399,14 @@ class CanonicalStore:
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        tenant_id, node_id, type_id, json.dumps(payload),
-                        now, now, owner_actor, json.dumps(acl),
+                        tenant_id,
+                        node_id,
+                        type_id,
+                        json.dumps(payload),
+                        now,
+                        now,
+                        owner_actor,
+                        json.dumps(acl),
                     ),
                 )
 
@@ -410,12 +420,12 @@ class CanonicalStore:
                 raise
 
         logger.debug(
-            f"Created node",
+            "Created node",
             extra={
                 "tenant_id": tenant_id,
                 "node_id": node_id,
                 "type_id": type_id,
-            }
+            },
         )
 
         return Node(
@@ -433,9 +443,9 @@ class CanonicalStore:
         self,
         tenant_id: str,
         node_id: str,
-        patch: Dict[str, Any],
-        updated_at: Optional[int] = None,
-    ) -> Optional[Node]:
+        patch: dict[str, Any],
+        updated_at: int | None = None,
+    ) -> Node | None:
         """Update a node's payload.
 
         Uses PATCH semantics - merges with existing payload.
@@ -532,7 +542,7 @@ class CanonicalStore:
                 conn.execute("ROLLBACK")
                 raise
 
-    async def get_node(self, tenant_id: str, node_id: str) -> Optional[Node]:
+    async def get_node(self, tenant_id: str, node_id: str) -> Node | None:
         """Get a node by ID.
 
         Args:
@@ -568,7 +578,7 @@ class CanonicalStore:
         type_id: int,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Node]:
+    ) -> list[Node]:
         """Get nodes by type.
 
         Args:
@@ -611,8 +621,8 @@ class CanonicalStore:
         edge_type_id: int,
         from_node_id: str,
         to_node_id: str,
-        props: Optional[Dict[str, Any]] = None,
-        created_at: Optional[int] = None,
+        props: dict[str, Any] | None = None,
+        created_at: int | None = None,
     ) -> Edge:
         """Create an edge between nodes.
 
@@ -641,13 +651,13 @@ class CanonicalStore:
             )
 
         logger.debug(
-            f"Created edge",
+            "Created edge",
             extra={
                 "tenant_id": tenant_id,
                 "edge_type_id": edge_type_id,
                 "from": from_node_id,
                 "to": to_node_id,
-            }
+            },
         )
 
         return Edge(
@@ -691,8 +701,8 @@ class CanonicalStore:
         self,
         tenant_id: str,
         node_id: str,
-        edge_type_id: Optional[int] = None,
-    ) -> List[Edge]:
+        edge_type_id: int | None = None,
+    ) -> list[Edge]:
         """Get outgoing edges from a node.
 
         Args:
@@ -734,8 +744,8 @@ class CanonicalStore:
         self,
         tenant_id: str,
         node_id: str,
-        edge_type_id: Optional[int] = None,
-    ) -> List[Edge]:
+        edge_type_id: int | None = None,
+    ) -> list[Edge]:
         """Get incoming edges to a node.
 
         Args:
@@ -777,10 +787,10 @@ class CanonicalStore:
         self,
         tenant_id: str,
         principal: str,
-        type_id: Optional[int] = None,
+        type_id: int | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Node]:
+    ) -> list[Node]:
         """Get nodes visible to a principal.
 
         Args:
@@ -806,7 +816,7 @@ class CanonicalStore:
                     OR v.principal = 'tenant:*'
                 )
             """
-            params: List[Any] = [tenant_id, principal, principal]
+            params: list[Any] = [tenant_id, principal, principal]
 
             if type_id is not None:
                 query += " AND n.type_id = ?"
@@ -837,7 +847,7 @@ class CanonicalStore:
         tenant_id: str,
         node_id: str,
         owner_actor: str,
-        acl: List[Dict[str, str]],
+        acl: list[dict[str, str]],
     ) -> None:
         """Update visibility index for a node.
 
@@ -869,7 +879,7 @@ class CanonicalStore:
                     (tenant_id, node_id, principal),
                 )
 
-    async def get_stats(self, tenant_id: str) -> Dict[str, int]:
+    async def get_stats(self, tenant_id: str) -> dict[str, int]:
         """Get statistics for a tenant.
 
         Args:
@@ -887,12 +897,14 @@ class CanonicalStore:
             cursor = conn.execute("SELECT COUNT(*) FROM edges WHERE tenant_id = ?", (tenant_id,))
             stats["edges"] = cursor.fetchone()[0]
 
-            cursor = conn.execute("SELECT COUNT(*) FROM applied_events WHERE tenant_id = ?", (tenant_id,))
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM applied_events WHERE tenant_id = ?", (tenant_id,)
+            )
             stats["applied_events"] = cursor.fetchone()[0]
 
             return stats
 
-    async def get_last_applied_position(self, tenant_id: str) -> Optional[str]:
+    async def get_last_applied_position(self, tenant_id: str) -> str | None:
         """Get the last applied stream position.
 
         Args:

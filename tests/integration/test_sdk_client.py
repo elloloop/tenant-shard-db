@@ -7,10 +7,12 @@ Tests cover:
 - Query execution
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
-from sdk.entdb_sdk.client import DbClient, Plan, Node, Edge
-from sdk.entdb_sdk.schema import NodeTypeDef, EdgeTypeDef, FieldDef, FieldKind
+
+import pytest
+
+from sdk.entdb_sdk.client import DbClient, Edge, Node, Plan
+from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
 
 
 def make_field(id: int, name: str, kind_str: str, **kwargs) -> FieldDef:
@@ -20,12 +22,7 @@ def make_field(id: int, name: str, kind_str: str, **kwargs) -> FieldDef:
         "int": FieldKind.INTEGER,
         "bool": FieldKind.BOOLEAN,
     }
-    return FieldDef(
-        field_id=id,
-        name=name,
-        kind=kind_map.get(kind_str, FieldKind.STRING),
-        **kwargs
-    )
+    return FieldDef(field_id=id, name=name, kind=kind_map.get(kind_str, FieldKind.STRING), **kwargs)
 
 
 class TestPlanBuilder:
@@ -77,10 +74,14 @@ class TestPlanBuilder:
         """Plan can create nodes."""
         plan = Plan(client)
 
-        plan.create(user_type, {
-            "email": "test@example.com",
-            "name": "Test User",
-        }, alias="user1")
+        plan.create(
+            user_type,
+            {
+                "email": "test@example.com",
+                "name": "Test User",
+            },
+            alias="user1",
+        )
 
         assert len(plan._operations) == 1
         assert plan._operations[0]["op"] == "create_node"
@@ -194,19 +195,21 @@ class TestDbClientMock:
     def mock_transport(self):
         """Create mock transport."""
         transport = AsyncMock()
-        transport.execute_atomic = AsyncMock(return_value={
-            "results": [{"node_id": "created_123"}]
-        })
-        transport.get_node = AsyncMock(return_value={
-            "id": "node_123",
-            "type_id": 1,
-            "payload": {"email": "test@example.com"},
-            "owner_actor": "user:alice",
-        })
-        transport.query_nodes = AsyncMock(return_value=[
-            {"id": "node_1", "type_id": 1, "payload": {}},
-            {"id": "node_2", "type_id": 1, "payload": {}},
-        ])
+        transport.execute_atomic = AsyncMock(return_value={"results": [{"node_id": "created_123"}]})
+        transport.get_node = AsyncMock(
+            return_value={
+                "id": "node_123",
+                "type_id": 1,
+                "payload": {"email": "test@example.com"},
+                "owner_actor": "user:alice",
+            }
+        )
+        transport.query_nodes = AsyncMock(
+            return_value=[
+                {"id": "node_1", "type_id": 1, "payload": {}},
+                {"id": "node_2", "type_id": 1, "payload": {}},
+            ]
+        )
         return transport
 
     @pytest.mark.asyncio
@@ -258,4 +261,3 @@ class TestDbClientMock:
 
         mock_transport.query_nodes.assert_called_once()
         assert len(nodes) == 2
-

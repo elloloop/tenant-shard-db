@@ -17,45 +17,45 @@ How to change safely:
 
 from __future__ import annotations
 
-from abc import abstractmethod
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum
-from typing import (
-    Any,
-    AsyncIterator,
-    Dict,
-    Optional,
-    Protocol,
-    runtime_checkable,
-    TYPE_CHECKING,
-)
 import json
 import logging
+from abc import abstractmethod
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Protocol,
+    runtime_checkable,
+)
 
 if TYPE_CHECKING:
-    from ..config import ServerConfig, WalBackend
+    from ..config import ServerConfig
 
 logger = logging.getLogger(__name__)
 
 
 class WalError(Exception):
     """Base exception for WAL operations."""
+
     pass
 
 
 class WalConnectionError(WalError):
     """Connection to WAL backend failed."""
+
     pass
 
 
 class WalTimeoutError(WalError):
     """WAL operation timed out."""
+
     pass
 
 
 class WalSerializationError(WalError):
     """Failed to serialize/deserialize WAL record."""
+
     pass
 
 
@@ -76,12 +76,13 @@ class StreamPos:
 
     The position is backend-specific but provides a consistent interface.
     """
+
     topic: str
     partition: int
     offset: int
     timestamp_ms: int
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "topic": self.topic,
@@ -91,7 +92,7 @@ class StreamPos:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> StreamPos:
+    def from_dict(cls, data: dict[str, Any]) -> StreamPos:
         """Create from dictionary."""
         return cls(
             topic=data["topic"],
@@ -122,10 +123,11 @@ class StreamRecord:
         ...     process_event(event)
         ...     await wal.commit(record)
     """
+
     key: str
     value: bytes
     position: StreamPos
-    headers: Dict[str, bytes] = field(default_factory=dict)
+    headers: dict[str, bytes] = field(default_factory=dict)
 
     def value_json(self) -> Any:
         """Parse value as JSON.
@@ -137,7 +139,7 @@ class StreamRecord:
             WalSerializationError: If value is not valid JSON
         """
         try:
-            return json.loads(self.value.decode('utf-8'))
+            return json.loads(self.value.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             raise WalSerializationError(f"Failed to parse record value as JSON: {e}")
 
@@ -196,7 +198,7 @@ class WalStream(Protocol):
         topic: str,
         key: str,
         value: bytes,
-        headers: Optional[Dict[str, bytes]] = None,
+        headers: dict[str, bytes] | None = None,
     ) -> StreamPos:
         """Append an event to the stream.
 
@@ -227,7 +229,7 @@ class WalStream(Protocol):
         self,
         topic: str,
         group_id: str,
-        start_position: Optional[StreamPos] = None,
+        start_position: StreamPos | None = None,
     ) -> AsyncIterator[StreamRecord]:
         """Subscribe to events from the stream.
 
@@ -267,7 +269,7 @@ class WalStream(Protocol):
         ...
 
     @abstractmethod
-    async def get_positions(self, topic: str, group_id: str) -> Dict[int, StreamPos]:
+    async def get_positions(self, topic: str, group_id: str) -> dict[int, StreamPos]:
         """Get committed positions for a consumer group.
 
         Returns the last committed position for each partition.
@@ -288,7 +290,7 @@ class WalStream(Protocol):
         ...
 
 
-def create_wal_stream(config: "ServerConfig") -> WalStream:
+def create_wal_stream(config: ServerConfig) -> WalStream:
     """Factory function to create a WAL stream from configuration.
 
     Args:

@@ -15,16 +15,16 @@ Invariants:
 from __future__ import annotations
 
 from difflib import get_close_matches
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from .schema import NodeTypeDef, EdgeTypeDef, FieldKind
-from .errors import ValidationError, UnknownFieldError
+from .errors import UnknownFieldError, ValidationError
+from .schema import FieldKind, NodeTypeDef
 
 
 def validate_payload(
     node_type: NodeTypeDef,
-    payload: Dict[str, Any],
-) -> Tuple[bool, List[str]]:
+    payload: dict[str, Any],
+) -> tuple[bool, list[str]]:
     """Validate payload against node type.
 
     Args:
@@ -34,7 +34,7 @@ def validate_payload(
     Returns:
         Tuple of (is_valid, list_of_errors)
     """
-    errors: List[str] = []
+    errors: list[str] = []
 
     # Check for unknown fields
     known_fields = {f.name for f in node_type.fields}
@@ -71,8 +71,8 @@ def _validate_field_value(
     name: str,
     kind: FieldKind,
     value: Any,
-    enum_values: Optional[Tuple[str, ...]] = None,
-) -> Optional[str]:
+    enum_values: tuple[str, ...] | None = None,
+) -> str | None:
     """Validate a single field value.
 
     Returns error message if invalid, None if valid.
@@ -128,7 +128,7 @@ def _validate_field_value(
 
 def validate_or_raise(
     node_type: NodeTypeDef,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
 ) -> None:
     """Validate payload and raise if invalid.
 
@@ -161,7 +161,7 @@ def suggest_fields(
     partial: str,
     node_type: NodeTypeDef,
     limit: int = 5,
-) -> List[str]:
+) -> list[str]:
     """Suggest field names based on partial input.
 
     Args:

@@ -22,11 +22,11 @@ How to change safely:
 """
 
 from .base import (
-    WalStream,
-    StreamRecord,
     StreamPos,
-    WalError,
+    StreamRecord,
     WalConnectionError,
+    WalError,
+    WalStream,
     WalTimeoutError,
     create_wal_stream,
 )

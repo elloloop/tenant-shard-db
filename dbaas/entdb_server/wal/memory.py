@@ -20,18 +20,17 @@ How to change safely:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
+import logging
 import time
 from collections import defaultdict
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Dict, List, Optional, Set
-import logging
 
 from .base import (
-    WalStream,
-    StreamRecord,
     StreamPos,
-    WalError,
+    StreamRecord,
     WalConnectionError,
 )
 
@@ -41,7 +40,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class InMemoryPartition:
     """In-memory partition storage."""
-    records: List[StreamRecord] = field(default_factory=list)
+
+    records: list[StreamRecord] = field(default_factory=list)
     next_offset: int = 0
 
 
@@ -77,16 +77,14 @@ class InMemoryWalStream:
             num_partitions: Number of partitions per topic
         """
         self.num_partitions = num_partitions
-        self._topics: Dict[str, Dict[int, InMemoryPartition]] = defaultdict(
+        self._topics: dict[str, dict[int, InMemoryPartition]] = defaultdict(
             lambda: {i: InMemoryPartition() for i in range(self.num_partitions)}
         )
-        self._committed: Dict[str, Dict[int, int]] = defaultdict(
-            lambda: defaultdict(int)
-        )
+        self._committed: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
         self._connected = False
         self._lock = asyncio.Lock()
-        self._new_record_events: Dict[str, asyncio.Event] = defaultdict(asyncio.Event)
-        self._subscribers: Set[str] = set()
+        self._new_record_events: dict[str, asyncio.Event] = defaultdict(asyncio.Event)
+        self._subscribers: set[str] = set()
 
     @property
     def is_connected(self) -> bool:
@@ -111,7 +109,7 @@ class InMemoryWalStream:
         topic: str,
         key: str,
         value: bytes,
-        headers: Optional[Dict[str, bytes]] = None,
+        headers: dict[str, bytes] | None = None,
     ) -> StreamPos:
         """Append event to in-memory stream.
 
@@ -158,7 +156,7 @@ class InMemoryWalStream:
 
         logger.debug(
             "Event appended to in-memory WAL",
-            extra={"topic": topic, "key": key, "partition": partition, "offset": offset}
+            extra={"topic": topic, "key": key, "partition": partition, "offset": offset},
         )
 
         return pos
@@ -167,7 +165,7 @@ class InMemoryWalStream:
         self,
         topic: str,
         group_id: str,
-        start_position: Optional[StreamPos] = None,
+        start_position: StreamPos | None = None,
     ) -> AsyncIterator[StreamRecord]:
         """Subscribe to in-memory stream.
 
@@ -219,13 +217,8 @@ class InMemoryWalStream:
                 if not has_records:
                     # Wait for new records
                     self._new_record_events[topic].clear()
-                    try:
-                        await asyncio.wait_for(
-                            self._new_record_events[topic].wait(),
-                            timeout=1.0
-                        )
-                    except asyncio.TimeoutError:
-                        pass
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(self._new_record_events[topic].wait(), timeout=1.0)
 
         finally:
             self._subscribers.discard(consumer_key)
@@ -240,7 +233,7 @@ class InMemoryWalStream:
         # Group ID is not available here, so we use a default
         self._committed["default"][record.position.partition] = record.position.offset + 1
 
-    async def get_positions(self, topic: str, group_id: str) -> Dict[int, StreamPos]:
+    async def get_positions(self, topic: str, group_id: str) -> dict[int, StreamPos]:
         """Get committed positions.
 
         Args:
@@ -263,13 +256,13 @@ class InMemoryWalStream:
 
     def _partition_for_key(self, key: str) -> int:
         """Get partition number for a key using consistent hashing."""
-        hash_bytes = hashlib.md5(key.encode('utf-8')).digest()
-        hash_int = int.from_bytes(hash_bytes[:4], 'big')
+        hash_bytes = hashlib.md5(key.encode("utf-8")).digest()
+        hash_int = int.from_bytes(hash_bytes[:4], "big")
         return hash_int % self.num_partitions
 
     # Testing helpers
 
-    def get_all_records(self, topic: str) -> List[StreamRecord]:
+    def get_all_records(self, topic: str) -> list[StreamRecord]:
         """Get all records for a topic (testing helper).
 
         Args:

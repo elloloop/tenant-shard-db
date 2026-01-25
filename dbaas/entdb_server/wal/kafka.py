@@ -23,17 +23,16 @@ How to change safely:
 from __future__ import annotations
 
 import asyncio
-import time
-from typing import Any, AsyncIterator, Dict, Optional
 import logging
-import json
+import time
+from collections.abc import AsyncIterator
+from typing import Any
 
 from .base import (
-    WalStream,
-    StreamRecord,
     StreamPos,
-    WalError,
+    StreamRecord,
     WalConnectionError,
+    WalError,
     WalTimeoutError,
 )
 
@@ -41,8 +40,9 @@ logger = logging.getLogger(__name__)
 
 # Try to import aiokafka, provide helpful message if not installed
 try:
-    from aiokafka import AIOKafkaProducer, AIOKafkaConsumer
-    from aiokafka.errors import KafkaError, KafkaConnectionError, KafkaTimeoutError
+    from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
+    from aiokafka.errors import KafkaConnectionError, KafkaError, KafkaTimeoutError
+
     KAFKA_AVAILABLE = True
 except ImportError:
     KAFKA_AVAILABLE = False
@@ -84,16 +84,15 @@ class KafkaWalStream:
         """
         if not KAFKA_AVAILABLE:
             raise ImportError(
-                "aiokafka is required for Kafka backend. "
-                "Install with: pip install aiokafka"
+                "aiokafka is required for Kafka backend. Install with: pip install aiokafka"
             )
 
         self.config = config
-        self._producer: Optional[AIOKafkaProducer] = None
-        self._consumer: Optional[AIOKafkaConsumer] = None
+        self._producer: AIOKafkaProducer | None = None
+        self._consumer: AIOKafkaConsumer | None = None
         self._connected = False
-        self._consumer_topic: Optional[str] = None
-        self._consumer_group: Optional[str] = None
+        self._consumer_topic: str | None = None
+        self._consumer_group: str | None = None
 
     @property
     def is_connected(self) -> bool:
@@ -149,7 +148,7 @@ class KafkaWalStream:
                     "brokers": self.config.brokers,
                     "acks": self.config.acks,
                     "idempotent": self.config.enable_idempotence,
-                }
+                },
             )
 
         except Exception as e:
@@ -183,7 +182,7 @@ class KafkaWalStream:
         topic: str,
         key: str,
         value: bytes,
-        headers: Optional[Dict[str, bytes]] = None,
+        headers: dict[str, bytes] | None = None,
     ) -> StreamPos:
         """Append event to Kafka topic.
 
@@ -216,7 +215,7 @@ class KafkaWalStream:
             record_metadata = await self._producer.send_and_wait(
                 topic,
                 value=value,
-                key=key.encode('utf-8'),
+                key=key.encode("utf-8"),
                 headers=kafka_headers,
             )
 
@@ -234,7 +233,7 @@ class KafkaWalStream:
                     "key": key,
                     "partition": pos.partition,
                     "offset": pos.offset,
-                }
+                },
             )
 
             return pos
@@ -251,7 +250,7 @@ class KafkaWalStream:
         self,
         topic: str,
         group_id: str,
-        start_position: Optional[StreamPos] = None,
+        start_position: StreamPos | None = None,
     ) -> AsyncIterator[StreamRecord]:
         """Subscribe to Kafka topic.
 
@@ -301,10 +300,7 @@ class KafkaWalStream:
             self._consumer_topic = topic
             self._consumer_group = group_id
 
-            logger.info(
-                "Subscribed to Kafka topic",
-                extra={"topic": topic, "group_id": group_id}
-            )
+            logger.info("Subscribed to Kafka topic", extra={"topic": topic, "group_id": group_id})
 
             # Seek to position if specified
             if start_position and start_position.topic == topic:
@@ -314,12 +310,10 @@ class KafkaWalStream:
             # Yield records
             async for msg in self._consumer:
                 # Convert headers
-                headers = {}
-                if msg.headers:
-                    headers = {k: v for k, v in msg.headers}
+                headers = dict(msg.headers) if msg.headers else {}
 
                 record = StreamRecord(
-                    key=msg.key.decode('utf-8') if msg.key else "",
+                    key=msg.key.decode("utf-8") if msg.key else "",
                     value=msg.value,
                     position=StreamPos(
                         topic=msg.topic,
@@ -351,10 +345,7 @@ class KafkaWalStream:
 
         try:
             # Commit the offset + 1 (next message to consume)
-            tp = {
-                (record.position.topic, record.position.partition):
-                record.position.offset + 1
-            }
+            tp = {(record.position.topic, record.position.partition): record.position.offset + 1}
             await self._consumer.commit(tp)
 
             logger.debug(
@@ -363,13 +354,13 @@ class KafkaWalStream:
                     "topic": record.position.topic,
                     "partition": record.position.partition,
                     "offset": record.position.offset,
-                }
+                },
             )
 
         except KafkaError as e:
             raise WalError(f"Failed to commit: {e}") from e
 
-    async def get_positions(self, topic: str, group_id: str) -> Dict[int, StreamPos]:
+    async def get_positions(self, topic: str, group_id: str) -> dict[int, StreamPos]:
         """Get committed positions for consumer group.
 
         Args:
@@ -425,8 +416,7 @@ class KafkaWalStream:
         try:
             # Check producer is responsive
             metadata = await asyncio.wait_for(
-                self._producer.partitions_for(self.config.topic),
-                timeout=5.0
+                self._producer.partitions_for(self.config.topic), timeout=5.0
             )
             return metadata is not None
         except Exception:

@@ -31,12 +31,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import List, Optional, Dict, Any
-import logging
+from typing import Any
 
-from .types import NodeTypeDef, EdgeTypeDef, FieldDef, FieldKind
 from .registry import SchemaRegistry
 
 logger = logging.getLogger(__name__)
@@ -44,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 class ChangeKind(Enum):
     """Types of schema changes."""
+
     # Non-breaking changes (allowed)
     NODE_TYPE_ADDED = auto()
     EDGE_TYPE_ADDED = auto()
@@ -104,10 +104,11 @@ class SchemaChange:
         new_value: New value (if applicable)
         message: Human-readable description of the change
     """
+
     kind: ChangeKind
     path: str
-    old_value: Optional[Any] = None
-    new_value: Optional[Any] = None
+    old_value: Any | None = None
+    new_value: Any | None = None
     message: str = ""
 
     @property
@@ -127,7 +128,7 @@ class CompatibilityError(Exception):
         changes: List of breaking changes detected
     """
 
-    def __init__(self, changes: List[SchemaChange]):
+    def __init__(self, changes: list[SchemaChange]):
         self.changes = changes
         messages = [str(c) for c in changes]
         super().__init__(
@@ -139,7 +140,7 @@ class CompatibilityError(Exception):
 def check_compatibility(
     old_registry: SchemaRegistry,
     new_registry: SchemaRegistry,
-) -> List[SchemaChange]:
+) -> list[SchemaChange]:
     """Check compatibility between two schema versions.
 
     This performs a comprehensive comparison of two schema registries
@@ -159,17 +160,17 @@ def check_compatibility(
         >>> if breaking:
         ...     raise CompatibilityError(breaking)
     """
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
 
     # Convert to dicts for comparison
     old_dict = old_registry.to_dict()
     new_dict = new_registry.to_dict()
 
     # Build lookup maps
-    old_nodes: Dict[int, dict] = {n["type_id"]: n for n in old_dict["node_types"]}
-    new_nodes: Dict[int, dict] = {n["type_id"]: n for n in new_dict["node_types"]}
-    old_edges: Dict[int, dict] = {e["edge_id"]: e for e in old_dict["edge_types"]}
-    new_edges: Dict[int, dict] = {e["edge_id"]: e for e in new_dict["edge_types"]}
+    old_nodes: dict[int, dict] = {n["type_id"]: n for n in old_dict["node_types"]}
+    new_nodes: dict[int, dict] = {n["type_id"]: n for n in new_dict["node_types"]}
+    old_edges: dict[int, dict] = {e["edge_id"]: e for e in old_dict["edge_types"]}
+    new_edges: dict[int, dict] = {e["edge_id"]: e for e in new_dict["edge_types"]}
 
     # Check node types
     changes.extend(_check_node_types(old_nodes, new_nodes))
@@ -184,31 +185,35 @@ def check_compatibility(
 
 
 def _check_node_types(
-    old_nodes: Dict[int, dict],
-    new_nodes: Dict[int, dict],
-) -> List[SchemaChange]:
+    old_nodes: dict[int, dict],
+    new_nodes: dict[int, dict],
+) -> list[SchemaChange]:
     """Check node type changes."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
 
     # Check for removed node types
     for type_id, old_node in old_nodes.items():
         if type_id not in new_nodes:
-            changes.append(SchemaChange(
-                kind=ChangeKind.NODE_TYPE_REMOVED,
-                path=f"NodeType:{old_node['name']}",
-                old_value=type_id,
-                message=f"Node type '{old_node['name']}' (type_id={type_id}) was removed"
-            ))
+            changes.append(
+                SchemaChange(
+                    kind=ChangeKind.NODE_TYPE_REMOVED,
+                    path=f"NodeType:{old_node['name']}",
+                    old_value=type_id,
+                    message=f"Node type '{old_node['name']}' (type_id={type_id}) was removed",
+                )
+            )
 
     # Check for added and modified node types
     for type_id, new_node in new_nodes.items():
         if type_id not in old_nodes:
-            changes.append(SchemaChange(
-                kind=ChangeKind.NODE_TYPE_ADDED,
-                path=f"NodeType:{new_node['name']}",
-                new_value=type_id,
-                message=f"Node type '{new_node['name']}' (type_id={type_id}) added"
-            ))
+            changes.append(
+                SchemaChange(
+                    kind=ChangeKind.NODE_TYPE_ADDED,
+                    path=f"NodeType:{new_node['name']}",
+                    new_value=type_id,
+                    message=f"Node type '{new_node['name']}' (type_id={type_id}) added",
+                )
+            )
         else:
             old_node = old_nodes[type_id]
             changes.extend(_check_node_type_diff(old_node, new_node))
@@ -216,80 +221,88 @@ def _check_node_types(
     return changes
 
 
-def _check_node_type_diff(old_node: dict, new_node: dict) -> List[SchemaChange]:
+def _check_node_type_diff(old_node: dict, new_node: dict) -> list[SchemaChange]:
     """Check differences between two versions of a node type."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
     path_prefix = f"NodeType:{old_node['name']}"
 
     # Check name change
     if old_node["name"] != new_node["name"]:
-        changes.append(SchemaChange(
-            kind=ChangeKind.NAME_CHANGED,
-            path=path_prefix,
-            old_value=old_node["name"],
-            new_value=new_node["name"],
-            message=f"Node type renamed from '{old_node['name']}' to '{new_node['name']}'"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.NAME_CHANGED,
+                path=path_prefix,
+                old_value=old_node["name"],
+                new_value=new_node["name"],
+                message=f"Node type renamed from '{old_node['name']}' to '{new_node['name']}'",
+            )
+        )
 
     # Check deprecation
     old_deprecated = old_node.get("deprecated", False)
     new_deprecated = new_node.get("deprecated", False)
     if not old_deprecated and new_deprecated:
-        changes.append(SchemaChange(
-            kind=ChangeKind.TYPE_DEPRECATED,
-            path=path_prefix,
-            message=f"Node type '{old_node['name']}' deprecated"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.TYPE_DEPRECATED,
+                path=path_prefix,
+                message=f"Node type '{old_node['name']}' deprecated",
+            )
+        )
 
     # Check description change
     if old_node.get("description", "") != new_node.get("description", ""):
-        changes.append(SchemaChange(
-            kind=ChangeKind.DESCRIPTION_CHANGED,
-            path=path_prefix,
-            old_value=old_node.get("description", ""),
-            new_value=new_node.get("description", ""),
-            message="Description changed"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.DESCRIPTION_CHANGED,
+                path=path_prefix,
+                old_value=old_node.get("description", ""),
+                new_value=new_node.get("description", ""),
+                message="Description changed",
+            )
+        )
 
     # Check fields
     old_fields = {f["field_id"]: f for f in old_node.get("fields", [])}
     new_fields = {f["field_id"]: f for f in new_node.get("fields", [])}
 
-    changes.extend(_check_fields(
-        old_fields, new_fields,
-        parent_path=path_prefix,
-        field_label="field"
-    ))
+    changes.extend(
+        _check_fields(old_fields, new_fields, parent_path=path_prefix, field_label="field")
+    )
 
     return changes
 
 
 def _check_edge_types(
-    old_edges: Dict[int, dict],
-    new_edges: Dict[int, dict],
-) -> List[SchemaChange]:
+    old_edges: dict[int, dict],
+    new_edges: dict[int, dict],
+) -> list[SchemaChange]:
     """Check edge type changes."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
 
     # Check for removed edge types
     for edge_id, old_edge in old_edges.items():
         if edge_id not in new_edges:
-            changes.append(SchemaChange(
-                kind=ChangeKind.EDGE_TYPE_REMOVED,
-                path=f"EdgeType:{old_edge['name']}",
-                old_value=edge_id,
-                message=f"Edge type '{old_edge['name']}' (edge_id={edge_id}) was removed"
-            ))
+            changes.append(
+                SchemaChange(
+                    kind=ChangeKind.EDGE_TYPE_REMOVED,
+                    path=f"EdgeType:{old_edge['name']}",
+                    old_value=edge_id,
+                    message=f"Edge type '{old_edge['name']}' (edge_id={edge_id}) was removed",
+                )
+            )
 
     # Check for added and modified edge types
     for edge_id, new_edge in new_edges.items():
         if edge_id not in old_edges:
-            changes.append(SchemaChange(
-                kind=ChangeKind.EDGE_TYPE_ADDED,
-                path=f"EdgeType:{new_edge['name']}",
-                new_value=edge_id,
-                message=f"Edge type '{new_edge['name']}' (edge_id={edge_id}) added"
-            ))
+            changes.append(
+                SchemaChange(
+                    kind=ChangeKind.EDGE_TYPE_ADDED,
+                    path=f"EdgeType:{new_edge['name']}",
+                    new_value=edge_id,
+                    message=f"Edge type '{new_edge['name']}' (edge_id={edge_id}) added",
+                )
+            )
         else:
             old_edge = old_edges[edge_id]
             changes.extend(_check_edge_type_diff(old_edge, new_edge))
@@ -297,101 +310,109 @@ def _check_edge_types(
     return changes
 
 
-def _check_edge_type_diff(old_edge: dict, new_edge: dict) -> List[SchemaChange]:
+def _check_edge_type_diff(old_edge: dict, new_edge: dict) -> list[SchemaChange]:
     """Check differences between two versions of an edge type."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
     path_prefix = f"EdgeType:{old_edge['name']}"
 
     # Check name change
     if old_edge["name"] != new_edge["name"]:
-        changes.append(SchemaChange(
-            kind=ChangeKind.NAME_CHANGED,
-            path=path_prefix,
-            old_value=old_edge["name"],
-            new_value=new_edge["name"],
-            message=f"Edge type renamed from '{old_edge['name']}' to '{new_edge['name']}'"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.NAME_CHANGED,
+                path=path_prefix,
+                old_value=old_edge["name"],
+                new_value=new_edge["name"],
+                message=f"Edge type renamed from '{old_edge['name']}' to '{new_edge['name']}'",
+            )
+        )
 
     # Check from_type_id change (breaking)
     if old_edge["from_type_id"] != new_edge["from_type_id"]:
-        changes.append(SchemaChange(
-            kind=ChangeKind.FROM_TYPE_CHANGED,
-            path=path_prefix,
-            old_value=old_edge["from_type_id"],
-            new_value=new_edge["from_type_id"],
-            message=f"Edge from_type_id changed from {old_edge['from_type_id']} to {new_edge['from_type_id']}"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.FROM_TYPE_CHANGED,
+                path=path_prefix,
+                old_value=old_edge["from_type_id"],
+                new_value=new_edge["from_type_id"],
+                message=f"Edge from_type_id changed from {old_edge['from_type_id']} to {new_edge['from_type_id']}",
+            )
+        )
 
     # Check to_type_id change (breaking)
     if old_edge["to_type_id"] != new_edge["to_type_id"]:
-        changes.append(SchemaChange(
-            kind=ChangeKind.TO_TYPE_CHANGED,
-            path=path_prefix,
-            old_value=old_edge["to_type_id"],
-            new_value=new_edge["to_type_id"],
-            message=f"Edge to_type_id changed from {old_edge['to_type_id']} to {new_edge['to_type_id']}"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.TO_TYPE_CHANGED,
+                path=path_prefix,
+                old_value=old_edge["to_type_id"],
+                new_value=new_edge["to_type_id"],
+                message=f"Edge to_type_id changed from {old_edge['to_type_id']} to {new_edge['to_type_id']}",
+            )
+        )
 
     # Check deprecation
     old_deprecated = old_edge.get("deprecated", False)
     new_deprecated = new_edge.get("deprecated", False)
     if not old_deprecated and new_deprecated:
-        changes.append(SchemaChange(
-            kind=ChangeKind.TYPE_DEPRECATED,
-            path=path_prefix,
-            message=f"Edge type '{old_edge['name']}' deprecated"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.TYPE_DEPRECATED,
+                path=path_prefix,
+                message=f"Edge type '{old_edge['name']}' deprecated",
+            )
+        )
 
     # Check props
     old_props = {p["field_id"]: p for p in old_edge.get("props", [])}
     new_props = {p["field_id"]: p for p in new_edge.get("props", [])}
 
-    changes.extend(_check_fields(
-        old_props, new_props,
-        parent_path=path_prefix,
-        field_label="prop"
-    ))
+    changes.extend(_check_fields(old_props, new_props, parent_path=path_prefix, field_label="prop"))
 
     return changes
 
 
 def _check_fields(
-    old_fields: Dict[int, dict],
-    new_fields: Dict[int, dict],
+    old_fields: dict[int, dict],
+    new_fields: dict[int, dict],
     parent_path: str,
     field_label: str = "field",
-) -> List[SchemaChange]:
+) -> list[SchemaChange]:
     """Check field/property changes."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
 
     # Check for removed fields
     for field_id, old_field in old_fields.items():
         if field_id not in new_fields:
             kind = ChangeKind.FIELD_REMOVED if field_label == "field" else ChangeKind.PROP_REMOVED
-            changes.append(SchemaChange(
-                kind=kind,
-                path=f"{parent_path}.{field_label}:{old_field['name']}",
-                old_value=field_id,
-                message=f"Field '{old_field['name']}' (field_id={field_id}) was removed"
-            ))
+            changes.append(
+                SchemaChange(
+                    kind=kind,
+                    path=f"{parent_path}.{field_label}:{old_field['name']}",
+                    old_value=field_id,
+                    message=f"Field '{old_field['name']}' (field_id={field_id}) was removed",
+                )
+            )
 
     # Check for added and modified fields
     for field_id, new_field in new_fields.items():
         if field_id not in old_fields:
             kind = ChangeKind.FIELD_ADDED if field_label == "field" else ChangeKind.PROP_ADDED
-            changes.append(SchemaChange(
-                kind=kind,
-                path=f"{parent_path}.{field_label}:{new_field['name']}",
-                new_value=field_id,
-                message=f"Field '{new_field['name']}' (field_id={field_id}) added"
-            ))
+            changes.append(
+                SchemaChange(
+                    kind=kind,
+                    path=f"{parent_path}.{field_label}:{new_field['name']}",
+                    new_value=field_id,
+                    message=f"Field '{new_field['name']}' (field_id={field_id}) added",
+                )
+            )
         else:
             old_field = old_fields[field_id]
-            changes.extend(_check_field_diff(
-                old_field, new_field,
-                parent_path=parent_path,
-                field_label=field_label
-            ))
+            changes.extend(
+                _check_field_diff(
+                    old_field, new_field, parent_path=parent_path, field_label=field_label
+                )
+            )
 
     return changes
 
@@ -401,50 +422,58 @@ def _check_field_diff(
     new_field: dict,
     parent_path: str,
     field_label: str,
-) -> List[SchemaChange]:
+) -> list[SchemaChange]:
     """Check differences between two versions of a field."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
     path = f"{parent_path}.{field_label}:{old_field['name']}"
 
     # Check kind change (breaking)
     if old_field["kind"] != new_field["kind"]:
-        changes.append(SchemaChange(
-            kind=ChangeKind.FIELD_KIND_CHANGED,
-            path=path,
-            old_value=old_field["kind"],
-            new_value=new_field["kind"],
-            message=f"Field kind changed from '{old_field['kind']}' to '{new_field['kind']}'"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.FIELD_KIND_CHANGED,
+                path=path,
+                old_value=old_field["kind"],
+                new_value=new_field["kind"],
+                message=f"Field kind changed from '{old_field['kind']}' to '{new_field['kind']}'",
+            )
+        )
 
     # Check name change (allowed)
     if old_field["name"] != new_field["name"]:
-        changes.append(SchemaChange(
-            kind=ChangeKind.NAME_CHANGED,
-            path=path,
-            old_value=old_field["name"],
-            new_value=new_field["name"],
-            message=f"Field renamed from '{old_field['name']}' to '{new_field['name']}'"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.NAME_CHANGED,
+                path=path,
+                old_value=old_field["name"],
+                new_value=new_field["name"],
+                message=f"Field renamed from '{old_field['name']}' to '{new_field['name']}'",
+            )
+        )
 
     # Check required change (making optional -> required is breaking)
     old_required = old_field.get("required", False)
     new_required = new_field.get("required", False)
     if not old_required and new_required:
-        changes.append(SchemaChange(
-            kind=ChangeKind.REQUIRED_ADDED,
-            path=path,
-            message=f"Field '{old_field['name']}' changed from optional to required"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.REQUIRED_ADDED,
+                path=path,
+                message=f"Field '{old_field['name']}' changed from optional to required",
+            )
+        )
 
     # Check deprecation
     old_deprecated = old_field.get("deprecated", False)
     new_deprecated = new_field.get("deprecated", False)
     if not old_deprecated and new_deprecated:
-        changes.append(SchemaChange(
-            kind=ChangeKind.FIELD_DEPRECATED,
-            path=path,
-            message=f"Field '{old_field['name']}' deprecated"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.FIELD_DEPRECATED,
+                path=path,
+                message=f"Field '{old_field['name']}' deprecated",
+            )
+        )
 
     # Check enum values
     old_enum = old_field.get("enum_values", [])
@@ -454,75 +483,85 @@ def _check_field_diff(
 
     # Check indexed added (allowed)
     if not old_field.get("indexed") and new_field.get("indexed"):
-        changes.append(SchemaChange(
-            kind=ChangeKind.INDEX_ADDED,
-            path=path,
-            message=f"Index added to field '{old_field['name']}'"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.INDEX_ADDED,
+                path=path,
+                message=f"Index added to field '{old_field['name']}'",
+            )
+        )
 
     # Check searchable added (allowed)
     if not old_field.get("searchable") and new_field.get("searchable"):
-        changes.append(SchemaChange(
-            kind=ChangeKind.SEARCHABLE_ADDED,
-            path=path,
-            message=f"Searchable added to field '{old_field['name']}'"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.SEARCHABLE_ADDED,
+                path=path,
+                message=f"Searchable added to field '{old_field['name']}'",
+            )
+        )
 
     return changes
 
 
 def _check_enum_values(
-    old_values: List[str],
-    new_values: List[str],
+    old_values: list[str],
+    new_values: list[str],
     path: str,
-) -> List[SchemaChange]:
+) -> list[SchemaChange]:
     """Check enum value changes."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
 
     # Check for removed values (breaking)
     old_set = set(old_values)
     new_set = set(new_values)
     removed = old_set - new_set
     for value in removed:
-        changes.append(SchemaChange(
-            kind=ChangeKind.ENUM_VALUE_REMOVED,
-            path=path,
-            old_value=value,
-            message=f"Enum value '{value}' was removed"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.ENUM_VALUE_REMOVED,
+                path=path,
+                old_value=value,
+                message=f"Enum value '{value}' was removed",
+            )
+        )
 
     # Check for added values (allowed)
     added = new_set - old_set
     for value in added:
-        changes.append(SchemaChange(
-            kind=ChangeKind.ENUM_VALUE_ADDED,
-            path=path,
-            new_value=value,
-            message=f"Enum value '{value}' was added"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.ENUM_VALUE_ADDED,
+                path=path,
+                new_value=value,
+                message=f"Enum value '{value}' was added",
+            )
+        )
 
     # Check for reordering (breaking - affects wire format in some protocols)
     # Only check if no values were added/removed
     if not removed and not added and old_values != new_values:
-        changes.append(SchemaChange(
-            kind=ChangeKind.ENUM_VALUE_REORDERED,
-            path=path,
-            old_value=old_values,
-            new_value=new_values,
-            message="Enum values were reordered"
-        ))
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.ENUM_VALUE_REORDERED,
+                path=path,
+                old_value=old_values,
+                new_value=new_values,
+                message="Enum values were reordered",
+            )
+        )
 
     return changes
 
 
 def _check_id_reuse(
-    old_nodes: Dict[int, dict],
-    new_nodes: Dict[int, dict],
-    old_edges: Dict[int, dict],
-    new_edges: Dict[int, dict],
-) -> List[SchemaChange]:
+    old_nodes: dict[int, dict],
+    new_nodes: dict[int, dict],
+    old_edges: dict[int, dict],
+    new_edges: dict[int, dict],
+) -> list[SchemaChange]:
     """Check for ID reuse (same ID, different type name)."""
-    changes: List[SchemaChange] = []
+    changes: list[SchemaChange] = []
 
     # Check node type_id reuse
     for type_id, old_node in old_nodes.items():
@@ -532,13 +571,15 @@ def _check_id_reuse(
             if old_node.get("deprecated"):
                 # Allow if same base name (just renamed)
                 if old_node["name"].lower() != new_node["name"].lower():
-                    changes.append(SchemaChange(
-                        kind=ChangeKind.TYPE_ID_REUSED,
-                        path=f"NodeType:{new_node['name']}",
-                        old_value=old_node["name"],
-                        new_value=new_node["name"],
-                        message=f"type_id {type_id} was deprecated as '{old_node['name']}' but reused for '{new_node['name']}'"
-                    ))
+                    changes.append(
+                        SchemaChange(
+                            kind=ChangeKind.TYPE_ID_REUSED,
+                            path=f"NodeType:{new_node['name']}",
+                            old_value=old_node["name"],
+                            new_value=new_node["name"],
+                            message=f"type_id {type_id} was deprecated as '{old_node['name']}' but reused for '{new_node['name']}'",
+                        )
+                    )
 
     # Check edge_id reuse
     for edge_id, old_edge in old_edges.items():
@@ -546,13 +587,15 @@ def _check_id_reuse(
             new_edge = new_edges[edge_id]
             if old_edge.get("deprecated"):
                 if old_edge["name"].lower() != new_edge["name"].lower():
-                    changes.append(SchemaChange(
-                        kind=ChangeKind.EDGE_ID_REUSED,
-                        path=f"EdgeType:{new_edge['name']}",
-                        old_value=old_edge["name"],
-                        new_value=new_edge["name"],
-                        message=f"edge_id {edge_id} was deprecated as '{old_edge['name']}' but reused for '{new_edge['name']}'"
-                    ))
+                    changes.append(
+                        SchemaChange(
+                            kind=ChangeKind.EDGE_ID_REUSED,
+                            path=f"EdgeType:{new_edge['name']}",
+                            old_value=old_edge["name"],
+                            new_value=new_edge["name"],
+                            message=f"edge_id {edge_id} was deprecated as '{old_edge['name']}' but reused for '{new_edge['name']}'",
+                        )
+                    )
 
     return changes
 
@@ -570,8 +613,8 @@ def generate_fingerprint(registry: SchemaRegistry) -> str:
         Fingerprint string in format 'sha256:<hash>'
     """
     schema_dict = registry.to_dict()
-    canonical = json.dumps(schema_dict, sort_keys=True, separators=(',', ':'))
-    hash_bytes = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+    canonical = json.dumps(schema_dict, sort_keys=True, separators=(",", ":"))
+    hash_bytes = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     return f"sha256:{hash_bytes}"
 
 

@@ -9,12 +9,13 @@ Tests cover:
 """
 
 import pytest
-from dbaas.entdb_server.schema.types import NodeTypeDef, EdgeTypeDef, field
+
 from dbaas.entdb_server.schema.registry import (
-    SchemaRegistry,
-    RegistryFrozenError,
     DuplicateRegistrationError,
+    RegistryFrozenError,
+    SchemaRegistry,
 )
+from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
 
 
 class TestSchemaRegistry:
@@ -122,7 +123,9 @@ class TestSchemaRegistry:
         registry2 = SchemaRegistry()
 
         User1 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "email", "str"),))
-        User2 = NodeTypeDef(type_id=1, name="User", fields=(field(1, "email", "str"), field(2, "name", "str")))
+        User2 = NodeTypeDef(
+            type_id=1, name="User", fields=(field(1, "email", "str"), field(2, "name", "str"))
+        )
 
         registry1.register_node_type(User1)
         registry2.register_node_type(User2)
@@ -161,7 +164,11 @@ class TestSchemaRegistry:
         """Can deserialize registry from dict."""
         d = {
             "node_types": [
-                {"type_id": 1, "name": "User", "fields": [{"field_id": 1, "name": "email", "kind": "str"}]}
+                {
+                    "type_id": 1,
+                    "name": "User",
+                    "fields": [{"field_id": 1, "name": "email", "kind": "str"}],
+                }
             ],
             "edge_types": [],
         }

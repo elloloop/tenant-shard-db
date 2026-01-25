@@ -21,22 +21,24 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from typing import Dict, Iterator, Optional, Union
+from collections.abc import Iterator
 
-from .schema import NodeTypeDef, EdgeTypeDef
+from .schema import EdgeTypeDef, NodeTypeDef
 
 # Global registry
-_global_registry: Optional["SchemaRegistry"] = None
+_global_registry: SchemaRegistry | None = None
 _registry_lock = threading.Lock()
 
 
 class RegistryFrozenError(Exception):
     """Registry is frozen and cannot be modified."""
+
     pass
 
 
 class DuplicateRegistrationError(Exception):
     """Type or edge with this ID is already registered."""
+
     pass
 
 
@@ -55,12 +57,12 @@ class SchemaRegistry:
 
     def __init__(self) -> None:
         """Initialize empty registry."""
-        self._node_types: Dict[int, NodeTypeDef] = {}
-        self._edge_types: Dict[int, EdgeTypeDef] = {}
-        self._node_types_by_name: Dict[str, NodeTypeDef] = {}
-        self._edge_types_by_name: Dict[str, EdgeTypeDef] = {}
+        self._node_types: dict[int, NodeTypeDef] = {}
+        self._edge_types: dict[int, EdgeTypeDef] = {}
+        self._node_types_by_name: dict[str, NodeTypeDef] = {}
+        self._edge_types_by_name: dict[str, EdgeTypeDef] = {}
         self._frozen = False
-        self._fingerprint: Optional[str] = None
+        self._fingerprint: str | None = None
         self._lock = threading.Lock()
 
     @property
@@ -69,7 +71,7 @@ class SchemaRegistry:
         return self._frozen
 
     @property
-    def fingerprint(self) -> Optional[str]:
+    def fingerprint(self) -> str | None:
         """Schema fingerprint (available after freeze)."""
         return self._fingerprint
 
@@ -119,13 +121,13 @@ class SchemaRegistry:
             self._edge_types[edge_type.edge_id] = edge_type
             self._edge_types_by_name[edge_type.name] = edge_type
 
-    def get_node_type(self, type_id_or_name: Union[int, str]) -> Optional[NodeTypeDef]:
+    def get_node_type(self, type_id_or_name: int | str) -> NodeTypeDef | None:
         """Get node type by ID or name."""
         if isinstance(type_id_or_name, int):
             return self._node_types.get(type_id_or_name)
         return self._node_types_by_name.get(type_id_or_name)
 
-    def get_edge_type(self, edge_id_or_name: Union[int, str]) -> Optional[EdgeTypeDef]:
+    def get_edge_type(self, edge_id_or_name: int | str) -> EdgeTypeDef | None:
         """Get edge type by ID or name."""
         if isinstance(edge_id_or_name, int):
             return self._edge_types.get(edge_id_or_name)
@@ -159,24 +161,22 @@ class SchemaRegistry:
     def _compute_fingerprint(self) -> str:
         """Compute SHA-256 fingerprint."""
         schema_dict = self.to_dict()
-        canonical = json.dumps(schema_dict, sort_keys=True, separators=(',', ':'))
-        hash_bytes = hashlib.sha256(canonical.encode('utf-8')).hexdigest()
+        canonical = json.dumps(schema_dict, sort_keys=True, separators=(",", ":"))
+        hash_bytes = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         return f"sha256:{hash_bytes}"
 
     def to_dict(self) -> dict:
         """Convert to dictionary."""
         return {
             "node_types": [
-                self._node_types[tid].to_dict()
-                for tid in sorted(self._node_types.keys())
+                self._node_types[tid].to_dict() for tid in sorted(self._node_types.keys())
             ],
             "edge_types": [
-                self._edge_types[eid].to_dict()
-                for eid in sorted(self._edge_types.keys())
+                self._edge_types[eid].to_dict() for eid in sorted(self._edge_types.keys())
             ],
         }
 
-    def to_json(self, indent: Optional[int] = 2) -> str:
+    def to_json(self, indent: int | None = 2) -> str:
         """Convert to JSON string."""
         return json.dumps(self.to_dict(), indent=indent, sort_keys=True)
 

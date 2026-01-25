@@ -26,19 +26,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional
 import logging
+import sys
+from typing import Any
 
 from ..schema import (
     SchemaRegistry,
-    NodeTypeDef,
-    EdgeTypeDef,
-    FieldDef,
     check_compatibility,
-    CompatibilityError,
-    ChangeKind,
 )
 
 logger = logging.getLogger(__name__)
@@ -82,7 +76,7 @@ class SchemaCLI:
         self,
         registry: SchemaRegistry,
         baseline_path: str,
-    ) -> tuple[bool, List[str]]:
+    ) -> tuple[bool, list[str]]:
         """Check compatibility with baseline.
 
         Args:
@@ -93,14 +87,11 @@ class SchemaCLI:
             Tuple of (is_compatible, list_of_issues)
         """
         # Load baseline
-        with open(baseline_path, "r") as f:
+        with open(baseline_path) as f:
             baseline_data = json.load(f)
 
         # Handle both raw schema and wrapped format
-        if "schema" in baseline_data:
-            schema_data = baseline_data["schema"]
-        else:
-            schema_data = baseline_data
+        schema_data = baseline_data.get("schema", baseline_data)
 
         # Create registry from baseline
         baseline_registry = SchemaRegistry.from_dict(schema_data)
@@ -119,7 +110,7 @@ class SchemaCLI:
         self,
         old_path: str,
         new_path: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Show differences between two schemas.
 
         Args:
@@ -130,9 +121,9 @@ class SchemaCLI:
             List of change dictionaries
         """
         # Load schemas
-        with open(old_path, "r") as f:
+        with open(old_path) as f:
             old_data = json.load(f)
-        with open(new_path, "r") as f:
+        with open(new_path) as f:
             new_data = json.load(f)
 
         # Handle wrapped format
@@ -160,7 +151,7 @@ class SchemaCLI:
             for change in changes
         ]
 
-    def validate(self, registry: SchemaRegistry) -> List[str]:
+    def validate(self, registry: SchemaRegistry) -> list[str]:
         """Validate schema for internal consistency.
 
         Args:
@@ -174,79 +165,34 @@ class SchemaCLI:
 
 def main() -> None:
     """CLI entry point for schema tool."""
-    parser = argparse.ArgumentParser(
-        description="EntDB schema management tool"
-    )
+    parser = argparse.ArgumentParser(description="EntDB schema management tool")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # snapshot command
-    snapshot_parser = subparsers.add_parser(
-        "snapshot",
-        help="Export schema to JSON"
-    )
-    snapshot_parser.add_argument(
-        "--module",
-        help="Python module containing schema definitions"
-    )
-    snapshot_parser.add_argument(
-        "--output", "-o",
-        help="Output file (default: stdout)"
-    )
+    snapshot_parser = subparsers.add_parser("snapshot", help="Export schema to JSON")
+    snapshot_parser.add_argument("--module", help="Python module containing schema definitions")
+    snapshot_parser.add_argument("--output", "-o", help="Output file (default: stdout)")
 
     # check command
-    check_parser = subparsers.add_parser(
-        "check",
-        help="Check compatibility with baseline"
-    )
+    check_parser = subparsers.add_parser("check", help="Check compatibility with baseline")
     check_parser.add_argument(
-        "--baseline", "-b",
-        required=True,
-        help="Path to baseline schema JSON"
+        "--baseline", "-b", required=True, help="Path to baseline schema JSON"
     )
-    check_parser.add_argument(
-        "--module",
-        help="Python module containing schema definitions"
-    )
-    check_parser.add_argument(
-        "--server",
-        help="Server URL to fetch current schema"
-    )
+    check_parser.add_argument("--module", help="Python module containing schema definitions")
+    check_parser.add_argument("--server", help="Server URL to fetch current schema")
 
     # diff command
-    diff_parser = subparsers.add_parser(
-        "diff",
-        help="Show differences between schemas"
-    )
+    diff_parser = subparsers.add_parser("diff", help="Show differences between schemas")
+    diff_parser.add_argument("--old", required=True, help="Path to old schema JSON")
+    diff_parser.add_argument("--new", required=True, help="Path to new schema JSON")
     diff_parser.add_argument(
-        "--old",
-        required=True,
-        help="Path to old schema JSON"
-    )
-    diff_parser.add_argument(
-        "--new",
-        required=True,
-        help="Path to new schema JSON"
-    )
-    diff_parser.add_argument(
-        "--format",
-        choices=["text", "json"],
-        default="text",
-        help="Output format"
+        "--format", choices=["text", "json"], default="text", help="Output format"
     )
 
     # validate command
-    validate_parser = subparsers.add_parser(
-        "validate",
-        help="Validate schema for consistency"
-    )
-    validate_parser.add_argument(
-        "--module",
-        help="Python module containing schema definitions"
-    )
-    validate_parser.add_argument(
-        "--file",
-        help="Schema JSON file to validate"
-    )
+    validate_parser = subparsers.add_parser("validate", help="Validate schema for consistency")
+    validate_parser.add_argument("--module", help="Python module containing schema definitions")
+    validate_parser.add_argument("--file", help="Schema JSON file to validate")
 
     args = parser.parse_args()
     cli = SchemaCLI()
@@ -302,7 +248,7 @@ def main() -> None:
 
     elif args.command == "validate":
         if args.file:
-            with open(args.file, "r") as f:
+            with open(args.file) as f:
                 data = json.load(f)
             if "schema" in data:
                 data = data["schema"]
@@ -323,8 +269,8 @@ def main() -> None:
 
 
 def _load_registry(
-    module_path: Optional[str] = None,
-    server_url: Optional[str] = None,
+    module_path: str | None = None,
+    server_url: str | None = None,
 ) -> SchemaRegistry:
     """Load schema registry from module or server.
 
@@ -338,6 +284,7 @@ def _load_registry(
     if server_url:
         # Fetch from server
         import urllib.request
+
         url = f"{server_url.rstrip('/')}/v1/schema"
         with urllib.request.urlopen(url) as response:
             data = json.loads(response.read().decode("utf-8"))
@@ -347,6 +294,7 @@ def _load_registry(
     if module_path:
         # Import module and get registry
         import importlib
+
         module = importlib.import_module(module_path)
         if hasattr(module, "registry"):
             return module.registry
@@ -356,6 +304,7 @@ def _load_registry(
 
     # Return global registry
     from ..schema import get_registry
+
     return get_registry()
 
 

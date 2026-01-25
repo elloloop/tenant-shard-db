@@ -4,19 +4,18 @@ E2E test fixtures for EntDB.
 These tests require docker-compose to be running with the full stack.
 """
 
-import asyncio
 import os
-import pytest
 import subprocess
 import time
-from typing import Generator
+from collections.abc import Generator
+
+import pytest
 
 # Skip E2E tests if not in E2E mode
 E2E_ENABLED = os.environ.get("ENTDB_E2E_TESTS", "0") == "1"
 
 pytestmark = pytest.mark.skipif(
-    not E2E_ENABLED,
-    reason="E2E tests disabled. Set ENTDB_E2E_TESTS=1 to enable."
+    not E2E_ENABLED, reason="E2E tests disabled. Set ENTDB_E2E_TESTS=1 to enable."
 )
 
 
@@ -29,7 +28,7 @@ def wait_for_service(host: str, port: int, timeout: int = 60) -> bool:
         try:
             with socket.create_connection((host, port), timeout=1):
                 return True
-        except (socket.error, socket.timeout):
+        except (TimeoutError, OSError):
             time.sleep(1)
     return False
 
@@ -41,11 +40,7 @@ def docker_compose() -> Generator[None, None, None]:
         yield
         return
 
-    compose_file = os.path.join(
-        os.path.dirname(__file__),
-        "..", "..",
-        "docker-compose.yml"
-    )
+    compose_file = os.path.join(os.path.dirname(__file__), "..", "..", "docker-compose.yml")
 
     # Start services
     subprocess.run(
@@ -91,6 +86,7 @@ def http_base_url(docker_compose) -> str:
 def test_tenant_id() -> str:
     """Generate unique tenant ID for test isolation."""
     import uuid
+
     return f"test_tenant_{uuid.uuid4().hex[:8]}"
 
 
@@ -98,4 +94,3 @@ def test_tenant_id() -> str:
 def test_actor() -> str:
     """Test actor identity."""
     return "user:e2e_test_user"
-
