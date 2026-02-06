@@ -3,10 +3,13 @@ EntDB Server - Main entry point.
 
 This module starts the EntDB server with all components:
 - gRPC server (primary API)
-- HTTP server (optional REST API)
 - Applier loop (WAL -> SQLite)
 - Archiver loop (WAL -> S3)
 - Snapshotter loop (SQLite -> S3)
+
+For HTTP/REST access, use the entdb-gateway sidecar project
+which provides a REST API and web-based data browser.
+See examples/entdb-gateway/
 
 Usage:
     python -m entdb_server.main
@@ -85,7 +88,7 @@ class Server:
 
     Manages the lifecycle of all server components:
     - WAL connection
-    - gRPC/HTTP servers
+    - gRPC server
     - Background loops (applier, archiver, snapshotter)
 
     Attributes:
@@ -192,14 +195,6 @@ class Server:
                 reflection_enabled=self.config.grpc.reflection_enabled,
             )
             await self.grpc_server.start()
-
-            # Start HTTP server if enabled
-            if self.config.http.enabled:
-                from .api.http_server import run_http_server
-
-                host, port = self.config.http.bind_address.split(":")
-                http_task = asyncio.create_task(run_http_server(self.servicer, host, int(port)))
-                self._tasks.append(http_task)
 
             # Start applier
             topic = (

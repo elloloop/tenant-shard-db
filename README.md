@@ -12,7 +12,7 @@ EntDB is a production-ready multi-tenant database service built on event sourcin
 - **Full-Text Search**: SQLite FTS5 for mailbox search
 - **ACL System**: Principal-based visibility (user:X, role:X, tenant:*)
 - **Idempotent Operations**: Deduplication via idempotency keys
-- **gRPC + HTTP APIs**: Both APIs for flexibility
+- **gRPC API**: High-performance binary protocol (HTTP/REST via gateway sidecar)
 - **Python SDK**: Type-safe client with Plan builder
 
 ## Quick Start
@@ -82,33 +82,33 @@ async with DbClient(
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                         Clients                             │
-│              (gRPC / HTTP / Python SDK)                     │
+│                         Clients                              │
+│                    (Python SDK / gRPC)                       │
 └─────────────────────┬───────────────────────────────────────┘
                       │
-┌─────────────────────▼───────────────────────────────────────┐
-│                    EntDB Server                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐       │
-│  │ gRPC Server  │  │ HTTP Server  │  │ Schema       │       │
-│  │   :50051     │  │   :8080      │  │ Registry     │       │
-│  └──────┬───────┘  └──────┬───────┘  └──────────────┘       │
-│         │                 │                                  │
-│  ┌──────▼─────────────────▼─────┐                           │
-│  │         WAL Stream           │                           │
-│  │    (Kafka / Kinesis)         │                           │
-│  └──────────────┬───────────────┘                           │
-│                 │                                            │
-│  ┌──────────────▼───────────────┐                           │
-│  │         Applier              │                           │
-│  │  (Idempotent Event Apply)    │                           │
-│  └──────────────┬───────────────┘                           │
-│                 │                                            │
-│  ┌──────────────▼───────────────┐   ┌──────────────┐        │
-│  │     Canonical Store          │   │   Mailbox    │        │
-│  │    (SQLite per tenant)       │   │  (FTS5)      │        │
-│  └──────────────────────────────┘   └──────────────┘        │
-└─────────────────────────────────────────────────────────────┘
+      ┌───────────────┴───────────────┐
+      │                               │
+      ▼                               ▼
+┌───────────────┐           ┌─────────────────────┐
+│ HTTP Gateway  │  ──gRPC── │   EntDB Server      │
+│ (optional)    │           │   ┌─────────────┐   │
+│  REST API     │           │   │ gRPC :50051 │   │
+│  React UI     │           │   └──────┬──────┘   │
+└───────────────┘           │   ┌──────▼──────┐   │
+                            │   │ WAL Stream  │   │
+                            │   │ (Kafka)     │   │
+                            │   └──────┬──────┘   │
+                            │   ┌──────▼──────┐   │
+                            │   │  Applier    │   │
+                            │   └──────┬──────┘   │
+                            │   ┌──────▼──────┐   │
+                            │   │SQLite Store │   │
+                            │   └─────────────┘   │
+                            └─────────────────────┘
 ```
+
+The HTTP Gateway (see `examples/entdb-gateway/`) is a sidecar that provides
+REST API access and a web-based data browser using the Python SDK.
 
 ## Documentation
 
@@ -130,7 +130,7 @@ async with DbClient(
 │       ├── schema/          # Schema types and registry
 │       ├── wal/             # WAL stream abstraction
 │       ├── apply/           # Applier and stores
-│       ├── api/             # gRPC and HTTP servers
+│       ├── api/             # gRPC server
 │       ├── archive/         # S3 archiving
 │       ├── snapshot/        # SQLite snapshots
 │       ├── tools/           # CLI tools
@@ -138,6 +138,7 @@ async with DbClient(
 ├── sdk/
 │   └── entdb_sdk/           # Python SDK
 ├── examples/
+│   ├── entdb-gateway/       # HTTP Gateway + React UI (sidecar)
 │   └── fastapi_app/         # Sample FastAPI application
 ├── tests/
 │   ├── unit/                # Unit tests

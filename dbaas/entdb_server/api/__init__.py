@@ -1,11 +1,11 @@
 """
 API module for EntDB server.
 
-This module provides the external interfaces:
-- gRPC server (primary API)
-- HTTP server (optional REST API)
+This module provides the external interface via gRPC.
 
-Both servers share the same underlying service logic.
+For HTTP/REST access, use the entdb-gateway sidecar project
+which demonstrates SDK usage and provides a web-based data browser.
+See examples/entdb-gateway/
 
 Invariants:
     - All operations require tenant_id and actor
@@ -15,13 +15,10 @@ Invariants:
 How to change safely:
     - gRPC changes must be backward compatible
     - Add new RPC methods, don't modify existing ones
-    - HTTP endpoints should match gRPC semantics
 """
 
 from .grpc_server import GrpcServer
-from .http_server import create_http_app
 
 __all__ = [
     "GrpcServer",
-    "create_http_app",
 ]

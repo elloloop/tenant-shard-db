@@ -60,31 +60,6 @@ class GrpcConfig:
 
 
 @dataclass(frozen=True)
-class HttpConfig:
-    """HTTP server configuration (optional REST API).
-
-    Attributes:
-        enabled: Whether to enable HTTP server
-        bind_address: Address to bind HTTP server (host:port)
-        cors_origins: Allowed CORS origins (comma-separated)
-    """
-
-    enabled: bool = False
-    bind_address: str = "0.0.0.0:8081"
-    cors_origins: tuple[str, ...] = ("*",)
-
-    @classmethod
-    def from_env(cls) -> HttpConfig:
-        """Load configuration from environment variables."""
-        cors = os.getenv("HTTP_CORS_ORIGINS", "*")
-        return cls(
-            enabled=os.getenv("HTTP_ENABLED", "false").lower() == "true",
-            bind_address=os.getenv("HTTP_BIND", "0.0.0.0:8081"),
-            cors_origins=tuple(cors.split(",")) if cors else ("*",),
-        )
-
-
-@dataclass(frozen=True)
 class KafkaConfig:
     """Kafka/Redpanda WAL backend configuration.
 
@@ -368,10 +343,12 @@ class ServerConfig:
 
     This aggregates all configuration sections and provides validation.
 
+    For HTTP/REST access, use the entdb-gateway sidecar project.
+    See examples/entdb-gateway/
+
     Attributes:
         wal_backend: Which WAL backend to use
         grpc: gRPC server configuration
-        http: HTTP server configuration
         kafka: Kafka configuration (if wal_backend is KAFKA)
         kinesis: Kinesis configuration (if wal_backend is KINESIS)
         s3: S3 configuration
@@ -384,7 +361,6 @@ class ServerConfig:
 
     wal_backend: WalBackend = WalBackend.KAFKA
     grpc: GrpcConfig = field(default_factory=GrpcConfig)
-    http: HttpConfig = field(default_factory=HttpConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     kinesis: KinesisConfig = field(default_factory=KinesisConfig)
     s3: S3Config = field(default_factory=S3Config)
@@ -413,7 +389,6 @@ class ServerConfig:
         config = cls(
             wal_backend=wal_backend,
             grpc=GrpcConfig.from_env(),
-            http=HttpConfig.from_env(),
             kafka=KafkaConfig.from_env(),
             kinesis=KinesisConfig.from_env(),
             s3=S3Config.from_env(),
@@ -464,8 +439,6 @@ class ServerConfig:
             extra={
                 "wal_backend": self.wal_backend.value,
                 "grpc_bind": self.grpc.bind_address,
-                "http_enabled": self.http.enabled,
-                "http_bind": self.http.bind_address if self.http.enabled else None,
                 "kafka_brokers": self.kafka.brokers
                 if self.wal_backend == WalBackend.KAFKA
                 else None,
