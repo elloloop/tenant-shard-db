@@ -2,8 +2,7 @@
 gRPC server implementation for EntDB.
 
 This module provides the gRPC API server that handles all client requests.
-It uses grpclib for async gRPC support and provides a service that
-matches the proto definition.
+It implements the EntDBService defined in entdb.proto.
 
 Invariants:
     - All RPCs require valid tenant_id and actor
@@ -24,49 +23,54 @@ import json
 import logging
 import time
 import uuid
-from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import grpc
+from grpc import aio as grpc_aio
+
+from .generated import (
+    EntDBServiceServicer,
+    add_EntDBServiceServicer_to_server,
+    # Request/Response types
+    ExecuteAtomicRequest,
+    ExecuteAtomicResponse,
+    GetReceiptStatusRequest,
+    GetReceiptStatusResponse,
+    GetNodeRequest,
+    GetNodeResponse,
+    GetNodesRequest,
+    GetNodesResponse,
+    QueryNodesRequest,
+    QueryNodesResponse,
+    GetEdgesRequest,
+    GetEdgesResponse,
+    SearchMailboxRequest,
+    SearchMailboxResponse,
+    GetMailboxRequest,
+    GetMailboxResponse,
+    HealthRequest,
+    HealthResponse,
+    GetSchemaRequest,
+    GetSchemaResponse,
+    # Data types
+    Receipt,
+    Node,
+    Edge,
+    MailboxItem,
+    MailboxSearchResult,
+    ReceiptStatus,
+)
+
+if TYPE_CHECKING:
+    from ..apply.applier import Applier
+    from ..storage.canonical_store import CanonicalStore
+    from ..storage.mailbox_store import MailboxStore
+    from ..wal.base import WALStream
 
 logger = logging.getLogger(__name__)
 
-# Try to import grpclib for async gRPC
-try:
-    import grpc
-    from grpc import aio as grpc_aio
 
-    GRPC_AVAILABLE = True
-except ImportError:
-    GRPC_AVAILABLE = False
-    grpc = None
-    grpc_aio = None
-
-
-@dataclass
-class RequestContext:
-    """Parsed request context."""
-
-    tenant_id: str
-    actor: str
-    trace_id: str | None = None
-
-
-@dataclass
-class Receipt:
-    """Transaction receipt."""
-
-    tenant_id: str
-    idempotency_key: str
-    stream_position: str | None = None
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "tenant_id": self.tenant_id,
-            "idempotency_key": self.idempotency_key,
-            "stream_position": self.stream_position,
-        }
-
-
-class EntDBServicer:
+class EntDBServicer(EntDBServiceServicer):
     """gRPC service implementation for EntDB.
 
     This class implements the gRPC service methods defined in the proto.
@@ -102,74 +106,45 @@ class EntDBServicer:
         self.mailbox_store = mailbox_store
         self.schema_registry = schema_registry
         self.topic = topic
-        self._pending_receipts: dict[str, asyncio.Event] = {}
-        self._receipt_results: dict[str, tuple[bool, str | None]] = {}
 
-    async def execute_atomic(
+    async def ExecuteAtomic(
         self,
-        tenant_id: str,
-        actor: str,
-        operations: list[dict[str, Any]],
-        idempotency_key: str | None = None,
-        schema_fingerprint: str | None = None,
-        wait_applied: bool = False,
-        wait_timeout_ms: int = 30000,
-    ) -> dict[str, Any]:
-        """Execute an atomic transaction.
-
-        Args:
-            tenant_id: Tenant identifier
-            actor: Actor performing the operation
-            operations: List of operations
-            idempotency_key: Optional idempotency key
-            schema_fingerprint: Schema fingerprint for validation
-            wait_applied: Whether to wait for application
-            wait_timeout_ms: Timeout for wait_applied
-
-        Returns:
-            Response dictionary with receipt or error
-        """
-        # Validate inputs
-        if not tenant_id:
-            return {
-                "success": False,
-                "error": "tenant_id is required",
-                "error_code": "INVALID_ARGUMENT",
-            }
-        if not actor:
-            return {
-                "success": False,
-                "error": "actor is required",
-                "error_code": "INVALID_ARGUMENT",
-            }
-        if not operations:
-            return {
-                "success": False,
-                "error": "operations list is empty",
-                "error_code": "INVALID_ARGUMENT",
-            }
+        request: ExecuteAtomicRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ExecuteAtomicResponse:
+        """Execute an atomic transaction."""
+        # Extract context
+        ctx = request.context
+        if not ctx.tenant_id:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+        if not ctx.actor:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+        if not request.operations:
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "operations list is empty")
 
         # Generate idempotency key if not provided
-        if not idempotency_key:
-            idempotency_key = str(uuid.uuid4())
+        idempotency_key = request.idempotency_key or str(uuid.uuid4())
 
         # Validate schema fingerprint if provided
-        if schema_fingerprint and self.schema_registry.fingerprint:
-            if schema_fingerprint != self.schema_registry.fingerprint:
-                return {
-                    "success": False,
-                    "error": f"Schema mismatch: server has {self.schema_registry.fingerprint}",
-                    "error_code": "SCHEMA_MISMATCH",
-                }
+        if request.schema_fingerprint and self.schema_registry.fingerprint:
+            if request.schema_fingerprint != self.schema_registry.fingerprint:
+                return ExecuteAtomicResponse(
+                    success=False,
+                    error=f"Schema mismatch: server has {self.schema_registry.fingerprint}",
+                    error_code="SCHEMA_MISMATCH",
+                )
+
+        # Convert operations to internal format
+        ops = self._convert_operations(request.operations)
 
         # Build transaction event
         event = {
-            "tenant_id": tenant_id,
-            "actor": actor,
+            "tenant_id": ctx.tenant_id,
+            "actor": ctx.actor,
             "idempotency_key": idempotency_key,
             "schema_fingerprint": self.schema_registry.fingerprint,
             "ts_ms": int(time.time() * 1000),
-            "ops": self._convert_operations(operations),
+            "ops": ops,
         }
 
         try:
@@ -177,128 +152,118 @@ class EntDBServicer:
             event_bytes = json.dumps(event).encode("utf-8")
             stream_pos = await self.wal.append(
                 self.topic,
-                tenant_id,  # Partition key
+                ctx.tenant_id,  # Partition key
                 event_bytes,
             )
 
             receipt = Receipt(
-                tenant_id=tenant_id,
+                tenant_id=ctx.tenant_id,
                 idempotency_key=idempotency_key,
-                stream_position=str(stream_pos),
+                stream_position=str(stream_pos) if stream_pos else "",
             )
 
             # Wait for application if requested
-            applied_status = "RECEIPT_STATUS_PENDING"
-            if wait_applied:
-                applied = await self._wait_for_applied(
-                    tenant_id,
-                    idempotency_key,
-                    wait_timeout_ms / 1000.0,
-                )
-                applied_status = "RECEIPT_STATUS_APPLIED" if applied else "RECEIPT_STATUS_PENDING"
+            applied_status = ReceiptStatus.RECEIPT_STATUS_PENDING
+            if request.wait_applied:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                applied = await self._wait_for_applied(ctx.tenant_id, idempotency_key, timeout)
+                if applied:
+                    applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
 
             # Extract created node IDs
             created_node_ids = []
-            for op in event["ops"]:
+            for op in ops:
                 if op.get("op") == "create_node":
                     node_id = op.get("id") or f"pending_{len(created_node_ids)}"
                     created_node_ids.append(node_id)
 
-            return {
-                "success": True,
-                "receipt": receipt.to_dict(),
-                "created_node_ids": created_node_ids,
-                "applied_status": applied_status,
-            }
+            return ExecuteAtomicResponse(
+                success=True,
+                receipt=receipt,
+                created_node_ids=created_node_ids,
+                applied_status=applied_status,
+            )
 
         except Exception as e:
             logger.error(f"ExecuteAtomic failed: {e}", exc_info=True)
-            return {
-                "success": False,
-                "error": str(e),
-                "error_code": "INTERNAL",
-            }
+            return ExecuteAtomicResponse(
+                success=False,
+                error=str(e),
+                error_code="INTERNAL",
+            )
 
-    def _convert_operations(self, operations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Convert operation format from API to internal format."""
+    def _convert_operations(self, operations: list) -> list[dict[str, Any]]:
+        """Convert protobuf operations to internal format."""
         result = []
 
         for op in operations:
-            if "create_node" in op:
-                create = op["create_node"]
-                internal_op = {
+            op_type = op.WhichOneof("op")
+
+            if op_type == "create_node":
+                create = op.create_node
+                internal_op: dict[str, Any] = {
                     "op": "create_node",
-                    "type_id": create.get("type_id"),
-                    "data": json.loads(create.get("data_json", "{}")),
+                    "type_id": create.type_id,
+                    "data": json.loads(create.data_json) if create.data_json else {},
                 }
-                if create.get("id"):
-                    internal_op["id"] = create["id"]
-                if create.get("acl_json"):
-                    internal_op["acl"] = json.loads(create["acl_json"])
-                if create.get("as"):
-                    internal_op["as"] = create["as"]
-                if create.get("fanout_to"):
-                    internal_op["fanout_to"] = create["fanout_to"]
+                if create.id:
+                    internal_op["id"] = create.id
+                if create.acl_json:
+                    internal_op["acl"] = json.loads(create.acl_json)
+                if create.HasField("as") if hasattr(create, "HasField") else getattr(create, "as", None):
+                    internal_op["as"] = getattr(create, "as")
+                if create.fanout_to:
+                    internal_op["fanout_to"] = list(create.fanout_to)
                 result.append(internal_op)
 
-            elif "update_node" in op:
-                update = op["update_node"]
-                result.append(
-                    {
-                        "op": "update_node",
-                        "type_id": update.get("type_id"),
-                        "id": update.get("id"),
-                        "patch": json.loads(update.get("patch_json", "{}")),
-                    }
-                )
+            elif op_type == "update_node":
+                update = op.update_node
+                result.append({
+                    "op": "update_node",
+                    "type_id": update.type_id,
+                    "id": update.id,
+                    "patch": json.loads(update.patch_json) if update.patch_json else {},
+                })
 
-            elif "delete_node" in op:
-                delete = op["delete_node"]
-                result.append(
-                    {
-                        "op": "delete_node",
-                        "type_id": delete.get("type_id"),
-                        "id": delete.get("id"),
-                    }
-                )
+            elif op_type == "delete_node":
+                delete = op.delete_node
+                result.append({
+                    "op": "delete_node",
+                    "type_id": delete.type_id,
+                    "id": delete.id,
+                })
 
-            elif "create_edge" in op:
-                create = op["create_edge"]
-                result.append(
-                    {
-                        "op": "create_edge",
-                        "edge_id": create.get("edge_id"),
-                        "from": self._convert_node_ref(create.get("from", {})),
-                        "to": self._convert_node_ref(create.get("to", {})),
-                        "props": json.loads(create.get("props_json", "{}")),
-                    }
-                )
+            elif op_type == "create_edge":
+                create = op.create_edge
+                result.append({
+                    "op": "create_edge",
+                    "edge_id": create.edge_id,
+                    "from": self._convert_node_ref(create.from_),
+                    "to": self._convert_node_ref(create.to),
+                    "props": json.loads(create.props_json) if create.props_json else {},
+                })
 
-            elif "delete_edge" in op:
-                delete = op["delete_edge"]
-                result.append(
-                    {
-                        "op": "delete_edge",
-                        "edge_id": delete.get("edge_id"),
-                        "from": self._convert_node_ref(delete.get("from", {})),
-                        "to": self._convert_node_ref(delete.get("to", {})),
-                    }
-                )
+            elif op_type == "delete_edge":
+                delete = op.delete_edge
+                result.append({
+                    "op": "delete_edge",
+                    "edge_id": delete.edge_id,
+                    "from": self._convert_node_ref(delete.from_),
+                    "to": self._convert_node_ref(delete.to),
+                })
 
         return result
 
-    def _convert_node_ref(self, ref: dict[str, Any]) -> Any:
-        """Convert node reference from API format."""
-        if "id" in ref:
-            return ref["id"]
-        if "alias_ref" in ref:
-            return {"ref": ref["alias_ref"]}
-        if "typed" in ref:
-            return {
-                "type_id": ref["typed"].get("type_id"),
-                "id": ref["typed"].get("id"),
-            }
-        return ref
+    def _convert_node_ref(self, ref: Any) -> Any:
+        """Convert protobuf node reference to internal format."""
+        ref_type = ref.WhichOneof("ref")
+        if ref_type == "id":
+            return ref.id
+        elif ref_type == "alias_ref":
+            return {"ref": ref.alias_ref}
+        elif ref_type == "typed":
+            return {"type_id": ref.typed.type_id, "id": ref.typed.id}
+        return None
 
     async def _wait_for_applied(
         self,
@@ -317,237 +282,288 @@ class EntDBServicer:
             await asyncio.sleep(0.1)
         return False
 
-    async def get_receipt_status(
+    async def GetReceiptStatus(
         self,
-        tenant_id: str,
-        idempotency_key: str,
-    ) -> dict[str, Any]:
+        request: GetReceiptStatusRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetReceiptStatusResponse:
         """Get the status of a transaction receipt."""
         try:
-            applied = await self.canonical_store.check_idempotency(tenant_id, idempotency_key)
-            status = "RECEIPT_STATUS_APPLIED" if applied else "RECEIPT_STATUS_PENDING"
-            return {"status": status}
+            applied = await self.canonical_store.check_idempotency(
+                request.context.tenant_id,
+                request.idempotency_key,
+            )
+            status = ReceiptStatus.RECEIPT_STATUS_APPLIED if applied else ReceiptStatus.RECEIPT_STATUS_PENDING
+            return GetReceiptStatusResponse(status=status)
         except Exception as e:
-            return {"status": "RECEIPT_STATUS_UNKNOWN", "error": str(e)}
+            return GetReceiptStatusResponse(
+                status=ReceiptStatus.RECEIPT_STATUS_UNKNOWN,
+                error=str(e),
+            )
 
-    async def get_node(
+    async def GetNode(
         self,
-        tenant_id: str,
-        actor: str,
-        type_id: int,
-        node_id: str,
-    ) -> dict[str, Any]:
+        request: GetNodeRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetNodeResponse:
         """Get a node by ID."""
         try:
-            node = await self.canonical_store.get_node(tenant_id, node_id)
+            node = await self.canonical_store.get_node(
+                request.context.tenant_id,
+                request.node_id,
+            )
             if not node:
-                return {"found": False}
+                return GetNodeResponse(found=False)
 
-            return {
-                "found": True,
-                "node": {
-                    "tenant_id": node.tenant_id,
-                    "node_id": node.node_id,
-                    "type_id": node.type_id,
-                    "payload_json": json.dumps(node.payload),
-                    "created_at": node.created_at,
-                    "updated_at": node.updated_at,
-                    "owner_actor": node.owner_actor,
-                    "acl_json": json.dumps(node.acl),
-                },
-            }
+            return GetNodeResponse(
+                found=True,
+                node=Node(
+                    tenant_id=node.tenant_id,
+                    node_id=node.node_id,
+                    type_id=node.type_id,
+                    payload_json=json.dumps(node.payload),
+                    created_at=node.created_at,
+                    updated_at=node.updated_at,
+                    owner_actor=node.owner_actor,
+                    acl_json=json.dumps(node.acl),
+                ),
+            )
         except Exception as e:
             logger.error(f"GetNode failed: {e}", exc_info=True)
-            return {"found": False, "error": str(e)}
+            return GetNodeResponse(found=False)
 
-    async def query_nodes(
+    async def GetNodes(
         self,
-        tenant_id: str,
-        actor: str,
-        type_id: int,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> dict[str, Any]:
+        request: GetNodesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetNodesResponse:
+        """Get multiple nodes by IDs."""
+        try:
+            nodes = []
+            missing_ids = []
+
+            for node_id in request.node_ids:
+                node = await self.canonical_store.get_node(
+                    request.context.tenant_id,
+                    node_id,
+                )
+                if node:
+                    nodes.append(Node(
+                        tenant_id=node.tenant_id,
+                        node_id=node.node_id,
+                        type_id=node.type_id,
+                        payload_json=json.dumps(node.payload),
+                        created_at=node.created_at,
+                        updated_at=node.updated_at,
+                        owner_actor=node.owner_actor,
+                        acl_json=json.dumps(node.acl),
+                    ))
+                else:
+                    missing_ids.append(node_id)
+
+            return GetNodesResponse(nodes=nodes, missing_ids=missing_ids)
+        except Exception as e:
+            logger.error(f"GetNodes failed: {e}", exc_info=True)
+            return GetNodesResponse(nodes=[], missing_ids=list(request.node_ids))
+
+    async def QueryNodes(
+        self,
+        request: QueryNodesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> QueryNodesResponse:
         """Query nodes by type."""
         try:
             nodes = await self.canonical_store.get_nodes_by_type(
-                tenant_id, type_id, limit=limit, offset=offset
+                request.context.tenant_id,
+                request.type_id,
+                limit=request.limit or 100,
+                offset=request.offset or 0,
             )
 
-            return {
-                "nodes": [
-                    {
-                        "tenant_id": n.tenant_id,
-                        "node_id": n.node_id,
-                        "type_id": n.type_id,
-                        "payload_json": json.dumps(n.payload),
-                        "created_at": n.created_at,
-                        "updated_at": n.updated_at,
-                        "owner_actor": n.owner_actor,
-                        "acl_json": json.dumps(n.acl),
-                    }
-                    for n in nodes
-                ],
-                "has_more": len(nodes) == limit,
-            }
+            proto_nodes = [
+                Node(
+                    tenant_id=n.tenant_id,
+                    node_id=n.node_id,
+                    type_id=n.type_id,
+                    payload_json=json.dumps(n.payload),
+                    created_at=n.created_at,
+                    updated_at=n.updated_at,
+                    owner_actor=n.owner_actor,
+                    acl_json=json.dumps(n.acl),
+                )
+                for n in nodes
+            ]
+
+            return QueryNodesResponse(
+                nodes=proto_nodes,
+                has_more=len(nodes) == (request.limit or 100),
+            )
         except Exception as e:
             logger.error(f"QueryNodes failed: {e}", exc_info=True)
-            return {"nodes": [], "error": str(e)}
+            return QueryNodesResponse(nodes=[])
 
-    async def get_edges_from(
+    async def GetEdgesFrom(
         self,
-        tenant_id: str,
-        actor: str,
-        node_id: str,
-        edge_type_id: int | None = None,
-        limit: int = 100,
-    ) -> dict[str, Any]:
+        request: GetEdgesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetEdgesResponse:
         """Get outgoing edges from a node."""
         try:
-            edges = await self.canonical_store.get_edges_from(tenant_id, node_id, edge_type_id)
+            edge_type_id = request.edge_type_id if request.edge_type_id else None
+            edges = await self.canonical_store.get_edges_from(
+                request.context.tenant_id,
+                request.node_id,
+                edge_type_id,
+            )
 
-            return {
-                "edges": [
-                    {
-                        "tenant_id": e.tenant_id,
-                        "edge_type_id": e.edge_type_id,
-                        "from_node_id": e.from_node_id,
-                        "to_node_id": e.to_node_id,
-                        "props_json": json.dumps(e.props),
-                        "created_at": e.created_at,
-                    }
-                    for e in edges[:limit]
-                ],
-                "has_more": len(edges) > limit,
-            }
+            limit = request.limit or 100
+            proto_edges = [
+                Edge(
+                    tenant_id=e.tenant_id,
+                    edge_type_id=e.edge_type_id,
+                    from_node_id=e.from_node_id,
+                    to_node_id=e.to_node_id,
+                    props_json=json.dumps(e.props),
+                    created_at=e.created_at,
+                )
+                for e in edges[:limit]
+            ]
+
+            return GetEdgesResponse(edges=proto_edges, has_more=len(edges) > limit)
         except Exception as e:
             logger.error(f"GetEdgesFrom failed: {e}", exc_info=True)
-            return {"edges": [], "error": str(e)}
+            return GetEdgesResponse(edges=[])
 
-    async def get_edges_to(
+    async def GetEdgesTo(
         self,
-        tenant_id: str,
-        actor: str,
-        node_id: str,
-        edge_type_id: int | None = None,
-        limit: int = 100,
-    ) -> dict[str, Any]:
+        request: GetEdgesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetEdgesResponse:
         """Get incoming edges to a node."""
         try:
-            edges = await self.canonical_store.get_edges_to(tenant_id, node_id, edge_type_id)
+            edge_type_id = request.edge_type_id if request.edge_type_id else None
+            edges = await self.canonical_store.get_edges_to(
+                request.context.tenant_id,
+                request.node_id,
+                edge_type_id,
+            )
 
-            return {
-                "edges": [
-                    {
-                        "tenant_id": e.tenant_id,
-                        "edge_type_id": e.edge_type_id,
-                        "from_node_id": e.from_node_id,
-                        "to_node_id": e.to_node_id,
-                        "props_json": json.dumps(e.props),
-                        "created_at": e.created_at,
-                    }
-                    for e in edges[:limit]
-                ],
-                "has_more": len(edges) > limit,
-            }
+            limit = request.limit or 100
+            proto_edges = [
+                Edge(
+                    tenant_id=e.tenant_id,
+                    edge_type_id=e.edge_type_id,
+                    from_node_id=e.from_node_id,
+                    to_node_id=e.to_node_id,
+                    props_json=json.dumps(e.props),
+                    created_at=e.created_at,
+                )
+                for e in edges[:limit]
+            ]
+
+            return GetEdgesResponse(edges=proto_edges, has_more=len(edges) > limit)
         except Exception as e:
             logger.error(f"GetEdgesTo failed: {e}", exc_info=True)
-            return {"edges": [], "error": str(e)}
+            return GetEdgesResponse(edges=[])
 
-    async def search_mailbox(
+    async def SearchMailbox(
         self,
-        tenant_id: str,
-        actor: str,
-        user_id: str,
-        query: str,
-        source_type_ids: list[int] | None = None,
-        limit: int = 20,
-        offset: int = 0,
-    ) -> dict[str, Any]:
+        request: SearchMailboxRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> SearchMailboxResponse:
         """Search mailbox with full-text search."""
         try:
+            source_type_ids = list(request.source_type_ids) if request.source_type_ids else None
             results = await self.mailbox_store.search(
-                tenant_id,
-                user_id,
-                query,
-                limit=limit,
-                offset=offset,
+                request.context.tenant_id,
+                request.user_id,
+                request.query,
+                limit=request.limit or 20,
+                offset=request.offset or 0,
                 source_type_ids=source_type_ids,
             )
 
-            return {
-                "results": [
-                    {
-                        "item": {
-                            "item_id": r.item.item_id,
-                            "ref_id": r.item.ref_id,
-                            "source_type_id": r.item.source_type_id,
-                            "source_node_id": r.item.source_node_id,
-                            "thread_id": r.item.thread_id,
-                            "ts": r.item.ts,
-                            "state_json": json.dumps(r.item.state),
-                            "snippet": r.item.snippet,
-                            "metadata_json": json.dumps(r.item.metadata),
-                        },
-                        "rank": r.rank,
-                        "highlights": r.highlights,
-                    }
-                    for r in results
-                ],
-                "has_more": len(results) == limit,
-            }
+            proto_results = [
+                MailboxSearchResult(
+                    item=MailboxItem(
+                        item_id=r.item.item_id,
+                        ref_id=r.item.ref_id,
+                        source_type_id=r.item.source_type_id,
+                        source_node_id=r.item.source_node_id,
+                        thread_id=r.item.thread_id or "",
+                        ts=r.item.ts,
+                        state_json=json.dumps(r.item.state),
+                        snippet=r.item.snippet or "",
+                        metadata_json=json.dumps(r.item.metadata),
+                    ),
+                    rank=r.rank,
+                    highlights=r.highlights or "",
+                )
+                for r in results
+            ]
+
+            return SearchMailboxResponse(
+                results=proto_results,
+                has_more=len(results) == (request.limit or 20),
+            )
         except Exception as e:
             logger.error(f"SearchMailbox failed: {e}", exc_info=True)
-            return {"results": [], "error": str(e)}
+            return SearchMailboxResponse(results=[])
 
-    async def get_mailbox(
+    async def GetMailbox(
         self,
-        tenant_id: str,
-        actor: str,
-        user_id: str,
-        source_type_id: int | None = None,
-        thread_id: str | None = None,
-        unread_only: bool = False,
-        limit: int = 50,
-        offset: int = 0,
-    ) -> dict[str, Any]:
+        request: GetMailboxRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetMailboxResponse:
         """Get mailbox items for a user."""
         try:
+            source_type_id = request.source_type_id if request.source_type_id else None
+            thread_id = request.thread_id if request.thread_id else None
+
             items = await self.mailbox_store.list_items(
-                tenant_id,
-                user_id,
-                limit=limit,
-                offset=offset,
+                request.context.tenant_id,
+                request.user_id,
+                limit=request.limit or 50,
+                offset=request.offset or 0,
                 source_type_id=source_type_id,
                 thread_id=thread_id,
-                unread_only=unread_only,
+                unread_only=request.unread_only,
             )
 
-            unread_count = await self.mailbox_store.get_unread_count(tenant_id, user_id)
+            unread_count = await self.mailbox_store.get_unread_count(
+                request.context.tenant_id,
+                request.user_id,
+            )
 
-            return {
-                "items": [
-                    {
-                        "item_id": item.item_id,
-                        "ref_id": item.ref_id,
-                        "source_type_id": item.source_type_id,
-                        "source_node_id": item.source_node_id,
-                        "thread_id": item.thread_id,
-                        "ts": item.ts,
-                        "state_json": json.dumps(item.state),
-                        "snippet": item.snippet,
-                        "metadata_json": json.dumps(item.metadata),
-                    }
-                    for item in items
-                ],
-                "unread_count": unread_count,
-                "has_more": len(items) == limit,
-            }
+            proto_items = [
+                MailboxItem(
+                    item_id=item.item_id,
+                    ref_id=item.ref_id,
+                    source_type_id=item.source_type_id,
+                    source_node_id=item.source_node_id,
+                    thread_id=item.thread_id or "",
+                    ts=item.ts,
+                    state_json=json.dumps(item.state),
+                    snippet=item.snippet or "",
+                    metadata_json=json.dumps(item.metadata),
+                )
+                for item in items
+            ]
+
+            return GetMailboxResponse(
+                items=proto_items,
+                unread_count=unread_count,
+                has_more=len(items) == (request.limit or 50),
+            )
         except Exception as e:
             logger.error(f"GetMailbox failed: {e}", exc_info=True)
-            return {"items": [], "unread_count": 0, "error": str(e)}
+            return GetMailboxResponse(items=[], unread_count=0)
 
-    async def health(self) -> dict[str, Any]:
+    async def Health(
+        self,
+        request: HealthRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> HealthResponse:
         """Get server health status."""
         components = {}
 
@@ -558,40 +574,42 @@ class EntDBServicer:
         except Exception:
             components["wal"] = "unknown"
 
-        # Check if data directory is accessible
         components["storage"] = "healthy"
-
         overall_healthy = all(v == "healthy" for v in components.values())
 
-        return {
-            "healthy": overall_healthy,
-            "version": "1.0.0",
-            "components": components,
-        }
+        return HealthResponse(
+            healthy=overall_healthy,
+            version="1.0.0",
+            components=components,
+        )
 
-    async def get_schema(self, type_id: int | None = None) -> dict[str, Any]:
+    async def GetSchema(
+        self,
+        request: GetSchemaRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetSchemaResponse:
         """Get schema information."""
         try:
             schema_dict = self.schema_registry.to_dict()
 
-            if type_id is not None:
-                # Filter to specific type
+            if request.type_id:
                 schema_dict["node_types"] = [
-                    t for t in schema_dict.get("node_types", []) if t.get("type_id") == type_id
+                    t for t in schema_dict.get("node_types", [])
+                    if t.get("type_id") == request.type_id
                 ]
                 schema_dict["edge_types"] = [
-                    e
-                    for e in schema_dict.get("edge_types", [])
-                    if e.get("from_type_id") == type_id or e.get("to_type_id") == type_id
+                    e for e in schema_dict.get("edge_types", [])
+                    if e.get("from_type_id") == request.type_id
+                    or e.get("to_type_id") == request.type_id
                 ]
 
-            return {
-                "schema_json": json.dumps(schema_dict),
-                "fingerprint": self.schema_registry.fingerprint or "",
-            }
+            return GetSchemaResponse(
+                schema_json=json.dumps(schema_dict),
+                fingerprint=self.schema_registry.fingerprint or "",
+            )
         except Exception as e:
             logger.error(f"GetSchema failed: {e}", exc_info=True)
-            return {"schema_json": "{}", "error": str(e)}
+            return GetSchemaResponse(schema_json="{}", fingerprint="")
 
 
 class GrpcServer:
@@ -623,7 +641,7 @@ class GrpcServer:
             servicer: EntDBServicer instance
             host: Host to bind to
             port: Port to listen on
-            max_workers: Maximum thread pool workers
+            max_workers: Maximum concurrent RPCs
             reflection_enabled: Whether to enable gRPC reflection
         """
         self.servicer = servicer
@@ -631,7 +649,7 @@ class GrpcServer:
         self.port = port
         self.max_workers = max_workers
         self.reflection_enabled = reflection_enabled
-        self._server = None
+        self._server: grpc_aio.Server | None = None
         self._running = False
 
     async def start(self) -> None:
@@ -640,26 +658,44 @@ class GrpcServer:
             logger.warning("Server already running")
             return
 
-        if not GRPC_AVAILABLE:
-            logger.error("grpc package not available, cannot start gRPC server")
-            return
-
-        # For now, we'll use a simple implementation
-        # In production, this would use grpc.aio.server() with proper servicer
-        logger.info(
-            f"gRPC server starting on {self.host}:{self.port}",
-            extra={
-                "host": self.host,
-                "port": self.port,
-                "max_workers": self.max_workers,
-            },
+        # Create async gRPC server
+        self._server = grpc_aio.server(
+            options=[
+                ("grpc.max_send_message_length", 50 * 1024 * 1024),  # 50MB
+                ("grpc.max_receive_message_length", 50 * 1024 * 1024),  # 50MB
+                ("grpc.max_concurrent_streams", self.max_workers),
+            ]
         )
 
+        # Register servicer
+        add_EntDBServiceServicer_to_server(self.servicer, self._server)
+
+        # Enable reflection for debugging tools like grpcurl
+        if self.reflection_enabled:
+            try:
+                from grpc_reflection.v1alpha import reflection
+                from .generated import entdb_pb2
+
+                SERVICE_NAMES = (
+                    entdb_pb2.DESCRIPTOR.services_by_name["EntDBService"].full_name,
+                    reflection.SERVICE_NAME,
+                )
+                reflection.enable_server_reflection(SERVICE_NAMES, self._server)
+            except ImportError:
+                logger.warning("grpc-reflection not installed, skipping reflection")
+
+        # Bind to address
+        bind_address = f"{self.host}:{self.port}"
+        self._server.add_insecure_port(bind_address)
+
+        # Start server
+        await self._server.start()
         self._running = True
 
-        # Note: Full gRPC implementation requires generated protobuf code
-        # This is a placeholder for the actual gRPC server
-        # In production, use: grpc.aio.server() with add_EntDBServiceServicer_to_server()
+        logger.info(
+            f"gRPC server started on {bind_address}",
+            extra={"host": self.host, "port": self.port},
+        )
 
     async def stop(self, grace_period: float = 5.0) -> None:
         """Stop the gRPC server gracefully.
@@ -667,14 +703,18 @@ class GrpcServer:
         Args:
             grace_period: Time to wait for pending RPCs to complete
         """
-        if not self._running:
+        if not self._running or not self._server:
             return
 
-        logger.info("Stopping gRPC server")
+        logger.info("Stopping gRPC server...")
+        await self._server.stop(grace_period)
         self._running = False
+        logger.info("gRPC server stopped")
 
+    async def wait_for_termination(self) -> None:
+        """Wait for the server to terminate."""
         if self._server:
-            await self._server.stop(grace_period)
+            await self._server.wait_for_termination()
 
     @property
     def is_running(self) -> bool:

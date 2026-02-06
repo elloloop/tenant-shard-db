@@ -33,17 +33,9 @@ from .errors import (
 )
 from .registry import SchemaRegistry, get_registry
 from .schema import EdgeTypeDef, NodeTypeDef
+from ._grpc_client import GrpcClient
 
 logger = logging.getLogger(__name__)
-
-# Try to import HTTP client
-try:
-    import aiohttp
-
-    AIOHTTP_AVAILABLE = True
-except ImportError:
-    AIOHTTP_AVAILABLE = False
-    aiohttp = None
 
 
 @dataclass
@@ -59,15 +51,6 @@ class Receipt:
     tenant_id: str
     idempotency_key: str
     stream_position: str | None = None
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Receipt:
-        """Create from dictionary."""
-        return cls(
-            tenant_id=data["tenant_id"],
-            idempotency_key=data["idempotency_key"],
-            stream_position=data.get("stream_position"),
-        )
 
 
 @dataclass
@@ -94,28 +77,6 @@ class Node:
     owner_actor: str
     acl: list[dict[str, str]] = field(default_factory=list)
 
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Node:
-        """Create from dictionary."""
-        payload = data.get("payload_json")
-        if isinstance(payload, str):
-            payload = json.loads(payload)
-
-        acl = data.get("acl_json")
-        if isinstance(acl, str):
-            acl = json.loads(acl)
-
-        return cls(
-            tenant_id=data["tenant_id"],
-            node_id=data["node_id"],
-            type_id=data["type_id"],
-            payload=payload or {},
-            created_at=data.get("created_at", 0),
-            updated_at=data.get("updated_at", 0),
-            owner_actor=data.get("owner_actor", ""),
-            acl=acl or [],
-        )
-
 
 @dataclass
 class Edge:
@@ -136,22 +97,6 @@ class Edge:
     to_node_id: str
     props: dict[str, Any]
     created_at: int
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Edge:
-        """Create from dictionary."""
-        props = data.get("props_json")
-        if isinstance(props, str):
-            props = json.loads(props)
-
-        return cls(
-            tenant_id=data["tenant_id"],
-            edge_type_id=data["edge_type_id"],
-            from_node_id=data["from_node_id"],
-            to_node_id=data["to_node_id"],
-            props=props or {},
-            created_at=data.get("created_at", 0),
-        )
 
 
 @dataclass
@@ -250,7 +195,7 @@ class Plan:
                 raise UnknownFieldError(field_name, node_type.name, suggestions)
             raise ValidationError("; ".join(errors), errors=errors)
 
-        op = {
+        op: dict[str, Any] = {
             "create_node": {
                 "type_id": node_type.type_id,
                 "data_json": json.dumps(payload),
@@ -286,7 +231,7 @@ class Plan:
         Returns:
             Self for chaining
         """
-        op = {
+        op: dict[str, Any] = {
             "update_node": {
                 "type_id": node_type.type_id,
                 "id": node_id,
@@ -425,8 +370,8 @@ class Plan:
 class DbClient:
     """Client for connecting to EntDB server.
 
-    Supports both gRPC and HTTP connections. Falls back to HTTP
-    if gRPC is not available.
+    Provides a clean Python API for interacting with EntDB.
+    Handles connection management and exposes high-level operations.
 
     Example:
         >>> async with DbClient("localhost:50051") as db:
@@ -437,20 +382,26 @@ class DbClient:
         self,
         address: str,
         *,
-        use_http: bool = False,
+        secure: bool = False,
         registry: SchemaRegistry | None = None,
     ) -> None:
         """Initialize client.
 
         Args:
-            address: Server address (host:port)
-            use_http: Force HTTP instead of gRPC
+            address: Server address (host:port or just host)
+            secure: Whether to use TLS
             registry: Optional schema registry
         """
-        self.address = address
-        self.use_http = use_http
+        # Parse address
+        if ":" in address:
+            host, port_str = address.rsplit(":", 1)
+            port = int(port_str)
+        else:
+            host = address
+            port = 50051  # Default gRPC port
+
+        self._grpc = GrpcClient(host=host, port=port, secure=secure)
         self.registry = registry or get_registry()
-        self._session: aiohttp.ClientSession | None = None
         self._connected = False
 
     async def connect(self) -> None:
@@ -458,33 +409,20 @@ class DbClient:
         if self._connected:
             return
 
-        if self.use_http or not AIOHTTP_AVAILABLE:
-            if not AIOHTTP_AVAILABLE:
-                raise ConnectionError(
-                    "aiohttp required for HTTP client",
-                    address=self.address,
-                )
-
-            # Parse address
-            if not self.address.startswith("http"):
-                self.address = f"http://{self.address}"
-
-            self._session = aiohttp.ClientSession()
+        try:
+            await self._grpc.connect()
             self._connected = True
-        else:
-            # gRPC connection would go here
-            # For now, fall back to HTTP
-            if not self.address.startswith("http"):
-                self.address = f"http://{self.address}"
-            self._session = aiohttp.ClientSession()
-            self._connected = True
+        except Exception as e:
+            raise ConnectionError(
+                f"Failed to connect: {e}",
+                address=f"{self._grpc._host}:{self._grpc._port}",
+            ) from e
 
     async def close(self) -> None:
         """Close the connection."""
-        if self._session:
-            await self._session.close()
-            self._session = None
-        self._connected = False
+        if self._connected:
+            await self._grpc.close()
+            self._connected = False
 
     async def __aenter__(self) -> DbClient:
         await self.connect()
@@ -534,15 +472,67 @@ class DbClient:
         Returns:
             Node if found, None otherwise
         """
-        url = f"{self.address}/v1/nodes/{node_id}"
-        params = {"type_id": node_type.type_id}
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
+        grpc_node = await self._grpc.get_node(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=node_type.type_id,
+            node_id=node_id,
+        )
 
-        async with self._session.get(url, params=params, headers=headers) as resp:
-            data = await resp.json()
-            if not data.get("found"):
-                return None
-            return Node.from_dict(data["node"])
+        if grpc_node is None:
+            return None
+
+        return Node(
+            tenant_id=grpc_node.tenant_id,
+            node_id=grpc_node.node_id,
+            type_id=grpc_node.type_id,
+            payload=grpc_node.payload,
+            created_at=grpc_node.created_at,
+            updated_at=grpc_node.updated_at,
+            owner_actor=grpc_node.owner_actor,
+            acl=grpc_node.acl,
+        )
+
+    async def get_many(
+        self,
+        node_type: NodeTypeDef,
+        node_ids: list[str],
+        tenant_id: str,
+        actor: str,
+    ) -> tuple[list[Node], list[str]]:
+        """Get multiple nodes by IDs.
+
+        Args:
+            node_type: Expected node type
+            node_ids: Node identifiers
+            tenant_id: Tenant identifier
+            actor: Actor making request
+
+        Returns:
+            Tuple of (found nodes, missing node IDs)
+        """
+        grpc_nodes, missing = await self._grpc.get_nodes(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=node_type.type_id,
+            node_ids=node_ids,
+        )
+
+        nodes = [
+            Node(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=n.payload,
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=n.acl,
+            )
+            for n in grpc_nodes
+        ]
+
+        return nodes, missing
 
     async def query(
         self,
@@ -564,19 +554,29 @@ class DbClient:
         Returns:
             List of nodes
         """
-        url = f"{self.address}/v1/nodes"
-        params = {
-            "type_id": node_type.type_id,
-            "limit": limit,
-            "offset": offset,
-        }
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
+        grpc_nodes, _ = await self._grpc.query_nodes(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=node_type.type_id,
+            limit=limit,
+            offset=offset,
+        )
 
-        async with self._session.get(url, params=params, headers=headers) as resp:
-            data = await resp.json()
-            return [Node.from_dict(n) for n in data.get("nodes", [])]
+        return [
+            Node(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=n.payload,
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=n.acl,
+            )
+            for n in grpc_nodes
+        ]
 
-    async def edge_out(
+    async def edges_out(
         self,
         node_id: str,
         tenant_id: str,
@@ -594,17 +594,27 @@ class DbClient:
         Returns:
             List of edges
         """
-        url = f"{self.address}/v1/nodes/{node_id}/edges/from"
-        params = {}
-        if edge_type:
-            params["edge_type_id"] = edge_type.edge_id
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
+        edge_type_id = edge_type.edge_id if edge_type else None
+        grpc_edges, _ = await self._grpc.get_edges_from(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=node_id,
+            edge_type_id=edge_type_id,
+        )
 
-        async with self._session.get(url, params=params, headers=headers) as resp:
-            data = await resp.json()
-            return [Edge.from_dict(e) for e in data.get("edges", [])]
+        return [
+            Edge(
+                tenant_id=e.tenant_id,
+                edge_type_id=e.edge_type_id,
+                from_node_id=e.from_node_id,
+                to_node_id=e.to_node_id,
+                props=e.props,
+                created_at=e.created_at,
+            )
+            for e in grpc_edges
+        ]
 
-    async def edge_in(
+    async def edges_in(
         self,
         node_id: str,
         tenant_id: str,
@@ -622,15 +632,25 @@ class DbClient:
         Returns:
             List of edges
         """
-        url = f"{self.address}/v1/nodes/{node_id}/edges/to"
-        params = {}
-        if edge_type:
-            params["edge_type_id"] = edge_type.edge_id
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
+        edge_type_id = edge_type.edge_id if edge_type else None
+        grpc_edges, _ = await self._grpc.get_edges_to(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=node_id,
+            edge_type_id=edge_type_id,
+        )
 
-        async with self._session.get(url, params=params, headers=headers) as resp:
-            data = await resp.json()
-            return [Edge.from_dict(e) for e in data.get("edges", [])]
+        return [
+            Edge(
+                tenant_id=e.tenant_id,
+                edge_type_id=e.edge_type_id,
+                from_node_id=e.from_node_id,
+                to_node_id=e.to_node_id,
+                props=e.props,
+                created_at=e.created_at,
+            )
+            for e in grpc_edges
+        ]
 
     async def search(
         self,
@@ -654,15 +674,24 @@ class DbClient:
         Returns:
             List of search results
         """
-        url = f"{self.address}/v1/mailbox/{user_id}/search"
-        params: dict[str, Any] = {"q": query, "limit": limit}
-        if types:
-            params["source_type_ids"] = ",".join(str(t.type_id) for t in types)
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
+        source_type_ids = [t.type_id for t in types] if types else None
 
-        async with self._session.get(url, params=params, headers=headers) as resp:
-            data = await resp.json()
-            return data.get("results", [])
+        return await self._grpc.search_mailbox(
+            tenant_id=tenant_id,
+            actor=actor,
+            user_id=user_id,
+            query=query,
+            source_type_ids=source_type_ids,
+            limit=limit,
+        )
+
+    async def health(self) -> dict[str, Any]:
+        """Check server health.
+
+        Returns:
+            Health status dictionary
+        """
+        return await self._grpc.health()
 
     async def _execute(
         self,
@@ -684,36 +713,35 @@ class DbClient:
         Returns:
             CommitResult
         """
-        url = f"{self.address}/v1/execute"
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": actor}
-        body = {
-            "operations": operations,
-            "idempotency_key": idempotency_key,
-            "wait_applied": wait_applied,
-        }
+        result = await self._grpc.execute_atomic(
+            tenant_id=tenant_id,
+            actor=actor,
+            operations=operations,
+            idempotency_key=idempotency_key,
+            schema_fingerprint=self.registry.fingerprint,
+            wait_applied=wait_applied,
+        )
 
-        if self.registry.fingerprint:
-            body["schema_fingerprint"] = self.registry.fingerprint
-
-        async with self._session.post(url, json=body, headers=headers) as resp:
-            data = await resp.json()
-
-            if not data.get("success"):
-                return CommitResult(
-                    success=False,
-                    error=data.get("error"),
-                )
-
-            receipt = None
-            if "receipt" in data:
-                receipt = Receipt.from_dict(data["receipt"])
-
+        if not result.success:
             return CommitResult(
-                success=True,
-                receipt=receipt,
-                created_node_ids=data.get("created_node_ids", []),
-                applied=data.get("applied_status") == "RECEIPT_STATUS_APPLIED",
+                success=False,
+                error=result.error,
             )
+
+        receipt = None
+        if result.receipt:
+            receipt = Receipt(
+                tenant_id=result.receipt.tenant_id,
+                idempotency_key=result.receipt.idempotency_key,
+                stream_position=result.receipt.stream_position,
+            )
+
+        return CommitResult(
+            success=True,
+            receipt=receipt,
+            created_node_ids=result.created_node_ids,
+            applied=result.applied,
+        )
 
     async def get_receipt_status(
         self,
@@ -729,9 +757,4 @@ class DbClient:
         Returns:
             Status string (PENDING, APPLIED, FAILED)
         """
-        url = f"{self.address}/v1/receipt/{idempotency_key}"
-        headers = {"X-Tenant-ID": tenant_id, "X-Actor": "system"}
-
-        async with self._session.get(url, headers=headers) as resp:
-            data = await resp.json()
-            return data.get("status", "UNKNOWN")
+        return await self._grpc.get_receipt_status(tenant_id, idempotency_key)
