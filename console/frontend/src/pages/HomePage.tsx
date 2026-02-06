@@ -28,10 +28,10 @@ export default function HomePage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
           <Database className="w-8 h-8 text-blue-600" />
-          EntDB Browser
+          EntDB Console
         </h1>
         <p className="mt-2 text-gray-600">
-          Browse and explore your EntDB data
+          Administration and data browsing for EntDB
         </p>
       </div>
 

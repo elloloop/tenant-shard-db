@@ -7,9 +7,9 @@ This module starts the EntDB server with all components:
 - Archiver loop (WAL -> S3)
 - Snapshotter loop (SQLite -> S3)
 
-For HTTP/REST access, use the entdb-gateway sidecar project
-which provides a REST API and web-based data browser.
-See examples/entdb-gateway/
+For HTTP/REST access, use the EntDB Console which provides
+a web UI and REST API for data browsing (similar to phpMyAdmin).
+See console/
 
 Usage:
     python -m entdb_server.main

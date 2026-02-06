@@ -40,7 +40,7 @@ export default function Layout({ children }: LayoutProps) {
           {sidebarOpen && (
             <Link to="/" className="flex items-center gap-2 font-bold text-lg">
               <Database className="w-6 h-6 text-blue-400" />
-              EntDB Browser
+              EntDB Console
             </Link>
           )}
           <button

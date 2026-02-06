@@ -3,9 +3,9 @@ API module for EntDB server.
 
 This module provides the external interface via gRPC.
 
-For HTTP/REST access, use the entdb-gateway sidecar project
-which demonstrates SDK usage and provides a web-based data browser.
-See examples/entdb-gateway/
+For HTTP/REST access, use the EntDB Console which provides
+a web UI and REST API for data browsing (similar to phpMyAdmin).
+See console/
 
 Invariants:
     - All operations require tenant_id and actor

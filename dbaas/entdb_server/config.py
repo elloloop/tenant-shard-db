@@ -343,8 +343,8 @@ class ServerConfig:
 
     This aggregates all configuration sections and provides validation.
 
-    For HTTP/REST access, use the entdb-gateway sidecar project.
-    See examples/entdb-gateway/
+    For HTTP/REST access, use the EntDB Console.
+    See console/
 
     Attributes:
         wal_backend: Which WAL backend to use

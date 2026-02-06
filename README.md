@@ -90,7 +90,7 @@ async with DbClient(
       │                               │
       ▼                               ▼
 ┌───────────────┐           ┌─────────────────────┐
-│ HTTP Gateway  │  ──gRPC── │   EntDB Server      │
+│ EntDB Console │  ──gRPC── │   EntDB Server      │
 │ (optional)    │           │   ┌─────────────┐   │
 │  REST API     │           │   │ gRPC :50051 │   │
 │  React UI     │           │   └──────┬──────┘   │
@@ -107,8 +107,8 @@ async with DbClient(
                             └─────────────────────┘
 ```
 
-The HTTP Gateway (see `examples/entdb-gateway/`) is a sidecar that provides
-REST API access and a web-based data browser using the Python SDK.
+The [EntDB Console](console/) provides a web UI and REST API for data browsing,
+similar to phpMyAdmin or DBeaver.
 
 ## Documentation
 
@@ -135,10 +135,12 @@ REST API access and a web-based data browser using the Python SDK.
 │       ├── snapshot/        # SQLite snapshots
 │       ├── tools/           # CLI tools
 │       └── diagrams/        # Mermaid diagrams
+├── console/                 # EntDB Console (Web UI + REST API)
+│   ├── gateway/             # FastAPI backend
+│   └── frontend/            # React frontend
 ├── sdk/
 │   └── entdb_sdk/           # Python SDK
 ├── examples/
-│   ├── entdb-gateway/       # HTTP Gateway + React UI (sidecar)
 │   └── fastapi_app/         # Sample FastAPI application
 ├── tests/
 │   ├── unit/                # Unit tests

@@ -1,5 +1,5 @@
 """
-FastAPI application factory for EntDB HTTP Gateway.
+FastAPI application factory for EntDB Console.
 
 This module creates the main FastAPI app with:
 - CORS configuration for frontend
@@ -8,7 +8,6 @@ This module creates the main FastAPI app with:
 - Static file serving for frontend
 """
 
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -41,8 +40,8 @@ def create_app() -> FastAPI:
     settings = Settings()
 
     app = FastAPI(
-        title="EntDB HTTP Gateway",
-        description="REST API gateway for EntDB, with data browsing frontend",
+        title="EntDB Console",
+        description="Web-based administration and data browsing tool for EntDB",
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -62,7 +61,7 @@ def create_app() -> FastAPI:
     # Health endpoint at root
     @app.get("/health")
     async def health():
-        return {"status": "healthy", "service": "entdb-gateway"}
+        return {"status": "healthy", "service": "entdb-console"}
 
     # Serve frontend static files in production
     frontend_dir = Path(__file__).parent.parent / "frontend" / "dist"

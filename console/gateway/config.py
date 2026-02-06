@@ -1,5 +1,5 @@
 """
-Configuration for EntDB HTTP Gateway.
+Configuration for EntDB Console.
 
 Uses pydantic-settings for environment variable loading.
 """
@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Gateway configuration loaded from environment."""
+    """Console configuration loaded from environment."""
 
     # EntDB server connection
     entdb_host: str = Field(default="localhost", description="EntDB gRPC server host")
@@ -18,9 +18,9 @@ class Settings(BaseSettings):
     # Default tenant (can be overridden per-request)
     default_tenant_id: str = Field(default="default", description="Default tenant ID")
 
-    # Gateway settings
-    gateway_host: str = Field(default="0.0.0.0", description="Gateway bind host")
-    gateway_port: int = Field(default=8080, description="Gateway bind port")
+    # Console settings
+    host: str = Field(default="0.0.0.0", description="Console bind host")
+    port: int = Field(default=8080, description="Console bind port")
 
     # CORS settings
     cors_origins: list[str] = Field(
@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     default_page_size: int = Field(default=50, description="Default items per page")
     max_page_size: int = Field(default=200, description="Maximum items per page")
 
-    model_config = {"env_prefix": "GATEWAY_"}
+    model_config = {"env_prefix": "CONSOLE_"}
 
     @property
     def entdb_endpoint(self) -> str:
