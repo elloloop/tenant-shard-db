@@ -3,8 +3,8 @@ FastAPI application factory for EntDB Console.
 
 This module creates the main FastAPI app with:
 - CORS configuration for frontend
-- SDK client lifecycle management
-- API routes
+- Console gRPC client lifecycle management
+- Read-only API routes
 - Static file serving for frontend
 """
 
@@ -17,22 +17,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from .config import Settings
+from .console_client import ConsoleClient
 from .routes import router
-from .sdk_client import SdkClientManager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Manage SDK client lifecycle."""
+    """Manage Console client lifecycle."""
     settings = Settings()
-    manager = SdkClientManager(settings)
+    client = ConsoleClient(host=settings.entdb_host, port=settings.entdb_port)
 
-    await manager.start()
-    app.state.sdk_manager = manager
+    await client.connect()
+    app.state.console_client = client
+    app.state.settings = settings
 
     yield
 
-    await manager.stop()
+    await client.close()
 
 
 def create_app() -> FastAPI:
@@ -41,7 +42,10 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         title="EntDB Console",
-        description="Web-based administration and data browsing tool for EntDB",
+        description=(
+            "Read-only web interface for browsing EntDB data. "
+            "All write operations must go through the SDK."
+        ),
         version="1.0.0",
         lifespan=lifespan,
     )
@@ -51,7 +55,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["*"],
+        allow_methods=["GET", "OPTIONS"],  # Read-only
         allow_headers=["*"],
     )
 
@@ -61,7 +65,7 @@ def create_app() -> FastAPI:
     # Health endpoint at root
     @app.get("/health")
     async def health():
-        return {"status": "healthy", "service": "entdb-console"}
+        return {"status": "healthy", "service": "entdb-console", "mode": "read-only"}
 
     # Serve frontend static files in production
     frontend_dir = Path(__file__).parent.parent / "frontend" / "dist"

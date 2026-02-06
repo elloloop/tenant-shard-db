@@ -1,8 +1,11 @@
 """
-API routes for EntDB HTTP Gateway.
+Read-only API routes for EntDB Console.
 
-Provides REST endpoints that wrap the EntDB SDK, demonstrating
-how to build HTTP APIs on top of EntDB.
+Provides REST endpoints for browsing EntDB data. This is intentionally
+read-only - all write operations must go through the SDK.
+
+The Console fetches schema from the server and displays data dynamically,
+without needing schema definitions in code.
 """
 
 import logging
@@ -11,51 +14,19 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
-from .sdk_client import SdkClientManager
+from .console_client import ConsoleClient
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["EntDB Gateway"])
+router = APIRouter(tags=["EntDB Console"])
 
 
-# --- Request/Response Models ---
-
-
-class NodeCreateRequest(BaseModel):
-    """Request to create a node."""
-
-    type_id: int = Field(..., description="Node type ID")
-    payload: dict[str, Any] = Field(..., description="Node payload")
-    acl: list[str] | None = Field(None, description="Access control list")
-    idempotency_key: str | None = Field(None, description="Idempotency key")
-
-
-class NodeUpdateRequest(BaseModel):
-    """Request to update a node."""
-
-    payload: dict[str, Any] = Field(..., description="Fields to update")
-
-
-class EdgeCreateRequest(BaseModel):
-    """Request to create an edge."""
-
-    edge_type_id: int = Field(..., description="Edge type ID")
-    from_id: str = Field(..., description="Source node ID")
-    to_id: str = Field(..., description="Target node ID")
-    payload: dict[str, Any] | None = Field(None, description="Edge payload")
-
-
-class AtomicOperationRequest(BaseModel):
-    """Request for atomic transaction."""
-
-    operations: list[dict[str, Any]] = Field(..., description="List of operations")
-    idempotency_key: str | None = Field(None, description="Idempotency key")
+# --- Response Models ---
 
 
 class NodeResponse(BaseModel):
-    """Node response."""
-
-    id: str
+    """Node data."""
+    node_id: str
     type_id: int
     tenant_id: str
     payload: dict[str, Any]
@@ -65,494 +36,457 @@ class NodeResponse(BaseModel):
 
 
 class EdgeResponse(BaseModel):
-    """Edge response."""
-
-    id: str
+    """Edge data."""
     edge_type_id: int
-    from_id: str
-    to_id: str
+    from_node_id: str
+    to_node_id: str
     tenant_id: str
-    payload: dict[str, Any] | None = None
+    props: dict[str, Any] | None = None
+    created_at: int | None = None
 
 
-class PaginatedResponse(BaseModel):
-    """Paginated list response."""
-
-    items: list[dict[str, Any]]
-    total: int
+class PaginatedNodesResponse(BaseModel):
+    """Paginated nodes response."""
+    nodes: list[NodeResponse]
     offset: int
     limit: int
     has_more: bool
 
 
 class SchemaTypeResponse(BaseModel):
-    """Schema type information."""
-
+    """Schema type info."""
     type_id: int
     name: str
     fields: list[dict[str, Any]]
     deprecated: bool = False
 
 
-class SchemaResponse(BaseModel):
-    """Full schema response."""
+class SchemaEdgeTypeResponse(BaseModel):
+    """Schema edge type info."""
+    edge_id: int
+    name: str
+    from_type_id: int
+    to_type_id: int
+    props: list[dict[str, Any]] = Field(default_factory=list)
 
+
+class SchemaResponse(BaseModel):
+    """Full schema."""
     node_types: list[SchemaTypeResponse]
-    edge_types: list[dict[str, Any]]
+    edge_types: list[SchemaEdgeTypeResponse]
     fingerprint: str
+
+
+class HealthResponse(BaseModel):
+    """Health status."""
+    healthy: bool
+    version: str
+    components: dict[str, str]
+
+
+class GraphResponse(BaseModel):
+    """Graph neighborhood response."""
+    root_id: str
+    nodes: list[NodeResponse]
+    edges: list[EdgeResponse]
 
 
 # --- Dependencies ---
 
 
-def get_sdk_manager(request: Request) -> SdkClientManager:
-    """Get SDK manager from app state."""
-    return request.app.state.sdk_manager
+def get_client(request: Request) -> ConsoleClient:
+    """Get Console client from app state."""
+    return request.app.state.console_client
 
 
 def get_tenant_id(
     request: Request,
-    x_tenant_id: str | None = Query(None, alias="X-Tenant-ID"),
+    x_tenant_id: str | None = Query(None, alias="tenant_id"),
 ) -> str:
     """Get tenant ID from header or query param."""
-    # Check header first
     tenant = request.headers.get("X-Tenant-ID") or x_tenant_id
     if not tenant:
-        # Use default from settings
-        tenant = request.app.state.sdk_manager.settings.default_tenant_id
+        tenant = request.app.state.settings.default_tenant_id
     return tenant
 
 
 def get_actor(
     request: Request,
-    x_actor: str | None = Query(None, alias="X-Actor"),
+    x_actor: str | None = Query(None, alias="actor"),
 ) -> str:
     """Get actor from header or query param."""
     actor = request.headers.get("X-Actor") or x_actor
-    return actor or "gateway:anonymous"
+    return actor or "console:browser"
 
 
-# --- Schema Routes ---
+# --- Health & Schema ---
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health(client: ConsoleClient = Depends(get_client)):
+    """
+    Check EntDB server health.
+
+    Returns health status of server components.
+    """
+    return await client.health()
 
 
 @router.get("/schema", response_model=SchemaResponse)
-async def get_schema(
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
+async def get_schema(client: ConsoleClient = Depends(get_client)):
     """
-    Get the full schema definition.
+    Get the full schema.
 
-    Returns all registered node types, edge types, and schema fingerprint.
-    Useful for frontend to dynamically render forms and displays.
+    Returns all node types and edge types registered on the server.
+    Use this to understand the data model and render dynamic forms.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        schema = await client.get_schema()
-        return schema
+    result = await client.get_schema()
+    schema = result.get("schema", {})
+
+    return SchemaResponse(
+        node_types=[
+            SchemaTypeResponse(**t) for t in schema.get("node_types", [])
+        ],
+        edge_types=[
+            SchemaEdgeTypeResponse(**e) for e in schema.get("edge_types", [])
+        ],
+        fingerprint=result.get("fingerprint", ""),
+    )
 
 
 @router.get("/schema/types/{type_id}", response_model=SchemaTypeResponse)
 async def get_type_schema(
     type_id: int,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
+    client: ConsoleClient = Depends(get_client),
 ):
     """
     Get schema for a specific node type.
 
-    Returns field definitions, validation rules, and metadata.
+    Returns field definitions and metadata for the type.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        schema = await client.get_schema()
+    result = await client.get_schema()
+    schema = result.get("schema", {})
 
-        for node_type in schema.get("node_types", []):
-            if node_type["type_id"] == type_id:
-                return node_type
+    for node_type in schema.get("node_types", []):
+        if node_type.get("type_id") == type_id:
+            return SchemaTypeResponse(**node_type)
 
-        raise HTTPException(status_code=404, detail=f"Type {type_id} not found")
-
-
-# --- Node Routes ---
+    raise HTTPException(status_code=404, detail=f"Type {type_id} not found")
 
 
-@router.get("/nodes", response_model=PaginatedResponse)
+# --- Node Browsing ---
+
+
+@router.get("/nodes", response_model=PaginatedNodesResponse)
 async def list_nodes(
-    type_id: int | None = Query(None, description="Filter by type"),
+    type_id: int = Query(..., description="Node type ID to query"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     limit: int = Query(50, ge=1, le=200, description="Page size"),
-    sdk: SdkClientManager = Depends(get_sdk_manager),
+    client: ConsoleClient = Depends(get_client),
     tenant_id: str = Depends(get_tenant_id),
     actor: str = Depends(get_actor),
 ):
     """
-    List nodes with optional filtering and pagination.
+    List nodes of a specific type.
 
-    Supports filtering by node type and pagination.
+    Paginated results for browsing nodes.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        if type_id is not None:
-            nodes = await client.query(type_id=type_id, limit=limit + 1, offset=offset)
-        else:
-            # Query all types (simplified - in production you'd want proper multi-type query)
-            nodes = await client.query(type_id=0, limit=limit + 1, offset=offset)
+    nodes, has_more = await client.query_nodes(
+        tenant_id=tenant_id,
+        actor=actor,
+        type_id=type_id,
+        limit=limit,
+        offset=offset,
+    )
 
-        has_more = len(nodes) > limit
-        items = nodes[:limit]
-
-        return PaginatedResponse(
-            items=[_node_to_dict(n) for n in items],
-            total=-1,  # Total count would require separate query
-            offset=offset,
-            limit=limit,
-            has_more=has_more,
-        )
+    return PaginatedNodesResponse(
+        nodes=[
+            NodeResponse(
+                node_id=n.node_id,
+                type_id=n.type_id,
+                tenant_id=n.tenant_id,
+                payload=n.payload,
+                owner_actor=n.owner_actor,
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+            )
+            for n in nodes
+        ],
+        offset=offset,
+        limit=limit,
+        has_more=has_more,
+    )
 
 
 @router.get("/nodes/{node_id}", response_model=NodeResponse)
 async def get_node(
     node_id: str,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
+    client: ConsoleClient = Depends(get_client),
     tenant_id: str = Depends(get_tenant_id),
     actor: str = Depends(get_actor),
 ):
     """
     Get a single node by ID.
 
-    Returns the node with its full payload.
+    Returns the full node with all payload fields.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        node = await client.get(node_id)
-        if node is None:
-            raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
-        return _node_to_dict(node)
+    node = await client.get_node(
+        tenant_id=tenant_id,
+        actor=actor,
+        node_id=node_id,
+    )
+
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
+
+    return NodeResponse(
+        node_id=node.node_id,
+        type_id=node.type_id,
+        tenant_id=node.tenant_id,
+        payload=node.payload,
+        owner_actor=node.owner_actor,
+        created_at=node.created_at,
+        updated_at=node.updated_at,
+    )
 
 
-@router.post("/nodes", response_model=NodeResponse, status_code=201)
-async def create_node(
-    request: NodeCreateRequest,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Create a new node.
-
-    The node will be created atomically and replicated to the WAL.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-        result = await client.atomic(
-            lambda plan: plan.create(
-                type_id=request.type_id,
-                payload=request.payload,
-                acl=request.acl,
-                alias="node",
-            ),
-            idempotency_key=request.idempotency_key,
-        )
-
-        node_id = result["results"][0]["node_id"]
-        node = await client.get(node_id)
-        return _node_to_dict(node)
-
-
-@router.patch("/nodes/{node_id}", response_model=NodeResponse)
-async def update_node(
-    node_id: str,
-    request: NodeUpdateRequest,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Update an existing node.
-
-    Only the specified fields will be updated.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-        await client.atomic(
-            lambda plan: plan.update(node_id, request.payload)
-        )
-
-        node = await client.get(node_id)
-        return _node_to_dict(node)
-
-
-@router.delete("/nodes/{node_id}", status_code=204)
-async def delete_node(
-    node_id: str,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Delete a node.
-
-    The node and all its edges will be removed.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-        await client.atomic(
-            lambda plan: plan.delete(node_id)
-        )
-
-
-# --- Edge Routes ---
+# --- Edge Browsing ---
 
 
 @router.get("/nodes/{node_id}/edges/out", response_model=list[EdgeResponse])
 async def get_outgoing_edges(
     node_id: str,
     edge_type_id: int | None = Query(None, description="Filter by edge type"),
-    sdk: SdkClientManager = Depends(get_sdk_manager),
+    limit: int = Query(100, ge=1, le=500),
+    client: ConsoleClient = Depends(get_client),
     tenant_id: str = Depends(get_tenant_id),
     actor: str = Depends(get_actor),
 ):
     """
     Get outgoing edges from a node.
 
-    Returns all edges where this node is the source.
+    Returns edges where this node is the source.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        edges = await client.edges_out(node_id, edge_type_id=edge_type_id)
-        return [_edge_to_dict(e) for e in edges]
+    edges = await client.get_edges_from(
+        tenant_id=tenant_id,
+        actor=actor,
+        node_id=node_id,
+        edge_type_id=edge_type_id,
+        limit=limit,
+    )
+
+    return [
+        EdgeResponse(
+            edge_type_id=e.edge_type_id,
+            from_node_id=e.from_node_id,
+            to_node_id=e.to_node_id,
+            tenant_id=e.tenant_id,
+            props=e.props,
+            created_at=e.created_at,
+        )
+        for e in edges
+    ]
 
 
 @router.get("/nodes/{node_id}/edges/in", response_model=list[EdgeResponse])
 async def get_incoming_edges(
     node_id: str,
     edge_type_id: int | None = Query(None, description="Filter by edge type"),
-    sdk: SdkClientManager = Depends(get_sdk_manager),
+    limit: int = Query(100, ge=1, le=500),
+    client: ConsoleClient = Depends(get_client),
     tenant_id: str = Depends(get_tenant_id),
     actor: str = Depends(get_actor),
 ):
     """
     Get incoming edges to a node.
 
-    Returns all edges where this node is the target.
+    Returns edges where this node is the target.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        edges = await client.edges_in(node_id, edge_type_id=edge_type_id)
-        return [_edge_to_dict(e) for e in edges]
+    edges = await client.get_edges_to(
+        tenant_id=tenant_id,
+        actor=actor,
+        node_id=node_id,
+        edge_type_id=edge_type_id,
+        limit=limit,
+    )
 
-
-@router.post("/edges", response_model=EdgeResponse, status_code=201)
-async def create_edge(
-    request: EdgeCreateRequest,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Create an edge between two nodes.
-
-    The edge is unidirectional from `from_id` to `to_id`.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-        result = await client.atomic(
-            lambda plan: plan.link(
-                edge_type_id=request.edge_type_id,
-                from_id=request.from_id,
-                to_id=request.to_id,
-                payload=request.payload,
-            )
+    return [
+        EdgeResponse(
+            edge_type_id=e.edge_type_id,
+            from_node_id=e.from_node_id,
+            to_node_id=e.to_node_id,
+            tenant_id=e.tenant_id,
+            props=e.props,
+            created_at=e.created_at,
         )
-
-        # Return created edge
-        return EdgeResponse(
-            id=result["results"][0]["edge_id"],
-            edge_type_id=request.edge_type_id,
-            from_id=request.from_id,
-            to_id=request.to_id,
-            tenant_id=tenant_id,
-            payload=request.payload,
-        )
+        for e in edges
+    ]
 
 
-# --- Search Routes ---
+# --- Graph Visualization ---
 
 
-@router.get("/search")
-async def search_mailbox(
-    q: str = Query(..., min_length=1, description="Search query"),
-    limit: int = Query(50, ge=1, le=200, description="Max results"),
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Full-text search in user's mailbox.
-
-    Searches across all mailbox items using SQLite FTS5.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-        results = await client.search(q, limit=limit)
-        return {"query": q, "results": results}
-
-
-# --- Atomic Transaction Routes ---
-
-
-@router.post("/atomic")
-async def execute_atomic(
-    request: AtomicOperationRequest,
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Execute multiple operations atomically.
-
-    All operations succeed or fail together. Supports:
-    - create_node
-    - update_node
-    - delete_node
-    - create_edge
-    - delete_edge
-
-    Operations can reference each other using aliases.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-
-        def build_plan(plan):
-            for op in request.operations:
-                op_type = op.get("op")
-                if op_type == "create_node":
-                    plan.create(
-                        type_id=op["type_id"],
-                        payload=op["payload"],
-                        alias=op.get("alias"),
-                        acl=op.get("acl"),
-                    )
-                elif op_type == "update_node":
-                    plan.update(op["node_id"], op["payload"])
-                elif op_type == "delete_node":
-                    plan.delete(op["node_id"])
-                elif op_type == "create_edge":
-                    plan.link(
-                        edge_type_id=op["edge_type_id"],
-                        from_id=op["from_id"],
-                        to_id=op["to_id"],
-                        payload=op.get("payload"),
-                    )
-                elif op_type == "delete_edge":
-                    plan.unlink(op["edge_id"])
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Unknown operation type: {op_type}",
-                    )
-
-        result = await client.atomic(build_plan, idempotency_key=request.idempotency_key)
-        return result
-
-
-# --- Browse Routes (for frontend) ---
-
-
-@router.get("/browse/types")
-async def browse_types(
-    sdk: SdkClientManager = Depends(get_sdk_manager),
-    tenant_id: str = Depends(get_tenant_id),
-    actor: str = Depends(get_actor),
-):
-    """
-    Get all node types for browsing.
-
-    Returns type names, IDs, and sample counts for the browser sidebar.
-    """
-    async with sdk.acquire(tenant_id, actor) as client:
-        schema = await client.get_schema()
-
-        types_info = []
-        for node_type in schema.get("node_types", []):
-            # Get sample count for each type
-            nodes = await client.query(type_id=node_type["type_id"], limit=1)
-            types_info.append({
-                "type_id": node_type["type_id"],
-                "name": node_type["name"],
-                "field_count": len(node_type.get("fields", [])),
-                "deprecated": node_type.get("deprecated", False),
-            })
-
-        return {"types": types_info}
-
-
-@router.get("/browse/graph/{node_id}")
-async def browse_graph(
+@router.get("/graph/{node_id}", response_model=GraphResponse)
+async def get_graph_neighborhood(
     node_id: str,
     depth: int = Query(1, ge=1, le=3, description="Traversal depth"),
-    sdk: SdkClientManager = Depends(get_sdk_manager),
+    client: ConsoleClient = Depends(get_client),
     tenant_id: str = Depends(get_tenant_id),
     actor: str = Depends(get_actor),
 ):
     """
     Get graph neighborhood of a node.
 
-    Returns the node and its connected nodes up to specified depth.
-    Useful for graph visualization in the frontend.
+    Returns the node and connected nodes up to specified depth.
+    Useful for graph visualization.
     """
-    async with sdk.acquire(tenant_id, actor) as client:
-        nodes = {}
-        edges = []
-        to_visit = [(node_id, 0)]
-        visited = set()
+    nodes_map: dict[str, NodeResponse] = {}
+    edges_list: list[EdgeResponse] = []
+    to_visit = [(node_id, 0)]
+    visited: set[str] = set()
 
-        while to_visit:
-            current_id, current_depth = to_visit.pop(0)
-            if current_id in visited or current_depth > depth:
-                continue
+    while to_visit:
+        current_id, current_depth = to_visit.pop(0)
+        if current_id in visited or current_depth > depth:
+            continue
 
-            visited.add(current_id)
+        visited.add(current_id)
 
-            # Get node
-            node = await client.get(current_id)
-            if node:
-                nodes[current_id] = _node_to_dict(node)
+        node = await client.get_node(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=current_id,
+        )
 
-                if current_depth < depth:
-                    # Get edges
-                    out_edges = await client.edges_out(current_id)
-                    in_edges = await client.edges_in(current_id)
+        if node:
+            nodes_map[current_id] = NodeResponse(
+                node_id=node.node_id,
+                type_id=node.type_id,
+                tenant_id=node.tenant_id,
+                payload=node.payload,
+                owner_actor=node.owner_actor,
+                created_at=node.created_at,
+                updated_at=node.updated_at,
+            )
 
-                    for edge in out_edges:
-                        edges.append(_edge_to_dict(edge))
-                        to_visit.append((edge.to_id, current_depth + 1))
+            if current_depth < depth:
+                # Get edges
+                out_edges = await client.get_edges_from(
+                    tenant_id=tenant_id,
+                    actor=actor,
+                    node_id=current_id,
+                )
+                in_edges = await client.get_edges_to(
+                    tenant_id=tenant_id,
+                    actor=actor,
+                    node_id=current_id,
+                )
 
-                    for edge in in_edges:
-                        edges.append(_edge_to_dict(edge))
-                        to_visit.append((edge.from_id, current_depth + 1))
+                for e in out_edges:
+                    edges_list.append(EdgeResponse(
+                        edge_type_id=e.edge_type_id,
+                        from_node_id=e.from_node_id,
+                        to_node_id=e.to_node_id,
+                        tenant_id=e.tenant_id,
+                        props=e.props,
+                        created_at=e.created_at,
+                    ))
+                    to_visit.append((e.to_node_id, current_depth + 1))
 
-        return {
-            "root_id": node_id,
-            "nodes": list(nodes.values()),
-            "edges": edges,
-        }
+                for e in in_edges:
+                    edges_list.append(EdgeResponse(
+                        edge_type_id=e.edge_type_id,
+                        from_node_id=e.from_node_id,
+                        to_node_id=e.to_node_id,
+                        tenant_id=e.tenant_id,
+                        props=e.props,
+                        created_at=e.created_at,
+                    ))
+                    to_visit.append((e.from_node_id, current_depth + 1))
+
+    return GraphResponse(
+        root_id=node_id,
+        nodes=list(nodes_map.values()),
+        edges=edges_list,
+    )
 
 
-# --- Helpers ---
+# --- Search ---
 
 
-def _node_to_dict(node) -> dict[str, Any]:
-    """Convert node object to dict."""
+@router.get("/search")
+async def search(
+    q: str = Query(..., min_length=1, description="Search query"),
+    user_id: str = Query(..., description="User ID for mailbox search"),
+    limit: int = Query(20, ge=1, le=100),
+    client: ConsoleClient = Depends(get_client),
+    tenant_id: str = Depends(get_tenant_id),
+    actor: str = Depends(get_actor),
+):
+    """
+    Full-text search in a user's mailbox.
+
+    Searches using SQLite FTS5.
+    """
+    results = await client.search(
+        tenant_id=tenant_id,
+        actor=actor,
+        user_id=user_id,
+        query=q,
+        limit=limit,
+    )
+
+    return {"query": q, "results": results}
+
+
+# --- Browse Helpers ---
+
+
+@router.get("/browse/types")
+async def browse_types(
+    client: ConsoleClient = Depends(get_client),
+):
+    """
+    Get all node types for sidebar navigation.
+
+    Returns type names and IDs for the browser interface.
+    """
+    result = await client.get_schema()
+    schema = result.get("schema", {})
+
     return {
-        "id": node.id,
-        "type_id": node.type_id,
-        "tenant_id": node.tenant_id,
-        "payload": node.payload,
-        "owner_actor": node.owner_actor,
-        "created_at": getattr(node, "created_at", None),
-        "updated_at": getattr(node, "updated_at", None),
+        "types": [
+            {
+                "type_id": t.get("type_id"),
+                "name": t.get("name"),
+                "field_count": len(t.get("fields", [])),
+                "deprecated": t.get("deprecated", False),
+            }
+            for t in schema.get("node_types", [])
+        ]
     }
 
 
-def _edge_to_dict(edge) -> dict[str, Any]:
-    """Convert edge object to dict."""
+@router.get("/browse/edge-types")
+async def browse_edge_types(
+    client: ConsoleClient = Depends(get_client),
+):
+    """
+    Get all edge types for reference.
+
+    Returns edge type definitions.
+    """
+    result = await client.get_schema()
+    schema = result.get("schema", {})
+
     return {
-        "id": edge.id,
-        "edge_type_id": edge.edge_type_id,
-        "from_id": edge.from_id,
-        "to_id": edge.to_id,
-        "tenant_id": edge.tenant_id,
-        "payload": getattr(edge, "payload", None),
+        "edge_types": [
+            {
+                "edge_id": e.get("edge_id"),
+                "name": e.get("name"),
+                "from_type_id": e.get("from_type_id"),
+                "to_type_id": e.get("to_type_id"),
+            }
+            for e in schema.get("edge_types", [])
+        ]
     }
