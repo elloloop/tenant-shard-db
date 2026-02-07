@@ -123,6 +123,80 @@ USER entdb
 CMD ["python", "-c", "print('EntDB SDK ready')"]
 
 # =============================================================================
+# Console stage - Read-only data browser
+# =============================================================================
+FROM base AS console
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy application code
+COPY dbaas/ /app/dbaas/
+COPY sdk/ /app/sdk/
+COPY console/ /app/console/
+
+# Switch to non-root user
+USER entdb
+
+# Set Python path
+ENV PYTHONPATH="/app"
+
+# Console configuration
+ENV CONSOLE_HOST="0.0.0.0"
+ENV CONSOLE_PORT="8080"
+ENV CONSOLE_ENTDB_HOST="server"
+ENV CONSOLE_ENTDB_PORT="50051"
+ENV CONSOLE_DEFAULT_TENANT_ID="default"
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Default command
+CMD ["uvicorn", "console.gateway.app:app", "--host", "0.0.0.0", "--port", "8080"]
+
+# =============================================================================
+# Playground stage - Interactive SDK sandbox
+# =============================================================================
+FROM base AS playground
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy application code
+COPY dbaas/ /app/dbaas/
+COPY sdk/ /app/sdk/
+COPY playground/ /app/playground/
+
+# Switch to non-root user
+USER entdb
+
+# Set Python path
+ENV PYTHONPATH="/app"
+
+# Playground configuration
+ENV PLAYGROUND_HOST="0.0.0.0"
+ENV PLAYGROUND_PORT="8081"
+ENV PLAYGROUND_ENTDB_HOST="server"
+ENV PLAYGROUND_ENTDB_PORT="50051"
+ENV PLAYGROUND_SANDBOX_TENANT="playground"
+
+# Expose port
+EXPOSE 8081
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8081/health || exit 1
+
+# Default command
+CMD ["uvicorn", "playground.app:app", "--host", "0.0.0.0", "--port", "8081"]
+
+# =============================================================================
 # Test stage - for running tests
 # =============================================================================
 FROM builder AS test
