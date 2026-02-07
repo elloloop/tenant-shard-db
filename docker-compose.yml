@@ -102,8 +102,6 @@ services:
       - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
       - --pandaproxy-addr=PLAINTEXT://0.0.0.0:8082
       - --advertise-pandaproxy-addr=PLAINTEXT://localhost:8082
-      - --set=redpanda.enable_idempotence=true
-      - --set=redpanda.enable_transactions=true
     ports:
       - "9092:9092"
       - "8082:8082"
@@ -192,11 +190,11 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9000' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 5s
+      start_period: 10s
 
   # ==========================================================================
   # MinIO Bucket Initialization

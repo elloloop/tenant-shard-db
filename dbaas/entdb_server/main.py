@@ -215,10 +215,13 @@ class Server:
             applier_task = asyncio.create_task(self.applier.start())
             self._tasks.append(applier_task)
 
-            # Start archiver if enabled
+            # Start archiver if enabled (uses its own WAL instance to avoid
+            # sharing the consumer with the applier)
             if self.config.archiver.enabled:
+                self._archiver_wal = create_wal_stream(self.config)
+                await self._archiver_wal.connect()
                 self.archiver = Archiver(
-                    wal=self.wal,
+                    wal=self._archiver_wal,
                     s3_config=self.config.s3,
                     topic=topic,
                     group_id="entdb-archiver",
@@ -281,6 +284,9 @@ class Server:
 
         if self.grpc_server:
             await self.grpc_server.stop()
+
+        if hasattr(self, "_archiver_wal") and self._archiver_wal:
+            await self._archiver_wal.close()
 
         if self.wal:
             await self.wal.close()

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entdb"
-version = "1.0.0"
+version = "0.1.0"
 description = "Tenant-sharded graph database with nodes and edges"
 readme = "README.md"
 license = {text = "MIT"}
@@ -37,9 +37,11 @@ server = [
     "grpcio>=1.60.0",
 ]
 sdk = [
-    "aiohttp>=3.9.0",
+    "grpcio>=1.60.0",
+    "protobuf>=4.25.0",
 ]
 dev = [
+    "entdb[server,sdk]",
     "pytest>=7.4.0",
     "pytest-asyncio>=0.23.0",
     "pytest-cov>=4.1.0",
@@ -47,6 +49,7 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.8.0",
     "httpx>=0.26.0",
+    "grpcio-tools>=1.60.0",
 ]
 all = [
     "entdb[server,sdk,dev]",
@@ -58,10 +61,10 @@ entdb-restore = "dbaas.entdb_server.tools.restore:main"
 entdb-schema = "dbaas.entdb_server.tools.schema_cli:main"
 
 [project.urls]
-Homepage = "https://github.com/example/entdb"
-Documentation = "https://github.com/example/entdb#readme"
-Repository = "https://github.com/example/entdb"
-Issues = "https://github.com/example/entdb/issues"
+Homepage = "https://github.com/elloloop/tenant-shard-db"
+Documentation = "https://github.com/elloloop/tenant-shard-db#readme"
+Repository = "https://github.com/elloloop/tenant-shard-db"
+Issues = "https://github.com/elloloop/tenant-shard-db/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -132,6 +135,13 @@ module = [
     "aiohttp.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "sdk.entdb_sdk._generated.*",
+    "dbaas.entdb_server.api.generated.*",
+]
+ignore_errors = true
 
 # =============================================================================
 # Pytest

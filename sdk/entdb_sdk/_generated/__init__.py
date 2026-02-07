@@ -6,48 +6,48 @@ This module is internal to the SDK. Users should not import from here.
 """
 
 from .entdb_pb2 import (
-    # Common
-    RequestContext,
-    Receipt,
+    CreateEdgeOp,
+    CreateNodeOp,
+    DeleteEdgeOp,
+    DeleteNodeOp,
+    Edge,
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
-    Operation,
-    CreateNodeOp,
-    UpdateNodeOp,
-    DeleteNodeOp,
-    CreateEdgeOp,
-    DeleteEdgeOp,
-    NodeRef,
-    TypedNodeRef,
-    # Receipt
-    GetReceiptStatusRequest,
-    GetReceiptStatusResponse,
-    ReceiptStatus,
+    # Edges
+    GetEdgesRequest,
+    GetEdgesResponse,
+    GetMailboxRequest,
+    GetMailboxResponse,
     # Nodes
     GetNodeRequest,
     GetNodeResponse,
     GetNodesRequest,
     GetNodesResponse,
-    QueryNodesRequest,
-    QueryNodesResponse,
-    Node,
-    # Edges
-    GetEdgesRequest,
-    GetEdgesResponse,
-    Edge,
-    # Mailbox
-    SearchMailboxRequest,
-    SearchMailboxResponse,
-    MailboxSearchResult,
-    GetMailboxRequest,
-    GetMailboxResponse,
-    MailboxItem,
+    # Receipt
+    GetReceiptStatusRequest,
+    GetReceiptStatusResponse,
+    GetSchemaRequest,
+    GetSchemaResponse,
     # Health/Schema
     HealthRequest,
     HealthResponse,
-    GetSchemaRequest,
-    GetSchemaResponse,
+    MailboxItem,
+    MailboxSearchResult,
+    Node,
+    NodeRef,
+    Operation,
+    QueryNodesRequest,
+    QueryNodesResponse,
+    Receipt,
+    ReceiptStatus,
+    # Common
+    RequestContext,
+    # Mailbox
+    SearchMailboxRequest,
+    SearchMailboxResponse,
+    TypedNodeRef,
+    UpdateNodeOp,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 

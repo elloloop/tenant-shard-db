@@ -31,6 +31,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Inject version from git tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          echo "$VER" > VERSION
+          echo "__version__ = \"$VER\"" > sdk/entdb_sdk/_version.py
+          echo "__version__ = \"$VER\"" > dbaas/entdb_server/_version.py
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -93,6 +101,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Inject version from git tag
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          echo "$VER" > VERSION
+          echo "__version__ = \"$VER\"" > sdk/entdb_sdk/_version.py
 
       - name: Install build tools
         run: |

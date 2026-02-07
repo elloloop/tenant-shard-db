@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     sandbox_actor: str = Field(default="playground:user")
 
     # Auto-cleanup TTL (seconds) - 0 = no auto-cleanup
-    cleanup_ttl: int = Field(default=3600, description="Auto-delete data after N seconds (0=disabled)")
+    cleanup_ttl: int = Field(
+        default=3600, description="Auto-delete data after N seconds (0=disabled)"
+    )
 
     # CORS
     cors_origins: list[str] = Field(

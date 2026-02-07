@@ -21,19 +21,16 @@ Environment:
 """
 
 import asyncio
-import json
 import os
 import sys
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 # Add SDK to path
 sys.path.insert(0, "/app/sdk")
 sys.path.insert(0, "/app")
 
-from entdb_sdk import DbClient, NodeTypeDef, EdgeTypeDef, field
-
+from entdb_sdk import DbClient, EdgeTypeDef, NodeTypeDef, field
 
 # =============================================================================
 # Test Configuration
@@ -59,11 +56,11 @@ User = NodeTypeDef(
     name="User",
     description="Application user for e2e testing",
     fields=(
-        field(1, "email", "string", required=True, indexed=True),
-        field(2, "name", "string", required=True, searchable=True),
-        field(3, "age", "int32"),
+        field(1, "email", "str", required=True, indexed=True),
+        field(2, "name", "str", required=True, searchable=True),
+        field(3, "age", "int"),
         field(4, "active", "bool", default=True),
-        field(5, "created_at", "int64"),
+        field(5, "created_at", "int"),
     ),
 )
 
@@ -72,9 +69,9 @@ Product = NodeTypeDef(
     name="Product",
     description="Product catalog item",
     fields=(
-        field(1, "sku", "string", required=True, indexed=True),
-        field(2, "name", "string", required=True, searchable=True),
-        field(3, "price", "double", required=True),
+        field(1, "sku", "str", required=True, indexed=True),
+        field(2, "name", "str", required=True, searchable=True),
+        field(3, "price", "float", required=True),
         field(4, "category", "enum", enum_values=("electronics", "clothing", "food", "other")),
         field(5, "in_stock", "bool", default=True),
     ),
@@ -85,10 +82,15 @@ Order = NodeTypeDef(
     name="Order",
     description="Customer order",
     fields=(
-        field(1, "order_number", "string", required=True, indexed=True),
-        field(2, "total", "double", required=True),
-        field(3, "status", "enum", enum_values=("pending", "paid", "shipped", "delivered", "cancelled")),
-        field(4, "created_at", "int64"),
+        field(1, "order_number", "str", required=True, indexed=True),
+        field(2, "total", "float", required=True),
+        field(
+            3,
+            "status",
+            "enum",
+            enum_values=("pending", "paid", "shipped", "delivered", "cancelled"),
+        ),
+        field(4, "created_at", "int"),
     ),
 )
 
@@ -100,8 +102,8 @@ Purchased = EdgeTypeDef(
     from_type=User,
     to_type=Product,
     props=(
-        field(1, "quantity", "int32", required=True),
-        field(2, "price_paid", "double"),
+        field(1, "quantity", "int", required=True),
+        field(2, "price_paid", "float"),
     ),
 )
 
@@ -119,9 +121,7 @@ OrderContains = EdgeTypeDef(
     description="Order contains a product",
     from_type=Order,
     to_type=Product,
-    props=(
-        field(1, "quantity", "int32", required=True),
-    ),
+    props=(field(1, "quantity", "int", required=True),),
 )
 
 
@@ -129,37 +129,40 @@ OrderContains = EdgeTypeDef(
 # Test Results
 # =============================================================================
 
+
 @dataclass
 class TestResult:
     name: str
     passed: bool
     duration_ms: float
-    error: Optional[str] = None
+    error: str | None = None
 
 
 class TestRunner:
     def __init__(self):
         self.results: list[TestResult] = []
-        self.client: Optional[DbClient] = None
+        self.client: DbClient | None = None
 
     async def setup(self):
         """Connect to EntDB server with retries."""
-        print(f"\n{'='*60}")
-        print(f"EntDB E2E Test Suite")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("EntDB E2E Test Suite")
+        print(f"{'=' * 60}")
         print(f"Host: {HOST}:{PORT}")
         print(f"Tenant: {TENANT}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         for attempt in range(MAX_RETRIES):
             try:
                 self.client = DbClient(f"{HOST}:{PORT}")
                 await self.client.connect()
-                print(f"[OK] Connected to EntDB server")
+                print("[OK] Connected to EntDB server")
                 return
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
-                    print(f"[WAIT] Server not ready, retrying in {RETRY_DELAY}s... ({attempt + 1}/{MAX_RETRIES})")
+                    print(
+                        f"[WAIT] Server not ready, retrying in {RETRY_DELAY}s... ({attempt + 1}/{MAX_RETRIES})"
+                    )
                     await asyncio.sleep(RETRY_DELAY)
                 else:
                     print(f"[FAIL] Could not connect to server: {e}")
@@ -169,7 +172,7 @@ class TestRunner:
         """Disconnect from server."""
         if self.client:
             await self.client.close()
-            print(f"\n[OK] Disconnected from server")
+            print("\n[OK] Disconnected from server")
 
     async def run_test(self, name: str, test_fn):
         """Run a single test and record result."""
@@ -190,17 +193,17 @@ class TestRunner:
         failed = sum(1 for r in self.results if not r.passed)
         total_time = sum(r.duration_ms for r in self.results)
 
-        print(f"\n{'='*60}")
-        print(f"Test Summary")
-        print(f"{'='*60}")
+        print(f"\n{'=' * 60}")
+        print("Test Summary")
+        print(f"{'=' * 60}")
         print(f"Passed: {passed}")
         print(f"Failed: {failed}")
         print(f"Total:  {len(self.results)}")
         print(f"Time:   {total_time:.1f}ms")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         if failed > 0:
-            print(f"\nFailed Tests:")
+            print("\nFailed Tests:")
             for r in self.results:
                 if not r.passed:
                     print(f"  - {r.name}: {r.error}")
@@ -212,15 +215,20 @@ class TestRunner:
 # Test Cases
 # =============================================================================
 
+
 async def test_create_single_node(runner: TestRunner):
     """Test creating a single node."""
     plan = runner.client.atomic(TENANT, ACTOR)
-    plan.create(User, {
-        "email": "alice@example.com",
-        "name": "Alice Smith",
-        "age": 30,
-        "created_at": int(time.time() * 1000),
-    }, as_="alice")
+    plan.create(
+        User,
+        {
+            "email": "alice@example.com",
+            "name": "Alice Smith",
+            "age": 30,
+            "created_at": int(time.time() * 1000),
+        },
+        as_="alice",
+    )
 
     result = await plan.commit(wait_applied=True)
     assert result.success, f"Commit failed: {result.error}"
@@ -231,29 +239,43 @@ async def test_create_multiple_nodes(runner: TestRunner):
     """Test creating multiple nodes in one transaction."""
     plan = runner.client.atomic(TENANT, ACTOR)
 
-    plan.create(User, {
-        "email": "bob@example.com",
-        "name": "Bob Jones",
-        "age": 25,
-    }, as_="bob")
+    plan.create(
+        User,
+        {
+            "email": "bob@example.com",
+            "name": "Bob Jones",
+            "age": 25,
+        },
+        as_="bob",
+    )
 
-    plan.create(Product, {
-        "sku": "LAPTOP-001",
-        "name": "Gaming Laptop",
-        "price": 1299.99,
-        "category": "electronics",
-    }, as_="laptop")
+    plan.create(
+        Product,
+        {
+            "sku": "LAPTOP-001",
+            "name": "Gaming Laptop",
+            "price": 1299.99,
+            "category": "electronics",
+        },
+        as_="laptop",
+    )
 
-    plan.create(Product, {
-        "sku": "SHIRT-001",
-        "name": "Blue T-Shirt",
-        "price": 29.99,
-        "category": "clothing",
-    }, as_="shirt")
+    plan.create(
+        Product,
+        {
+            "sku": "SHIRT-001",
+            "name": "Blue T-Shirt",
+            "price": 29.99,
+            "category": "clothing",
+        },
+        as_="shirt",
+    )
 
     result = await plan.commit(wait_applied=True)
     assert result.success, f"Commit failed: {result.error}"
-    assert len(result.created_node_ids) == 3, f"Expected 3 nodes, got {len(result.created_node_ids)}"
+    assert len(result.created_node_ids) == 3, (
+        f"Expected 3 nodes, got {len(result.created_node_ids)}"
+    )
 
 
 async def test_create_edges(runner: TestRunner):
@@ -261,13 +283,21 @@ async def test_create_edges(runner: TestRunner):
     # First create nodes
     plan = runner.client.atomic(TENANT, ACTOR)
     plan.create(User, {"email": "charlie@example.com", "name": "Charlie"}, as_="charlie")
-    plan.create(Product, {"sku": "PHONE-001", "name": "Smartphone", "price": 799.99, "category": "electronics"}, as_="phone")
-    plan.create(Order, {"order_number": "ORD-001", "total": 799.99, "status": "pending"}, as_="order1")
+    plan.create(
+        Product,
+        {"sku": "PHONE-001", "name": "Smartphone", "price": 799.99, "category": "electronics"},
+        as_="phone",
+    )
+    plan.create(
+        Order, {"order_number": "ORD-001", "total": 799.99, "status": "pending"}, as_="order1"
+    )
 
     # Create edges in same transaction
-    plan.edge_create(Purchased, from_="@charlie", to="@phone", props={"quantity": 1, "price_paid": 799.99})
-    plan.edge_create(PlacedOrder, from_="@charlie", to="@order1")
-    plan.edge_create(OrderContains, from_="@order1", to="@phone", props={"quantity": 1})
+    plan.edge_create(
+        Purchased, from_="$charlie", to="$phone", props={"quantity": 1, "price_paid": 799.99}
+    )
+    plan.edge_create(PlacedOrder, from_="$charlie", to="$order1")
+    plan.edge_create(OrderContains, from_="$order1", to="$phone", props={"quantity": 1})
 
     result = await plan.commit(wait_applied=True)
     assert result.success, f"Commit failed: {result.error}"
@@ -276,9 +306,10 @@ async def test_create_edges(runner: TestRunner):
 async def test_query_nodes_by_type(runner: TestRunner):
     """Test querying nodes by type."""
     # Query all users
-    nodes, has_more = await runner.client.query_nodes(
+    nodes = await runner.client.query(
+        User,
         TENANT,
-        User.type_id,
+        ACTOR,
         limit=100,
     )
 
@@ -293,9 +324,10 @@ async def test_query_nodes_by_type(runner: TestRunner):
 
 async def test_query_products(runner: TestRunner):
     """Test querying product nodes."""
-    nodes, has_more = await runner.client.query_nodes(
+    nodes = await runner.client.query(
+        Product,
         TENANT,
-        Product.type_id,
+        ACTOR,
         limit=100,
     )
 
@@ -318,7 +350,7 @@ async def test_get_node_by_id(runner: TestRunner):
     node_id = result.created_node_ids[0]
 
     # Now fetch it by ID
-    node = await runner.client.get_node(TENANT, node_id)
+    node = await runner.client.get(User, node_id, TENANT, ACTOR)
     assert node is not None, f"Node {node_id} not found"
     assert node.payload["email"] == "david@example.com"
     assert node.payload["name"] == "David"
@@ -329,10 +361,22 @@ async def test_get_edges_from_node(runner: TestRunner):
     # Create a user with purchases
     plan = runner.client.atomic(TENANT, ACTOR)
     plan.create(User, {"email": "eve@example.com", "name": "Eve"}, as_="eve")
-    plan.create(Product, {"sku": "BOOK-001", "name": "Python Book", "price": 49.99, "category": "other"}, as_="book")
-    plan.create(Product, {"sku": "BOOK-002", "name": "Go Book", "price": 39.99, "category": "other"}, as_="gobook")
-    plan.edge_create(Purchased, from_="@eve", to="@book", props={"quantity": 2, "price_paid": 99.98})
-    plan.edge_create(Purchased, from_="@eve", to="@gobook", props={"quantity": 1, "price_paid": 39.99})
+    plan.create(
+        Product,
+        {"sku": "BOOK-001", "name": "Python Book", "price": 49.99, "category": "other"},
+        as_="book",
+    )
+    plan.create(
+        Product,
+        {"sku": "BOOK-002", "name": "Go Book", "price": 39.99, "category": "other"},
+        as_="gobook",
+    )
+    plan.edge_create(
+        Purchased, from_="$eve", to="$book", props={"quantity": 2, "price_paid": 99.98}
+    )
+    plan.edge_create(
+        Purchased, from_="$eve", to="$gobook", props={"quantity": 1, "price_paid": 39.99}
+    )
 
     result = await plan.commit(wait_applied=True)
     assert result.success
@@ -340,7 +384,7 @@ async def test_get_edges_from_node(runner: TestRunner):
     eve_id = result.created_node_ids[0]
 
     # Get edges from Eve
-    edges = await runner.client.get_edges_from(TENANT, eve_id, edge_type_id=Purchased.edge_id)
+    edges = await runner.client.edges_out(eve_id, TENANT, ACTOR, edge_type=Purchased)
     assert len(edges) == 2, f"Expected 2 purchase edges, got {len(edges)}"
 
     for edge in edges:
@@ -366,9 +410,9 @@ async def test_update_node(runner: TestRunner):
     assert result2.success, f"Update failed: {result2.error}"
 
     # Verify update
-    node = await runner.client.get_node(TENANT, frank_id)
+    node = await runner.client.get(User, frank_id, TENANT, ACTOR)
     assert node.payload["age"] == 41
-    assert node.payload["active"] == False
+    assert not node.payload["active"]
 
 
 async def test_delete_node(runner: TestRunner):
@@ -388,7 +432,7 @@ async def test_delete_node(runner: TestRunner):
     assert result2.success, f"Delete failed: {result2.error}"
 
     # Verify deletion
-    node = await runner.client.get_node(TENANT, grace_id)
+    node = await runner.client.get(User, grace_id, TENANT, ACTOR)
     assert node is None, "Node should be deleted"
 
 
@@ -397,8 +441,12 @@ async def test_delete_edge(runner: TestRunner):
     # Create nodes and edge
     plan = runner.client.atomic(TENANT, ACTOR)
     plan.create(User, {"email": "henry@example.com", "name": "Henry"}, as_="henry")
-    plan.create(Product, {"sku": "MUG-001", "name": "Coffee Mug", "price": 12.99, "category": "other"}, as_="mug")
-    plan.edge_create(Purchased, from_="@henry", to="@mug", props={"quantity": 1})
+    plan.create(
+        Product,
+        {"sku": "MUG-001", "name": "Coffee Mug", "price": 12.99, "category": "other"},
+        as_="mug",
+    )
+    plan.edge_create(Purchased, from_="$henry", to="$mug", props={"quantity": 1})
     result = await plan.commit(wait_applied=True)
     assert result.success
 
@@ -406,7 +454,7 @@ async def test_delete_edge(runner: TestRunner):
     mug_id = result.created_node_ids[1]
 
     # Verify edge exists
-    edges = await runner.client.get_edges_from(TENANT, henry_id, edge_type_id=Purchased.edge_id)
+    edges = await runner.client.edges_out(henry_id, TENANT, ACTOR, edge_type=Purchased)
     assert len(edges) == 1
 
     # Delete the edge
@@ -416,15 +464,15 @@ async def test_delete_edge(runner: TestRunner):
     assert result2.success, f"Edge delete failed: {result2.error}"
 
     # Verify edge is deleted
-    edges = await runner.client.get_edges_from(TENANT, henry_id, edge_type_id=Purchased.edge_id)
+    edges = await runner.client.edges_out(henry_id, TENANT, ACTOR, edge_type=Purchased)
     assert len(edges) == 0, "Edge should be deleted"
 
 
 async def test_atomic_transaction_rollback(runner: TestRunner):
     """Test that failed transactions don't partially apply."""
     # Get initial user count
-    users_before, _ = await runner.client.query_nodes(TENANT, User.type_id, limit=1000)
-    count_before = len(users_before)
+    users_before = await runner.client.query(User, TENANT, ACTOR, limit=1000)
+    _ = len(users_before)
 
     # Try to create a transaction that should fail
     # (This tests server-side validation)
@@ -438,7 +486,7 @@ async def test_atomic_transaction_rollback(runner: TestRunner):
         pass  # Expected to fail
 
     # Verify no new users were created
-    users_after, _ = await runner.client.query_nodes(TENANT, User.type_id, limit=1000)
+    _ = await runner.client.query(User, TENANT, ACTOR, limit=1000)
     # Note: This test may pass even if the transaction partially applied
     # depending on server implementation
 
@@ -448,26 +496,34 @@ async def test_large_payload(runner: TestRunner):
     large_name = "A" * 1000  # 1KB name
 
     plan = runner.client.atomic(TENANT, ACTOR)
-    plan.create(User, {
-        "email": "largeuser@example.com",
-        "name": large_name,
-    }, as_="large")
+    plan.create(
+        User,
+        {
+            "email": "largeuser@example.com",
+            "name": large_name,
+        },
+        as_="large",
+    )
 
     result = await plan.commit(wait_applied=True)
     assert result.success
 
-    node = await runner.client.get_node(TENANT, result.created_node_ids[0])
+    node = await runner.client.get(User, result.created_node_ids[0], TENANT, ACTOR)
     assert node.payload["name"] == large_name
 
 
 async def test_concurrent_transactions(runner: TestRunner):
     """Test multiple concurrent transactions."""
+
     async def create_user(i: int):
         plan = runner.client.atomic(TENANT, ACTOR)
-        plan.create(User, {
-            "email": f"concurrent{i}@example.com",
-            "name": f"Concurrent User {i}",
-        })
+        plan.create(
+            User,
+            {
+                "email": f"concurrent{i}@example.com",
+                "name": f"Concurrent User {i}",
+            },
+        )
         return await plan.commit(wait_applied=True)
 
     # Run 10 concurrent transactions
@@ -481,6 +537,7 @@ async def test_concurrent_transactions(runner: TestRunner):
 # =============================================================================
 # Main
 # =============================================================================
+
 
 async def main():
     runner = TestRunner()
@@ -504,7 +561,9 @@ async def main():
 
         print("\n[TEST] Advanced Operations")
         await runner.run_test("large_payload", lambda: test_large_payload(runner))
-        await runner.run_test("concurrent_transactions", lambda: test_concurrent_transactions(runner))
+        await runner.run_test(
+            "concurrent_transactions", lambda: test_concurrent_transactions(runner)
+        )
 
         success = runner.print_summary()
         sys.exit(0 if success else 1)

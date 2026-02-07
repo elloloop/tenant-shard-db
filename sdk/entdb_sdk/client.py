@@ -26,6 +26,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._grpc_client import GrpcClient
 from .errors import (
     ConnectionError,
     UnknownFieldError,
@@ -33,7 +34,6 @@ from .errors import (
 )
 from .registry import SchemaRegistry, get_registry
 from .schema import EdgeTypeDef, NodeTypeDef
-from ._grpc_client import GrpcClient
 
 logger = logging.getLogger(__name__)
 

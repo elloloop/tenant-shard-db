@@ -18,29 +18,29 @@ import grpc
 from grpc import aio as grpc_aio
 
 from ._generated import (
-    EntDBServiceStub,
-    # Request types
-    RequestContext,
-    ExecuteAtomicRequest,
-    Operation,
-    CreateNodeOp,
-    UpdateNodeOp,
-    DeleteNodeOp,
     CreateEdgeOp,
+    CreateNodeOp,
     DeleteEdgeOp,
-    NodeRef,
-    TypedNodeRef,
-    GetReceiptStatusRequest,
+    DeleteNodeOp,
+    EntDBServiceStub,
+    ExecuteAtomicRequest,
+    GetEdgesRequest,
+    GetMailboxRequest,
     GetNodeRequest,
     GetNodesRequest,
-    QueryNodesRequest,
-    GetEdgesRequest,
-    SearchMailboxRequest,
-    GetMailboxRequest,
-    HealthRequest,
+    GetReceiptStatusRequest,
     GetSchemaRequest,
+    HealthRequest,
+    NodeRef,
+    Operation,
+    QueryNodesRequest,
     # Enums
     ReceiptStatus,
+    # Request types
+    RequestContext,
+    SearchMailboxRequest,
+    TypedNodeRef,
+    UpdateNodeOp,
 )
 
 logger = logging.getLogger(__name__)
@@ -278,10 +278,12 @@ class GrpcClient:
 
             elif "delete_node" in op:
                 delete = op["delete_node"]
-                proto_op.delete_node.CopyFrom(DeleteNodeOp(
-                    type_id=delete.get("type_id", 0),
-                    id=delete.get("id", ""),
-                ))
+                proto_op.delete_node.CopyFrom(
+                    DeleteNodeOp(
+                        type_id=delete.get("type_id", 0),
+                        id=delete.get("id", ""),
+                    )
+                )
 
             elif "create_edge" in op:
                 create = op["create_edge"]
@@ -289,14 +291,14 @@ class GrpcClient:
                     edge_id=create.get("edge_id", 0),
                     props_json=create.get("props_json", "{}"),
                 )
-                create_op.from_.CopyFrom(self._convert_node_ref(create.get("from", {})))
+                getattr(create_op, "from").CopyFrom(self._convert_node_ref(create.get("from", {})))
                 create_op.to.CopyFrom(self._convert_node_ref(create.get("to", {})))
                 proto_op.create_edge.CopyFrom(create_op)
 
             elif "delete_edge" in op:
                 delete = op["delete_edge"]
                 delete_op = DeleteEdgeOp(edge_id=delete.get("edge_id", 0))
-                delete_op.from_.CopyFrom(self._convert_node_ref(delete.get("from", {})))
+                getattr(delete_op, "from").CopyFrom(self._convert_node_ref(delete.get("from", {})))
                 delete_op.to.CopyFrom(self._convert_node_ref(delete.get("to", {})))
                 proto_op.delete_edge.CopyFrom(delete_op)
 
@@ -313,10 +315,12 @@ class GrpcClient:
         elif "alias_ref" in ref:
             node_ref.alias_ref = ref["alias_ref"]
         elif "typed" in ref:
-            node_ref.typed.CopyFrom(TypedNodeRef(
-                type_id=ref["typed"].get("type_id", 0),
-                id=ref["typed"].get("id", ""),
-            ))
+            node_ref.typed.CopyFrom(
+                TypedNodeRef(
+                    type_id=ref["typed"].get("type_id", 0),
+                    id=ref["typed"].get("id", ""),
+                )
+            )
 
         return node_ref
 

@@ -42,6 +42,7 @@ logger = logging.getLogger(__name__)
 try:
     from aiokafka import AIOKafkaConsumer, AIOKafkaProducer
     from aiokafka.errors import KafkaConnectionError, KafkaError, KafkaTimeoutError
+    from aiokafka.structs import OffsetAndMetadata, TopicPartition
 
     KAFKA_AVAILABLE = True
 except ImportError:
@@ -345,7 +346,11 @@ class KafkaWalStream:
 
         try:
             # Commit the offset + 1 (next message to consume)
-            tp = {(record.position.topic, record.position.partition): record.position.offset + 1}
+            tp = {
+                TopicPartition(record.position.topic, record.position.partition): OffsetAndMetadata(
+                    record.position.offset + 1, ""
+                )
+            }
             await self._consumer.commit(tp)
 
             logger.debug(

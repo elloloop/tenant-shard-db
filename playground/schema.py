@@ -16,7 +16,7 @@ Edges connect these entities:
 - Comment BY User
 """
 
-from entdb_sdk import NodeTypeDef, EdgeTypeDef, field
+from entdb_sdk import EdgeTypeDef, NodeTypeDef, field
 
 # --- Node Types ---
 
@@ -53,8 +53,16 @@ Task = NodeTypeDef(
     fields=(
         field(1, "title", "str", required=True, searchable=True),
         field(2, "description", "str", searchable=True),
-        field(3, "status", "enum", enum_values=("todo", "in_progress", "review", "done"), default="todo"),
-        field(4, "priority", "enum", enum_values=("low", "medium", "high", "urgent"), default="medium"),
+        field(
+            3,
+            "status",
+            "enum",
+            enum_values=("todo", "in_progress", "review", "done"),
+            default="todo",
+        ),
+        field(
+            4, "priority", "enum", enum_values=("low", "medium", "high", "urgent"), default="medium"
+        ),
         field(5, "due_date", "timestamp"),
         field(6, "created_at", "timestamp"),
         field(7, "completed_at", "timestamp"),
@@ -96,9 +104,7 @@ AssignedTo = EdgeTypeDef(
     description="Task is assigned to a user",
     from_type=Task,
     to_type=User,
-    props=(
-        field(1, "role", "enum", enum_values=("assignee", "reviewer")),
-    ),
+    props=(field(1, "role", "enum", enum_values=("assignee", "reviewer")),),
 )
 
 CommentOn = EdgeTypeDef(

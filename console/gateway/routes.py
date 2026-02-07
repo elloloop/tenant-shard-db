@@ -26,6 +26,7 @@ router = APIRouter(tags=["EntDB Console"])
 
 class NodeResponse(BaseModel):
     """Node data."""
+
     node_id: str
     type_id: int
     tenant_id: str
@@ -37,6 +38,7 @@ class NodeResponse(BaseModel):
 
 class EdgeResponse(BaseModel):
     """Edge data."""
+
     edge_type_id: int
     from_node_id: str
     to_node_id: str
@@ -47,6 +49,7 @@ class EdgeResponse(BaseModel):
 
 class PaginatedNodesResponse(BaseModel):
     """Paginated nodes response."""
+
     nodes: list[NodeResponse]
     offset: int
     limit: int
@@ -55,6 +58,7 @@ class PaginatedNodesResponse(BaseModel):
 
 class SchemaTypeResponse(BaseModel):
     """Schema type info."""
+
     type_id: int
     name: str
     fields: list[dict[str, Any]]
@@ -63,6 +67,7 @@ class SchemaTypeResponse(BaseModel):
 
 class SchemaEdgeTypeResponse(BaseModel):
     """Schema edge type info."""
+
     edge_id: int
     name: str
     from_type_id: int
@@ -72,6 +77,7 @@ class SchemaEdgeTypeResponse(BaseModel):
 
 class SchemaResponse(BaseModel):
     """Full schema."""
+
     node_types: list[SchemaTypeResponse]
     edge_types: list[SchemaEdgeTypeResponse]
     fingerprint: str
@@ -79,6 +85,7 @@ class SchemaResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Health status."""
+
     healthy: bool
     version: str
     components: dict[str, str]
@@ -86,6 +93,7 @@ class HealthResponse(BaseModel):
 
 class GraphResponse(BaseModel):
     """Graph neighborhood response."""
+
     root_id: str
     nodes: list[NodeResponse]
     edges: list[EdgeResponse]
@@ -144,12 +152,8 @@ async def get_schema(client: ConsoleClient = Depends(get_client)):
     schema = result.get("schema", {})
 
     return SchemaResponse(
-        node_types=[
-            SchemaTypeResponse(**t) for t in schema.get("node_types", [])
-        ],
-        edge_types=[
-            SchemaEdgeTypeResponse(**e) for e in schema.get("edge_types", [])
-        ],
+        node_types=[SchemaTypeResponse(**t) for t in schema.get("node_types", [])],
+        edge_types=[SchemaEdgeTypeResponse(**e) for e in schema.get("edge_types", [])],
         fingerprint=result.get("fingerprint", ""),
     )
 
@@ -383,25 +387,29 @@ async def get_graph_neighborhood(
                 )
 
                 for e in out_edges:
-                    edges_list.append(EdgeResponse(
-                        edge_type_id=e.edge_type_id,
-                        from_node_id=e.from_node_id,
-                        to_node_id=e.to_node_id,
-                        tenant_id=e.tenant_id,
-                        props=e.props,
-                        created_at=e.created_at,
-                    ))
+                    edges_list.append(
+                        EdgeResponse(
+                            edge_type_id=e.edge_type_id,
+                            from_node_id=e.from_node_id,
+                            to_node_id=e.to_node_id,
+                            tenant_id=e.tenant_id,
+                            props=e.props,
+                            created_at=e.created_at,
+                        )
+                    )
                     to_visit.append((e.to_node_id, current_depth + 1))
 
                 for e in in_edges:
-                    edges_list.append(EdgeResponse(
-                        edge_type_id=e.edge_type_id,
-                        from_node_id=e.from_node_id,
-                        to_node_id=e.to_node_id,
-                        tenant_id=e.tenant_id,
-                        props=e.props,
-                        created_at=e.created_at,
-                    ))
+                    edges_list.append(
+                        EdgeResponse(
+                            edge_type_id=e.edge_type_id,
+                            from_node_id=e.from_node_id,
+                            to_node_id=e.to_node_id,
+                            tenant_id=e.tenant_id,
+                            props=e.props,
+                            created_at=e.created_at,
+                        )
+                    )
                     to_visit.append((e.from_node_id, current_depth + 1))
 
     return GraphResponse(

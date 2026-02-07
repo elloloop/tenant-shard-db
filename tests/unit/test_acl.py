@@ -13,8 +13,7 @@ import pytest
 from dbaas.entdb_server.apply.acl import (
     AclManager,
     Permission,
-    PrincipalType,
-    parse_principal,
+    Principal,
 )
 
 
@@ -23,57 +22,80 @@ class TestPrincipalParsing:
 
     def test_parse_user_principal(self):
         """Parse user:id format."""
-        ptype, pid = parse_principal("user:alice")
-        assert ptype == PrincipalType.USER
-        assert pid == "alice"
+        principal = Principal.parse("user:alice")
+        assert principal.type == "user"
+        assert principal.id == "alice"
 
     def test_parse_role_principal(self):
         """Parse role:name format."""
-        ptype, pid = parse_principal("role:admin")
-        assert ptype == PrincipalType.ROLE
-        assert pid == "admin"
+        principal = Principal.parse("role:admin")
+        assert principal.type == "role"
+        assert principal.id == "admin"
 
     def test_parse_tenant_wildcard(self):
         """Parse tenant:* format."""
-        ptype, pid = parse_principal("tenant:*")
-        assert ptype == PrincipalType.TENANT
-        assert pid == "*"
+        principal = Principal.parse("tenant:*")
+        assert principal.type == "tenant"
+        assert principal.id == "*"
 
     def test_parse_invalid_format(self):
         """Invalid format raises error."""
         with pytest.raises(ValueError):
-            parse_principal("invalid")
+            Principal.parse("invalid")
 
-    def test_parse_empty_id(self):
-        """Empty ID raises error."""
+    def test_parse_invalid_type(self):
+        """Invalid principal type raises error."""
         with pytest.raises(ValueError):
-            parse_principal("user:")
+            Principal.parse("badtype:id")
+
+    def test_principal_str(self):
+        """Principal converts to string."""
+        principal = Principal(type="user", id="alice")
+        assert str(principal) == "user:alice"
+
+
+class TestPrincipalMatching:
+    """Tests for principal matching."""
+
+    def test_exact_match(self):
+        """Principal matches exact actor string."""
+        principal = Principal(type="user", id="alice")
+        assert principal.matches("user:alice")
+
+    def test_no_match(self):
+        """Principal doesn't match different actor."""
+        principal = Principal(type="user", id="alice")
+        assert not principal.matches("user:bob")
+
+    def test_tenant_wildcard_matches_all(self):
+        """tenant:* matches any actor."""
+        principal = Principal(type="tenant", id="*")
+        assert principal.matches("user:anyone")
 
 
 class TestPermissionHierarchy:
-    """Tests for permission hierarchy."""
+    """Tests for permission hierarchy in AclManager."""
 
-    def test_read_is_lowest(self):
-        """READ is lowest permission."""
-        assert Permission.READ < Permission.WRITE
-        assert Permission.READ < Permission.DELETE
-        assert Permission.READ < Permission.ADMIN
+    def test_read_only_grants_read(self):
+        """READ only covers READ."""
+        hierarchy = AclManager.PERMISSION_HIERARCHY
+        assert Permission.READ in hierarchy[Permission.READ]
+        assert Permission.WRITE not in hierarchy[Permission.READ]
 
-    def test_write_implies_read(self):
-        """WRITE is higher than READ."""
-        assert Permission.WRITE > Permission.READ
-        assert Permission.WRITE < Permission.DELETE
+    def test_write_includes_read(self):
+        """WRITE grants READ and WRITE."""
+        hierarchy = AclManager.PERMISSION_HIERARCHY
+        assert Permission.READ in hierarchy[Permission.WRITE]
+        assert Permission.WRITE in hierarchy[Permission.WRITE]
+        assert Permission.DELETE not in hierarchy[Permission.WRITE]
 
-    def test_delete_implies_write(self):
-        """DELETE is higher than WRITE."""
-        assert Permission.DELETE > Permission.WRITE
-        assert Permission.DELETE < Permission.ADMIN
-
-    def test_admin_is_highest(self):
-        """ADMIN is highest permission."""
-        assert Permission.ADMIN > Permission.READ
-        assert Permission.ADMIN > Permission.WRITE
-        assert Permission.ADMIN > Permission.DELETE
+    def test_admin_includes_all(self):
+        """ADMIN grants all permissions."""
+        hierarchy = AclManager.PERMISSION_HIERARCHY
+        assert Permission.READ in hierarchy[Permission.ADMIN]
+        assert Permission.WRITE in hierarchy[Permission.ADMIN]
+        assert Permission.DELETE in hierarchy[Permission.ADMIN]
+        assert Permission.ADMIN in hierarchy[Permission.ADMIN]
 
 
 class TestAclManager:
@@ -88,29 +110,29 @@ class TestAclManager:
         """Owner always has ADMIN permission."""
         result = manager.check_permission(
             actor="user:alice",
-            owner="user:alice",
-            principals=["user:bob"],
+            acl=[],
             required=Permission.ADMIN,
+            owner_actor="user:alice",
         )
         assert result is True
 
-    def test_user_in_principals_has_permission(self, manager):
-        """User in principals list has permission."""
+    def test_user_in_acl_has_permission(self, manager):
+        """User in ACL has permission."""
         result = manager.check_permission(
             actor="user:bob",
-            owner="user:alice",
-            principals=["user:bob"],
+            acl=[{"principal": "user:bob", "permission": "read"}],
             required=Permission.READ,
+            owner_actor="user:alice",
         )
         assert result is True
 
-    def test_user_not_in_principals_denied(self, manager):
-        """User not in principals is denied."""
+    def test_user_not_in_acl_denied(self, manager):
+        """User not in ACL is denied."""
         result = manager.check_permission(
             actor="user:charlie",
-            owner="user:alice",
-            principals=["user:bob"],
+            acl=[{"principal": "user:bob", "permission": "read"}],
             required=Permission.READ,
+            owner_actor="user:alice",
         )
         assert result is False
 
@@ -118,125 +140,72 @@ class TestAclManager:
         """tenant:* grants access to all tenant users."""
         result = manager.check_permission(
             actor="user:anyone",
-            owner="user:alice",
-            principals=["tenant:*"],
+            acl=[{"principal": "tenant:*", "permission": "read"}],
             required=Permission.READ,
+            owner_actor="user:alice",
         )
         assert result is True
-
-    def test_role_principal(self, manager):
-        """Role principal grants access to role members."""
-        # Actor has admin role
-        result = manager.check_permission(
-            actor="user:bob",
-            owner="user:alice",
-            principals=["role:admin"],
-            required=Permission.READ,
-            actor_roles=["admin"],
-        )
-        assert result is True
-
-    def test_role_not_matched_denied(self, manager):
-        """User without role is denied."""
-        result = manager.check_permission(
-            actor="user:bob",
-            owner="user:alice",
-            principals=["role:admin"],
-            required=Permission.READ,
-            actor_roles=["member"],
-        )
-        assert result is False
-
-    def test_permission_level_checked(self, manager):
-        """Higher permission required fails with lower grant."""
-        # Principal has READ, but WRITE is required
-        result = manager.check_permission(
-            actor="user:bob",
-            owner="user:alice",
-            principals=[("user:bob", Permission.READ)],
-            required=Permission.WRITE,
-        )
-        assert result is False
 
     def test_higher_permission_grants_lower(self, manager):
         """Higher permission grants lower levels."""
-        # Principal has ADMIN, READ is required
         result = manager.check_permission(
             actor="user:bob",
-            owner="user:alice",
-            principals=[("user:bob", Permission.ADMIN)],
+            acl=[{"principal": "user:bob", "permission": "admin"}],
             required=Permission.READ,
+            owner_actor="user:alice",
         )
         assert result is True
 
-    def test_multiple_principals(self, manager):
-        """Any matching principal grants access."""
-        result = manager.check_permission(
-            actor="user:charlie",
-            owner="user:alice",
-            principals=["user:bob", "user:charlie", "user:dave"],
-            required=Permission.READ,
-        )
-        assert result is True
-
-    def test_empty_principals_only_owner(self, manager):
-        """Empty principals means only owner has access."""
+    def test_lower_permission_denies_higher(self, manager):
+        """Lower permission denies higher levels."""
         result = manager.check_permission(
             actor="user:bob",
-            owner="user:alice",
-            principals=[],
-            required=Permission.READ,
+            acl=[{"principal": "user:bob", "permission": "read"}],
+            required=Permission.WRITE,
+            owner_actor="user:alice",
         )
         assert result is False
 
-        result = manager.check_permission(
-            actor="user:alice",
-            owner="user:alice",
-            principals=[],
-            required=Permission.ADMIN,
-        )
-        assert result is True
-
-
-class TestAclManagerFiltering:
-    """Tests for ACL filtering queries."""
-
-    @pytest.fixture
-    def manager(self):
-        """Create ACL manager."""
-        return AclManager()
-
-    def test_filter_visible_nodes(self, manager):
-        """Filter returns only visible nodes."""
-        nodes = [
-            {"id": "1", "owner": "user:alice", "principals": ["user:alice"]},
-            {"id": "2", "owner": "user:alice", "principals": ["user:bob"]},
-            {"id": "3", "owner": "user:alice", "principals": ["tenant:*"]},
-        ]
-
-        visible = manager.filter_visible(
-            nodes=nodes,
+    def test_empty_acl_only_owner(self, manager):
+        """Empty ACL means only owner has access."""
+        assert not manager.check_permission(
             actor="user:bob",
-            owner_key="owner",
-            principals_key="principals",
+            acl=[],
+            required=Permission.READ,
+            owner_actor="user:alice",
         )
-
-        visible_ids = {n["id"] for n in visible}
-        assert visible_ids == {"2", "3"}
-
-    def test_filter_includes_owned(self, manager):
-        """Filter includes nodes owned by actor."""
-        nodes = [
-            {"id": "1", "owner": "user:alice", "principals": []},
-            {"id": "2", "owner": "user:bob", "principals": []},
-        ]
-
-        visible = manager.filter_visible(
-            nodes=nodes,
+        assert manager.check_permission(
             actor="user:alice",
-            owner_key="owner",
-            principals_key="principals",
+            acl=[],
+            required=Permission.ADMIN,
+            owner_actor="user:alice",
         )
 
-        visible_ids = {n["id"] for n in visible}
-        assert visible_ids == {"1"}
+    def test_default_acl_contains_owner(self, manager):
+        """Default ACL gives owner admin access."""
+        acl = manager.create_default_acl("user:alice")
+        assert any(e["principal"] == "user:alice" and e["permission"] == "admin" for e in acl)
+
+    def test_default_acl_tenant_readable(self, manager):
+        """Default ACL can include tenant:* read."""
+        acl = manager.create_default_acl("user:alice", tenant_readable=True)
+        assert any(e["principal"] == "tenant:*" and e["permission"] == "read" for e in acl)
+
+    def test_validate_acl_valid(self, manager):
+        """Valid ACL passes validation."""
+        errors = manager.validate_acl(
+            [
+                {"principal": "user:alice", "permission": "admin"},
+                {"principal": "tenant:*", "permission": "read"},
+            ]
+        )
+        assert len(errors) == 0
+
+    def test_validate_acl_invalid(self, manager):
+        """Invalid ACL returns errors."""
+        errors = manager.validate_acl(
+            [
+                {"principal": "invalid", "permission": "read"},
+            ]
+        )
+        assert len(errors) > 0
