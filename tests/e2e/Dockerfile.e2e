@@ -1,0 +1,31 @@
+# EntDB E2E Test Runner
+#
+# This Dockerfile builds a container that runs the e2e test suite
+# using the Python SDK to test the EntDB server.
+
+FROM python:3.11-slim-bookworm
+
+# Prevent Python from writing bytecode and buffering stdout/stderr
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install dependencies
+RUN pip install --no-cache-dir \
+    grpcio>=1.60.0 \
+    grpcio-tools>=1.60.0 \
+    aiohttp>=3.9.0
+
+# Copy SDK and generated code
+COPY sdk/ /app/sdk/
+COPY dbaas/entdb_server/api/generated/ /app/dbaas/entdb_server/api/generated/
+
+# Copy test files
+COPY tests/e2e/ /app/tests/e2e/
+
+# Set Python path
+ENV PYTHONPATH="/app:/app/sdk"
+
+# Run the e2e tests
+CMD ["python", "/app/tests/e2e/test_e2e.py"]
