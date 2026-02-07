@@ -1,0 +1,35 @@
+# EntDB Terraform Configuration
+# Copy to terraform.tfvars and customize
+
+project     = "entdb"
+environment = "dev"
+aws_region  = "us-east-1"
+
+# WAL backend: "kinesis" (~$26/mo) or "msk" (~$452/mo)
+wal_backend = "kinesis"
+
+# Kinesis settings (when wal_backend = "kinesis")
+kinesis_shard_count     = 1
+kinesis_retention_hours = 24
+
+# MSK settings (when wal_backend = "msk")
+# msk_instance_type    = "kafka.m7g.large"
+# msk_broker_count     = 3
+# msk_ebs_volume_size  = 50
+
+# EntDB container
+entdb_image         = "ghcr.io/elloloop/tenant-shard-db:latest"
+entdb_cpu           = 512
+entdb_memory        = 1024
+entdb_desired_count = 1
+
+# Set to true to allow terraform destroy to delete non-empty S3 bucket
+s3_force_destroy = false
+
+# Use existing VPC (leave empty to create new)
+# vpc_id             = "vpc-0123456789abcdef0"
+# private_subnet_ids = ["subnet-0123456789abcdef0", "subnet-0123456789abcdef1"]
+
+tags = {
+  Team = "platform"
+}
