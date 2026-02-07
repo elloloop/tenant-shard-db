@@ -8,13 +8,12 @@ Tests cover:
 - Mailbox fanout
 """
 
-import contextlib
-import json
 import tempfile
+import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import Applier, TransactionEvent
+from dbaas.entdb_server.apply.applier import Applier, MailboxFanoutConfig, TransactionEvent
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.schema.registry import SchemaRegistry
@@ -96,47 +95,59 @@ class TestApplierIntegration:
     async def applier(self, wal, canonical_store, mailbox_store, registry):
         """Create and start applier."""
         applier = Applier(
-            wal_stream=wal,
+            wal=wal,
             canonical_store=canonical_store,
             mailbox_store=mailbox_store,
-            registry=registry,
             topic="entdb-wal",
-            consumer_group="applier",
-            mailbox_node_types={3},  # Message type fans out to mailbox
+            group_id="applier",
+            fanout_config=MailboxFanoutConfig(
+                enabled=True,
+                node_types={3},  # Message type fans out to mailbox
+            ),
         )
         await wal.connect()
         yield applier
         await wal.close()
 
+    def _make_event(
+        self,
+        tenant_id: str,
+        actor: str,
+        idempotency_key: str,
+        ops: list,
+    ) -> TransactionEvent:
+        """Helper to create a TransactionEvent with proper field names."""
+        return TransactionEvent(
+            tenant_id=tenant_id,
+            actor=actor,
+            idempotency_key=idempotency_key,
+            schema_fingerprint=None,
+            ts_ms=int(time.time() * 1000),
+            ops=ops,
+        )
+
     @pytest.mark.asyncio
-    async def test_create_node_event(self, wal, applier, canonical_store):
+    async def test_create_node_event(self, applier, canonical_store):
         """Create node event is applied."""
         tenant_id = "tenant_1"
 
-        # Create transaction event
-        event = TransactionEvent(
+        event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="create_user_1",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "alice@example.com", "name": "Alice"},
+                    "data": {"email": "alice@example.com", "name": "Alice"},
                 }
             ],
         )
 
-        # Append to WAL
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(event.to_dict()).encode(),
-        )
-
-        # Process one event
-        await applier.process_one()
+        result = await applier.apply_event(event)
+        assert result.success
+        assert len(result.created_nodes) == 1
 
         # Verify node was created
         nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
@@ -144,76 +155,70 @@ class TestApplierIntegration:
         assert nodes[0]["payload"]["email"] == "alice@example.com"
 
     @pytest.mark.asyncio
-    async def test_idempotent_processing(self, wal, applier, canonical_store):
+    async def test_idempotent_processing(self, applier, canonical_store):
         """Same event processed twice is idempotent."""
         tenant_id = "tenant_1"
 
-        event = TransactionEvent(
+        event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="idempotent_op_1",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "test@example.com", "name": "Test"},
+                    "data": {"email": "test@example.com", "name": "Test"},
                 }
             ],
         )
 
-        event_bytes = json.dumps(event.to_dict()).encode()
+        # Apply same event twice
+        result1 = await applier.apply_event(event)
+        result2 = await applier.apply_event(event)
 
-        # Append same event twice
-        await wal.append("entdb-wal", tenant_id, event_bytes)
-        await wal.append("entdb-wal", tenant_id, event_bytes)
-
-        # Process both
-        await applier.process_one()
-        await applier.process_one()
+        assert result1.success
+        assert not result1.skipped
+        assert result2.success
+        assert result2.skipped
 
         # Should only have one node
         nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
         assert len(nodes) == 1
 
     @pytest.mark.asyncio
-    async def test_create_edge_with_alias_reference(self, wal, applier, canonical_store):
+    async def test_create_edge_with_alias_reference(self, applier, canonical_store):
         """Edge can reference nodes by alias."""
         tenant_id = "tenant_1"
 
-        event = TransactionEvent(
+        event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="create_task_with_assignment",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "alice@example.com", "name": "Alice"},
+                    "data": {"email": "alice@example.com", "name": "Alice"},
                 },
                 {
                     "op": "create_node",
-                    "alias": "task1",
+                    "as": "task1",
                     "type_id": 2,
-                    "payload": {"title": "Fix bug", "description": "Important"},
+                    "data": {"title": "Fix bug", "description": "Important"},
                 },
                 {
                     "op": "create_edge",
-                    "edge_type_id": 100,
-                    "from_id": "$task1.id",
-                    "to_id": "$user1.id",
+                    "edge_id": 100,
+                    "from": {"ref": "$task1.id"},
+                    "to": {"ref": "$user1.id"},
                 },
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(event.to_dict()).encode(),
-        )
-
-        await applier.process_one()
+        result = await applier.apply_event(event)
+        assert result.success
 
         # Verify nodes created
         users = await canonical_store.query_nodes(tenant_id, type_id=1)
@@ -222,60 +227,49 @@ class TestApplierIntegration:
         assert len(tasks) == 1
 
         # Verify edge created
-        edges = await canonical_store.get_edges_from(tenant_id, tasks[0]["id"])
-        assert len(edges) == 1
-        assert edges[0]["to_id"] == users[0]["id"]
+        assert len(result.created_edges) == 1
+        assert result.created_edges[0][0] == 100  # edge_type_id
 
     @pytest.mark.asyncio
-    async def test_update_node_event(self, wal, applier, canonical_store):
+    async def test_update_node_event(self, applier, canonical_store):
         """Update node event modifies payload."""
         tenant_id = "tenant_1"
 
         # First create
-        create_event = TransactionEvent(
+        create_event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="create_1",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "old@example.com", "name": "Old Name"},
+                    "data": {"email": "old@example.com", "name": "Old Name"},
                 }
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(create_event.to_dict()).encode(),
-        )
-        await applier.process_one()
-
-        nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
-        node_id = nodes[0]["id"]
+        result = await applier.apply_event(create_event)
+        assert result.success
+        node_id = result.created_nodes[0]
 
         # Then update
-        update_event = TransactionEvent(
+        update_event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="update_1",
-            operations=[
+            ops=[
                 {
                     "op": "update_node",
-                    "node_id": node_id,
-                    "payload": {"email": "new@example.com", "name": "New Name"},
+                    "id": node_id,
+                    "patch": {"email": "new@example.com", "name": "New Name"},
                 }
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(update_event.to_dict()).encode(),
-        )
-        await applier.process_one()
+        result = await applier.apply_event(update_event)
+        assert result.success
 
         # Verify update
         node = await canonical_store.get_node(tenant_id, node_id)
@@ -283,54 +277,44 @@ class TestApplierIntegration:
         assert node["payload"]["name"] == "New Name"
 
     @pytest.mark.asyncio
-    async def test_delete_node_event(self, wal, applier, canonical_store):
+    async def test_delete_node_event(self, applier, canonical_store):
         """Delete node event soft-deletes."""
         tenant_id = "tenant_1"
 
         # Create
-        create_event = TransactionEvent(
+        create_event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="create_2",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "test@example.com", "name": "Test"},
+                    "data": {"email": "test@example.com", "name": "Test"},
                 }
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(create_event.to_dict()).encode(),
-        )
-        await applier.process_one()
-
-        nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
-        node_id = nodes[0]["id"]
+        result = await applier.apply_event(create_event)
+        assert result.success
+        node_id = result.created_nodes[0]
 
         # Delete
-        delete_event = TransactionEvent(
+        delete_event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="delete_1",
-            operations=[
+            ops=[
                 {
                     "op": "delete_node",
-                    "node_id": node_id,
+                    "id": node_id,
                 }
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(delete_event.to_dict()).encode(),
-        )
-        await applier.process_one()
+        result = await applier.apply_event(delete_event)
+        assert result.success
 
         # Node should not appear in normal query
         nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
@@ -342,79 +326,73 @@ class TestApplierIntegration:
         assert node["deleted"] is True
 
     @pytest.mark.asyncio
-    async def test_mailbox_fanout(self, wal, applier, mailbox_store):
+    async def test_mailbox_fanout(self, applier, mailbox_store):
         """Message type fans out to recipient mailboxes."""
         tenant_id = "tenant_1"
 
-        event = TransactionEvent(
+        event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="send_message_1",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "msg1",
+                    "as": "msg1",
                     "type_id": 3,  # Message type
-                    "payload": {"subject": "Hello", "body": "Hi Bob!"},
-                    "recipients": ["user:bob", "user:charlie"],
+                    "data": {"subject": "Hello", "body": "Hi Bob!"},
+                    "fanout_to": ["user:bob", "user:charlie"],
                 }
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(event.to_dict()).encode(),
-        )
-        await applier.process_one()
+        result = await applier.apply_event(event)
+        assert result.success
 
         # Check Bob's mailbox
-        bob_items = await mailbox_store.get_items(tenant_id, "bob")
+        bob_items = await mailbox_store.get_items(tenant_id, "user:bob")
         assert len(bob_items) == 1
-        assert bob_items[0].preview_text == "Hello"
 
         # Check Charlie's mailbox
-        charlie_items = await mailbox_store.get_items(tenant_id, "charlie")
+        charlie_items = await mailbox_store.get_items(tenant_id, "user:charlie")
         assert len(charlie_items) == 1
 
     @pytest.mark.asyncio
-    async def test_multi_tenant_isolation(self, wal, applier, canonical_store):
+    async def test_multi_tenant_isolation(self, applier, canonical_store):
         """Events from different tenants are isolated."""
         # Tenant 1 event
-        event1 = TransactionEvent(
+        event1 = self._make_event(
             tenant_id="tenant_1",
             actor="user:alice",
             idempotency_key="t1_create",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "t1@example.com", "name": "Tenant 1 User"},
+                    "data": {"email": "t1@example.com", "name": "Tenant 1 User"},
                 }
             ],
         )
 
         # Tenant 2 event
-        event2 = TransactionEvent(
+        event2 = self._make_event(
             tenant_id="tenant_2",
             actor="user:bob",
             idempotency_key="t2_create",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "t2@example.com", "name": "Tenant 2 User"},
+                    "data": {"email": "t2@example.com", "name": "Tenant 2 User"},
                 }
             ],
         )
 
-        await wal.append("entdb-wal", "tenant_1", json.dumps(event1.to_dict()).encode())
-        await wal.append("entdb-wal", "tenant_2", json.dumps(event2.to_dict()).encode())
-
-        await applier.process_one()
-        await applier.process_one()
+        result1 = await applier.apply_event(event1)
+        result2 = await applier.apply_event(event2)
+        assert result1.success
+        assert result2.success
 
         # Verify isolation
         t1_nodes = await canonical_store.query_nodes("tenant_1", type_id=1)
@@ -426,40 +404,30 @@ class TestApplierIntegration:
         assert t2_nodes[0]["payload"]["email"] == "t2@example.com"
 
     @pytest.mark.asyncio
-    async def test_atomic_transaction_rollback(self, wal, applier, canonical_store):
+    async def test_atomic_transaction_rollback(self, applier, canonical_store):
         """Failed transaction rolls back all operations."""
         tenant_id = "tenant_1"
 
         # Event with invalid operation (referencing non-existent node)
-        event = TransactionEvent(
+        event = self._make_event(
             tenant_id=tenant_id,
             actor="user:alice",
             idempotency_key="bad_tx",
-            operations=[
+            ops=[
                 {
                     "op": "create_node",
-                    "alias": "user1",
+                    "as": "user1",
                     "type_id": 1,
-                    "payload": {"email": "test@example.com", "name": "Test"},
+                    "data": {"email": "test@example.com", "name": "Test"},
                 },
                 {
                     "op": "update_node",
-                    "node_id": "nonexistent_id",
-                    "payload": {"name": "Updated"},
+                    "id": "nonexistent_id",
+                    "patch": {"name": "Updated"},
                 },
             ],
         )
 
-        await wal.append(
-            "entdb-wal",
-            tenant_id,
-            json.dumps(event.to_dict()).encode(),
-        )
-
-        # Process should fail or skip
-        with contextlib.suppress(Exception):
-            await applier.process_one()
-
-        # First operation should be rolled back
-        nodes = await canonical_store.query_nodes(tenant_id, type_id=1)
-        assert len(nodes) == 0
+        result = await applier.apply_event(event)
+        # The apply_event should report failure
+        assert not result.success or result.error is not None

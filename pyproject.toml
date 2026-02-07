@@ -126,6 +126,10 @@ check_untyped_defs = true
 ignore_missing_imports = true
 show_error_codes = true
 strict_optional = true
+exclude = [
+    "_generated/",
+    "api/generated/",
+]
 
 [[tool.mypy.overrides]]
 module = [
@@ -138,10 +142,12 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = [
-    "sdk.entdb_sdk._generated.*",
-    "dbaas.entdb_server.api.generated.*",
+    "entdb_sdk._generated",
+    "entdb_sdk._generated.*",
+    "entdb_server.api.generated",
+    "entdb_server.api.generated.*",
 ]
-ignore_errors = true
+follow_imports = "skip"
 
 # =============================================================================
 # Pytest

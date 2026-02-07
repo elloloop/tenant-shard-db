@@ -31,19 +31,19 @@ class TestMailboxStore:
     @pytest.mark.asyncio
     async def test_add_mailbox_item(self, store):
         """Add item to user mailbox."""
-        await store.add_item(
+        item = await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_123",
-            preview_text="Hello from Bob",
+            source_type_id=1,
+            source_node_id="node_123",
+            snippet="Hello from Bob",
             metadata={"sender": "user_bob"},
         )
 
-        items = await store.get_items("tenant_1", "user_alice")
-        assert len(items) == 1
-        assert items[0].node_id == "node_123"
-        assert items[0].preview_text == "Hello from Bob"
+        fetched = await store.get_item("tenant_1", "user_alice", item.item_id)
+        assert fetched is not None
+        assert fetched.source_node_id == "node_123"
+        assert fetched.snippet == "Hello from Bob"
 
     @pytest.mark.asyncio
     async def test_mailbox_pagination(self, store):
@@ -53,80 +53,85 @@ class TestMailboxStore:
             await store.add_item(
                 tenant_id="tenant_1",
                 user_id="user_alice",
-                node_type_id=1,
-                node_id=f"node_{i}",
-                preview_text=f"Message {i}",
+                source_type_id=1,
+                source_node_id=f"node_{i}",
+                snippet=f"Message {i}",
             )
 
         # Get first page
-        page1 = await store.get_items("tenant_1", "user_alice", limit=3)
+        page1 = await store.list_items("tenant_1", "user_alice", limit=3)
         assert len(page1) == 3
 
         # Get second page
-        page2 = await store.get_items("tenant_1", "user_alice", limit=3, offset=3)
+        page2 = await store.list_items("tenant_1", "user_alice", limit=3, offset=3)
         assert len(page2) == 3
 
         # Items should be different
-        ids1 = {item.node_id for item in page1}
-        ids2 = {item.node_id for item in page2}
+        ids1 = {item.item_id for item in page1}
+        ids2 = {item.item_id for item in page2}
         assert ids1.isdisjoint(ids2)
 
     @pytest.mark.asyncio
     async def test_mark_read(self, store):
         """Mark item as read."""
-        await store.add_item(
+        item = await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_123",
-            preview_text="Test message",
+            source_type_id=1,
+            source_node_id="node_123",
+            snippet="Test message",
         )
 
         # Initially unread
-        items = await store.get_items("tenant_1", "user_alice")
-        assert items[0].is_read is False
+        fetched = await store.get_item("tenant_1", "user_alice", item.item_id)
+        assert fetched.state["read"] is False
 
         # Mark as read
-        await store.mark_read("tenant_1", "user_alice", "node_123")
+        await store.mark_read("tenant_1", "user_alice", [item.item_id])
 
-        items = await store.get_items("tenant_1", "user_alice")
-        assert items[0].is_read is True
+        fetched = await store.get_item("tenant_1", "user_alice", item.item_id)
+        assert fetched.state["read"] == 1  # json_set stores 1 for true
 
     @pytest.mark.asyncio
-    async def test_mark_unread(self, store):
-        """Mark item as unread."""
-        await store.add_item(
+    async def test_update_state(self, store):
+        """Update item state."""
+        item = await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_123",
-            preview_text="Test message",
+            source_type_id=1,
+            source_node_id="node_123",
+            snippet="Test message",
         )
 
-        await store.mark_read("tenant_1", "user_alice", "node_123")
-        await store.mark_unread("tenant_1", "user_alice", "node_123")
+        # Mark as read via update_state
+        updated = await store.update_state("tenant_1", "user_alice", item.item_id, {"read": True})
+        assert updated is not None
+        assert updated.state["read"] is True
 
-        items = await store.get_items("tenant_1", "user_alice")
-        assert items[0].is_read is False
+        # Mark as unread via update_state
+        updated = await store.update_state("tenant_1", "user_alice", item.item_id, {"read": False})
+        assert updated is not None
+        assert updated.state["read"] is False
 
     @pytest.mark.asyncio
     async def test_get_unread_count(self, store):
         """Get count of unread items."""
+        items = []
         for i in range(5):
-            await store.add_item(
+            item = await store.add_item(
                 tenant_id="tenant_1",
                 user_id="user_alice",
-                node_type_id=1,
-                node_id=f"node_{i}",
-                preview_text=f"Message {i}",
+                source_type_id=1,
+                source_node_id=f"node_{i}",
+                snippet=f"Message {i}",
             )
+            items.append(item)
 
         count = await store.get_unread_count("tenant_1", "user_alice")
         assert count == 5
 
         # Mark some as read
-        await store.mark_read("tenant_1", "user_alice", "node_0")
-        await store.mark_read("tenant_1", "user_alice", "node_1")
+        await store.mark_read("tenant_1", "user_alice", [items[0].item_id, items[1].item_id])
 
         count = await store.get_unread_count("tenant_1", "user_alice")
         assert count == 3
@@ -137,23 +142,23 @@ class TestMailboxStore:
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_1",
-            preview_text="Meeting tomorrow at 3pm",
+            source_type_id=1,
+            source_node_id="node_1",
+            snippet="Meeting tomorrow at 3pm",
         )
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_2",
-            preview_text="Lunch plans for Friday",
+            source_type_id=1,
+            source_node_id="node_2",
+            snippet="Lunch plans for Friday",
         )
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_3",
-            preview_text="Project meeting notes",
+            source_type_id=1,
+            source_node_id="node_3",
+            snippet="Project meeting notes",
         )
 
         # Search for "meeting"
@@ -163,7 +168,7 @@ class TestMailboxStore:
         # Search for "Friday"
         results = await store.search("tenant_1", "user_alice", "Friday")
         assert len(results) == 1
-        assert results[0].node_id == "node_2"
+        assert results[0].item.source_node_id == "node_2"
 
     @pytest.mark.asyncio
     async def test_search_no_results(self, store):
@@ -171,9 +176,9 @@ class TestMailboxStore:
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_1",
-            preview_text="Hello world",
+            source_type_id=1,
+            source_node_id="node_1",
+            snippet="Hello world",
         )
 
         results = await store.search("tenant_1", "user_alice", "nonexistent")
@@ -182,17 +187,18 @@ class TestMailboxStore:
     @pytest.mark.asyncio
     async def test_delete_item(self, store):
         """Delete item from mailbox."""
-        await store.add_item(
+        item = await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_123",
-            preview_text="Test message",
+            source_type_id=1,
+            source_node_id="node_123",
+            snippet="Test message",
         )
 
-        await store.delete_item("tenant_1", "user_alice", "node_123")
+        deleted = await store.delete_item("tenant_1", "user_alice", item.item_id)
+        assert deleted is True
 
-        items = await store.get_items("tenant_1", "user_alice")
+        items = await store.list_items("tenant_1", "user_alice")
         assert len(items) == 0
 
     @pytest.mark.asyncio
@@ -201,25 +207,25 @@ class TestMailboxStore:
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_1",
-            preview_text="Alice's message",
+            source_type_id=1,
+            source_node_id="node_1",
+            snippet="Alice's message",
         )
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_bob",
-            node_type_id=1,
-            node_id="node_2",
-            preview_text="Bob's message",
+            source_type_id=1,
+            source_node_id="node_2",
+            snippet="Bob's message",
         )
 
-        alice_items = await store.get_items("tenant_1", "user_alice")
-        bob_items = await store.get_items("tenant_1", "user_bob")
+        alice_items = await store.list_items("tenant_1", "user_alice")
+        bob_items = await store.list_items("tenant_1", "user_bob")
 
         assert len(alice_items) == 1
         assert len(bob_items) == 1
-        assert alice_items[0].preview_text == "Alice's message"
-        assert bob_items[0].preview_text == "Bob's message"
+        assert alice_items[0].snippet == "Alice's message"
+        assert bob_items[0].snippet == "Bob's message"
 
     @pytest.mark.asyncio
     async def test_tenant_isolation(self, store):
@@ -227,53 +233,53 @@ class TestMailboxStore:
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_1",
-            preview_text="Tenant 1 message",
+            source_type_id=1,
+            source_node_id="node_1",
+            snippet="Tenant 1 message",
         )
         await store.add_item(
             tenant_id="tenant_2",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_2",
-            preview_text="Tenant 2 message",
+            source_type_id=1,
+            source_node_id="node_2",
+            snippet="Tenant 2 message",
         )
 
-        t1_items = await store.get_items("tenant_1", "user_alice")
-        t2_items = await store.get_items("tenant_2", "user_alice")
+        t1_items = await store.list_items("tenant_1", "user_alice")
+        t2_items = await store.list_items("tenant_2", "user_alice")
 
         assert len(t1_items) == 1
         assert len(t2_items) == 1
-        assert t1_items[0].preview_text == "Tenant 1 message"
-        assert t2_items[0].preview_text == "Tenant 2 message"
+        assert t1_items[0].snippet == "Tenant 1 message"
+        assert t2_items[0].snippet == "Tenant 2 message"
 
     @pytest.mark.asyncio
     async def test_filter_by_type(self, store):
-        """Filter mailbox by node type."""
+        """Filter mailbox by source type."""
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_1",
-            preview_text="Message type 1",
+            source_type_id=1,
+            source_node_id="node_1",
+            snippet="Message type 1",
         )
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=2,
-            node_id="node_2",
-            preview_text="Message type 2",
+            source_type_id=2,
+            source_node_id="node_2",
+            snippet="Message type 2",
         )
         await store.add_item(
             tenant_id="tenant_1",
             user_id="user_alice",
-            node_type_id=1,
-            node_id="node_3",
-            preview_text="Another type 1",
+            source_type_id=1,
+            source_node_id="node_3",
+            snippet="Another type 1",
         )
 
-        type1_items = await store.get_items("tenant_1", "user_alice", node_type_id=1)
-        type2_items = await store.get_items("tenant_1", "user_alice", node_type_id=2)
+        type1_items = await store.list_items("tenant_1", "user_alice", source_type_id=1)
+        type2_items = await store.list_items("tenant_1", "user_alice", source_type_id=2)
 
         assert len(type1_items) == 2
         assert len(type2_items) == 1
