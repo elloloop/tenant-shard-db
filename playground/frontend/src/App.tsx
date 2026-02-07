@@ -1,7 +1,11 @@
 import { useState, useCallback, useEffect } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Play, Wand2, Copy, Check, AlertCircle, ExternalLink, FileCode, ChevronDown } from 'lucide-react'
+import { Play, Sparkles, Copy, Check, AlertCircle, ExternalLink, Code2, Loader2, Sun, Moon, Monitor } from 'lucide-react'
 import { parseSchema, executeSchema, getAIPromptTemplate, SchemaParseResponse } from './api'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useTheme } from '@/components/theme-provider'
 import YamlEditor from './components/YamlEditor'
 import CodePreview from './components/CodePreview'
 import AIPromptModal from './components/AIPromptModal'
@@ -81,6 +85,33 @@ data:
     to_id: "@post1"
 `
 
+function ThemeToggle() {
+  const { theme, setTheme } = useTheme()
+
+  const cycleTheme = () => {
+    if (theme === 'light') setTheme('dark')
+    else if (theme === 'dark') setTheme('system')
+    else setTheme('light')
+  }
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" onClick={cycleTheme} className="h-9 w-9">
+          {theme === 'light' && <Sun className="h-4 w-4" />}
+          {theme === 'dark' && <Moon className="h-4 w-4" />}
+          {theme === 'system' && <Monitor className="h-4 w-4" />}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>
+        {theme === 'light' && 'Light mode'}
+        {theme === 'dark' && 'Dark mode'}
+        {theme === 'system' && 'System mode'}
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 function App() {
   const [yaml, setYaml] = useState(DEFAULT_SCHEMA)
   const [parseResult, setParseResult] = useState<SchemaParseResponse | null>(null)
@@ -88,7 +119,6 @@ function App() {
   const [copied, setCopied] = useState(false)
   const [executeResult, setExecuteResult] = useState<{ success: boolean; message: string; ids: string[] } | null>(null)
 
-  // Parse mutation
   const parseMutation = useMutation({
     mutationFn: (content: string) => parseSchema(content, 'yaml'),
     onSuccess: (data) => {
@@ -97,7 +127,6 @@ function App() {
     },
   })
 
-  // Execute mutation
   const executeMutation = useMutation({
     mutationFn: (content: string) => executeSchema(content, 'yaml'),
     onSuccess: (data) => {
@@ -109,7 +138,6 @@ function App() {
     },
   })
 
-  // Auto-parse on change (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       if (yaml.trim()) {
@@ -142,115 +170,150 @@ function App() {
   }, [])
 
   return (
-    <div className="h-screen flex flex-col bg-slate-900 text-slate-100">
-      {/* Header */}
-      <header className="flex-none h-14 border-b border-slate-700 flex items-center justify-between px-4">
-        <div className="flex items-center gap-3">
-          <FileCode className="w-6 h-6 text-blue-400" />
-          <h1 className="text-lg font-semibold">EntDB Playground</h1>
-          <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded">Interactive SDK Simulator</span>
-        </div>
+    <TooltipProvider>
+      <div className="h-screen flex flex-col bg-background text-foreground">
+        {/* Header */}
+        <header className="flex-none h-14 border-b flex items-center justify-between px-4">
+          <div className="flex items-center gap-3">
+            <Code2 className="w-6 h-6 text-primary" />
+            <h1 className="text-lg font-semibold">EntDB Playground</h1>
+            <Badge variant="secondary" className="text-xs font-normal">
+              Interactive SDK Simulator
+            </Badge>
+          </div>
 
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setShowAIModal(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-500 rounded-md transition-colors"
-          >
-            <Wand2 className="w-4 h-4" />
-            AI Generate
-          </button>
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowAIModal(true)}
+                  className="gap-2"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  AI Generate
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Generate schema from natural language
+              </TooltipContent>
+            </Tooltip>
 
-          <button
-            onClick={handleCopyPrompt}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm bg-slate-700 hover:bg-slate-600 rounded-md transition-colors"
-          >
-            {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
-            Copy Prompt
-          </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleCopyPrompt}
+                  className="gap-2"
+                >
+                  {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                  {copied ? 'Copied' : 'Copy Prompt'}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Copy AI prompt template to clipboard
+              </TooltipContent>
+            </Tooltip>
 
-          <button
-            onClick={handleExecute}
-            disabled={!parseResult?.valid || executeMutation.isPending}
-            className="flex items-center gap-2 px-4 py-1.5 text-sm bg-green-600 hover:bg-green-500 disabled:bg-slate-700 disabled:text-slate-500 rounded-md transition-colors"
-          >
-            <Play className="w-4 h-4" />
-            {executeMutation.isPending ? 'Executing...' : 'Execute'}
-          </button>
-
-          <a
-            href="http://localhost:8080"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-1 px-3 py-1.5 text-sm text-slate-400 hover:text-white transition-colors"
-          >
-            <ExternalLink className="w-4 h-4" />
-            Console
-          </a>
-        </div>
-      </header>
-
-      {/* Status bar */}
-      {(parseResult || executeResult) && (
-        <div className={`flex-none px-4 py-2 text-sm flex items-center gap-2 ${
-          executeResult
-            ? (executeResult.success ? 'bg-green-900/50 text-green-300' : 'bg-red-900/50 text-red-300')
-            : (parseResult?.valid ? 'bg-blue-900/50 text-blue-300' : 'bg-yellow-900/50 text-yellow-300')
-        }`}>
-          {executeResult ? (
-            <>
-              {executeResult.success ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-              {executeResult.message}
-              {executeResult.ids.length > 0 && (
-                <span className="text-xs opacity-75">
-                  (IDs: {executeResult.ids.slice(0, 3).join(', ')}{executeResult.ids.length > 3 && '...'})
-                </span>
+            <Button
+              size="sm"
+              onClick={handleExecute}
+              disabled={!parseResult?.valid || executeMutation.isPending}
+              className="gap-2"
+            >
+              {executeMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Play className="w-4 h-4" />
               )}
-            </>
-          ) : parseResult?.valid ? (
-            <>
-              <Check className="w-4 h-4" />
-              Schema valid - {parseResult.schema_data?.node_types?.length || 0} node types, {parseResult.schema_data?.edge_types?.length || 0} edge types
-            </>
-          ) : (
-            <>
-              <AlertCircle className="w-4 h-4" />
-              {parseResult?.errors?.[0] || 'Schema has errors'}
-            </>
-          )}
-        </div>
-      )}
+              {executeMutation.isPending ? 'Executing...' : 'Execute'}
+            </Button>
 
-      {/* Main content - split view */}
-      <div className="flex-1 flex min-h-0">
-        {/* Left panel - YAML Editor */}
-        <div className="w-1/2 flex flex-col border-r border-slate-700">
-          <div className="flex-none h-10 bg-slate-800 border-b border-slate-700 flex items-center px-4">
-            <span className="text-sm text-slate-400">Schema (YAML)</span>
-            <div className="ml-auto flex items-center gap-2">
+            <div className="w-px h-6 bg-border mx-1" />
+
+            <ThemeToggle />
+
+            <Button variant="ghost" size="sm" asChild className="gap-1 text-muted-foreground">
+              <a href="http://localhost:8080" target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="w-4 h-4" />
+                Console
+              </a>
+            </Button>
+          </div>
+        </header>
+
+        {/* Status bar */}
+        {(parseResult || executeResult) && (
+          <div className={`flex-none px-4 py-2 text-sm flex items-center gap-2 border-b ${
+            executeResult
+              ? (executeResult.success ? 'bg-green-500/10 text-green-600 dark:text-green-400' : 'bg-destructive/10 text-destructive')
+              : (parseResult?.valid ? 'bg-primary/10 text-primary' : 'bg-yellow-500/10 text-yellow-600 dark:text-yellow-400')
+          }`}>
+            {executeResult ? (
+              <>
+                {executeResult.success ? <Check className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                <span>{executeResult.message}</span>
+                {executeResult.ids.length > 0 && (
+                  <Badge variant="outline" className="ml-2 text-xs">
+                    {executeResult.ids.length} node{executeResult.ids.length !== 1 ? 's' : ''} created
+                  </Badge>
+                )}
+              </>
+            ) : parseResult?.valid ? (
+              <>
+                <Check className="w-4 h-4" />
+                <span>Schema valid</span>
+                <Badge variant="secondary" className="ml-2 text-xs">
+                  {(parseResult.schema_data?.node_types as unknown[])?.length || 0} node types
+                </Badge>
+                <Badge variant="secondary" className="text-xs">
+                  {(parseResult.schema_data?.edge_types as unknown[])?.length || 0} edge types
+                </Badge>
+              </>
+            ) : (
+              <>
+                <AlertCircle className="w-4 h-4" />
+                <span>{parseResult?.errors?.[0] || 'Schema has errors'}</span>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* Main content - split view */}
+        <div className="flex-1 flex min-h-0">
+          {/* Left panel - YAML Editor */}
+          <div className="w-1/2 flex flex-col border-r">
+            <div className="flex-none h-10 bg-muted/30 border-b flex items-center justify-between px-4">
+              <span className="text-sm text-muted-foreground font-medium">Schema (YAML)</span>
               {parseMutation.isPending && (
-                <span className="text-xs text-slate-500">Parsing...</span>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Parsing...
+                </div>
               )}
             </div>
+            <div className="flex-1 min-h-0">
+              <YamlEditor value={yaml} onChange={setYaml} errors={parseResult?.errors} />
+            </div>
           </div>
-          <div className="flex-1 min-h-0">
-            <YamlEditor value={yaml} onChange={setYaml} errors={parseResult?.errors} />
+
+          {/* Right panel - Code Preview */}
+          <div className="w-1/2 flex flex-col">
+            <CodePreview parseResult={parseResult} />
           </div>
         </div>
 
-        {/* Right panel - Code Preview */}
-        <div className="w-1/2 flex flex-col">
-          <CodePreview parseResult={parseResult} />
-        </div>
+        {/* AI Modal */}
+        {showAIModal && (
+          <AIPromptModal
+            onClose={() => setShowAIModal(false)}
+            onGenerate={handleSchemaGenerated}
+          />
+        )}
       </div>
-
-      {/* AI Modal */}
-      {showAIModal && (
-        <AIPromptModal
-          onClose={() => setShowAIModal(false)}
-          onGenerate={handleSchemaGenerated}
-        />
-      )}
-    </div>
+    </TooltipProvider>
   )
 }
 
