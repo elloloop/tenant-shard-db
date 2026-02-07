@@ -15,7 +15,7 @@
 # =============================================================================
 # Base stage with Python and dependencies
 # =============================================================================
-FROM python:3.11-slim-bookworm AS base
+FROM python:3.14-slim-bookworm AS base
 
 # Prevent Python from writing bytecode and buffering stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1
