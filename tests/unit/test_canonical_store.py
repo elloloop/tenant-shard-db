@@ -33,94 +33,100 @@ class TestCanonicalStore:
     async def test_create_node(self, store):
         """Create node stores data."""
         tenant_id = "tenant_1"
-        node_id = await store.create_node(
+        await store.initialize_tenant(tenant_id)
+
+        node = await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "Test User", "email": "test@example.com"},
             owner_actor="user:alice",
-            principals=["user:alice", "tenant:*"],
+            acl=[
+                {"principal": "user:alice", "permission": "read"},
+                {"principal": "tenant:*", "permission": "read"},
+            ],
         )
 
-        assert node_id is not None
+        assert node is not None
+        assert node.node_id is not None
 
         # Retrieve the node
-        node = await store.get_node(tenant_id, node_id)
-        assert node is not None
-        assert node["payload"]["name"] == "Test User"
-        assert node["owner_actor"] == "user:alice"
+        fetched = await store.get_node(tenant_id, node.node_id)
+        assert fetched is not None
+        assert fetched.payload["name"] == "Test User"
+        assert fetched.owner_actor == "user:alice"
 
     @pytest.mark.asyncio
     async def test_create_node_idempotent(self, store):
-        """Same idempotency key returns same result."""
+        """Idempotency key prevents duplicate processing."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        node_id1 = await store.create_node(
+        # Record an applied event
+        already_applied = await store.check_idempotency(tenant_id, "create_user_1")
+        assert already_applied is False
+
+        await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "Test"},
             owner_actor="user:alice",
-            idempotency_key="create_user_1",
         )
+        await store.record_applied_event(tenant_id, "create_user_1", stream_pos="pos_1")
 
-        # Second call with same idempotency key
-        node_id2 = await store.create_node(
-            tenant_id=tenant_id,
-            type_id=1,
-            payload={"name": "Different"},
-            owner_actor="user:alice",
-            idempotency_key="create_user_1",
-        )
-
-        assert node_id1 == node_id2
+        # Second check shows event already applied
+        already_applied = await store.check_idempotency(tenant_id, "create_user_1")
+        assert already_applied is True
 
     @pytest.mark.asyncio
     async def test_update_node(self, store):
         """Update node modifies payload."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        node_id = await store.create_node(
+        node = await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "Original"},
             owner_actor="user:alice",
         )
 
-        await store.update_node(
+        updated = await store.update_node(
             tenant_id=tenant_id,
-            node_id=node_id,
-            payload={"name": "Updated"},
+            node_id=node.node_id,
+            patch={"name": "Updated"},
         )
 
-        node = await store.get_node(tenant_id, node_id)
-        assert node["payload"]["name"] == "Updated"
+        assert updated is not None
+        assert updated.payload["name"] == "Updated"
+
+        fetched = await store.get_node(tenant_id, node.node_id)
+        assert fetched.payload["name"] == "Updated"
 
     @pytest.mark.asyncio
-    async def test_delete_node_soft_delete(self, store):
-        """Delete performs soft delete."""
+    async def test_delete_node(self, store):
+        """Delete node removes it."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        node_id = await store.create_node(
+        node = await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "Test"},
             owner_actor="user:alice",
         )
 
-        await store.delete_node(tenant_id, node_id)
+        deleted = await store.delete_node(tenant_id, node.node_id)
+        assert deleted is True
 
-        # Node should not be returned normally
-        node = await store.get_node(tenant_id, node_id)
-        assert node is None
-
-        # But exists in DB with deleted flag
-        node = await store.get_node(tenant_id, node_id, include_deleted=True)
-        assert node is not None
-        assert node["deleted"] is True
+        # Node should not be returned
+        fetched = await store.get_node(tenant_id, node.node_id)
+        assert fetched is None
 
     @pytest.mark.asyncio
     async def test_query_nodes_by_type(self, store):
         """Query nodes filters by type."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
         # Create nodes of different types
         await store.create_node(
@@ -142,25 +148,26 @@ class TestCanonicalStore:
             owner_actor="user:alice",
         )
 
-        users = await store.query_nodes(tenant_id, type_id=1)
+        users = await store.get_nodes_by_type(tenant_id, type_id=1)
         assert len(users) == 2
 
-        tasks = await store.query_nodes(tenant_id, type_id=2)
+        tasks = await store.get_nodes_by_type(tenant_id, type_id=2)
         assert len(tasks) == 1
 
     @pytest.mark.asyncio
     async def test_create_edge(self, store):
         """Create edge links nodes."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
         # Create nodes
-        user_id = await store.create_node(
+        user_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "User"},
             owner_actor="user:alice",
         )
-        task_id = await store.create_node(
+        task_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=2,
             payload={"title": "Task"},
@@ -168,39 +175,39 @@ class TestCanonicalStore:
         )
 
         # Create edge
-        edge_id = await store.create_edge(
+        edge = await store.create_edge(
             tenant_id=tenant_id,
             edge_type_id=100,
-            from_id=task_id,
-            to_id=user_id,
-            owner_actor="user:alice",
+            from_node_id=task_node.node_id,
+            to_node_id=user_node.node_id,
         )
 
-        assert edge_id is not None
+        assert edge is not None
 
         # Query edges
-        edges = await store.get_edges_from(tenant_id, task_id)
+        edges = await store.get_edges_from(tenant_id, task_node.node_id)
         assert len(edges) == 1
-        assert edges[0]["to_id"] == user_id
+        assert edges[0].to_node_id == user_node.node_id
 
     @pytest.mark.asyncio
     async def test_get_edges_to(self, store):
         """Get edges pointing to a node."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        user_id = await store.create_node(
+        user_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "User"},
             owner_actor="user:alice",
         )
-        task1_id = await store.create_node(
+        task1_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=2,
             payload={"title": "Task 1"},
             owner_actor="user:alice",
         )
-        task2_id = await store.create_node(
+        task2_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=2,
             payload={"title": "Task 2"},
@@ -211,94 +218,109 @@ class TestCanonicalStore:
         await store.create_edge(
             tenant_id=tenant_id,
             edge_type_id=100,
-            from_id=task1_id,
-            to_id=user_id,
-            owner_actor="user:alice",
+            from_node_id=task1_node.node_id,
+            to_node_id=user_node.node_id,
         )
         await store.create_edge(
             tenant_id=tenant_id,
             edge_type_id=100,
-            from_id=task2_id,
-            to_id=user_id,
-            owner_actor="user:alice",
+            from_node_id=task2_node.node_id,
+            to_node_id=user_node.node_id,
         )
 
-        edges = await store.get_edges_to(tenant_id, user_id)
+        edges = await store.get_edges_to(tenant_id, user_node.node_id)
         assert len(edges) == 2
 
     @pytest.mark.asyncio
     async def test_delete_edge(self, store):
         """Delete edge removes relationship."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        user_id = await store.create_node(
+        user_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "User"},
             owner_actor="user:alice",
         )
-        task_id = await store.create_node(
+        task_node = await store.create_node(
             tenant_id=tenant_id,
             type_id=2,
             payload={"title": "Task"},
             owner_actor="user:alice",
         )
 
-        edge_id = await store.create_edge(
+        edge = await store.create_edge(
             tenant_id=tenant_id,
             edge_type_id=100,
-            from_id=task_id,
-            to_id=user_id,
-            owner_actor="user:alice",
+            from_node_id=task_node.node_id,
+            to_node_id=user_node.node_id,
         )
 
-        await store.delete_edge(tenant_id, edge_id)
+        deleted = await store.delete_edge(
+            tenant_id,
+            edge.edge_type_id,
+            edge.from_node_id,
+            edge.to_node_id,
+        )
+        assert deleted is True
 
-        edges = await store.get_edges_from(tenant_id, task_id)
+        edges = await store.get_edges_from(tenant_id, task_node.node_id)
         assert len(edges) == 0
 
     @pytest.mark.asyncio
     async def test_check_idempotency(self, store):
-        """Check idempotency returns stored result."""
+        """Check idempotency returns whether event was applied."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        # First operation
+        # First check - not yet applied
         result = await store.check_idempotency(tenant_id, "op_1")
-        assert result is None
+        assert result is False
 
         # Record the operation
-        await store.record_idempotency(tenant_id, "op_1", {"node_id": "abc123"})
+        await store.record_applied_event(tenant_id, "op_1", stream_pos="pos_1")
 
-        # Second check returns stored result
+        # Second check - already applied
         result = await store.check_idempotency(tenant_id, "op_1")
-        assert result == {"node_id": "abc123"}
+        assert result is True
 
     @pytest.mark.asyncio
-    async def test_set_visibility(self, store):
-        """Set visibility updates node principals."""
+    async def test_visibility(self, store):
+        """Visibility index allows filtering by principal."""
         tenant_id = "tenant_1"
+        await store.initialize_tenant(tenant_id)
 
-        node_id = await store.create_node(
+        # Create node with ACL
+        await store.create_node(
             tenant_id=tenant_id,
             type_id=1,
             payload={"name": "Test"},
             owner_actor="user:alice",
-            principals=["user:alice"],
+            acl=[
+                {"principal": "user:bob", "permission": "read"},
+                {"principal": "role:admin", "permission": "read"},
+            ],
         )
 
-        # Update visibility
-        await store.set_visibility(
-            tenant_id=tenant_id,
-            node_id=node_id,
-            principals=["user:alice", "user:bob", "role:admin"],
-        )
+        # Owner can see the node
+        visible = await store.get_visible_nodes(tenant_id, principal="user:alice")
+        assert len(visible) == 1
 
-        visibility = await store.get_visibility(tenant_id, node_id)
-        assert set(visibility) == {"user:alice", "user:bob", "role:admin"}
+        # ACL principal can see the node
+        visible = await store.get_visible_nodes(tenant_id, principal="user:bob")
+        assert len(visible) == 1
+
+        # Non-ACL principal cannot see the node
+        visible = await store.get_visible_nodes(tenant_id, principal="user:charlie")
+        assert len(visible) == 0
 
     @pytest.mark.asyncio
     async def test_tenant_isolation(self, store):
         """Different tenants have isolated data."""
+        await store.initialize_tenant("tenant_1")
+        await store.initialize_tenant("tenant_2")
+
         # Create node in tenant_1
         await store.create_node(
             tenant_id="tenant_1",
@@ -316,10 +338,10 @@ class TestCanonicalStore:
         )
 
         # Query each tenant
-        t1_nodes = await store.query_nodes("tenant_1", type_id=1)
-        t2_nodes = await store.query_nodes("tenant_2", type_id=1)
+        t1_nodes = await store.get_nodes_by_type("tenant_1", type_id=1)
+        t2_nodes = await store.get_nodes_by_type("tenant_2", type_id=1)
 
         assert len(t1_nodes) == 1
         assert len(t2_nodes) == 1
-        assert t1_nodes[0]["payload"]["name"] == "Tenant 1 User"
-        assert t2_nodes[0]["payload"]["name"] == "Tenant 2 User"
+        assert t1_nodes[0].payload["name"] == "Tenant 1 User"
+        assert t2_nodes[0].payload["name"] == "Tenant 2 User"

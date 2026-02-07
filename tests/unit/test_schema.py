@@ -195,8 +195,8 @@ class TestNodeTypeDef:
         assert not is_valid
         assert any("Unknown" in e for e in errors)
 
-    def test_new_creates_validated_payload(self):
-        """new() creates a validated payload."""
+    def test_validate_payload_accepts_valid_fields(self):
+        """validate_payload accepts a payload with valid fields."""
         Task = NodeTypeDef(
             type_id=101,
             name="Task",
@@ -206,20 +206,22 @@ class TestNodeTypeDef:
             ),
         )
 
-        payload = Task.new(title="My Task", status="todo")
-        assert payload["title"] == "My Task"
-        assert payload["status"] == "todo"
+        payload = {"title": "My Task", "status": "todo"}
+        is_valid, errors = Task.validate_payload(payload)
+        assert is_valid
+        assert len(errors) == 0
 
-    def test_new_raises_on_unknown_field(self):
-        """new() raises TypeError on unknown field."""
+    def test_validate_payload_rejects_unknown_field(self):
+        """validate_payload rejects unknown fields."""
         Task = NodeTypeDef(
             type_id=101,
             name="Task",
             fields=(field(1, "title", "str"),),
         )
 
-        with pytest.raises(TypeError, match="Unknown field"):
-            Task.new(title="Test", unknown="value")
+        is_valid, errors = Task.validate_payload({"title": "Test", "unknown": "value"})
+        assert not is_valid
+        assert any("Unknown" in e for e in errors)
 
     def test_node_type_to_dict(self):
         """Node type can be serialized."""
