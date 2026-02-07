@@ -31,11 +31,10 @@ Invariants:
     - All operations require tenant_id and actor
     - Writes are atomic per commit()
 
-Version: 1.0.0
+Version: see VERSION file at project root.
 """
 
-__version__ = "1.0.0"
-
+from ._version import __version__
 from .client import DbClient, Plan, Receipt
 from .errors import (
     ConnectionError,

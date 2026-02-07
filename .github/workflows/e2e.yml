@@ -25,30 +25,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build containers
-        run: |
-          docker compose -f $COMPOSE_FILE build
-
       - name: Run E2E tests
-        id: e2e
         run: |
-          docker compose -f $COMPOSE_FILE up \
-            --abort-on-container-exit \
-            --exit-code-from e2e-tests
-
-      - name: Show server logs on failure
-        if: failure()
-        run: |
-          echo "=== Server Logs ==="
-          docker compose -f $COMPOSE_FILE logs server
-          echo ""
-          echo "=== Redpanda Logs ==="
-          docker compose -f $COMPOSE_FILE logs redpanda
-
-      - name: Cleanup
-        if: always()
-        run: |
-          docker compose -f $COMPOSE_FILE down -v
+          chmod +x tests/e2e/run-e2e.sh
+          tests/e2e/run-e2e.sh --logs
 
   # ==========================================================================
   # Pre-release checks (runs on release creation)

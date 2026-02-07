@@ -90,6 +90,17 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # =============================================================================
 FROM base AS server
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+
+LABEL org.opencontainers.image.title="EntDB Server" \
+      org.opencontainers.image.description="Tenant-sharded graph database with nodes and edges" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.source="https://github.com/elloloop/tenant-shard-db" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.vendor="elloloop"
+
 # Copy virtual environment from builder
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -97,6 +108,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy application code
 COPY dbaas/ /app/dbaas/
 COPY sdk/ /app/sdk/
+COPY VERSION /app/VERSION
 
 # Create data directory
 RUN mkdir -p /var/lib/entdb && chown -R entdb:entdb /var/lib/entdb
@@ -104,8 +116,8 @@ RUN mkdir -p /var/lib/entdb && chown -R entdb:entdb /var/lib/entdb
 # Switch to non-root user
 USER entdb
 
-# Set Python path
-ENV PYTHONPATH="/app"
+# Set Python path (include /app/sdk for entdb_sdk imports)
+ENV PYTHONPATH="/app:/app/sdk"
 
 # Default configuration
 ENV GRPC_BIND="0.0.0.0:50051"
@@ -167,8 +179,8 @@ COPY --from=frontend-builder /build/console/frontend/dist /app/console/static
 # Switch to non-root user
 USER entdb
 
-# Set Python path
-ENV PYTHONPATH="/app"
+# Set Python path (include /app/sdk for entdb_sdk imports)
+ENV PYTHONPATH="/app:/app/sdk"
 
 # Console configuration
 ENV CONSOLE_HOST="0.0.0.0"
@@ -207,8 +219,8 @@ COPY --from=frontend-builder /build/playground/frontend/dist /app/playground/sta
 # Switch to non-root user
 USER entdb
 
-# Set Python path
-ENV PYTHONPATH="/app"
+# Set Python path (include /app/sdk for entdb_sdk imports)
+ENV PYTHONPATH="/app:/app/sdk"
 
 # Playground configuration
 ENV PLAYGROUND_HOST="0.0.0.0"

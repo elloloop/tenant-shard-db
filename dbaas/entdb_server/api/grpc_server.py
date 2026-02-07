@@ -29,43 +29,40 @@ import grpc
 from grpc import aio as grpc_aio
 
 from .generated import (
+    Edge,
     EntDBServiceServicer,
-    add_EntDBServiceServicer_to_server,
     # Request/Response types
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
-    GetReceiptStatusRequest,
-    GetReceiptStatusResponse,
+    GetEdgesRequest,
+    GetEdgesResponse,
+    GetMailboxRequest,
+    GetMailboxResponse,
     GetNodeRequest,
     GetNodeResponse,
     GetNodesRequest,
     GetNodesResponse,
-    QueryNodesRequest,
-    QueryNodesResponse,
-    GetEdgesRequest,
-    GetEdgesResponse,
-    SearchMailboxRequest,
-    SearchMailboxResponse,
-    GetMailboxRequest,
-    GetMailboxResponse,
-    HealthRequest,
-    HealthResponse,
+    GetReceiptStatusRequest,
+    GetReceiptStatusResponse,
     GetSchemaRequest,
     GetSchemaResponse,
-    # Data types
-    Receipt,
-    Node,
-    Edge,
+    HealthRequest,
+    HealthResponse,
     MailboxItem,
     MailboxSearchResult,
+    Node,
+    QueryNodesRequest,
+    QueryNodesResponse,
+    # Data types
+    Receipt,
     ReceiptStatus,
+    SearchMailboxRequest,
+    SearchMailboxResponse,
+    add_EntDBServiceServicer_to_server,
 )
 
 if TYPE_CHECKING:
-    from ..apply.applier import Applier
-    from ..storage.canonical_store import CanonicalStore
-    from ..storage.mailbox_store import MailboxStore
-    from ..wal.base import WALStream
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +134,14 @@ class EntDBServicer(EntDBServiceServicer):
         # Convert operations to internal format
         ops = self._convert_operations(request.operations)
 
+        # Assign IDs to create_node ops that don't have one
+        created_node_ids = []
+        for op in ops:
+            if op.get("op") == "create_node":
+                if not op.get("id"):
+                    op["id"] = str(uuid.uuid4())
+                created_node_ids.append(op["id"])
+
         # Build transaction event
         event = {
             "tenant_id": ctx.tenant_id,
@@ -169,13 +174,6 @@ class EntDBServicer(EntDBServiceServicer):
                 applied = await self._wait_for_applied(ctx.tenant_id, idempotency_key, timeout)
                 if applied:
                     applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
-
-            # Extract created node IDs
-            created_node_ids = []
-            for op in ops:
-                if op.get("op") == "create_node":
-                    node_id = op.get("id") or f"pending_{len(created_node_ids)}"
-                    created_node_ids.append(node_id)
 
             return ExecuteAtomicResponse(
                 success=True,
@@ -210,54 +208,63 @@ class EntDBServicer(EntDBServiceServicer):
                     internal_op["id"] = create.id
                 if create.acl_json:
                     internal_op["acl"] = json.loads(create.acl_json)
-                if create.HasField("as") if hasattr(create, "HasField") else getattr(create, "as", None):
-                    internal_op["as"] = getattr(create, "as")
+                as_val = getattr(create, "as", "")
+                if as_val:
+                    internal_op["as"] = as_val
                 if create.fanout_to:
                     internal_op["fanout_to"] = list(create.fanout_to)
                 result.append(internal_op)
 
             elif op_type == "update_node":
                 update = op.update_node
-                result.append({
-                    "op": "update_node",
-                    "type_id": update.type_id,
-                    "id": update.id,
-                    "patch": json.loads(update.patch_json) if update.patch_json else {},
-                })
+                result.append(
+                    {
+                        "op": "update_node",
+                        "type_id": update.type_id,
+                        "id": update.id,
+                        "patch": json.loads(update.patch_json) if update.patch_json else {},
+                    }
+                )
 
             elif op_type == "delete_node":
                 delete = op.delete_node
-                result.append({
-                    "op": "delete_node",
-                    "type_id": delete.type_id,
-                    "id": delete.id,
-                })
+                result.append(
+                    {
+                        "op": "delete_node",
+                        "type_id": delete.type_id,
+                        "id": delete.id,
+                    }
+                )
 
             elif op_type == "create_edge":
                 create = op.create_edge
-                result.append({
-                    "op": "create_edge",
-                    "edge_id": create.edge_id,
-                    "from": self._convert_node_ref(create.from_),
-                    "to": self._convert_node_ref(create.to),
-                    "props": json.loads(create.props_json) if create.props_json else {},
-                })
+                result.append(
+                    {
+                        "op": "create_edge",
+                        "edge_id": create.edge_id,
+                        "from": self._convert_node_ref(getattr(create, "from")),
+                        "to": self._convert_node_ref(create.to),
+                        "props": json.loads(create.props_json) if create.props_json else {},
+                    }
+                )
 
             elif op_type == "delete_edge":
                 delete = op.delete_edge
-                result.append({
-                    "op": "delete_edge",
-                    "edge_id": delete.edge_id,
-                    "from": self._convert_node_ref(delete.from_),
-                    "to": self._convert_node_ref(delete.to),
-                })
+                result.append(
+                    {
+                        "op": "delete_edge",
+                        "edge_id": delete.edge_id,
+                        "from": self._convert_node_ref(getattr(delete, "from")),
+                        "to": self._convert_node_ref(delete.to),
+                    }
+                )
 
         return result
 
     def _convert_node_ref(self, ref: Any) -> Any:
         """Convert protobuf node reference to internal format."""
         ref_type = ref.WhichOneof("ref")
-        if ref_type == "id":
+        if ref_type == "id":  # noqa: SIM116
             return ref.id
         elif ref_type == "alias_ref":
             return {"ref": ref.alias_ref}
@@ -293,7 +300,11 @@ class EntDBServicer(EntDBServiceServicer):
                 request.context.tenant_id,
                 request.idempotency_key,
             )
-            status = ReceiptStatus.RECEIPT_STATUS_APPLIED if applied else ReceiptStatus.RECEIPT_STATUS_PENDING
+            status = (
+                ReceiptStatus.RECEIPT_STATUS_APPLIED
+                if applied
+                else ReceiptStatus.RECEIPT_STATUS_PENDING
+            )
             return GetReceiptStatusResponse(status=status)
         except Exception as e:
             return GetReceiptStatusResponse(
@@ -348,16 +359,18 @@ class EntDBServicer(EntDBServiceServicer):
                     node_id,
                 )
                 if node:
-                    nodes.append(Node(
-                        tenant_id=node.tenant_id,
-                        node_id=node.node_id,
-                        type_id=node.type_id,
-                        payload_json=json.dumps(node.payload),
-                        created_at=node.created_at,
-                        updated_at=node.updated_at,
-                        owner_actor=node.owner_actor,
-                        acl_json=json.dumps(node.acl),
-                    ))
+                    nodes.append(
+                        Node(
+                            tenant_id=node.tenant_id,
+                            node_id=node.node_id,
+                            type_id=node.type_id,
+                            payload_json=json.dumps(node.payload),
+                            created_at=node.created_at,
+                            updated_at=node.updated_at,
+                            owner_actor=node.owner_actor,
+                            acl_json=json.dumps(node.acl),
+                        )
+                    )
                 else:
                     missing_ids.append(node_id)
 
@@ -594,11 +607,13 @@ class EntDBServicer(EntDBServiceServicer):
 
             if request.type_id:
                 schema_dict["node_types"] = [
-                    t for t in schema_dict.get("node_types", [])
+                    t
+                    for t in schema_dict.get("node_types", [])
                     if t.get("type_id") == request.type_id
                 ]
                 schema_dict["edge_types"] = [
-                    e for e in schema_dict.get("edge_types", [])
+                    e
+                    for e in schema_dict.get("edge_types", [])
                     if e.get("from_type_id") == request.type_id
                     or e.get("to_type_id") == request.type_id
                 ]
@@ -674,6 +689,7 @@ class GrpcServer:
         if self.reflection_enabled:
             try:
                 from grpc_reflection.v1alpha import reflection
+
                 from .generated import entdb_pb2
 
                 SERVICE_NAMES = (

@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ChevronLeft, ZoomIn, ZoomOut, Maximize2, Eye } from 'lucide-react'
-import { api, Node, Edge } from '../api'
+import { api, Node } from '../api'
 
 interface GraphNode extends Node {
   x: number

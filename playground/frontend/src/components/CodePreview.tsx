@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Copy, Check } from 'lucide-react'
 import { SchemaParseResponse } from '../api'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 
 interface CodePreviewProps {

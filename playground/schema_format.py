@@ -35,18 +35,27 @@ from typing import Any
 
 import yaml
 
-
 # Valid field kinds
 VALID_KINDS = {
-    "str", "int", "float", "bool", "timestamp",
-    "json", "bytes", "enum", "ref",
-    "list_str", "list_int", "list_ref",
+    "str",
+    "int",
+    "float",
+    "bool",
+    "timestamp",
+    "json",
+    "bytes",
+    "enum",
+    "ref",
+    "list_str",
+    "list_int",
+    "list_ref",
 }
 
 
 @dataclass
 class FieldSchema:
     """Schema for a single field."""
+
     id: int
     name: str
     kind: str
@@ -92,6 +101,7 @@ class FieldSchema:
 @dataclass
 class NodeTypeSchema:
     """Schema for a node type."""
+
     type_id: int
     name: str
     fields: list[FieldSchema] = field(default_factory=list)
@@ -131,6 +141,7 @@ class NodeTypeSchema:
 @dataclass
 class EdgeTypeSchema:
     """Schema for an edge type."""
+
     edge_id: int
     name: str
     from_type: int
@@ -173,6 +184,7 @@ class EdgeTypeSchema:
 @dataclass
 class DataOperation:
     """A data operation (create/update/delete)."""
+
     operation: str  # create_node, update_node, delete_node, create_edge, delete_edge
     type_id: int | None = None
     edge_id: int | None = None
@@ -233,6 +245,7 @@ class DataOperation:
 @dataclass
 class PlaygroundSchema:
     """Complete playground schema."""
+
     version: int = 1
     tenant: str = "playground"
     node_types: list[NodeTypeSchema] = field(default_factory=list)

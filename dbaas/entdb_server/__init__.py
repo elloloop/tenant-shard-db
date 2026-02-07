@@ -44,8 +44,9 @@ How to change safely:
     - Fields cannot be removed, only deprecated
     - IDs cannot be reused after deprecation
 
-Version: 1.0.0
+Version: see VERSION file at project root.
 """
 
-__version__ = "1.0.0"
+from ._version import __version__
+
 __all__ = ["__version__"]

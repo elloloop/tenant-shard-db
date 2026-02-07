@@ -7,7 +7,7 @@ The schema is the source of truth - code is always derived.
 
 from __future__ import annotations
 
-from .schema_format import PlaygroundSchema, NodeTypeSchema, EdgeTypeSchema, FieldSchema
+from .schema_format import EdgeTypeSchema, FieldSchema, NodeTypeSchema, PlaygroundSchema
 
 
 def generate_python_schema(schema: PlaygroundSchema) -> str:
@@ -34,13 +34,15 @@ def generate_python_schema(schema: PlaygroundSchema) -> str:
         lines.extend(_generate_python_node_type(nt))
         lines.append("")
 
-    lines.extend([
-        "",
-        "# =============================================================================",
-        "# Edge Types",
-        "# =============================================================================",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            "# =============================================================================",
+            "# Edge Types",
+            "# =============================================================================",
+            "",
+        ]
+    )
 
     # Generate edge types
     node_name_map = {nt.type_id: nt.name for nt in schema.node_types}
@@ -49,14 +51,16 @@ def generate_python_schema(schema: PlaygroundSchema) -> str:
         lines.append("")
 
     # Generate registry lists
-    lines.extend([
-        "",
-        "# =============================================================================",
-        "# Registry",
-        "# =============================================================================",
-        "",
-        "ALL_NODE_TYPES = [",
-    ])
+    lines.extend(
+        [
+            "",
+            "# =============================================================================",
+            "# Registry",
+            "# =============================================================================",
+            "",
+            "ALL_NODE_TYPES = [",
+        ]
+    )
     for nt in schema.node_types:
         lines.append(f"    {nt.name},")
     lines.append("]")
@@ -155,8 +159,9 @@ def generate_python_usage(schema: PlaygroundSchema) -> str:
         elif f.kind == "enum" and f.values:
             example_payload[f.name] = f.values[0]
 
-    payload_str = ", ".join(f'{k}="{v}"' if isinstance(v, str) else f"{k}={v}"
-                           for k, v in example_payload.items())
+    payload_str = ", ".join(
+        f'{k}="{v}"' if isinstance(v, str) else f"{k}={v}" for k, v in example_payload.items()
+    )
 
     return f'''from entdb_sdk import DbClient
 from schema import {nt.name}
@@ -201,12 +206,14 @@ def generate_go_schema(schema: PlaygroundSchema) -> str:
         lines.extend(_generate_go_node_type(nt))
         lines.append("")
 
-    lines.extend([
-        "// =============================================================================",
-        "// Edge Types",
-        "// =============================================================================",
-        "",
-    ])
+    lines.extend(
+        [
+            "// =============================================================================",
+            "// Edge Types",
+            "// =============================================================================",
+            "",
+        ]
+    )
 
     # Generate edge types
     node_name_map = {nt.type_id: nt.name for nt in schema.node_types}
@@ -384,7 +391,7 @@ def generate_data_python(schema: PlaygroundSchema) -> str:
         "from schema import *  # Import all types",
         "",
         "",
-        f'async with DbClient("localhost:50051") as db:',
+        'async with DbClient("localhost:50051") as db:',
         f'    plan = db.atomic("{schema.tenant}", "user:you")',
         "",
     ]
@@ -423,17 +430,23 @@ def generate_data_python(schema: PlaygroundSchema) -> str:
                     for k, v in op.props.items()
                 )
                 props_arg = f", props={{{props_str}}}"
-            lines.append(f'    plan.edge_create({edge_name}, from_="{op.from_id}", to="{op.to_id}"{props_arg})')
+            lines.append(
+                f'    plan.edge_create({edge_name}, from_="{op.from_id}", to="{op.to_id}"{props_arg})'
+            )
 
         elif op.operation == "delete_edge":
             edge_name = edge_map.get(op.edge_id, f"Edge_{op.edge_id}")
-            lines.append(f'    plan.edge_delete({edge_name}, from_="{op.from_id}", to="{op.to_id}")')
+            lines.append(
+                f'    plan.edge_delete({edge_name}, from_="{op.from_id}", to="{op.to_id}")'
+            )
 
-    lines.extend([
-        "",
-        "    result = await plan.commit()",
-        '    print(f"Success: {result.success}")',
-        '    print(f"Created: {result.created_node_ids}")',
-    ])
+    lines.extend(
+        [
+            "",
+            "    result = await plan.commit()",
+            '    print(f"Success: {result.success}")',
+            '    print(f"Created: {result.created_node_ids}")',
+        ]
+    )
 
     return "\n".join(lines)

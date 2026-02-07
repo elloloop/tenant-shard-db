@@ -16,21 +16,18 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-import grpc
 from grpc import aio as grpc_aio
 
 # Import generated stubs - Console has its own copy
 from entdb_sdk._generated import (
     EntDBServiceStub,
-    RequestContext,
-    GetNodeRequest,
-    GetNodesRequest,
-    QueryNodesRequest,
     GetEdgesRequest,
-    SearchMailboxRequest,
-    GetMailboxRequest,
-    HealthRequest,
+    GetNodeRequest,
     GetSchemaRequest,
+    HealthRequest,
+    QueryNodesRequest,
+    RequestContext,
+    SearchMailboxRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -39,6 +36,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ConsoleNode:
     """Node data for Console display."""
+
     node_id: str
     type_id: int
     tenant_id: str
@@ -51,6 +49,7 @@ class ConsoleNode:
 @dataclass
 class ConsoleEdge:
     """Edge data for Console display."""
+
     edge_type_id: int
     from_node_id: str
     to_node_id: str

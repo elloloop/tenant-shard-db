@@ -15,9 +15,9 @@ Usage:
     uvicorn playground.app:app --port 8081
 """
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,7 +28,7 @@ from entdb_sdk.registry import SchemaRegistry
 
 from .config import Settings
 from .routes import router
-from .schema import ALL_NODE_TYPES, ALL_EDGE_TYPES
+from .schema import ALL_EDGE_TYPES, ALL_NODE_TYPES
 
 
 @asynccontextmanager
@@ -83,9 +83,9 @@ def create_app() -> FastAPI:
     # API routes
     app.include_router(router, prefix="/api/v1")
 
-    # Root info
-    @app.get("/")
-    async def root():
+    # API info endpoint (moved from "/" to "/api")
+    @app.get("/api")
+    async def api_info():
         return {
             "service": "entdb-playground",
             "description": "Interactive SDK simulator for EntDB",

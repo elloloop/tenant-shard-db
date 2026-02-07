@@ -11,33 +11,33 @@ Supports two modes:
 Each response includes the equivalent SDK code.
 """
 
-import time
 import logging
+import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from entdb_sdk import DbClient, NodeTypeDef, EdgeTypeDef, field as sdk_field
+from entdb_sdk import DbClient, EdgeTypeDef, NodeTypeDef
+from entdb_sdk import field as sdk_field
 
+from .codegen import (
+    generate_data_python,
+    generate_go_schema,
+    generate_go_usage,
+    generate_python_schema,
+    generate_python_usage,
+)
 from .schema import (
-    ALL_NODE_TYPES,
     ALL_EDGE_TYPES,
-    get_node_type,
+    ALL_NODE_TYPES,
     get_edge_type,
+    get_node_type,
 )
 from .schema_format import (
-    PlaygroundSchema,
-    parse_yaml,
-    parse_json,
     AI_PROMPT_TEMPLATE,
-)
-from .codegen import (
-    generate_python_schema,
-    generate_go_schema,
-    generate_python_usage,
-    generate_go_usage,
-    generate_data_python,
+    parse_json,
+    parse_yaml,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,12 +52,14 @@ router = APIRouter(tags=["Playground"])
 
 class CreateNodeRequest(BaseModel):
     """Create a node (demo mode)."""
+
     type_id: int = Field(..., description="Node type ID (1=User, 2=Project, 3=Task, 4=Comment)")
     payload: dict[str, Any] = Field(..., description="Node data")
 
 
 class UpdateNodeRequest(BaseModel):
     """Update a node (demo mode)."""
+
     type_id: int = Field(..., description="Node type ID")
     node_id: str = Field(..., description="Node ID to update")
     patch: dict[str, Any] = Field(..., description="Fields to update")
@@ -65,12 +67,14 @@ class UpdateNodeRequest(BaseModel):
 
 class DeleteNodeRequest(BaseModel):
     """Delete a node (demo mode)."""
+
     type_id: int = Field(..., description="Node type ID")
     node_id: str = Field(..., description="Node ID to delete")
 
 
 class CreateEdgeRequest(BaseModel):
     """Create an edge (demo mode)."""
+
     edge_id: int = Field(..., description="Edge type ID")
     from_id: str = Field(..., description="Source node ID")
     to_id: str = Field(..., description="Target node ID")
@@ -79,6 +83,7 @@ class CreateEdgeRequest(BaseModel):
 
 class DeleteEdgeRequest(BaseModel):
     """Delete an edge (demo mode)."""
+
     edge_id: int = Field(..., description="Edge type ID")
     from_id: str = Field(..., description="Source node ID")
     to_id: str = Field(..., description="Target node ID")
@@ -86,11 +91,13 @@ class DeleteEdgeRequest(BaseModel):
 
 class AtomicRequest(BaseModel):
     """Execute multiple operations atomically (demo mode)."""
+
     operations: list[dict[str, Any]] = Field(..., description="List of operations")
 
 
 class PlaygroundResponse(BaseModel):
     """Response with result and SDK code."""
+
     success: bool
     message: str
     data: dict[str, Any] | None = None
@@ -102,12 +109,14 @@ class PlaygroundResponse(BaseModel):
 
 class SchemaParseRequest(BaseModel):
     """Request to parse and validate a schema."""
+
     content: str = Field(..., description="YAML or JSON schema content")
     format: str = Field(default="yaml", description="Format: 'yaml' or 'json'")
 
 
 class SchemaParseResponse(BaseModel):
     """Response with parsed schema and generated code."""
+
     valid: bool
     errors: list[str] = Field(default_factory=list)
     schema_data: dict[str, Any] | None = None
@@ -120,6 +129,7 @@ class SchemaParseResponse(BaseModel):
 
 class SchemaExecuteRequest(BaseModel):
     """Request to parse schema and execute data operations."""
+
     content: str = Field(..., description="YAML or JSON schema content")
     format: str = Field(default="yaml", description="Format: 'yaml' or 'json'")
     execute_data: bool = Field(default=True, description="Execute data operations")
@@ -127,6 +137,7 @@ class SchemaExecuteRequest(BaseModel):
 
 class SchemaExecuteResponse(BaseModel):
     """Response from schema execution."""
+
     success: bool
     message: str
     errors: list[str] = Field(default_factory=list)
@@ -137,11 +148,13 @@ class SchemaExecuteResponse(BaseModel):
 
 class AIPromptRequest(BaseModel):
     """Request for AI prompt generation."""
+
     requirements: str = Field(..., description="Natural language requirements for the schema")
 
 
 class AIPromptResponse(BaseModel):
     """Response with AI prompt."""
+
     prompt: str
 
 
@@ -220,7 +233,7 @@ async def parse_schema(request: SchemaParseRequest):
 async def execute_schema(
     request: SchemaExecuteRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """
     Parse schema, register types, and execute data operations.
@@ -279,17 +292,21 @@ async def execute_schema(
                 if not from_type or not to_type:
                     continue
 
-                props = tuple(
-                    sdk_field(
-                        p.id,
-                        p.name,
-                        p.kind,
-                        required=p.required,
-                        default=p.default,
-                        enum_values=tuple(p.values) if p.values else None,
+                props = (
+                    tuple(
+                        sdk_field(
+                            p.id,
+                            p.name,
+                            p.kind,
+                            required=p.required,
+                            default=p.default,
+                            enum_values=tuple(p.values) if p.values else None,
+                        )
+                        for p in et.props
                     )
-                    for p in et.props
-                ) if et.props else ()
+                    if et.props
+                    else ()
+                )
 
                 edge_type = EdgeTypeDef(
                     edge_id=et.edge_id,
@@ -303,7 +320,6 @@ async def execute_schema(
 
             # Execute data operations
             plan = db.atomic(settings.sandbox_tenant, settings.sandbox_actor)
-            alias_map: dict[str, str] = {}  # alias -> created node id
 
             for op in schema.data:
                 if op.operation == "create_node":
@@ -467,7 +483,7 @@ async def get_demo_schema():
 
 def _generate_demo_code(operation: str, **kwargs) -> str:
     """Generate SDK code for demo operations."""
-    from .schema import NODE_TYPE_MAP, EDGE_TYPE_MAP
+    from .schema import EDGE_TYPE_MAP, NODE_TYPE_MAP
 
     if operation == "create_node":
         type_name = NODE_TYPE_MAP.get(kwargs["type_id"])
@@ -476,7 +492,7 @@ def _generate_demo_code(operation: str, **kwargs) -> str:
             f'{k}="{v}"' if isinstance(v, str) else f"{k}={v}"
             for k, v in kwargs.get("payload", {}).items()
         )
-        return f'''from entdb_sdk import DbClient
+        return f"""from entdb_sdk import DbClient
 from playground.schema import {type_str}
 
 async with DbClient("localhost:50051") as db:
@@ -484,7 +500,7 @@ async with DbClient("localhost:50051") as db:
     plan.create({type_str}, {{{payload_str}}})
     result = await plan.commit()
     print(f"Created: {{result.created_node_ids[0]}}")
-'''
+"""
 
     elif operation == "update_node":
         type_name = NODE_TYPE_MAP.get(kwargs["type_id"])
@@ -498,7 +514,7 @@ from playground.schema import {type_str}
 
 async with DbClient("localhost:50051") as db:
     plan = db.atomic("playground", "user:you")
-    plan.update({type_str}, "{kwargs['node_id']}", {{{patch_str}}})
+    plan.update({type_str}, "{kwargs["node_id"]}", {{{patch_str}}})
     result = await plan.commit()
 '''
 
@@ -510,7 +526,7 @@ from playground.schema import {type_str}
 
 async with DbClient("localhost:50051") as db:
     plan = db.atomic("playground", "user:you")
-    plan.delete({type_str}, "{kwargs['node_id']}")
+    plan.delete({type_str}, "{kwargs["node_id"]}")
     result = await plan.commit()
 '''
 
@@ -529,7 +545,7 @@ from playground.schema import {edge_str}
 
 async with DbClient("localhost:50051") as db:
     plan = db.atomic("playground", "user:you")
-    plan.edge_create({edge_str}, from_="{kwargs['from_id']}", to="{kwargs['to_id']}"{props_arg})
+    plan.edge_create({edge_str}, from_="{kwargs["from_id"]}", to="{kwargs["to_id"]}"{props_arg})
     result = await plan.commit()
 '''
 
@@ -541,7 +557,7 @@ from playground.schema import {edge_str}
 
 async with DbClient("localhost:50051") as db:
     plan = db.atomic("playground", "user:you")
-    plan.edge_delete({edge_str}, from_="{kwargs['from_id']}", to="{kwargs['to_id']}")
+    plan.edge_delete({edge_str}, from_="{kwargs["from_id"]}", to="{kwargs["to_id"]}")
     result = await plan.commit()
 '''
 
@@ -552,7 +568,7 @@ async with DbClient("localhost:50051") as db:
 async def create_node(
     request: CreateNodeRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """
     Create a node in the sandbox (demo mode).
@@ -595,7 +611,7 @@ async def create_node(
 async def update_node(
     request: UpdateNodeRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """Update a node in the sandbox (demo mode)."""
     node_type = get_node_type(request.type_id)
@@ -628,7 +644,7 @@ async def update_node(
 async def delete_node(
     request: DeleteNodeRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """Delete a node from the sandbox (demo mode)."""
     node_type = get_node_type(request.type_id)
@@ -647,7 +663,9 @@ async def delete_node(
             success=True,
             message=f"Deleted {node_type.name} node",
             data={"node_id": request.node_id},
-            sdk_code=_generate_demo_code("delete_node", type_id=request.type_id, node_id=request.node_id),
+            sdk_code=_generate_demo_code(
+                "delete_node", type_id=request.type_id, node_id=request.node_id
+            ),
         )
 
     except Exception as e:
@@ -664,7 +682,7 @@ async def delete_node(
 async def create_edge(
     request: CreateEdgeRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """Create an edge in the sandbox (demo mode)."""
     edge_type = get_edge_type(request.edge_id)
@@ -706,7 +724,7 @@ async def create_edge(
 async def delete_edge(
     request: DeleteEdgeRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """Delete an edge from the sandbox (demo mode)."""
     edge_type = get_edge_type(request.edge_id)
@@ -751,7 +769,7 @@ async def delete_edge(
 async def execute_atomic(
     request: AtomicRequest,
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """
     Execute multiple operations atomically (demo mode).
@@ -835,7 +853,9 @@ async def execute_atomic(
                 u = op["update_node"]
                 type_name = get_node_type(u["type_id"])
                 type_str = type_name.name if type_name else f"Type_{u['type_id']}"
-                code_lines.append(f'    plan.update({type_str}, "{u["node_id"]}", {u.get("patch", {})})')
+                code_lines.append(
+                    f'    plan.update({type_str}, "{u["node_id"]}", {u.get("patch", {})})'
+                )
             elif "delete_node" in op:
                 d = op["delete_node"]
                 type_name = get_node_type(d["type_id"])
@@ -845,24 +865,32 @@ async def execute_atomic(
                 e = op["create_edge"]
                 edge_name = get_edge_type(e["edge_id"])
                 edge_str = edge_name.name if edge_name else f"Edge_{e['edge_id']}"
-                code_lines.append(f'    plan.edge_create({edge_str}, from_="{e["from_id"]}", to="{e["to_id"]}")')
+                code_lines.append(
+                    f'    plan.edge_create({edge_str}, from_="{e["from_id"]}", to="{e["to_id"]}")'
+                )
             elif "delete_edge" in op:
                 e = op["delete_edge"]
                 edge_name = get_edge_type(e["edge_id"])
                 edge_str = edge_name.name if edge_name else f"Edge_{e['edge_id']}"
-                code_lines.append(f'    plan.edge_delete({edge_str}, from_="{e["from_id"]}", to="{e["to_id"]}")')
+                code_lines.append(
+                    f'    plan.edge_delete({edge_str}, from_="{e["from_id"]}", to="{e["to_id"]}")'
+                )
 
-        code_lines.extend([
-            "",
-            "    result = await plan.commit()",
-            '    print(f"Created: {result.created_node_ids}")',
-        ])
+        code_lines.extend(
+            [
+                "",
+                "    result = await plan.commit()",
+                '    print(f"Created: {result.created_node_ids}")',
+            ]
+        )
 
         return PlaygroundResponse(
             success=True,
             message=f"Executed {len(request.operations)} operations atomically",
             data={
-                "created_node_ids": list(result.created_node_ids) if result.created_node_ids else [],
+                "created_node_ids": list(result.created_node_ids)
+                if result.created_node_ids
+                else [],
                 "operation_count": len(request.operations),
             },
             sdk_code="\n".join(code_lines),
@@ -883,7 +911,7 @@ async def execute_atomic(
 @router.post("/reset", response_model=PlaygroundResponse)
 async def reset_sandbox(
     db: DbClient = Depends(get_db_client),
-    settings = Depends(get_settings),
+    settings=Depends(get_settings),
 ):
     """
     Delete all data in the sandbox tenant.

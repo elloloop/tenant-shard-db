@@ -53,10 +53,19 @@ echo "[1/3] Building containers..."
 docker compose -f "$COMPOSE_FILE" build $NO_CACHE
 
 echo ""
-echo "[2/3] Running e2e tests..."
+echo "[2/3] Starting infrastructure..."
+docker compose -f "$COMPOSE_FILE" up -d redpanda minio
+docker compose -f "$COMPOSE_FILE" up -d minio-init
+docker compose -f "$COMPOSE_FILE" up -d server
+
+echo "Waiting for server to be healthy..."
+docker compose -f "$COMPOSE_FILE" up -d --wait server
+
+echo ""
+echo "[3/4] Running e2e tests..."
 set +e  # Don't exit on error, we want to capture the exit code
 
-docker compose -f "$COMPOSE_FILE" up --abort-on-container-exit --exit-code-from e2e-tests
+docker compose -f "$COMPOSE_FILE" up --exit-code-from e2e-tests e2e-tests
 EXIT_CODE=$?
 
 set -e
@@ -71,11 +80,11 @@ fi
 # Cleanup
 if [ "$KEEP_RUNNING" = false ]; then
     echo ""
-    echo "[3/3] Cleaning up..."
+    echo "[4/4] Cleaning up..."
     docker compose -f "$COMPOSE_FILE" down -v
 else
     echo ""
-    echo "[3/3] Keeping containers running (use 'docker compose -f $COMPOSE_FILE down -v' to clean up)"
+    echo "[4/4] Keeping containers running (use 'docker compose -f $COMPOSE_FILE down -v' to clean up)"
 fi
 
 echo ""
