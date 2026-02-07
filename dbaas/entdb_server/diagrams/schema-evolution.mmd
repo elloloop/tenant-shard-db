@@ -1,0 +1,60 @@
+%% EntDB Schema Evolution
+%% Safe schema changes workflow
+
+flowchart TD
+    subgraph Development["Development"]
+        CODE["Update schema.py"]
+        LOCAL["Local testing"]
+    end
+
+    subgraph CI["CI Pipeline"]
+        SNAPSHOT["Load baseline<br/>.schema-snapshot.json"]
+        CURRENT["Parse current schema"]
+        COMPARE["Compare schemas"]
+        CHANGES{"Breaking<br/>changes?"}
+        FAIL["Fail CI"]
+        PASS["Pass CI"]
+    end
+
+    subgraph CD["CD Pipeline"]
+        DEPLOY["Deploy new version"]
+        UPDATE["Update snapshot"]
+        COMMIT["Commit snapshot"]
+    end
+
+    %% Flow
+    CODE --> LOCAL
+    LOCAL --> |"git push"| SNAPSHOT
+    SNAPSHOT --> COMPARE
+    CURRENT --> COMPARE
+
+    COMPARE --> CHANGES
+    CHANGES --> |"Yes"| FAIL
+    CHANGES --> |"No"| PASS
+
+    PASS --> DEPLOY
+    DEPLOY --> UPDATE
+    UPDATE --> COMMIT
+
+    subgraph SafeChanges["Safe Changes ✓"]
+        S1["Add new type"]
+        S2["Add new field"]
+        S3["Rename type/field"]
+        S4["Add enum value"]
+        S5["Deprecate field"]
+        S6["Make required → optional"]
+    end
+
+    subgraph BreakingChanges["Breaking Changes ✗"]
+        B1["Remove type"]
+        B2["Remove field"]
+        B3["Change field type"]
+        B4["Remove enum value"]
+        B5["Make optional → required"]
+        B6["Reuse deleted ID"]
+    end
+
+    style FAIL fill:#ffcdd2
+    style PASS fill:#c8e6c9
+    style SafeChanges fill:#e8f5e9
+    style BreakingChanges fill:#ffebee

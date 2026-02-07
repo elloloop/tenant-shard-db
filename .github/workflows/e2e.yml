@@ -1,0 +1,50 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:  # Allow manual trigger
+  release:
+    types: [created]
+
+env:
+  COMPOSE_FILE: tests/e2e/docker-compose.e2e.yml
+
+jobs:
+  e2e-tests:
+    name: End-to-End Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Run E2E tests
+        run: |
+          chmod +x tests/e2e/run-e2e.sh
+          tests/e2e/run-e2e.sh --logs
+
+  # ==========================================================================
+  # Pre-release checks (runs on release creation)
+  # ==========================================================================
+  pre-release:
+    name: Pre-Release Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+    needs: e2e-tests
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate release
+        run: |
+          echo "E2E tests passed - release is validated"
+          echo "Release: ${{ github.event.release.tag_name }}"

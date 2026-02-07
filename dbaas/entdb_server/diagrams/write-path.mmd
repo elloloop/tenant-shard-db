@@ -1,0 +1,53 @@
+%% EntDB Write Path
+%% Detailed flow of write operations
+
+sequenceDiagram
+    participant C as Client
+    participant S as Server
+    participant V as Validator
+    participant K as Kafka
+    participant A as Applier
+    participant DB as SQLite
+
+    C->>S: ExecuteAtomic(tenant_id, actor, operations)
+    activate S
+
+    S->>V: Validate schema & payload
+    V-->>S: Validation result
+
+    alt Validation failed
+        S-->>C: Error: ValidationError
+    end
+
+    S->>K: Append TransactionEvent
+    activate K
+    Note over K: acks=all<br/>Durable write
+    K-->>S: StreamPos (partition, offset)
+    deactivate K
+
+    S-->>C: Success + WAL position
+    deactivate S
+
+    Note over C: Client can return<br/>Write is durable
+
+    K->>A: Consume event
+    activate A
+
+    A->>A: Check idempotency_key
+    alt Already applied
+        A->>A: Skip (idempotent)
+    else New event
+        A->>DB: Begin transaction
+        activate DB
+
+        loop For each operation
+            A->>DB: Apply operation
+        end
+
+        A->>DB: Record idempotency_key
+        A->>DB: Commit transaction
+        deactivate DB
+
+        A->>A: Update checkpoint
+    end
+    deactivate A
