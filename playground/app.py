@@ -89,19 +89,32 @@ def create_app() -> FastAPI:
             "description": "Interactive SDK simulator for EntDB",
             "sandbox_tenant": settings.sandbox_tenant,
             "console_url": "http://localhost:8080",
+            "modes": {
+                "demo": "Use predefined schema (User, Project, Task, Comment)",
+                "dynamic": "Define custom schema via YAML/JSON",
+            },
             "endpoints": {
-                "schema": "/api/v1/schema",
-                "create_node": "POST /api/v1/nodes",
-                "update_node": "PATCH /api/v1/nodes",
-                "delete_node": "DELETE /api/v1/nodes",
-                "create_edge": "POST /api/v1/edges",
-                "delete_edge": "DELETE /api/v1/edges",
-                "atomic": "POST /api/v1/atomic",
+                "demo_mode": {
+                    "schema": "GET /api/v1/schema",
+                    "create_node": "POST /api/v1/nodes",
+                    "update_node": "PATCH /api/v1/nodes",
+                    "delete_node": "DELETE /api/v1/nodes",
+                    "create_edge": "POST /api/v1/edges",
+                    "delete_edge": "DELETE /api/v1/edges",
+                    "atomic": "POST /api/v1/atomic",
+                },
+                "dynamic_mode": {
+                    "parse_schema": "POST /api/v1/schema/parse - Parse YAML/JSON, get generated code",
+                    "execute_schema": "POST /api/v1/schema/execute - Parse and execute data ops",
+                    "ai_prompt": "GET /api/v1/schema/prompt - Get AI prompt template",
+                    "generate_prompt": "POST /api/v1/schema/prompt - Generate prompt for requirements",
+                },
             },
             "tips": [
                 "View created data in Console at http://localhost:8080",
                 "Use tenant_id='playground' in Console to see sandbox data",
-                "Each response includes equivalent SDK code",
+                "Each response includes equivalent SDK code (Python & Go)",
+                "Use /schema/prompt to get an AI-ready prompt for generating schemas",
             ],
         }
 
