@@ -36,7 +36,7 @@ WORKDIR /app
 # =============================================================================
 # Frontend builder - Build React frontends
 # =============================================================================
-FROM node:20-slim AS frontend-builder
+FROM node:25-slim AS frontend-builder
 
 WORKDIR /build
 
