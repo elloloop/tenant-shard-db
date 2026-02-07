@@ -208,9 +208,11 @@ FROM base AS playground
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Install playground dependencies (SDK from PyPI)
+COPY playground/requirements.txt /app/playground/
+RUN pip install --no-cache-dir -r /app/playground/requirements.txt
+
 # Copy application code
-COPY dbaas/ /app/dbaas/
-COPY sdk/ /app/sdk/
 COPY playground/*.py /app/playground/
 
 # Copy built frontend
@@ -219,8 +221,8 @@ COPY --from=frontend-builder /build/playground/frontend/dist /app/playground/sta
 # Switch to non-root user
 USER entdb
 
-# Set Python path (include /app/sdk for entdb_sdk imports)
-ENV PYTHONPATH="/app:/app/sdk"
+# Set Python path
+ENV PYTHONPATH="/app"
 
 # Playground configuration
 ENV PLAYGROUND_HOST="0.0.0.0"
