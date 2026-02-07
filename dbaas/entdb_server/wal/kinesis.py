@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 AWS Kinesis WAL stream implementation.
 

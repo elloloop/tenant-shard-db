@@ -640,7 +640,8 @@ class MailboxStore:
                     WHERE json_extract(state_json, '$.read') = 0
                     """
                 )
-                return cursor.fetchone()[0]
+                row = cursor.fetchone()
+                return int(row[0]) if row else 0
         except FileNotFoundError:
             return 0
 

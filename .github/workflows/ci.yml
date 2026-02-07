@@ -51,7 +51,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run mypy
-        run: mypy dbaas sdk
+        run: mypy dbaas sdk --exclude '(_generated|api/generated)'
 
   unit-tests:
     name: Unit Tests

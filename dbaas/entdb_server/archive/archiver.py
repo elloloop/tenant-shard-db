@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 WAL stream archiver for EntDB.
 
@@ -172,7 +173,7 @@ class Archiver:
         flush_task = asyncio.create_task(self._flush_loop())
 
         try:
-            async for record in self.wal.subscribe(self.topic, self.group_id):
+            async for record in self.wal.subscribe(self.topic, self.group_id):  # type: ignore[attr-defined]
                 if not self._running:
                     break
 

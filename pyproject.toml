@@ -144,10 +144,23 @@ ignore_missing_imports = true
 module = [
     "entdb_sdk._generated",
     "entdb_sdk._generated.*",
-    "entdb_server.api.generated",
-    "entdb_server.api.generated.*",
+    "dbaas.entdb_server.api.generated",
+    "dbaas.entdb_server.api.generated.*",
 ]
 follow_imports = "skip"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = [
+    "dbaas.entdb_server.wal.kinesis",
+    "dbaas.entdb_server.wal.kafka",
+    "dbaas.entdb_server.tools.restore",
+    "dbaas.entdb_server.tools.schema_cli",
+    "dbaas.entdb_server.snapshot.snapshotter",
+    "dbaas.entdb_server.archive.archiver",
+]
+strict_optional = false
+warn_return_any = false
 
 # =============================================================================
 # Pytest

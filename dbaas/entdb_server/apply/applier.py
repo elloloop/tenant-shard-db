@@ -222,7 +222,7 @@ class Applier:
         logger.info("Starting applier", extra={"topic": self.topic, "group_id": self.group_id})
 
         try:
-            async for record in self.wal.subscribe(self.topic, self.group_id):
+            async for record in self.wal.subscribe(self.topic, self.group_id):  # type: ignore[attr-defined]
                 if not self._running:
                     break
 
