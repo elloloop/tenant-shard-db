@@ -207,11 +207,11 @@ The project includes GitHub Actions workflows for:
   - E2E tests
   - Security scan
 
-- **CD** (`.github/workflows/cd.yml`):
+- **Release** (`.github/workflows/release.yml`):
   - Multi-arch Docker image build
   - Push to GHCR
   - PyPI SDK publishing
-  - Staging/Production deployment
+  - GitHub Release with changelog
 
 ## Configuration
 

@@ -298,7 +298,7 @@ git push origin v1.0.0
 The CI/CD pipeline builds for both AMD64 and ARM64:
 
 ```yaml
-# .github/workflows/cd.yml
+# .github/workflows/release.yml
 platforms: linux/amd64,linux/arm64
 ```
 
