@@ -34,6 +34,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # =============================================================================
+# Frontend builder - Build React frontends
+# =============================================================================
+FROM node:20-slim AS frontend-builder
+
+WORKDIR /build
+
+# Build Console frontend
+COPY console/frontend/package*.json console/frontend/
+RUN cd console/frontend && npm install --frozen-lockfile 2>/dev/null || npm install
+
+COPY console/frontend/ console/frontend/
+RUN cd console/frontend && npm run build
+
+# Build Playground frontend
+COPY playground/frontend/package*.json playground/frontend/
+RUN cd playground/frontend && npm install --frozen-lockfile 2>/dev/null || npm install
+
+COPY playground/frontend/ playground/frontend/
+RUN cd playground/frontend && npm run build
+
+# =============================================================================
 # Builder stage - install dependencies
 # =============================================================================
 FROM base AS builder
@@ -59,7 +80,10 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     grpcio-tools>=1.60.0 \
     uvicorn>=0.27.0 \
     fastapi>=0.109.0 \
-    pydantic>=2.5.0
+    pydantic>=2.5.0 \
+    pydantic-settings>=2.0.0 \
+    pyyaml>=6.0.0 \
+    aiofiles>=23.2.0
 
 # =============================================================================
 # Server stage - production image
@@ -134,7 +158,11 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy application code
 COPY dbaas/ /app/dbaas/
 COPY sdk/ /app/sdk/
-COPY console/ /app/console/
+COPY console/gateway/ /app/console/gateway/
+COPY console/__init__.py /app/console/
+
+# Copy built frontend
+COPY --from=frontend-builder /build/console/frontend/dist /app/console/static
 
 # Switch to non-root user
 USER entdb
@@ -171,7 +199,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy application code
 COPY dbaas/ /app/dbaas/
 COPY sdk/ /app/sdk/
-COPY playground/ /app/playground/
+COPY playground/*.py /app/playground/
+
+# Copy built frontend
+COPY --from=frontend-builder /build/playground/frontend/dist /app/playground/static
 
 # Switch to non-root user
 USER entdb

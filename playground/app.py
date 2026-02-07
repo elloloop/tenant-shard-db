@@ -16,10 +16,12 @@ Usage:
 """
 
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from entdb_sdk import DbClient
 from entdb_sdk.registry import SchemaRegistry
@@ -121,6 +123,16 @@ def create_app() -> FastAPI:
     @app.get("/health")
     async def health():
         return {"status": "healthy", "service": "entdb-playground"}
+
+    # Serve frontend static files
+    # Check Docker path first, then local dev path
+    docker_static_dir = Path("/app/playground/static")
+    local_static_dir = Path(__file__).parent / "frontend" / "dist"
+
+    static_dir = docker_static_dir if docker_static_dir.exists() else local_static_dir
+    if static_dir.exists():
+        # Mount static files - this serves index.html at root
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
 
     return app
 

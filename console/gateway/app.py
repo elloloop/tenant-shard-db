@@ -67,10 +67,14 @@ def create_app() -> FastAPI:
     async def health():
         return {"status": "healthy", "service": "entdb-console", "mode": "read-only"}
 
-    # Serve frontend static files in production
-    frontend_dir = Path(__file__).parent.parent / "frontend" / "dist"
-    if frontend_dir.exists():
-        app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
+    # Serve frontend static files
+    # Check Docker path first, then local dev path
+    docker_static_dir = Path("/app/console/static")
+    local_static_dir = Path(__file__).parent.parent / "frontend" / "dist"
+
+    static_dir = docker_static_dir if docker_static_dir.exists() else local_static_dir
+    if static_dir.exists():
+        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="frontend")
 
     return app
 

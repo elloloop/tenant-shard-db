@@ -1,26 +1,35 @@
 version: "3.8"
 
+# =============================================================================
 # EntDB Local Development Environment
+# =============================================================================
 #
-# Usage:
+# QUICK START:
 #   docker compose up -d
 #
-# Services:
-#   - server:           EntDB server (gRPC)
-#   - console:          EntDB Console (read-only browser)
-#   - playground:       EntDB Playground (interactive sandbox)
-#   - redpanda:         Kafka-compatible message broker
-#   - redpanda-console: Redpanda web UI
-#   - minio:            S3-compatible object storage
+# FRONTENDS (open in browser):
+#   - Console:    http://localhost:8080  (read-only data browser)
+#   - Playground: http://localhost:8081  (interactive SDK sandbox)
 #
-# Ports:
-#   - 50051: EntDB gRPC API
-#   - 8080:  EntDB Console (data browser)
-#   - 8081:  EntDB Playground (SDK sandbox)
-#   - 9092:  Kafka protocol
-#   - 8082:  Redpanda Console
-#   - 9000:  MinIO S3 API
-#   - 9001:  MinIO Console
+# BACKEND SERVICES:
+#   - EntDB gRPC: localhost:50051 (for SDK connections)
+#
+# INFRASTRUCTURE:
+#   - Redpanda Console: http://localhost:8083  (Kafka UI)
+#   - MinIO Console:    http://localhost:9001  (S3 UI, user: minioadmin/minioadmin)
+#
+# WORKFLOW:
+#   1. Open Playground (http://localhost:8081) to create schemas and data
+#   2. Open Console (http://localhost:8080) to browse created data
+#   3. Use the generated SDK code in your own applications
+#
+# STOPPING:
+#   docker compose down
+#
+# RESET DATA:
+#   docker compose down -v
+#
+# =============================================================================
 
 services:
   # ==========================================================================
@@ -161,7 +170,7 @@ services:
   redpanda-console:
     image: docker.redpanda.com/redpandadata/console:v2.4.3
     ports:
-      - "8082:8080"
+      - "8083:8080"
     environment:
       - KAFKA_BROKERS=redpanda:9092
     depends_on:
