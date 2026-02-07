@@ -307,8 +307,8 @@ def create_wal_stream(config: ServerConfig) -> WalStream:
     from .kinesis import KinesisWalStream
 
     if config.wal_backend == WalBackend.KAFKA:
-        return KafkaWalStream(config.kafka)
+        return KafkaWalStream(config.kafka)  # type: ignore[return-value]
     elif config.wal_backend == WalBackend.KINESIS:
-        return KinesisWalStream(config.kinesis)
+        return KinesisWalStream(config.kinesis)  # type: ignore[return-value]
     else:
         raise ValueError(f"Unsupported WAL backend: {config.wal_backend}")

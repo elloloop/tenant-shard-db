@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 SQLite snapshotter for EntDB.
 

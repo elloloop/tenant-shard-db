@@ -106,7 +106,7 @@ class FieldDef:
             return True, None
 
         if self.kind == FieldKind.ENUM:
-            if value not in self.enum_values:
+            if self.enum_values is not None and value not in self.enum_values:
                 return False, f"Field '{self.name}' must be one of {self.enum_values}"
 
         return True, None

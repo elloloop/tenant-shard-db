@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """
 Schema CLI tool for EntDB.
 

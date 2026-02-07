@@ -153,7 +153,7 @@ class Server:
                 logger.info(f"Schema registry frozen, fingerprint: {fingerprint}")
             except Exception:
                 logger.warning("Schema registry already frozen")
-                fingerprint = registry.fingerprint
+                fingerprint = registry.fingerprint or ""
 
             # Initialize WAL stream
             self.wal = create_wal_stream(self.config)

@@ -1,3 +1,4 @@
+# mypy: ignore-errors
 """Generated protobuf code for EntDB SDK.
 
 Do not edit manually - regenerate with scripts/generate_proto.sh

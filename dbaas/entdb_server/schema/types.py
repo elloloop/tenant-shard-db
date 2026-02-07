@@ -198,12 +198,16 @@ class FieldDef:
             FieldKind.TIMESTAMP: lambda v: isinstance(v, int) and v >= 0,
             FieldKind.JSON: lambda _: True,  # Any JSON-serializable value
             FieldKind.BYTES: lambda v: isinstance(v, (str, bytes)),
-            FieldKind.LIST_STRING: lambda v: isinstance(v, list)
-            and all(isinstance(i, str) for i in v),
-            FieldKind.LIST_INT: lambda v: isinstance(v, list)
-            and all(isinstance(i, int) and not isinstance(i, bool) for i in v),
-            FieldKind.LIST_REF: lambda v: isinstance(v, list)
-            and all(isinstance(i, dict) for i in v),
+            FieldKind.LIST_STRING: lambda v: (
+                isinstance(v, list) and all(isinstance(i, str) for i in v)
+            ),
+            FieldKind.LIST_INT: lambda v: (
+                isinstance(v, list)
+                and all(isinstance(i, int) and not isinstance(i, bool) for i in v)
+            ),
+            FieldKind.LIST_REF: lambda v: (
+                isinstance(v, list) and all(isinstance(i, dict) for i in v)
+            ),
         }
 
         if self.kind == FieldKind.ENUM:
