@@ -397,6 +397,9 @@ message HealthResponse {
 message GetSchemaRequest {
     // Optional: get schema for specific type
     int32 type_id = 1;
+
+    // Optional: tenant ID for observed schema fallback
+    string tenant_id = 2;
 }
 
 message GetSchemaResponse {

@@ -141,14 +141,17 @@ async def health(client: ConsoleClient = Depends(get_client)):
 
 
 @router.get("/schema", response_model=SchemaResponse)
-async def get_schema(client: ConsoleClient = Depends(get_client)):
+async def get_schema(
+    client: ConsoleClient = Depends(get_client),
+    tenant_id: str = Depends(get_tenant_id),
+):
     """
     Get the full schema.
 
     Returns all node types and edge types registered on the server.
-    Use this to understand the data model and render dynamic forms.
+    Includes observed types from data writes for the given tenant.
     """
-    result = await client.get_schema()
+    result = await client.get_schema(tenant_id=tenant_id)
     schema = result.get("schema", {})
 
     return SchemaResponse(
@@ -162,13 +165,14 @@ async def get_schema(client: ConsoleClient = Depends(get_client)):
 async def get_type_schema(
     type_id: int,
     client: ConsoleClient = Depends(get_client),
+    tenant_id: str = Depends(get_tenant_id),
 ):
     """
     Get schema for a specific node type.
 
     Returns field definitions and metadata for the type.
     """
-    result = await client.get_schema()
+    result = await client.get_schema(tenant_id=tenant_id)
     schema = result.get("schema", {})
 
     for node_type in schema.get("node_types", []):
@@ -453,13 +457,14 @@ async def search(
 @router.get("/browse/types")
 async def browse_types(
     client: ConsoleClient = Depends(get_client),
+    tenant_id: str = Depends(get_tenant_id),
 ):
     """
     Get all node types for sidebar navigation.
 
     Returns type names and IDs for the browser interface.
     """
-    result = await client.get_schema()
+    result = await client.get_schema(tenant_id=tenant_id)
     schema = result.get("schema", {})
 
     return {
@@ -478,13 +483,14 @@ async def browse_types(
 @router.get("/browse/edge-types")
 async def browse_edge_types(
     client: ConsoleClient = Depends(get_client),
+    tenant_id: str = Depends(get_tenant_id),
 ):
     """
     Get all edge types for reference.
 
     Returns edge type definitions.
     """
-    result = await client.get_schema()
+    result = await client.get_schema(tenant_id=tenant_id)
     schema = result.get("schema", {})
 
     return {

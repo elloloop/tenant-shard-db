@@ -32,6 +32,7 @@ from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
 from .canonical_store import CanonicalStore, Edge, Node
 from .mailbox_store import MailboxStore
+from .schema_observer import SchemaObserver
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +182,7 @@ class Applier:
         schema_fingerprint: str | None = None,
         acl_manager: AclManager | None = None,
         fanout_config: MailboxFanoutConfig | None = None,
+        schema_observer: SchemaObserver | None = None,
     ) -> None:
         """Initialize the applier.
 
@@ -193,6 +195,7 @@ class Applier:
             schema_fingerprint: Expected schema fingerprint
             acl_manager: ACL manager instance
             fanout_config: Mailbox fanout configuration
+            schema_observer: Optional schema observer for tracking types
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -202,6 +205,7 @@ class Applier:
         self.schema_fingerprint = schema_fingerprint
         self.acl_manager = acl_manager or get_acl_manager()
         self.fanout_config = fanout_config or MailboxFanoutConfig()
+        self.schema_observer = schema_observer
 
         self._running = False
         self._processed_count = 0
@@ -327,12 +331,24 @@ class Applier:
                     if alias:
                         self._node_alias_map[alias] = node.node_id
 
+                    # Observe schema
+                    if self.schema_observer and node.payload:
+                        self.schema_observer.observe_node(
+                            event.tenant_id, node.type_id, node.payload,
+                        )
+
                     # Trigger mailbox fanout if configured
                     if self.fanout_config.enabled:
                         await self._fanout_node(event, node, op)
 
                 elif op_type == "update_node":
-                    await self._apply_update_node(event, op)
+                    updated = await self._apply_update_node(event, op)
+
+                    # Observe schema from the updated payload
+                    if self.schema_observer and updated and updated.payload:
+                        self.schema_observer.observe_node(
+                            event.tenant_id, updated.type_id, updated.payload,
+                        )
 
                 elif op_type == "delete_node":
                     await self._apply_delete_node(event, op)
@@ -340,6 +356,24 @@ class Applier:
                 elif op_type == "create_edge":
                     edge = await self._apply_create_edge(event, op)
                     created_edges.append((edge.edge_type_id, edge.from_node_id, edge.to_node_id))
+
+                    # Observe edge schema
+                    if self.schema_observer:
+                        from_type_id = await self._get_node_type_id(
+                            event.tenant_id, edge.from_node_id,
+                        )
+                        to_type_id = await self._get_node_type_id(
+                            event.tenant_id, edge.to_node_id,
+                        )
+                        self.schema_observer.observe_edge(
+                            tenant_id=event.tenant_id,
+                            edge_type_id=edge.edge_type_id,
+                            from_node_id=edge.from_node_id,
+                            to_node_id=edge.to_node_id,
+                            props=edge.props,
+                            from_type_id=from_type_id,
+                            to_type_id=to_type_id,
+                        )
 
                 elif op_type == "delete_edge":
                     await self._apply_delete_edge(event, op)
@@ -542,6 +576,14 @@ class Applier:
                 return self._resolve_ref(node_id)
 
         raise ValueError(f"Invalid node reference: {ref}")
+
+    async def _get_node_type_id(self, tenant_id: str, node_id: str) -> int | None:
+        """Look up the type_id for a node. Returns None if not found."""
+        try:
+            node = await self.canonical_store.get_node(tenant_id, node_id)
+            return node.type_id if node else None
+        except Exception:
+            return None
 
     async def _fanout_node(
         self,
