@@ -39,6 +39,7 @@ from pathlib import Path
 from .api import GrpcServer
 from .api.grpc_server import EntDBServicer
 from .apply import Applier, CanonicalStore, MailboxStore
+from .apply.schema_observer import SchemaObserver
 from .archive import Archiver
 from .config import ServerConfig, WalBackend
 from .schema import freeze_registry, get_registry
@@ -124,9 +125,79 @@ class Server:
         self.applier: Applier | None = None
         self.archiver: Archiver | None = None
         self.snapshotter: Snapshotter | None = None
+        self.schema_observer: SchemaObserver | None = None
 
         # Background tasks
         self._tasks: list[asyncio.Task] = []
+
+    @staticmethod
+    def _load_schema_file(registry: object, schema_file: str) -> None:
+        """Load node/edge types from a YAML or JSON schema file into the registry."""
+        import yaml
+
+        from .schema.types import EdgeTypeDef, NodeTypeDef
+
+        path = Path(schema_file)
+        if not path.exists():
+            logger.warning(f"Schema file not found: {schema_file}")
+            return
+
+        raw = path.read_text()
+        if path.suffix in (".yaml", ".yml"):
+            data = yaml.safe_load(raw)
+        else:
+            import json
+            data = json.loads(raw)
+
+        if not data:
+            return
+
+        # Build a map of type_id -> NodeTypeDef for edge resolution
+        node_map: dict[int, NodeTypeDef] = {}
+
+        for nt in data.get("node_types", []):
+            fields_data = []
+            for f in nt.get("fields", []):
+                fd: dict = {
+                    "field_id": f["id"],
+                    "name": f["name"],
+                    "kind": f["kind"],
+                }
+                if f.get("required"):
+                    fd["required"] = True
+                if f.get("enum_values") or f.get("values"):
+                    fd["enum_values"] = f.get("enum_values") or f.get("values")
+                if f.get("indexed"):
+                    fd["indexed"] = True
+                if f.get("searchable"):
+                    fd["searchable"] = True
+                fields_data.append(fd)
+
+            node_dict = {
+                "type_id": nt["type_id"],
+                "name": nt["name"],
+                "fields": fields_data,
+            }
+            node_type = NodeTypeDef.from_dict(node_dict)
+            registry.register_node_type(node_type)  # type: ignore[attr-defined]
+            node_map[nt["type_id"]] = node_type
+            logger.info(f"Registered node type: {nt['name']} (id={nt['type_id']})")
+
+        for et in data.get("edge_types", []):
+            edge_dict = {
+                "edge_id": et["edge_id"],
+                "name": et["name"],
+                "from_type_id": et["from_type"],
+                "to_type_id": et["to_type"],
+            }
+            if et.get("props"):
+                edge_dict["props"] = [
+                    {"field_id": p["id"], "name": p["name"], "kind": p["kind"]}
+                    for p in et["props"]
+                ]
+            edge_type = EdgeTypeDef.from_dict(edge_dict)
+            registry.register_edge_type(edge_type)  # type: ignore[attr-defined]
+            logger.info(f"Registered edge type: {et['name']} (id={et['edge_id']})")
 
     async def start(self) -> None:
         """Start the server and all components."""
@@ -146,8 +217,11 @@ class Server:
 
             # Initialize schema registry
             registry = get_registry()
-            # In production, types would be registered here
-            # For now, freeze with empty registry
+
+            # Load schema from file if configured
+            if self.config.schema_file:
+                self._load_schema_file(registry, self.config.schema_file)
+
             try:
                 fingerprint = freeze_registry()
                 logger.info(f"Schema registry frozen, fingerprint: {fingerprint}")
@@ -173,6 +247,13 @@ class Server:
                 wal_mode=self.config.storage.wal_mode,
                 busy_timeout_ms=self.config.storage.busy_timeout_ms,
             )
+
+            # Initialize schema observer
+            self.schema_observer = SchemaObserver(
+                canonical_store=self.canonical_store,
+                schema_registry=registry,
+            )
+            await self.schema_observer.start()
 
             # Initialize servicer
             self.servicer = EntDBServicer(
@@ -211,6 +292,7 @@ class Server:
                 if self.config.wal_backend == WalBackend.KAFKA
                 else "entdb-applier",
                 schema_fingerprint=fingerprint,
+                schema_observer=self.schema_observer,
             )
             applier_task = asyncio.create_task(self.applier.start())
             self._tasks.append(applier_task)
@@ -281,6 +363,9 @@ class Server:
 
         if self.snapshotter:
             await self.snapshotter.stop()
+
+        if self.schema_observer:
+            await self.schema_observer.stop()
 
         if self.grpc_server:
             await self.grpc_server.stop()
