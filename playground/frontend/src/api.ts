@@ -1,71 +1,51 @@
 const API_BASE = '/api/v1'
 
-export interface SchemaParseResponse {
-  valid: boolean
-  errors: string[]
-  schema_data: Record<string, unknown> | null
-  python_schema: string | null
-  python_usage: string | null
-  go_schema: string | null
-  go_usage: string | null
-  python_data: string | null
-}
-
-export interface SchemaExecuteResponse {
+export interface PlaygroundResponse {
   success: boolean
   message: string
-  errors: string[]
-  created_node_ids: string[]
-  python_schema: string | null
-  go_schema: string | null
+  data: {
+    node_id?: string
+    type_id?: number
+    type_name?: string
+    payload?: Record<string, unknown>
+    edge_type_id?: number
+    from_id?: string
+    to_id?: string
+    props?: Record<string, unknown>
+  } | null
 }
 
-export interface AIPromptResponse {
-  template: string
-  usage: string
-  example_requirements: string
-}
-
-export async function parseSchema(content: string, format: 'yaml' | 'json' = 'yaml'): Promise<SchemaParseResponse> {
-  const res = await fetch(`${API_BASE}/schema/parse`, {
+export async function createNode(
+  typeId: number,
+  typeName: string,
+  payload: Record<string, unknown>,
+): Promise<PlaygroundResponse> {
+  const res = await fetch(`${API_BASE}/nodes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, format }),
+    body: JSON.stringify({ type_id: typeId, type_name: typeName, payload }),
   })
   if (!res.ok) {
-    throw new Error(`Parse failed: ${res.statusText}`)
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `HTTP ${res.status}`)
   }
   return res.json()
 }
 
-export async function executeSchema(content: string, format: 'yaml' | 'json' = 'yaml'): Promise<SchemaExecuteResponse> {
-  const res = await fetch(`${API_BASE}/schema/execute`, {
+export async function createEdge(
+  edgeTypeId: number,
+  fromId: string,
+  toId: string,
+  props?: Record<string, unknown>,
+): Promise<PlaygroundResponse> {
+  const res = await fetch(`${API_BASE}/edges`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content, format, execute_data: true }),
+    body: JSON.stringify({ edge_type_id: edgeTypeId, from_id: fromId, to_id: toId, props }),
   })
   if (!res.ok) {
-    throw new Error(`Execute failed: ${res.statusText}`)
-  }
-  return res.json()
-}
-
-export async function getAIPromptTemplate(): Promise<AIPromptResponse> {
-  const res = await fetch(`${API_BASE}/schema/prompt`)
-  if (!res.ok) {
-    throw new Error(`Failed to get prompt: ${res.statusText}`)
-  }
-  return res.json()
-}
-
-export async function generateAIPrompt(requirements: string): Promise<{ prompt: string }> {
-  const res = await fetch(`${API_BASE}/schema/prompt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ requirements }),
-  })
-  if (!res.ok) {
-    throw new Error(`Failed to generate prompt: ${res.statusText}`)
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || `HTTP ${res.status}`)
   }
   return res.json()
 }

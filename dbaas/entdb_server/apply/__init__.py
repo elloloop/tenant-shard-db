@@ -26,7 +26,6 @@ from .acl import AccessDeniedError, AclManager, Principal
 from .applier import Applier, ApplierError
 from .canonical_store import CanonicalStore, TenantNotFoundError
 from .mailbox_store import MailboxItem, MailboxStore
-from .schema_observer import SchemaObserver
 
 __all__ = [
     "CanonicalStore",
@@ -38,5 +37,4 @@ __all__ = [
     "AccessDeniedError",
     "Applier",
     "ApplierError",
-    "SchemaObserver",
 ]

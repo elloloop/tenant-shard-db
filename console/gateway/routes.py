@@ -451,6 +451,76 @@ async def search(
     return {"query": q, "results": results}
 
 
+# --- Tenant & User Browsing ---
+
+
+@router.get("/tenants")
+async def list_tenants(
+    client: ConsoleClient = Depends(get_client),
+):
+    """
+    List all tenants that have data.
+    """
+    tenants = await client.list_tenants()
+    return {"tenants": [{"tenant_id": tid} for tid in tenants]}
+
+
+@router.get("/tenants/{tenant_id}/users")
+async def list_mailbox_users(
+    tenant_id: str,
+    client: ConsoleClient = Depends(get_client),
+):
+    """
+    List mailbox users for a tenant.
+    """
+    users = await client.list_mailbox_users(tenant_id)
+    return {"users": users}
+
+
+@router.get("/tenants/{tenant_id}/mailbox/{user_id:path}")
+async def get_user_mailbox(
+    tenant_id: str,
+    user_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    client: ConsoleClient = Depends(get_client),
+    actor: str = Depends(get_actor),
+):
+    """
+    Get mailbox items for a specific user (tenant in path).
+    """
+    items = await client.get_mailbox(
+        tenant_id=tenant_id,
+        actor=actor,
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items}
+
+
+@router.get("/mailbox/{user_id:path}")
+async def get_user_mailbox_by_header(
+    user_id: str,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    client: ConsoleClient = Depends(get_client),
+    tenant_id: str = Depends(get_tenant_id),
+    actor: str = Depends(get_actor),
+):
+    """
+    Get mailbox items for a specific user (tenant from header).
+    """
+    items = await client.get_mailbox(
+        tenant_id=tenant_id,
+        actor=actor,
+        user_id=user_id,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": items}
+
+
 # --- Browse Helpers ---
 
 
@@ -463,6 +533,7 @@ async def browse_types(
     Get all node types for sidebar navigation.
 
     Returns type names and IDs for the browser interface.
+    Falls back to distinct type_ids from data when schema has no types.
     """
     result = await client.get_schema(tenant_id=tenant_id)
     schema = result.get("schema", {})

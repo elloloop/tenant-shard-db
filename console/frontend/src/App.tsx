@@ -6,6 +6,7 @@ import NodeListPage from './pages/NodeListPage'
 import NodeDetailPage from './pages/NodeDetailPage'
 import SearchPage from './pages/SearchPage'
 import GraphPage from './pages/GraphPage'
+import MailboxPage from './pages/MailboxPage'
 
 function App() {
   return (
@@ -17,6 +18,7 @@ function App() {
         <Route path="/nodes/:nodeId" element={<NodeDetailPage />} />
         <Route path="/search" element={<SearchPage />} />
         <Route path="/graph/:nodeId" element={<GraphPage />} />
+        <Route path="/mailbox/:userId" element={<MailboxPage />} />
       </Routes>
     </Layout>
   )
