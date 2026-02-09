@@ -22,9 +22,12 @@ from grpc import aio as grpc_aio
 from entdb_sdk._generated import (
     EntDBServiceStub,
     GetEdgesRequest,
+    GetMailboxRequest,
     GetNodeRequest,
     GetSchemaRequest,
     HealthRequest,
+    ListMailboxUsersRequest,
+    ListTenantsRequest,
     QueryNodesRequest,
     RequestContext,
     SearchMailboxRequest,
@@ -293,4 +296,57 @@ class ConsoleClient:
                 "highlights": r.highlights,
             }
             for r in response.results
+        ]
+
+    async def list_tenants(self) -> list[str]:
+        """List all tenants with data."""
+        if not self._stub:
+            raise RuntimeError("Not connected")
+
+        response = await self._stub.ListTenants(ListTenantsRequest())
+        return [t.tenant_id for t in response.tenants]
+
+    async def list_mailbox_users(self, tenant_id: str) -> list[str]:
+        """List mailbox users for a tenant."""
+        if not self._stub:
+            raise RuntimeError("Not connected")
+
+        response = await self._stub.ListMailboxUsers(
+            ListMailboxUsersRequest(tenant_id=tenant_id)
+        )
+        return list(response.user_ids)
+
+    async def get_mailbox(
+        self,
+        tenant_id: str,
+        actor: str,
+        user_id: str,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Get mailbox items for a user."""
+        if not self._stub:
+            raise RuntimeError("Not connected")
+
+        request = GetMailboxRequest(
+            context=self._context(tenant_id, actor),
+            user_id=user_id,
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._stub.GetMailbox(request)
+
+        return [
+            {
+                "item_id": item.item_id,
+                "ref_id": item.ref_id,
+                "source_type_id": item.source_type_id,
+                "source_node_id": item.source_node_id,
+                "thread_id": item.thread_id,
+                "ts": item.ts,
+                "state": json.loads(item.state_json) if item.state_json else {},
+                "snippet": item.snippet,
+            }
+            for item in response.items
         ]

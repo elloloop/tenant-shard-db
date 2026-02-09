@@ -5,7 +5,7 @@
 const API_BASE = '/api/v1'
 
 export interface Node {
-  id: string
+  node_id: string
   type_id: number
   tenant_id: string
   payload: Record<string, unknown>
@@ -15,12 +15,12 @@ export interface Node {
 }
 
 export interface Edge {
-  id: string
   edge_type_id: number
-  from_id: string
-  to_id: string
+  from_node_id: string
+  to_node_id: string
   tenant_id: string
-  payload?: Record<string, unknown>
+  props?: Record<string, unknown>
+  created_at?: number
 }
 
 export interface SchemaField {
@@ -45,8 +45,7 @@ export interface Schema {
 }
 
 export interface PaginatedResponse<T> {
-  items: T[]
-  total: number
+  nodes: T[]
   offset: number
   limit: number
   has_more: boolean
@@ -56,6 +55,17 @@ export interface GraphData {
   root_id: string
   nodes: Node[]
   edges: Edge[]
+}
+
+export interface MailboxItemData {
+  item_id: string
+  ref_id: string
+  source_type_id: number
+  source_node_id: string
+  thread_id?: string
+  ts: number
+  state: Record<string, unknown>
+  snippet: string
 }
 
 class ApiClient {
@@ -156,12 +166,33 @@ class ApiClient {
 
   // Graph
   async getGraph(nodeId: string, depth = 1): Promise<GraphData> {
-    return this.fetch(`/browse/graph/${nodeId}?depth=${depth}`)
+    return this.fetch(`/graph/${nodeId}?depth=${depth}`)
   }
 
   // Browse
   async getTypes(): Promise<{ types: { type_id: number; name: string; field_count: number }[] }> {
     return this.fetch('/browse/types')
+  }
+
+  // Tenants
+  async getTenants(): Promise<{ tenants: { tenant_id: string }[] }> {
+    return this.fetch('/tenants')
+  }
+
+  // Mailbox users
+  async getMailboxUsers(tenantId: string): Promise<{ users: string[] }> {
+    return this.fetch(`/tenants/${encodeURIComponent(tenantId)}/users`)
+  }
+
+  // User mailbox (uses X-Tenant-ID header set by setTenant)
+  async getUserMailbox(
+    userId: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<{ items: MailboxItemData[] }> {
+    return this.fetch(
+      `/mailbox/${encodeURIComponent(userId)}?limit=${limit}&offset=${offset}`,
+    )
   }
 }
 

@@ -54,6 +54,12 @@ service EntDBService {
 
     // Get schema information
     rpc GetSchema(GetSchemaRequest) returns (GetSchemaResponse);
+
+    // List all tenants that have data
+    rpc ListTenants(ListTenantsRequest) returns (ListTenantsResponse);
+
+    // List mailbox users for a tenant
+    rpc ListMailboxUsers(ListMailboxUsersRequest) returns (ListMailboxUsersResponse);
 }
 
 // Common message types
@@ -405,4 +411,26 @@ message GetSchemaRequest {
 message GetSchemaResponse {
     string schema_json = 1;
     string fingerprint = 2;
+}
+
+// Tenant listing
+
+message ListTenantsRequest {}
+
+message ListTenantsResponse {
+    repeated TenantInfo tenants = 1;
+}
+
+message TenantInfo {
+    string tenant_id = 1;
+}
+
+// Mailbox user listing
+
+message ListMailboxUsersRequest {
+    string tenant_id = 1;
+}
+
+message ListMailboxUsersResponse {
+    repeated string user_ids = 1;
 }

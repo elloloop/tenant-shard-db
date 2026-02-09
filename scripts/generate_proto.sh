@@ -45,62 +45,70 @@ python -m grpc_tools.protoc \
 
 # Fix imports in generated files (grpc_tools generates absolute imports)
 # Change "import entdb_pb2" to "from . import entdb_pb2"
+# Use sed compatible with both macOS and Linux
 for dir in "$SERVER_OUT" "$SDK_OUT"; do
     if [[ -f "$dir/entdb_pb2_grpc.py" ]]; then
-        sed -i 's/^import entdb_pb2/from . import entdb_pb2/' "$dir/entdb_pb2_grpc.py"
+        sed -i '' 's/^import entdb_pb2/from . import entdb_pb2/' "$dir/entdb_pb2_grpc.py"
     fi
 done
 
 # Create __init__.py files
 cat > "$SERVER_OUT/__init__.py" << 'EOF'
+# mypy: ignore-errors
 """Generated protobuf code for EntDB server.
 
 Do not edit manually - regenerate with scripts/generate_proto.sh
 """
 
 from .entdb_pb2 import (
-    # Common
-    RequestContext,
-    Receipt,
+    CreateEdgeOp,
+    CreateNodeOp,
+    DeleteEdgeOp,
+    DeleteNodeOp,
+    Edge,
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
-    Operation,
-    CreateNodeOp,
-    UpdateNodeOp,
-    DeleteNodeOp,
-    CreateEdgeOp,
-    DeleteEdgeOp,
-    NodeRef,
-    TypedNodeRef,
-    # Receipt
-    GetReceiptStatusRequest,
-    GetReceiptStatusResponse,
-    ReceiptStatus,
+    # Edges
+    GetEdgesRequest,
+    GetEdgesResponse,
+    GetMailboxRequest,
+    GetMailboxResponse,
     # Nodes
     GetNodeRequest,
     GetNodeResponse,
     GetNodesRequest,
     GetNodesResponse,
-    QueryNodesRequest,
-    QueryNodesResponse,
-    Node,
-    # Edges
-    GetEdgesRequest,
-    GetEdgesResponse,
-    Edge,
-    # Mailbox
-    SearchMailboxRequest,
-    SearchMailboxResponse,
-    MailboxSearchResult,
-    GetMailboxRequest,
-    GetMailboxResponse,
-    MailboxItem,
+    # Receipt
+    GetReceiptStatusRequest,
+    GetReceiptStatusResponse,
+    GetSchemaRequest,
+    GetSchemaResponse,
     # Health/Schema
     HealthRequest,
     HealthResponse,
-    GetSchemaRequest,
-    GetSchemaResponse,
+    # Tenants
+    ListMailboxUsersRequest,
+    ListMailboxUsersResponse,
+    ListTenantsRequest,
+    ListTenantsResponse,
+    MailboxItem,
+    MailboxSearchResult,
+    Node,
+    NodeRef,
+    Operation,
+    QueryNodesRequest,
+    QueryNodesResponse,
+    Receipt,
+    ReceiptStatus,
+    # Common
+    RequestContext,
+    # Mailbox
+    SearchMailboxRequest,
+    SearchMailboxResponse,
+    TenantInfo,
+    TypedNodeRef,
+    UpdateNodeOp,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -151,6 +159,12 @@ __all__ = [
     "HealthResponse",
     "GetSchemaRequest",
     "GetSchemaResponse",
+    # Tenants
+    "ListTenantsRequest",
+    "ListTenantsResponse",
+    "TenantInfo",
+    "ListMailboxUsersRequest",
+    "ListMailboxUsersResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",
@@ -159,6 +173,7 @@ __all__ = [
 EOF
 
 cat > "$SDK_OUT/__init__.py" << 'EOF'
+# mypy: ignore-errors
 """Generated protobuf code for EntDB SDK.
 
 Do not edit manually - regenerate with scripts/generate_proto.sh
@@ -167,48 +182,54 @@ This module is internal to the SDK. Users should not import from here.
 """
 
 from .entdb_pb2 import (
-    # Common
-    RequestContext,
-    Receipt,
+    CreateEdgeOp,
+    CreateNodeOp,
+    DeleteEdgeOp,
+    DeleteNodeOp,
+    Edge,
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
-    Operation,
-    CreateNodeOp,
-    UpdateNodeOp,
-    DeleteNodeOp,
-    CreateEdgeOp,
-    DeleteEdgeOp,
-    NodeRef,
-    TypedNodeRef,
-    # Receipt
-    GetReceiptStatusRequest,
-    GetReceiptStatusResponse,
-    ReceiptStatus,
+    # Edges
+    GetEdgesRequest,
+    GetEdgesResponse,
+    GetMailboxRequest,
+    GetMailboxResponse,
     # Nodes
     GetNodeRequest,
     GetNodeResponse,
     GetNodesRequest,
     GetNodesResponse,
-    QueryNodesRequest,
-    QueryNodesResponse,
-    Node,
-    # Edges
-    GetEdgesRequest,
-    GetEdgesResponse,
-    Edge,
-    # Mailbox
-    SearchMailboxRequest,
-    SearchMailboxResponse,
-    MailboxSearchResult,
-    GetMailboxRequest,
-    GetMailboxResponse,
-    MailboxItem,
+    # Receipt
+    GetReceiptStatusRequest,
+    GetReceiptStatusResponse,
+    GetSchemaRequest,
+    GetSchemaResponse,
     # Health/Schema
     HealthRequest,
     HealthResponse,
-    GetSchemaRequest,
-    GetSchemaResponse,
+    # Tenants
+    ListMailboxUsersRequest,
+    ListMailboxUsersResponse,
+    ListTenantsRequest,
+    ListTenantsResponse,
+    MailboxItem,
+    MailboxSearchResult,
+    Node,
+    NodeRef,
+    Operation,
+    QueryNodesRequest,
+    QueryNodesResponse,
+    Receipt,
+    ReceiptStatus,
+    # Common
+    RequestContext,
+    # Mailbox
+    SearchMailboxRequest,
+    SearchMailboxResponse,
+    TenantInfo,
+    TypedNodeRef,
+    UpdateNodeOp,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 
@@ -248,6 +269,11 @@ __all__ = [
     "HealthResponse",
     "GetSchemaRequest",
     "GetSchemaResponse",
+    "ListTenantsRequest",
+    "ListTenantsResponse",
+    "TenantInfo",
+    "ListMailboxUsersRequest",
+    "ListMailboxUsersResponse",
     "EntDBServiceStub",
 ]
 EOF

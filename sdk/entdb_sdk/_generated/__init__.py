@@ -33,6 +33,11 @@ from .entdb_pb2 import (
     # Health/Schema
     HealthRequest,
     HealthResponse,
+    # Tenants
+    ListMailboxUsersRequest,
+    ListMailboxUsersResponse,
+    ListTenantsRequest,
+    ListTenantsResponse,
     MailboxItem,
     MailboxSearchResult,
     Node,
@@ -47,6 +52,7 @@ from .entdb_pb2 import (
     # Mailbox
     SearchMailboxRequest,
     SearchMailboxResponse,
+    TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
 )
@@ -88,5 +94,10 @@ __all__ = [
     "HealthResponse",
     "GetSchemaRequest",
     "GetSchemaResponse",
+    "ListTenantsRequest",
+    "ListTenantsResponse",
+    "TenantInfo",
+    "ListMailboxUsersRequest",
+    "ListMailboxUsersResponse",
     "EntDBServiceStub",
 ]

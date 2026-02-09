@@ -43,7 +43,7 @@ export default function GraphPage() {
     const radius = 150
 
     const initialNodes: GraphNode[] = graphData.nodes.map((node, i) => {
-      const isRoot = node.id === graphData.root_id
+      const isRoot = node.node_id === graphData.root_id
       const angle = (2 * Math.PI * i) / graphData.nodes.length
 
       return {
@@ -83,8 +83,8 @@ export default function GraphPage() {
 
         // Apply edge springs
         for (const edge of graphData.edges) {
-          const source = newNodes.find(n => n.id === edge.from_id)
-          const target = newNodes.find(n => n.id === edge.to_id)
+          const source = newNodes.find(n => n.node_id === edge.from_node_id)
+          const target = newNodes.find(n => n.node_id === edge.to_node_id)
           if (!source || !target) continue
 
           const dx = target.x - source.x
@@ -138,8 +138,8 @@ export default function GraphPage() {
     ctx.strokeStyle = '#94a3b8'
     ctx.lineWidth = 1
     for (const edge of graphData.edges) {
-      const source = nodes.find(n => n.id === edge.from_id)
-      const target = nodes.find(n => n.id === edge.to_id)
+      const source = nodes.find(n => n.node_id === edge.from_node_id)
+      const target = nodes.find(n => n.node_id === edge.to_node_id)
       if (!source || !target) continue
 
       ctx.beginPath()
@@ -168,8 +168,8 @@ export default function GraphPage() {
 
     // Draw nodes
     for (const node of nodes) {
-      const isRoot = node.id === graphData.root_id
-      const isSelected = node.id === selectedNode
+      const isRoot = node.node_id === graphData.root_id
+      const isSelected = node.node_id === selectedNode
 
       // Node circle
       ctx.beginPath()
@@ -191,7 +191,7 @@ export default function GraphPage() {
       ctx.fillText(typeName, node.x, node.y + 35)
       ctx.font = '10px monospace'
       ctx.fillStyle = '#6b7280'
-      ctx.fillText(node.id.slice(0, 8), node.x, node.y + 48)
+      ctx.fillText(node.node_id.slice(0, 8), node.x, node.y + 48)
     }
 
     ctx.restore()
@@ -211,7 +211,7 @@ export default function GraphPage() {
       const dx = x - node.x
       const dy = y - node.y
       if (dx * dx + dy * dy < 400) {
-        setSelectedNode(node.id)
+        setSelectedNode(node.node_id)
         return
       }
     }
@@ -241,7 +241,7 @@ export default function GraphPage() {
     )
   }
 
-  const selectedNodeData = selectedNode ? nodes.find(n => n.id === selectedNode) : null
+  const selectedNodeData = selectedNode ? nodes.find(n => n.node_id === selectedNode) : null
 
   return (
     <div className="h-full flex flex-col">
@@ -329,7 +329,7 @@ export default function GraphPage() {
               <div>
                 <p className="text-xs text-gray-500 uppercase">ID</p>
                 <p className="text-sm font-mono text-gray-900 break-all">
-                  {selectedNodeData.id}
+                  {selectedNodeData.node_id}
                 </p>
               </div>
 
@@ -347,14 +347,14 @@ export default function GraphPage() {
 
               <div className="pt-4 border-t border-gray-200 flex gap-2">
                 <Link
-                  to={`/nodes/${selectedNodeData.id}`}
+                  to={`/nodes/${selectedNodeData.node_id}`}
                   className="flex-1 flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
                 >
                   <Eye className="w-4 h-4" />
                   View Details
                 </Link>
                 <button
-                  onClick={() => navigate(`/graph/${selectedNodeData.id}`)}
+                  onClick={() => navigate(`/graph/${selectedNodeData.node_id}`)}
                   className="px-3 py-2 border border-gray-300 rounded hover:bg-gray-50 text-sm"
                 >
                   Center

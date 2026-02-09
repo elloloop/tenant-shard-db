@@ -48,6 +48,10 @@ from .generated import (
     GetSchemaResponse,
     HealthRequest,
     HealthResponse,
+    ListMailboxUsersRequest,
+    ListMailboxUsersResponse,
+    ListTenantsRequest,
+    ListTenantsResponse,
     MailboxItem,
     MailboxSearchResult,
     Node,
@@ -58,6 +62,7 @@ from .generated import (
     ReceiptStatus,
     SearchMailboxRequest,
     SearchMailboxResponse,
+    TenantInfo,
     add_EntDBServiceServicer_to_server,
 )
 
@@ -596,6 +601,34 @@ class EntDBServicer(EntDBServiceServicer):
             components=components,
         )
 
+    async def ListTenants(
+        self,
+        request: ListTenantsRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ListTenantsResponse:
+        """List all tenants that have data."""
+        try:
+            tenant_ids = self.canonical_store.list_tenants()
+            return ListTenantsResponse(
+                tenants=[TenantInfo(tenant_id=tid) for tid in tenant_ids],
+            )
+        except Exception as e:
+            logger.error(f"ListTenants failed: {e}", exc_info=True)
+            return ListTenantsResponse(tenants=[])
+
+    async def ListMailboxUsers(
+        self,
+        request: ListMailboxUsersRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ListMailboxUsersResponse:
+        """List mailbox users for a tenant."""
+        try:
+            user_ids = self.mailbox_store.list_users(request.tenant_id)
+            return ListMailboxUsersResponse(user_ids=user_ids)
+        except Exception as e:
+            logger.error(f"ListMailboxUsers failed: {e}", exc_info=True)
+            return ListMailboxUsersResponse(user_ids=[])
+
     async def GetSchema(
         self,
         request: GetSchemaRequest,
@@ -603,8 +636,8 @@ class EntDBServicer(EntDBServiceServicer):
     ) -> GetSchemaResponse:
         """Get schema information.
 
-        Falls back to observed schema when registry is empty.
-        Merges observed schema to supplement registry types with extra fields.
+        Returns registry schema. When registry is empty and tenant_id is provided,
+        builds minimal schema from distinct type_ids in the data.
         """
         try:
             schema_dict = self.schema_registry.to_dict()
@@ -612,20 +645,37 @@ class EntDBServicer(EntDBServiceServicer):
                 schema_dict.get("node_types") or schema_dict.get("edge_types")
             )
 
-            # Merge or fallback to observed schema if tenant_id is provided
-            if request.tenant_id:
+            # Fallback to data-driven schema when registry is empty
+            if not has_registry_types and request.tenant_id:
                 try:
-                    observed = await self.canonical_store.get_observed_schema(
+                    node_type_rows = await self.canonical_store.get_distinct_type_ids(
                         request.tenant_id,
                     )
-                    if observed.get("node_types") or observed.get("edge_types"):
-                        if has_registry_types:
-                            from ..schema.observer import merge_schemas
-                            schema_dict = merge_schemas(schema_dict, observed)
-                        else:
-                            schema_dict = observed
+                    edge_type_rows = await self.canonical_store.get_distinct_edge_type_ids(
+                        request.tenant_id,
+                    )
+                    schema_dict = {
+                        "node_types": [
+                            {
+                                "type_id": row["type_id"],
+                                "name": f"Type_{row['type_id']}",
+                                "fields": [],
+                            }
+                            for row in node_type_rows
+                        ],
+                        "edge_types": [
+                            {
+                                "edge_id": row["edge_type_id"],
+                                "name": f"Edge_{row['edge_type_id']}",
+                                "from_type_id": 0,
+                                "to_type_id": 0,
+                                "props": [],
+                            }
+                            for row in edge_type_rows
+                        ],
+                    }
                 except Exception as e:
-                    logger.debug(f"Could not load observed schema: {e}")
+                    logger.debug(f"Could not build data-driven schema: {e}")
 
             if request.type_id:
                 schema_dict["node_types"] = [
