@@ -601,9 +601,31 @@ class EntDBServicer(EntDBServiceServicer):
         request: GetSchemaRequest,
         context: grpc_aio.ServicerContext,
     ) -> GetSchemaResponse:
-        """Get schema information."""
+        """Get schema information.
+
+        Falls back to observed schema when registry is empty.
+        Merges observed schema to supplement registry types with extra fields.
+        """
         try:
             schema_dict = self.schema_registry.to_dict()
+            has_registry_types = bool(
+                schema_dict.get("node_types") or schema_dict.get("edge_types")
+            )
+
+            # Merge or fallback to observed schema if tenant_id is provided
+            if request.tenant_id:
+                try:
+                    observed = await self.canonical_store.get_observed_schema(
+                        request.tenant_id,
+                    )
+                    if observed.get("node_types") or observed.get("edge_types"):
+                        if has_registry_types:
+                            from ..schema.observer import merge_schemas
+                            schema_dict = merge_schemas(schema_dict, observed)
+                        else:
+                            schema_dict = observed
+                except Exception as e:
+                    logger.debug(f"Could not load observed schema: {e}")
 
             if request.type_id:
                 schema_dict["node_types"] = [

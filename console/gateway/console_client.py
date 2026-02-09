@@ -109,12 +109,17 @@ class ConsoleClient:
             "components": dict(response.components),
         }
 
-    async def get_schema(self) -> dict[str, Any]:
-        """Get full schema from server."""
+    async def get_schema(self, tenant_id: str | None = None) -> dict[str, Any]:
+        """Get full schema from server.
+
+        Args:
+            tenant_id: Optional tenant ID for observed schema fallback.
+        """
         if not self._stub:
             raise RuntimeError("Not connected")
 
-        response = await self._stub.GetSchema(GetSchemaRequest())
+        request = GetSchemaRequest(tenant_id=tenant_id or "")
+        response = await self._stub.GetSchema(request)
         return {
             "schema": json.loads(response.schema_json) if response.schema_json else {},
             "fingerprint": response.fingerprint,
