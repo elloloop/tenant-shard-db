@@ -158,7 +158,7 @@ class CanonicalStore:
     """
 
     # SQLite schema version for migrations
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 1
 
     def __init__(
         self,
@@ -294,35 +294,9 @@ class CanonicalStore:
             CREATE INDEX IF NOT EXISTS idx_applied_events_key
                 ON applied_events(tenant_id, idempotency_key);
 
-            -- Observed node type schemas (inferred from data writes)
-            CREATE TABLE IF NOT EXISTS observed_node_types (
-                type_id       INTEGER NOT NULL,
-                version       INTEGER NOT NULL,
-                name          TEXT NOT NULL,
-                fields_json   TEXT NOT NULL,
-                fingerprint   TEXT NOT NULL,
-                first_seen_at INTEGER NOT NULL,
-                sample_count  INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY (type_id, version)
-            );
-
-            -- Observed edge type schemas
-            CREATE TABLE IF NOT EXISTS observed_edge_types (
-                edge_type_id   INTEGER NOT NULL,
-                version        INTEGER NOT NULL,
-                name           TEXT NOT NULL,
-                from_type_id   INTEGER,
-                to_type_id     INTEGER,
-                props_json     TEXT NOT NULL,
-                fingerprint    TEXT NOT NULL,
-                first_seen_at  INTEGER NOT NULL,
-                sample_count   INTEGER NOT NULL DEFAULT 1,
-                PRIMARY KEY (edge_type_id, version)
-            );
-
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
-            VALUES (2, strftime('%s', 'now') * 1000);
+            VALUES (1, strftime('%s', 'now') * 1000);
         """)
 
     async def initialize_tenant(self, tenant_id: str) -> None:
@@ -905,173 +879,63 @@ class CanonicalStore:
                     (tenant_id, node_id, principal),
                 )
 
-    async def upsert_observed_node_type(
-        self,
-        tenant_id: str,
-        type_id: int,
-        name: str,
-        fields: list[dict[str, Any]],
-        fingerprint: str,
-        ts: int,
-    ) -> None:
-        """Upsert an observed node type schema.
+    def list_tenants(self) -> list[str]:
+        """Scan data_dir for tenant database files and return tenant IDs.
 
-        If the latest version's fingerprint matches, increments sample_count.
-        Otherwise inserts a new version.
-
-        Args:
-            tenant_id: Tenant identifier
-            type_id: Node type ID
-            name: Type name
-            fields: Field definitions list
-            fingerprint: Fields fingerprint for dedup
-            ts: Observation timestamp (Unix ms)
+        Returns:
+            List of tenant ID strings.
         """
-        with self._get_connection(tenant_id) as conn:
-            # Get latest version for this type_id
-            cursor = conn.execute(
-                """SELECT version, fingerprint FROM observed_node_types
-                   WHERE type_id = ? ORDER BY version DESC LIMIT 1""",
-                (type_id,),
-            )
-            row = cursor.fetchone()
+        tenants = []
+        if not self.data_dir.exists():
+            return tenants
+        for p in sorted(self.data_dir.glob("tenant_*.db")):
+            name = p.stem  # e.g. "tenant_myapp"
+            tenant_id = name[len("tenant_"):]
+            if tenant_id:
+                tenants.append(tenant_id)
+        return tenants
 
-            if row and row["fingerprint"] == fingerprint:
-                conn.execute(
-                    """UPDATE observed_node_types
-                       SET sample_count = sample_count + 1
-                       WHERE type_id = ? AND version = ?""",
-                    (type_id, row["version"]),
-                )
-            else:
-                next_version = (row["version"] + 1) if row else 1
-                conn.execute(
-                    """INSERT INTO observed_node_types
-                       (type_id, version, name, fields_json, fingerprint, first_seen_at, sample_count)
-                       VALUES (?, ?, ?, ?, ?, ?, 1)""",
-                    (type_id, next_version, name, json.dumps(fields), fingerprint, ts),
-                )
-
-    async def upsert_observed_edge_type(
-        self,
-        tenant_id: str,
-        edge_type_id: int,
-        name: str,
-        from_type_id: int | None,
-        to_type_id: int | None,
-        props: list[dict[str, Any]],
-        fingerprint: str,
-        ts: int,
-    ) -> None:
-        """Upsert an observed edge type schema.
-
-        If the latest version's fingerprint matches, increments sample_count.
-        Otherwise inserts a new version.
-
-        Args:
-            tenant_id: Tenant identifier
-            edge_type_id: Edge type ID
-            name: Type name
-            from_type_id: Source node type ID
-            to_type_id: Target node type ID
-            props: Property definitions list
-            fingerprint: Props fingerprint for dedup
-            ts: Observation timestamp (Unix ms)
-        """
-        with self._get_connection(tenant_id) as conn:
-            cursor = conn.execute(
-                """SELECT version, fingerprint FROM observed_edge_types
-                   WHERE edge_type_id = ? ORDER BY version DESC LIMIT 1""",
-                (edge_type_id,),
-            )
-            row = cursor.fetchone()
-
-            if row and row["fingerprint"] == fingerprint:
-                conn.execute(
-                    """UPDATE observed_edge_types
-                       SET sample_count = sample_count + 1
-                       WHERE edge_type_id = ? AND version = ?""",
-                    (edge_type_id, row["version"]),
-                )
-            else:
-                next_version = (row["version"] + 1) if row else 1
-                conn.execute(
-                    """INSERT INTO observed_edge_types
-                       (edge_type_id, version, name, from_type_id, to_type_id,
-                        props_json, fingerprint, first_seen_at, sample_count)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)""",
-                    (
-                        edge_type_id,
-                        next_version,
-                        name,
-                        from_type_id,
-                        to_type_id,
-                        json.dumps(props),
-                        fingerprint,
-                        ts,
-                    ),
-                )
-
-    async def get_observed_schema(self, tenant_id: str) -> dict[str, Any]:
-        """Get the latest observed schema for a tenant.
-
-        Returns the latest version of each observed node/edge type
-        in SchemaRegistry.to_dict() format.
+    async def get_distinct_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Get distinct node type_ids with counts for a tenant.
 
         Args:
             tenant_id: Tenant identifier
 
         Returns:
-            Dict with "node_types" and "edge_types" lists.
+            List of dicts with "type_id" and "node_count" keys.
         """
-        try:
-            with self._get_connection(tenant_id) as conn:
-                # Get latest version of each node type
-                cursor = conn.execute(
-                    """SELECT ont.type_id, ont.name, ont.fields_json
-                       FROM observed_node_types ont
-                       INNER JOIN (
-                           SELECT type_id, MAX(version) as max_version
-                           FROM observed_node_types
-                           GROUP BY type_id
-                       ) latest ON ont.type_id = latest.type_id
-                                AND ont.version = latest.max_version
-                       ORDER BY ont.type_id"""
-                )
-                node_types = []
-                for row in cursor.fetchall():
-                    node_types.append({
-                        "type_id": row["type_id"],
-                        "name": row["name"],
-                        "fields": json.loads(row["fields_json"]),
-                    })
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                """SELECT type_id, COUNT(*) as node_count
+                   FROM nodes WHERE tenant_id = ?
+                   GROUP BY type_id ORDER BY type_id""",
+                (tenant_id,),
+            )
+            return [
+                {"type_id": row["type_id"], "node_count": row["node_count"]}
+                for row in cursor.fetchall()
+            ]
 
-                # Get latest version of each edge type
-                cursor = conn.execute(
-                    """SELECT oet.edge_type_id, oet.name, oet.from_type_id,
-                              oet.to_type_id, oet.props_json
-                       FROM observed_edge_types oet
-                       INNER JOIN (
-                           SELECT edge_type_id, MAX(version) as max_version
-                           FROM observed_edge_types
-                           GROUP BY edge_type_id
-                       ) latest ON oet.edge_type_id = latest.edge_type_id
-                                AND oet.version = latest.max_version
-                       ORDER BY oet.edge_type_id"""
-                )
-                edge_types = []
-                for row in cursor.fetchall():
-                    edge_types.append({
-                        "edge_id": row["edge_type_id"],
-                        "name": row["name"],
-                        "from_type_id": row["from_type_id"],
-                        "to_type_id": row["to_type_id"],
-                        "props": json.loads(row["props_json"]),
-                    })
+    async def get_distinct_edge_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Get distinct edge type_ids with counts for a tenant.
 
-                return {"node_types": node_types, "edge_types": edge_types}
-        except TenantNotFoundError:
-            return {"node_types": [], "edge_types": []}
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            List of dicts with "edge_type_id" and "edge_count" keys.
+        """
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                """SELECT edge_type_id, COUNT(*) as edge_count
+                   FROM edges WHERE tenant_id = ?
+                   GROUP BY edge_type_id ORDER BY edge_type_id""",
+                (tenant_id,),
+            )
+            return [
+                {"edge_type_id": row["edge_type_id"], "edge_count": row["edge_count"]}
+                for row in cursor.fetchall()
+            ]
 
     async def get_stats(self, tenant_id: str) -> dict[str, int]:
         """Get statistics for a tenant.

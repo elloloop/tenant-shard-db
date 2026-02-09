@@ -74,7 +74,7 @@ export default function NodeDetailPage() {
             </h1>
             <div className="flex items-center gap-2 mt-1">
               <code className="text-sm text-gray-600 bg-gray-100 px-2 py-1 rounded font-mono">
-                {node.id}
+                {node.node_id}
               </code>
               <button
                 onClick={copyToClipboard}
@@ -91,7 +91,7 @@ export default function NodeDetailPage() {
           </div>
 
           <Link
-            to={`/graph/${node.id}`}
+            to={`/graph/${node.node_id}`}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
             <Network className="w-4 h-4" />
@@ -203,8 +203,8 @@ export default function NodeDetailPage() {
                 const edgeType = schema?.edge_types.find(e => e.edge_id === edge.edge_type_id)
                 return (
                   <Link
-                    key={edge.id}
-                    to={`/nodes/${edge.to_id}`}
+                    key={edge.edge_type_id + edge.to_node_id}
+                    to={`/nodes/${edge.to_node_id}`}
                     className="flex items-center justify-between p-4 hover:bg-gray-50"
                   >
                     <div>
@@ -212,7 +212,7 @@ export default function NodeDetailPage() {
                         {edgeType?.name || `Edge ${edge.edge_type_id}`}
                       </p>
                       <p className="text-xs text-gray-500 font-mono">
-                        → {edge.to_id.slice(0, 12)}...
+                        → {edge.to_node_id.slice(0, 12)}...
                       </p>
                     </div>
                     <ArrowRight className="w-4 h-4 text-gray-400" />
@@ -238,8 +238,8 @@ export default function NodeDetailPage() {
                 const edgeType = schema?.edge_types.find(e => e.edge_id === edge.edge_type_id)
                 return (
                   <Link
-                    key={edge.id}
-                    to={`/nodes/${edge.from_id}`}
+                    key={edge.edge_type_id + edge.from_node_id}
+                    to={`/nodes/${edge.from_node_id}`}
                     className="flex items-center justify-between p-4 hover:bg-gray-50"
                   >
                     <div>
@@ -247,7 +247,7 @@ export default function NodeDetailPage() {
                         {edgeType?.name || `Edge ${edge.edge_type_id}`}
                       </p>
                       <p className="text-xs text-gray-500 font-mono">
-                        ← {edge.from_id.slice(0, 12)}...
+                        ← {edge.from_node_id.slice(0, 12)}...
                       </p>
                     </div>
                     <ArrowLeft className="w-4 h-4 text-gray-400" />

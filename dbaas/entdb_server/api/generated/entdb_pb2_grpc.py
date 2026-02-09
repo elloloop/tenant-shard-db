@@ -70,6 +70,16 @@ class EntDBServiceStub(object):
                 request_serializer=entdb__pb2.GetSchemaRequest.SerializeToString,
                 response_deserializer=entdb__pb2.GetSchemaResponse.FromString,
                 )
+        self.ListTenants = channel.unary_unary(
+                '/entdb.v1.EntDBService/ListTenants',
+                request_serializer=entdb__pb2.ListTenantsRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ListTenantsResponse.FromString,
+                )
+        self.ListMailboxUsers = channel.unary_unary(
+                '/entdb.v1.EntDBService/ListMailboxUsers',
+                request_serializer=entdb__pb2.ListMailboxUsersRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ListMailboxUsersResponse.FromString,
+                )
 
 
 class EntDBServiceServicer(object):
@@ -154,6 +164,20 @@ class EntDBServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ListTenants(self, request, context):
+        """List all tenants that have data
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListMailboxUsers(self, request, context):
+        """List mailbox users for a tenant
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EntDBServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -211,6 +235,16 @@ def add_EntDBServiceServicer_to_server(servicer, server):
                     servicer.GetSchema,
                     request_deserializer=entdb__pb2.GetSchemaRequest.FromString,
                     response_serializer=entdb__pb2.GetSchemaResponse.SerializeToString,
+            ),
+            'ListTenants': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListTenants,
+                    request_deserializer=entdb__pb2.ListTenantsRequest.FromString,
+                    response_serializer=entdb__pb2.ListTenantsResponse.SerializeToString,
+            ),
+            'ListMailboxUsers': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListMailboxUsers,
+                    request_deserializer=entdb__pb2.ListMailboxUsersRequest.FromString,
+                    response_serializer=entdb__pb2.ListMailboxUsersResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -407,5 +441,39 @@ class EntDBService(object):
         return grpc.experimental.unary_unary(request, target, '/entdb.v1.EntDBService/GetSchema',
             entdb__pb2.GetSchemaRequest.SerializeToString,
             entdb__pb2.GetSchemaResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ListTenants(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/entdb.v1.EntDBService/ListTenants',
+            entdb__pb2.ListTenantsRequest.SerializeToString,
+            entdb__pb2.ListTenantsResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def ListMailboxUsers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/entdb.v1.EntDBService/ListMailboxUsers',
+            entdb__pb2.ListMailboxUsersRequest.SerializeToString,
+            entdb__pb2.ListMailboxUsersResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)

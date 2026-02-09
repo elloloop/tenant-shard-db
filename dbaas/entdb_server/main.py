@@ -39,7 +39,6 @@ from pathlib import Path
 from .api import GrpcServer
 from .api.grpc_server import EntDBServicer
 from .apply import Applier, CanonicalStore, MailboxStore
-from .apply.schema_observer import SchemaObserver
 from .archive import Archiver
 from .config import ServerConfig, WalBackend
 from .schema import freeze_registry, get_registry
@@ -125,7 +124,6 @@ class Server:
         self.applier: Applier | None = None
         self.archiver: Archiver | None = None
         self.snapshotter: Snapshotter | None = None
-        self.schema_observer: SchemaObserver | None = None
 
         # Background tasks
         self._tasks: list[asyncio.Task] = []
@@ -248,13 +246,6 @@ class Server:
                 busy_timeout_ms=self.config.storage.busy_timeout_ms,
             )
 
-            # Initialize schema observer
-            self.schema_observer = SchemaObserver(
-                canonical_store=self.canonical_store,
-                schema_registry=registry,
-            )
-            await self.schema_observer.start()
-
             # Initialize servicer
             self.servicer = EntDBServicer(
                 wal=self.wal,
@@ -292,7 +283,6 @@ class Server:
                 if self.config.wal_backend == WalBackend.KAFKA
                 else "entdb-applier",
                 schema_fingerprint=fingerprint,
-                schema_observer=self.schema_observer,
             )
             applier_task = asyncio.create_task(self.applier.start())
             self._tasks.append(applier_task)
@@ -363,9 +353,6 @@ class Server:
 
         if self.snapshotter:
             await self.snapshotter.stop()
-
-        if self.schema_observer:
-            await self.schema_observer.stop()
 
         if self.grpc_server:
             await self.grpc_server.stop()

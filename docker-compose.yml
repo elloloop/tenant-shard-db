@@ -45,6 +45,7 @@ services:
     environment:
       # Server configuration
       - GRPC_BIND=0.0.0.0:50051
+      - SCHEMA_FILE=/app/schema.yaml
 
       # WAL configuration
       - WAL_BACKEND=kafka
@@ -73,6 +74,7 @@ services:
       - LOG_FORMAT=json
     volumes:
       - entdb-data:/var/lib/entdb
+      - ./schema.yaml:/app/schema.yaml:ro
     depends_on:
       redpanda:
         condition: service_healthy
@@ -127,7 +129,7 @@ services:
     environment:
       - CONSOLE_ENTDB_HOST=server
       - CONSOLE_ENTDB_PORT=50051
-      - CONSOLE_DEFAULT_TENANT_ID=default
+      - CONSOLE_DEFAULT_TENANT_ID=playground
     depends_on:
       server:
         condition: service_healthy

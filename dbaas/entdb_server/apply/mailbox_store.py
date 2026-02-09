@@ -714,6 +714,38 @@ class MailboxStore:
         """
         return self._get_db_path(tenant_id, user_id)
 
+    def list_users(self, tenant_id: str) -> list[str]:
+        """List user IDs that have mailboxes for the given tenant.
+
+        Scans data_dir for mailbox_{safe_tenant}_*.db files and reverses
+        the sanitization to recover user IDs.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            List of user ID strings (e.g. "user:42").
+        """
+        safe_tenant = "".join(c for c in tenant_id if c.isalnum() or c in "-_")
+        prefix = f"mailbox_{safe_tenant}_"
+        users = []
+        if not self.data_dir.exists():
+            return users
+        for p in sorted(self.data_dir.glob(f"{prefix}*.db")):
+            name = p.stem  # e.g. "mailbox_default_user_42"
+            safe_user = name[len(prefix):]
+            if safe_user:
+                # Reverse sanitization: first _ back to :
+                # The original _get_db_path replaces ":" with "_"
+                # We restore the first "_" to ":" to get e.g. "user:42"
+                idx = safe_user.find("_")
+                if idx != -1:
+                    user_id = safe_user[:idx] + ":" + safe_user[idx + 1:]
+                else:
+                    user_id = safe_user
+                users.append(user_id)
+        return users
+
     async def mailbox_exists(self, tenant_id: str, user_id: str) -> bool:
         """Check if a mailbox exists.
 

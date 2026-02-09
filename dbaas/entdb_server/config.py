@@ -360,6 +360,7 @@ class ServerConfig:
     """
 
     wal_backend: WalBackend = WalBackend.KAFKA
+    schema_file: str | None = None
     grpc: GrpcConfig = field(default_factory=GrpcConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     kinesis: KinesisConfig = field(default_factory=KinesisConfig)
@@ -388,6 +389,7 @@ class ServerConfig:
 
         config = cls(
             wal_backend=wal_backend,
+            schema_file=os.getenv("SCHEMA_FILE"),
             grpc=GrpcConfig.from_env(),
             kafka=KafkaConfig.from_env(),
             kinesis=KinesisConfig.from_env(),

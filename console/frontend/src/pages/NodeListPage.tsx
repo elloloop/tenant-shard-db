@@ -94,11 +94,11 @@ export default function NodeListPage() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {nodesData?.items.map((node) => (
-              <tr key={node.id} className="hover:bg-gray-50">
+            {nodesData?.nodes.map((node) => (
+              <tr key={node.node_id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap">
                   <span className="font-mono text-sm text-gray-900">
-                    {node.id.slice(0, 12)}...
+                    {node.node_id.slice(0, 12)}...
                   </span>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
@@ -113,14 +113,14 @@ export default function NodeListPage() {
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                   <div className="flex justify-end gap-2">
                     <Link
-                      to={`/nodes/${node.id}`}
+                      to={`/nodes/${node.node_id}`}
                       className="text-blue-600 hover:text-blue-800 p-1"
                       title="View details"
                     >
                       <Eye className="w-4 h-4" />
                     </Link>
                     <Link
-                      to={`/graph/${node.id}`}
+                      to={`/graph/${node.node_id}`}
                       className="text-green-600 hover:text-green-800 p-1"
                       title="View graph"
                     >
@@ -136,7 +136,7 @@ export default function NodeListPage() {
         {/* Pagination */}
         <div className="bg-gray-50 px-6 py-3 flex items-center justify-between border-t border-gray-200">
           <div className="text-sm text-gray-500">
-            Showing {offset + 1} - {offset + (nodesData?.items.length || 0)}
+            Showing {offset + 1} - {offset + (nodesData?.nodes.length || 0)}
           </div>
           <div className="flex gap-2">
             <button
