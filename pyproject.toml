@@ -7,7 +7,7 @@ name = "entdb"
 version = "0.2.0"
 description = "Tenant-sharded graph database with nodes and edges"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 authors = [
     {name = "EntDB Team", email = "team@entdb.io"}
@@ -167,8 +167,8 @@ warn_return_any = false
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_functions = ["test_*"]
+python_files = ["test_*.py", "*_test.py", "bench_*.py"]
+python_functions = ["test_*", "bench_*"]
 asyncio_mode = "auto"
 addopts = [
     "-v",
