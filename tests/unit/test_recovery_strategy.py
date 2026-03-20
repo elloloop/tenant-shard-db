@@ -11,18 +11,13 @@ Tests cover:
 from __future__ import annotations
 
 import sqlite3
-import time
 
 import pytest
 
 from dbaas.entdb_server.tools.recovery_strategy import (
-    RecoveryPlan,
-    RecoveryResult,
     RecoveryStrategy,
     RecoveryTier,
-    TierResult,
 )
-
 
 # ---------------------------------------------------------------------------
 # Mock providers
@@ -113,10 +108,9 @@ class TestRecoveryPlan:
 
         plan = await strategy.build_plan("tenant_1")
 
-        tier_names = [t for t in plan.tiers]
-        assert RecoveryTier.SNAPSHOT in tier_names
-        assert RecoveryTier.KAFKA_WAL in tier_names
-        assert RecoveryTier.S3_ARCHIVE not in tier_names
+        assert RecoveryTier.SNAPSHOT in plan.tiers
+        assert RecoveryTier.KAFKA_WAL in plan.tiers
+        assert RecoveryTier.S3_ARCHIVE not in plan.tiers
 
     @pytest.mark.asyncio
     async def test_plan_with_all_tiers(self):
