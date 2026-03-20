@@ -78,6 +78,12 @@ class RestoreConfig:
     verify: bool = True
     skip_archive: bool = False
     stream_config: dict[str, Any] | None = None
+    # Tiered recovery options
+    kafka_replay_enabled: bool = True
+    archive_replay_enabled: bool = True
+    kafka_brokers: str | None = None
+    kafka_topic: str = "entdb-wal"
+    kafka_replay_timeout_seconds: int = 300
 
 
 @dataclass
@@ -631,6 +637,11 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Don't make changes")
     parser.add_argument("--skip-archive", action="store_true", help="Only restore snapshot")
     parser.add_argument("--no-verify", action="store_true", help="Skip verification")
+    parser.add_argument("--kafka-brokers", help="Kafka broker addresses for WAL replay")
+    parser.add_argument("--kafka-topic", default="entdb-wal", help="Kafka topic name")
+    parser.add_argument("--no-kafka-replay", action="store_true", help="Disable Kafka WAL replay tier")
+    parser.add_argument("--no-archive-replay", action="store_true", help="Disable S3 archive replay tier")
+    parser.add_argument("--kafka-replay-timeout", type=int, default=300, help="Kafka replay timeout (seconds)")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
 
     args = parser.parse_args()
@@ -648,8 +659,13 @@ def main() -> None:
         s3_region=args.s3_region,
         s3_endpoint=args.s3_endpoint,
         dry_run=args.dry_run,
-        skip_archive=args.skip_archive,
+        skip_archive=args.skip_archive or args.no_archive_replay,
         verify=not args.no_verify,
+        kafka_replay_enabled=not args.no_kafka_replay,
+        archive_replay_enabled=not args.skip_archive and not args.no_archive_replay,
+        kafka_brokers=args.kafka_brokers,
+        kafka_topic=args.kafka_topic,
+        kafka_replay_timeout_seconds=args.kafka_replay_timeout,
     )
 
     tool = RestoreTool(config)
