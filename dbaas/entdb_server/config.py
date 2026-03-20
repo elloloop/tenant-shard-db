@@ -245,35 +245,95 @@ class ApplierConfig:
         )
 
 
+class ArchiveFlushMode(Enum):
+    """How the archiver flushes events to S3."""
+    BATCHED = "batched"          # Buffer events, flush periodically (default)
+    INDIVIDUAL = "individual"    # Flush each event immediately (expensive)
+    DISABLED = "disabled"        # Archiver is off — no S3 writes
+
+
 @dataclass(frozen=True)
 class ArchiverConfig:
     """Archiver configuration.
 
+    Controls how WAL events are archived to S3 for long-term durability.
+    The archiver can be fully disabled if snapshots + Kafka retention
+    provide sufficient recovery guarantees.
+
     Attributes:
-        enabled: Whether archiver is enabled
-        flush_interval_seconds: Interval between S3 flushes
-        max_segment_size_bytes: Maximum segment size before flush
-        max_segment_events: Maximum events per segment
+        enabled: Whether archiver is enabled (master switch)
+        flush_mode: How events are flushed to S3 (batched, individual, disabled)
+        flush_interval_seconds: Seconds between periodic batch flushes
+        max_segment_size_bytes: Max segment size before forced flush
+        max_segment_events: Max events per segment before forced flush
+        min_segment_events: Min events required to flush (avoids tiny segments)
         compression: Compression algorithm (gzip, none)
+        s3_storage_class: S3 storage class for archive objects
+        s3_upload_timeout_seconds: Timeout for S3 upload operations
+        deduplicate: Whether to check for duplicate events before archiving
     """
 
     enabled: bool = True
+    flush_mode: str = "batched"
     flush_interval_seconds: int = 60
     max_segment_size_bytes: int = 100 * 1024 * 1024  # 100MB
     max_segment_events: int = 10000
+    min_segment_events: int = 1
     compression: str = "gzip"
+    s3_storage_class: str = "STANDARD"
+    s3_upload_timeout_seconds: int = 300
+    deduplicate: bool = True
 
     @classmethod
     def from_env(cls) -> ArchiverConfig:
-        """Load configuration from environment variables."""
+        enabled = os.getenv("ARCHIVER_ENABLED", "true").lower() == "true"
+        flush_mode = os.getenv("ARCHIVE_FLUSH_MODE", "batched").lower()
+        # If disabled via ARCHIVER_ENABLED=false, override flush_mode
+        if not enabled:
+            flush_mode = "disabled"
         return cls(
-            enabled=os.getenv("ARCHIVER_ENABLED", "true").lower() == "true",
+            enabled=enabled,
+            flush_mode=flush_mode,
             flush_interval_seconds=int(os.getenv("ARCHIVE_FLUSH_SECONDS", "60")),
-            max_segment_size_bytes=int(
-                os.getenv("ARCHIVE_MAX_SEGMENT_BYTES", str(100 * 1024 * 1024))
-            ),
+            max_segment_size_bytes=int(os.getenv("ARCHIVE_MAX_SEGMENT_BYTES", str(100 * 1024 * 1024))),
             max_segment_events=int(os.getenv("ARCHIVE_MAX_SEGMENT_EVENTS", "10000")),
+            min_segment_events=int(os.getenv("ARCHIVE_MIN_SEGMENT_EVENTS", "1")),
             compression=os.getenv("ARCHIVE_COMPRESSION", "gzip"),
+            s3_storage_class=os.getenv("ARCHIVE_S3_STORAGE_CLASS", "STANDARD"),
+            s3_upload_timeout_seconds=int(os.getenv("ARCHIVE_S3_UPLOAD_TIMEOUT", "300")),
+            deduplicate=os.getenv("ARCHIVE_DEDUPLICATE", "true").lower() == "true",
+        )
+
+
+@dataclass(frozen=True)
+class RecoveryConfig:
+    """Recovery strategy configuration.
+
+    Controls the tiered recovery behavior when restoring a tenant database.
+    Recovery tries each tier in order until the database is fully restored:
+      1. Snapshot — restore latest SQLite backup from S3
+      2. Kafka WAL — replay events from snapshot position (fast, fresh)
+      3. S3 Archive — replay archived events (last resort)
+
+    Attributes:
+        kafka_replay_enabled: Whether to attempt Kafka WAL replay during recovery
+        archive_replay_enabled: Whether to attempt S3 archive replay during recovery
+        kafka_replay_timeout_seconds: Max seconds to wait for Kafka replay
+        verify_after_recovery: Run SQLite integrity check after recovery
+    """
+
+    kafka_replay_enabled: bool = True
+    archive_replay_enabled: bool = True
+    kafka_replay_timeout_seconds: int = 300
+    verify_after_recovery: bool = True
+
+    @classmethod
+    def from_env(cls) -> RecoveryConfig:
+        return cls(
+            kafka_replay_enabled=os.getenv("RECOVERY_KAFKA_REPLAY", "true").lower() == "true",
+            archive_replay_enabled=os.getenv("RECOVERY_ARCHIVE_REPLAY", "true").lower() == "true",
+            kafka_replay_timeout_seconds=int(os.getenv("RECOVERY_KAFKA_TIMEOUT", "300")),
+            verify_after_recovery=os.getenv("RECOVERY_VERIFY", "true").lower() == "true",
         )
 
 
@@ -368,6 +428,7 @@ class ServerConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     applier: ApplierConfig = field(default_factory=ApplierConfig)
     archiver: ArchiverConfig = field(default_factory=ArchiverConfig)
+    recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
@@ -397,6 +458,7 @@ class ServerConfig:
             storage=StorageConfig.from_env(),
             applier=ApplierConfig.from_env(),
             archiver=ArchiverConfig.from_env(),
+            recovery=RecoveryConfig.from_env(),
             snapshot=SnapshotConfig.from_env(),
             observability=ObservabilityConfig.from_env(),
         )
@@ -425,6 +487,18 @@ class ServerConfig:
             if not self.s3.bucket:
                 raise ValueError("S3_BUCKET is required when archiver or snapshotter is enabled")
 
+        # Warn about recovery configuration
+        if self.recovery.archive_replay_enabled and not self.archiver.enabled:
+            logger.warning(
+                "Archive replay is enabled for recovery but archiver is disabled. "
+                "Recovery will only find archives from previous archiver runs."
+            )
+        if not self.recovery.kafka_replay_enabled and not self.recovery.archive_replay_enabled:
+            logger.warning(
+                "Both Kafka and archive replay are disabled for recovery. "
+                "Recovery can only restore from snapshots."
+            )
+
         # Validate storage directory exists or can be created
         import os
 
@@ -451,6 +525,10 @@ class ServerConfig:
                 "s3_bucket": self.s3.bucket,
                 "data_dir": self.storage.data_dir,
                 "archiver_enabled": self.archiver.enabled,
+                "archiver_flush_mode": self.archiver.flush_mode,
+                "archiver_flush_interval": self.archiver.flush_interval_seconds,
+                "recovery_kafka_replay": self.recovery.kafka_replay_enabled,
+                "recovery_archive_replay": self.recovery.archive_replay_enabled,
                 "snapshot_enabled": self.snapshot.enabled,
                 "log_level": self.observability.log_level,
             },

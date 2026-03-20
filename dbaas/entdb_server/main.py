@@ -289,7 +289,7 @@ class Server:
 
             # Start archiver if enabled (uses its own WAL instance to avoid
             # sharing the consumer with the applier)
-            if self.config.archiver.enabled:
+            if self.config.archiver.enabled and self.config.archiver.flush_mode != "disabled":
                 self._archiver_wal = create_wal_stream(self.config)
                 await self._archiver_wal.connect()
                 self.archiver = Archiver(
@@ -301,6 +301,9 @@ class Server:
                     max_segment_size_bytes=self.config.archiver.max_segment_size_bytes,
                     max_segment_events=self.config.archiver.max_segment_events,
                     compression=self.config.archiver.compression,
+                    flush_mode=self.config.archiver.flush_mode,
+                    min_segment_events=self.config.archiver.min_segment_events,
+                    s3_storage_class=self.config.archiver.s3_storage_class,
                 )
                 archiver_task = asyncio.create_task(self.archiver.start())
                 self._tasks.append(archiver_task)

@@ -117,6 +117,9 @@ class Archiver:
         max_segment_size_bytes: int = 100 * 1024 * 1024,
         max_segment_events: int = 10000,
         compression: str = "gzip",
+        flush_mode: str = "batched",
+        min_segment_events: int = 1,
+        s3_storage_class: str = "STANDARD",
     ) -> None:
         """Initialize the archiver.
 
@@ -129,6 +132,9 @@ class Archiver:
             max_segment_size_bytes: Maximum segment size
             max_segment_events: Maximum events per segment
             compression: Compression algorithm ("gzip" or "none")
+            flush_mode: How events are flushed ("batched", "individual", "disabled")
+            min_segment_events: Minimum events required to flush a segment
+            s3_storage_class: S3 storage class for archive objects
         """
         self.wal = wal
         self.s3_config = s3_config
@@ -138,6 +144,9 @@ class Archiver:
         self.max_segment_size_bytes = max_segment_size_bytes
         self.max_segment_events = max_segment_events
         self.compression = compression
+        self.flush_mode = flush_mode  # "batched", "individual", "disabled"
+        self.min_segment_events = min_segment_events
+        self.s3_storage_class = s3_storage_class
 
         self._running = False
         self._pending_segments: dict[str, PendingSegment] = {}  # key = tenant:partition
@@ -252,7 +261,9 @@ class Archiver:
             segment.size_estimate += len(record.value)
 
             # Check if segment should be flushed
-            if (
+            if self.flush_mode == "individual":
+                await self._flush_segment(segment_key)
+            elif (
                 segment.size_estimate >= self.max_segment_size_bytes
                 or len(segment.events) >= self.max_segment_events
             ):
@@ -271,13 +282,14 @@ class Archiver:
         """Flush all pending segments."""
         segment_keys = list(self._pending_segments.keys())
         for key in segment_keys:
-            await self._flush_segment(key)
+            await self._flush_segment(key, force=True)
 
-    async def _flush_segment(self, segment_key: str) -> ArchiveSegment | None:
+    async def _flush_segment(self, segment_key: str, force: bool = False) -> ArchiveSegment | None:
         """Flush a pending segment to S3.
 
         Args:
             segment_key: Key for the pending segment
+            force: If True, flush even if below min_segment_events (used during shutdown)
 
         Returns:
             ArchiveSegment if flushed, None if empty
@@ -285,9 +297,13 @@ class Archiver:
         if segment_key not in self._pending_segments:
             return None
 
-        segment = self._pending_segments.pop(segment_key)
+        segment = self._pending_segments[segment_key]
         if not segment.events:
+            self._pending_segments.pop(segment_key)
             return None
+        if not force and len(segment.events) < self.min_segment_events:
+            return None
+        segment = self._pending_segments.pop(segment_key)
 
         try:
             # Build S3 key
@@ -303,14 +319,15 @@ class Archiver:
             content = self._serialize_segment(segment.events)
 
             # Upload to S3
-            await self._s3_client.put_object(
-                Bucket=self.s3_config.bucket,
-                Key=s3_key,
-                Body=content,
-                ContentType="application/x-gzip"
-                if self.compression == "gzip"
-                else "application/x-ndjson",
-            )
+            put_kwargs = {
+                "Bucket": self.s3_config.bucket,
+                "Key": s3_key,
+                "Body": content,
+                "ContentType": "application/x-gzip" if self.compression == "gzip" else "application/x-ndjson",
+            }
+            if self.s3_storage_class and self.s3_storage_class != "STANDARD":
+                put_kwargs["StorageClass"] = self.s3_storage_class
+            await self._s3_client.put_object(**put_kwargs)
 
             self._archived_count += len(segment.events)
 

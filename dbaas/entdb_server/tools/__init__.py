@@ -11,7 +11,28 @@ Invariants:
     - All operations are logged for audit
 """
 
+from .recovery_strategy import (
+    ArchiveReplayProvider,
+    KafkaReplayProvider,
+    RecoveryPlan,
+    RecoveryResult,
+    RecoveryStrategy,
+    RecoveryTier,
+    SnapshotProvider,
+    TierResult,
+)
 from .restore import RestoreTool
 from .schema_cli import SchemaCLI
 
-__all__ = ["RestoreTool", "SchemaCLI"]
+__all__ = [
+    "ArchiveReplayProvider",
+    "KafkaReplayProvider",
+    "RecoveryPlan",
+    "RecoveryResult",
+    "RecoveryStrategy",
+    "RecoveryTier",
+    "RestoreTool",
+    "SchemaCLI",
+    "SnapshotProvider",
+    "TierResult",
+]
