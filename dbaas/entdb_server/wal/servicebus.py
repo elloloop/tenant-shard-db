@@ -290,9 +290,7 @@ class ServiceBusWalStream:
                         if msg.application_properties:
                             for k, v in msg.application_properties.items():
                                 key_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
-                                val_str = (
-                                    v.decode("utf-8") if isinstance(v, bytes) else str(v)
-                                )
+                                val_str = v.decode("utf-8") if isinstance(v, bytes) else str(v)
                                 headers[key_str] = val_str.encode("utf-8")
 
                         # Use sequence_number for offset

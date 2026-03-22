@@ -193,11 +193,11 @@ class FieldDef:
         validators = {
             FieldKind.STRING: lambda v: isinstance(v, str),
             FieldKind.INTEGER: lambda v: isinstance(v, int) and not isinstance(v, bool),
-            FieldKind.FLOAT: lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+            FieldKind.FLOAT: lambda v: isinstance(v, int | float) and not isinstance(v, bool),
             FieldKind.BOOLEAN: lambda v: isinstance(v, bool),
             FieldKind.TIMESTAMP: lambda v: isinstance(v, int) and v >= 0,
             FieldKind.JSON: lambda _: True,  # Any JSON-serializable value
-            FieldKind.BYTES: lambda v: isinstance(v, (str, bytes)),
+            FieldKind.BYTES: lambda v: isinstance(v, str | bytes),
             FieldKind.LIST_STRING: lambda v: (
                 isinstance(v, list) and all(isinstance(i, str) for i in v)
             ),

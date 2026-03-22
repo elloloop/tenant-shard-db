@@ -145,6 +145,7 @@ class Server:
             data = yaml.safe_load(raw)
         else:
             import json
+
             data = json.loads(raw)
 
         if not data:
@@ -190,8 +191,7 @@ class Server:
             }
             if et.get("props"):
                 edge_dict["props"] = [
-                    {"field_id": p["id"], "name": p["name"], "kind": p["kind"]}
-                    for p in et["props"]
+                    {"field_id": p["id"], "name": p["name"], "kind": p["kind"]} for p in et["props"]
                 ]
             edge_type = EdgeTypeDef.from_dict(edge_dict)
             registry.register_edge_type(edge_type)  # type: ignore[attr-defined]
@@ -264,6 +264,8 @@ class Server:
                 topic = self.config.sqs.queue_url
             elif self.config.wal_backend == WalBackend.SERVICEBUS:
                 topic = self.config.servicebus.queue_name
+            elif self.config.wal_backend == WalBackend.EVENTHUBS:
+                topic = self.config.eventhubs.eventhub_name
             elif self.config.wal_backend == WalBackend.LOCAL:
                 topic = "entdb-wal"
             else:
@@ -295,6 +297,8 @@ class Server:
                 group_id = self.config.kafka.consumer_group
             elif self.config.wal_backend == WalBackend.PUBSUB:
                 group_id = self.config.pubsub.subscription_id
+            elif self.config.wal_backend == WalBackend.EVENTHUBS:
+                group_id = self.config.eventhubs.consumer_group
             else:
                 group_id = "entdb-applier"
 

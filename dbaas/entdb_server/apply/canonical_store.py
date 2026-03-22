@@ -365,7 +365,16 @@ class CanonicalStore:
                                created_at, updated_at, owner_actor, acl_blob)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (tenant_id, node_id, type_id, json.dumps(payload), now, now, owner_actor, json.dumps(acl)),
+            (
+                tenant_id,
+                node_id,
+                type_id,
+                json.dumps(payload),
+                now,
+                now,
+                owner_actor,
+                json.dumps(acl),
+            ),
         )
 
         self._update_visibility(conn, tenant_id, node_id, owner_actor, acl)
@@ -972,7 +981,7 @@ class CanonicalStore:
             return tenants
         for p in sorted(self.data_dir.glob("tenant_*.db")):
             name = p.stem  # e.g. "tenant_myapp"
-            tenant_id = name[len("tenant_"):]
+            tenant_id = name[len("tenant_") :]
             if tenant_id:
                 tenants.append(tenant_id)
         return tenants

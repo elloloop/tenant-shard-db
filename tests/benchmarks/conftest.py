@@ -4,6 +4,7 @@ Benchmark configuration and system spec capture.
 Automatically collects and prints machine specs at the start of any
 benchmark run so results are reproducible and comparable.
 """
+
 from __future__ import annotations
 
 import os
@@ -59,9 +60,7 @@ def _get_memory_info() -> dict:
 
     if system == "Darwin":
         try:
-            mem_bytes = subprocess.check_output(
-                ["sysctl", "-n", "hw.memsize"], text=True
-            ).strip()
+            mem_bytes = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True).strip()
             info["total_gb"] = round(int(mem_bytes) / (1024**3), 1)
         except (subprocess.CalledProcessError, FileNotFoundError):
             pass
@@ -117,6 +116,7 @@ def _get_disk_info() -> dict:
 def _get_sqlite_version() -> str:
     """Get SQLite version."""
     import sqlite3
+
     return sqlite3.sqlite_version
 
 
@@ -152,7 +152,9 @@ def _format_specs(specs: dict) -> str:
     if "brand" in cpu:
         lines.append(f"  CPU:      {cpu['brand']}")
     if "cores_physical" in cpu:
-        lines.append(f"  Cores:    {cpu['cores_physical']} physical / {cpu['cores_logical']} logical")
+        lines.append(
+            f"  Cores:    {cpu['cores_physical']} physical / {cpu['cores_logical']} logical"
+        )
     elif "cores_logical" in cpu:
         lines.append(f"  Cores:    {cpu['cores_logical']} logical")
 

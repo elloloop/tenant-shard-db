@@ -281,7 +281,7 @@ class WalStream(Protocol):
         # Backends should override with native batch polling for efficiency.
         records: list[StreamRecord] = []
         try:
-            async for record in self.subscribe(topic, group_id, start_position):
+            async for record in self.subscribe(topic, group_id, start_position):  # type: ignore[attr-defined]
                 records.append(record)
                 if len(records) >= max_records:
                     break
@@ -358,6 +358,10 @@ def create_wal_stream(config: ServerConfig) -> WalStream:
         from .servicebus import ServiceBusWalStream
 
         return ServiceBusWalStream(config.servicebus)  # type: ignore[return-value]
+    elif config.wal_backend == WalBackend.EVENTHUBS:
+        from .eventhubs import EventHubsWalStream
+
+        return EventHubsWalStream(config.eventhubs)  # type: ignore[return-value]
     elif config.wal_backend == WalBackend.LOCAL:
         from .memory import InMemoryWalStream
 

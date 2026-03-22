@@ -261,9 +261,7 @@ class Archiver:
             segment.size_estimate += len(record.value)
 
             # Check if segment should be flushed
-            if self.flush_mode == "individual":
-                await self._flush_segment(segment_key)
-            elif (
+            if self.flush_mode == "individual" or (
                 segment.size_estimate >= self.max_segment_size_bytes
                 or len(segment.events) >= self.max_segment_events
             ):
@@ -323,7 +321,9 @@ class Archiver:
                 "Bucket": self.s3_config.bucket,
                 "Key": s3_key,
                 "Body": content,
-                "ContentType": "application/x-gzip" if self.compression == "gzip" else "application/x-ndjson",
+                "ContentType": "application/x-gzip"
+                if self.compression == "gzip"
+                else "application/x-ndjson",
             }
             if self.s3_storage_class and self.s3_storage_class != "STANDARD":
                 put_kwargs["StorageClass"] = self.s3_storage_class
