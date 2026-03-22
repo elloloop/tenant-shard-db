@@ -246,15 +246,36 @@ class Server:
                 busy_timeout_ms=self.config.storage.busy_timeout_ms,
             )
 
+            # Log warning for local mode
+            if self.config.wal_backend == WalBackend.LOCAL:
+                logger.warning(
+                    "Running in LOCAL mode — WAL is in-memory only. "
+                    "Data is NOT durable across restarts. Use snapshots for recovery."
+                )
+
+            # Determine topic based on WAL backend
+            if self.config.wal_backend == WalBackend.KAFKA:
+                topic = self.config.kafka.topic
+            elif self.config.wal_backend == WalBackend.KINESIS:
+                topic = self.config.kinesis.stream_name
+            elif self.config.wal_backend == WalBackend.PUBSUB:
+                topic = self.config.pubsub.topic_id
+            elif self.config.wal_backend == WalBackend.SQS:
+                topic = self.config.sqs.queue_url
+            elif self.config.wal_backend == WalBackend.SERVICEBUS:
+                topic = self.config.servicebus.queue_name
+            elif self.config.wal_backend == WalBackend.LOCAL:
+                topic = "entdb-wal"
+            else:
+                topic = "entdb-wal"
+
             # Initialize servicer
             self.servicer = EntDBServicer(
                 wal=self.wal,
                 canonical_store=self.canonical_store,
                 mailbox_store=self.mailbox_store,
                 schema_registry=registry,
-                topic=self.config.kafka.topic
-                if self.config.wal_backend == WalBackend.KAFKA
-                else self.config.kinesis.stream_name,
+                topic=topic,
                 sharding=self.config.sharding,
             )
 
@@ -270,19 +291,19 @@ class Server:
             await self.grpc_server.start()
 
             # Start applier
-            topic = (
-                self.config.kafka.topic
-                if self.config.wal_backend == WalBackend.KAFKA
-                else self.config.kinesis.stream_name
-            )
+            if self.config.wal_backend == WalBackend.KAFKA:
+                group_id = self.config.kafka.consumer_group
+            elif self.config.wal_backend == WalBackend.PUBSUB:
+                group_id = self.config.pubsub.subscription_id
+            else:
+                group_id = "entdb-applier"
+
             self.applier = Applier(
                 wal=self.wal,
                 canonical_store=self.canonical_store,
                 mailbox_store=self.mailbox_store,
                 topic=topic,
-                group_id=self.config.kafka.consumer_group
-                if self.config.wal_backend == WalBackend.KAFKA
-                else "entdb-applier",
+                group_id=group_id,
                 schema_fingerprint=fingerprint,
                 batch_size=self.config.applier.batch_size,
                 poll_timeout_ms=self.config.kafka.poll_timeout_ms
@@ -295,7 +316,11 @@ class Server:
 
             # Start archiver if enabled (uses its own WAL instance to avoid
             # sharing the consumer with the applier)
-            if self.config.archiver.enabled and self.config.archiver.flush_mode != "disabled":
+            if (
+                self.config.archiver.enabled
+                and self.config.archiver.flush_mode != "disabled"
+                and self.config.wal_backend != WalBackend.LOCAL
+            ):
                 self._archiver_wal = create_wal_stream(self.config)
                 await self._archiver_wal.connect()
                 self.archiver = Archiver(

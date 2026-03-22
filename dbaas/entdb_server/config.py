@@ -32,6 +32,10 @@ class WalBackend(Enum):
 
     KAFKA = "kafka"
     KINESIS = "kinesis"
+    PUBSUB = "pubsub"
+    SQS = "sqs"
+    SERVICEBUS = "servicebus"
+    LOCAL = "local"
 
 
 @dataclass(frozen=True)
@@ -155,6 +159,102 @@ class KinesisConfig:
             endpoint_url=os.getenv("KINESIS_ENDPOINT_URL"),
             max_records_per_get=int(os.getenv("KINESIS_MAX_RECORDS", "1000")),
             iterator_type=os.getenv("KINESIS_ITERATOR_TYPE", "TRIM_HORIZON"),
+        )
+
+
+@dataclass(frozen=True)
+class PubSubConfig:
+    """Google Cloud Pub/Sub WAL backend configuration.
+
+    Attributes:
+        project_id: GCP project ID
+        topic_id: Pub/Sub topic ID (not full path)
+        subscription_id: Pub/Sub subscription ID
+        ordering_enabled: Whether to use ordering keys (recommended)
+        max_messages: Maximum messages per pull request
+        ack_deadline_seconds: Time before unacked messages are redelivered
+        endpoint: Custom endpoint (for emulator)
+    """
+
+    project_id: str = ""
+    topic_id: str = "entdb-wal"
+    subscription_id: str = "entdb-applier"
+    ordering_enabled: bool = True
+    max_messages: int = 100
+    ack_deadline_seconds: int = 60
+    endpoint: str | None = None
+
+    @classmethod
+    def from_env(cls) -> PubSubConfig:
+        """Load configuration from environment variables."""
+        return cls(
+            project_id=os.getenv("PUBSUB_PROJECT_ID", os.getenv("GCP_PROJECT_ID", "")),
+            topic_id=os.getenv("PUBSUB_TOPIC_ID", "entdb-wal"),
+            subscription_id=os.getenv("PUBSUB_SUBSCRIPTION_ID", "entdb-applier"),
+            ordering_enabled=os.getenv("PUBSUB_ORDERING", "true").lower() == "true",
+            max_messages=int(os.getenv("PUBSUB_MAX_MESSAGES", "100")),
+            ack_deadline_seconds=int(os.getenv("PUBSUB_ACK_DEADLINE", "60")),
+            endpoint=os.getenv("PUBSUB_ENDPOINT"),
+        )
+
+
+@dataclass(frozen=True)
+class SqsConfig:
+    """AWS SQS FIFO WAL backend configuration.
+
+    Attributes:
+        queue_url: SQS FIFO queue URL
+        region: AWS region
+        endpoint_url: Custom endpoint URL (for LocalStack)
+        max_messages: Maximum messages per ReceiveMessage call (SQS max is 10)
+        wait_time_seconds: Long polling wait time in seconds
+        visibility_timeout: Visibility timeout in seconds
+    """
+
+    queue_url: str = ""
+    region: str = "us-east-1"
+    endpoint_url: str | None = None
+    max_messages: int = 10
+    wait_time_seconds: int = 5
+    visibility_timeout: int = 60
+
+    @classmethod
+    def from_env(cls) -> SqsConfig:
+        """Load configuration from environment variables."""
+        return cls(
+            queue_url=os.getenv("SQS_QUEUE_URL", ""),
+            region=os.getenv("SQS_REGION", os.getenv("AWS_REGION", "us-east-1")),
+            endpoint_url=os.getenv("SQS_ENDPOINT"),
+            max_messages=int(os.getenv("SQS_MAX_MESSAGES", "10")),
+            wait_time_seconds=int(os.getenv("SQS_WAIT_TIME", "5")),
+            visibility_timeout=int(os.getenv("SQS_VISIBILITY_TIMEOUT", "60")),
+        )
+
+
+@dataclass(frozen=True)
+class ServiceBusConfig:
+    """Azure Service Bus WAL backend configuration.
+
+    Attributes:
+        connection_string: Service Bus connection string
+        queue_name: Queue name
+        max_messages: Maximum messages per receive call
+        max_wait_time_seconds: Maximum wait time for receive operations
+    """
+
+    connection_string: str = ""
+    queue_name: str = "entdb-wal"
+    max_messages: int = 20
+    max_wait_time_seconds: int = 5
+
+    @classmethod
+    def from_env(cls) -> ServiceBusConfig:
+        """Load configuration from environment variables."""
+        return cls(
+            connection_string=os.getenv("SERVICEBUS_CONNECTION_STRING", ""),
+            queue_name=os.getenv("SERVICEBUS_QUEUE_NAME", "entdb-wal"),
+            max_messages=int(os.getenv("SERVICEBUS_MAX_MESSAGES", "20")),
+            max_wait_time_seconds=int(os.getenv("SERVICEBUS_MAX_WAIT", "5")),
         )
 
 
@@ -433,6 +533,9 @@ class ServerConfig:
     grpc: GrpcConfig = field(default_factory=GrpcConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
     kinesis: KinesisConfig = field(default_factory=KinesisConfig)
+    pubsub: PubSubConfig = field(default_factory=PubSubConfig)
+    sqs: SqsConfig = field(default_factory=SqsConfig)
+    servicebus: ServiceBusConfig = field(default_factory=ServiceBusConfig)
     s3: S3Config = field(default_factory=S3Config)
     storage: StorageConfig = field(default_factory=StorageConfig)
     applier: ApplierConfig = field(default_factory=ApplierConfig)
@@ -456,7 +559,10 @@ class ServerConfig:
         try:
             wal_backend = WalBackend(backend_str)
         except ValueError:
-            raise ValueError(f"Invalid WAL_BACKEND '{backend_str}'. Must be one of: kafka, kinesis")
+            raise ValueError(
+                f"Invalid WAL_BACKEND '{backend_str}'. "
+                "Must be one of: kafka, kinesis, pubsub, sqs, servicebus, local"
+            )
 
         config = cls(
             wal_backend=wal_backend,
@@ -464,6 +570,9 @@ class ServerConfig:
             grpc=GrpcConfig.from_env(),
             kafka=KafkaConfig.from_env(),
             kinesis=KinesisConfig.from_env(),
+            pubsub=PubSubConfig.from_env(),
+            sqs=SqsConfig.from_env(),
+            servicebus=ServiceBusConfig.from_env(),
             s3=S3Config.from_env(),
             storage=StorageConfig.from_env(),
             applier=ApplierConfig.from_env(),
@@ -492,6 +601,17 @@ class ServerConfig:
         elif self.wal_backend == WalBackend.KINESIS:
             if not self.kinesis.stream_name:
                 raise ValueError("KINESIS_STREAM_NAME is required when WAL_BACKEND=kinesis")
+        elif self.wal_backend == WalBackend.PUBSUB:
+            if not self.pubsub.project_id:
+                raise ValueError("PUBSUB_PROJECT_ID is required when WAL_BACKEND=pubsub")
+        elif self.wal_backend == WalBackend.SQS:
+            if not self.sqs.queue_url:
+                raise ValueError("SQS_QUEUE_URL is required when WAL_BACKEND=sqs")
+        elif self.wal_backend == WalBackend.SERVICEBUS:
+            if not self.servicebus.connection_string:
+                raise ValueError(
+                    "SERVICEBUS_CONNECTION_STRING is required when WAL_BACKEND=servicebus"
+                )
 
         # Validate S3 config if archiver or snapshotter enabled
         if self.archiver.enabled or self.snapshot.enabled:
