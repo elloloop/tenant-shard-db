@@ -8,7 +8,7 @@ Thank you for considering contributing to EntDB! This document explains how to c
 2. Clone your fork locally
 3. Set up the development environment:
    ```bash
-   pip install -e ".[dev]"
+   uv pip install -e ".[dev]"
    make dev  # Start Docker Compose stack
    ```
 4. Create a feature branch from `main`
