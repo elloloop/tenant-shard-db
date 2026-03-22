@@ -639,9 +639,15 @@ def main() -> None:
     parser.add_argument("--no-verify", action="store_true", help="Skip verification")
     parser.add_argument("--kafka-brokers", help="Kafka broker addresses for WAL replay")
     parser.add_argument("--kafka-topic", default="entdb-wal", help="Kafka topic name")
-    parser.add_argument("--no-kafka-replay", action="store_true", help="Disable Kafka WAL replay tier")
-    parser.add_argument("--no-archive-replay", action="store_true", help="Disable S3 archive replay tier")
-    parser.add_argument("--kafka-replay-timeout", type=int, default=300, help="Kafka replay timeout (seconds)")
+    parser.add_argument(
+        "--no-kafka-replay", action="store_true", help="Disable Kafka WAL replay tier"
+    )
+    parser.add_argument(
+        "--no-archive-replay", action="store_true", help="Disable S3 archive replay tier"
+    )
+    parser.add_argument(
+        "--kafka-replay-timeout", type=int, default=300, help="Kafka replay timeout (seconds)"
+    )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
 
     args = parser.parse_args()

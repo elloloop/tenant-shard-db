@@ -82,8 +82,7 @@ class SqsWalStream:
         """
         if not AIOBOTOCORE_AVAILABLE:
             raise ImportError(
-                "aiobotocore is required for SQS backend. "
-                "Install with: pip install aiobotocore"
+                "aiobotocore is required for SQS backend. " "Install with: pip install aiobotocore"
             )
 
         self.config = config

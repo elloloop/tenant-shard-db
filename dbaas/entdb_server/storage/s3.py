@@ -4,6 +4,7 @@ S3-compatible object storage backend.
 
 Works with AWS S3, Cloudflare R2, MinIO, and any S3-compatible service.
 """
+
 from __future__ import annotations
 
 import logging

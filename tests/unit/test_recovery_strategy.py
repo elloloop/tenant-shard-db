@@ -255,9 +255,7 @@ class TestRecoveryExecution:
         tier_names = [tr.tier for tr in result.tier_results]
         assert RecoveryTier.S3_ARCHIVE in tier_names
 
-        archive_tier = next(
-            tr for tr in result.tier_results if tr.tier == RecoveryTier.S3_ARCHIVE
-        )
+        archive_tier = next(tr for tr in result.tier_results if tr.tier == RecoveryTier.S3_ARCHIVE)
         assert archive_tier.events_replayed == 10
 
     @pytest.mark.asyncio
@@ -313,9 +311,7 @@ class TestRecoveryExecution:
         result = await strategy.execute("tenant_1", db_path)
 
         assert result.success
-        kafka_tier = next(
-            tr for tr in result.tier_results if tr.tier == RecoveryTier.KAFKA_WAL
-        )
+        kafka_tier = next(tr for tr in result.tier_results if tr.tier == RecoveryTier.KAFKA_WAL)
         assert kafka_tier.events_replayed == 7
 
     @pytest.mark.asyncio

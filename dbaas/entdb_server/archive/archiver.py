@@ -321,7 +321,9 @@ class Archiver:
                 "Bucket": self.s3_config.bucket,
                 "Key": s3_key,
                 "Body": content,
-                "ContentType": "application/x-gzip" if self.compression == "gzip" else "application/x-ndjson",
+                "ContentType": "application/x-gzip"
+                if self.compression == "gzip"
+                else "application/x-ndjson",
             }
             if self.s3_storage_class and self.s3_storage_class != "STANDARD":
                 put_kwargs["StorageClass"] = self.s3_storage_class

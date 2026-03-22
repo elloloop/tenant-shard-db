@@ -311,9 +311,7 @@ class ConsoleClient:
         if not self._stub:
             raise RuntimeError("Not connected")
 
-        response = await self._stub.ListMailboxUsers(
-            ListMailboxUsersRequest(tenant_id=tenant_id)
-        )
+        response = await self._stub.ListMailboxUsers(ListMailboxUsersRequest(tenant_id=tenant_id))
         return list(response.user_ids)
 
     async def get_mailbox(

@@ -6,6 +6,7 @@ All storage backends implement three operations:
   - get(key) -- download a blob
   - list_objects(prefix) -- list blobs by prefix
 """
+
 from __future__ import annotations
 
 import logging

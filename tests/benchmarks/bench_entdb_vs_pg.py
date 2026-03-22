@@ -11,6 +11,7 @@ Run:
   # Start PG: docker run -d --name bench-pg -p 5433:5432 -e POSTGRES_USER=bench -e POSTGRES_PASSWORD=bench -e POSTGRES_DB=bench postgres:16
   python tests/benchmarks/bench_entdb_vs_pg.py
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -27,6 +28,7 @@ BATCH_SIZES = [1, 10, 50]
 # ---------------------------------------------------------------------------
 # EntDB benchmark (full stack via SDK)
 # ---------------------------------------------------------------------------
+
 
 async def bench_entdb_writes(num: int) -> dict:
     """Benchmark EntDB writes through the full gRPC → Kafka → ACK path."""
@@ -165,11 +167,14 @@ async def bench_entdb_reads(num: int, tenant_id: str = "playground") -> dict:
 # PostgreSQL benchmark (direct SQL)
 # ---------------------------------------------------------------------------
 
+
 def bench_pg_writes_single(num: int) -> dict:
     """Benchmark Postgres writes — one INSERT + COMMIT per event."""
     import psycopg2
 
-    conn = psycopg2.connect(host="localhost", port=5433, user="bench", password="bench", dbname="bench")
+    conn = psycopg2.connect(
+        host="localhost", port=5433, user="bench", password="bench", dbname="bench"
+    )
     conn.autocommit = False
     cur = conn.cursor()
 
@@ -198,8 +203,16 @@ def bench_pg_writes_single(num: int) -> dict:
         start = time.perf_counter()
         cur.execute(
             "INSERT INTO nodes VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-            (tid, f"node-{i}", 1, json.dumps({"name": f"Item {i}", "body": "x" * 200}),
-             ts, ts, f"user:{i % 10}", "[]"),
+            (
+                tid,
+                f"node-{i}",
+                1,
+                json.dumps({"name": f"Item {i}", "body": "x" * 200}),
+                ts,
+                ts,
+                f"user:{i % 10}",
+                "[]",
+            ),
         )
         conn.commit()
         elapsed = time.perf_counter() - start
@@ -221,7 +234,9 @@ def bench_pg_writes_batched(num: int, batch_size: int) -> dict:
     import psycopg2
     from psycopg2.extras import execute_values
 
-    conn = psycopg2.connect(host="localhost", port=5433, user="bench", password="bench", dbname="bench")
+    conn = psycopg2.connect(
+        host="localhost", port=5433, user="bench", password="bench", dbname="bench"
+    )
     conn.autocommit = False
     cur = conn.cursor()
 
@@ -247,19 +262,32 @@ def bench_pg_writes_batched(num: int, batch_size: int) -> dict:
     start = time.perf_counter()
     batch = []
     for i in range(num):
-        batch.append((tid, f"node-{i}", 1,
-                       json.dumps({"name": f"Item {i}", "body": "x" * 200}),
-                       ts, ts, f"user:{i % 10}", "[]"))
+        batch.append(
+            (
+                tid,
+                f"node-{i}",
+                1,
+                json.dumps({"name": f"Item {i}", "body": "x" * 200}),
+                ts,
+                ts,
+                f"user:{i % 10}",
+                "[]",
+            )
+        )
         if len(batch) >= batch_size:
-            execute_values(cur,
+            execute_values(
+                cur,
                 "INSERT INTO nodes (tenant_id,node_id,type_id,payload_json,created_at,updated_at,owner_actor,acl_blob) VALUES %s",
-                batch)
+                batch,
+            )
             conn.commit()
             batch = []
     if batch:
-        execute_values(cur,
+        execute_values(
+            cur,
             "INSERT INTO nodes (tenant_id,node_id,type_id,payload_json,created_at,updated_at,owner_actor,acl_blob) VALUES %s",
-            batch)
+            batch,
+        )
         conn.commit()
 
     elapsed = time.perf_counter() - start
@@ -277,7 +305,9 @@ def bench_pg_reads(num: int) -> dict:
     """Benchmark Postgres reads — SELECT by primary key."""
     import psycopg2
 
-    conn = psycopg2.connect(host="localhost", port=5433, user="bench", password="bench", dbname="bench")
+    conn = psycopg2.connect(
+        host="localhost", port=5433, user="bench", password="bench", dbname="bench"
+    )
     cur = conn.cursor()
 
     # Seed data
@@ -287,8 +317,7 @@ def bench_pg_reads(num: int) -> dict:
     for i in range(min(num, 50)):
         cur.execute(
             "INSERT INTO nodes VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-            (tid, f"node-{i}", 1, json.dumps({"name": f"Read Item {i}"}),
-             ts, ts, "user", "[]"),
+            (tid, f"node-{i}", 1, json.dumps({"name": f"Read Item {i}"}), ts, ts, "user", "[]"),
         )
     conn.commit()
     conn.autocommit = True
@@ -317,12 +346,16 @@ def bench_pg_reads(num: int) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     try:
         import psycopg2  # noqa: F401
     except ImportError:
         import subprocess
-        subprocess.run([sys.executable, "-m", "pip", "install", "psycopg2-binary"], capture_output=True)
+
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "psycopg2-binary"], capture_output=True
+        )
 
     print("=" * 80)
     print("EntDB (Full Stack) vs PostgreSQL — End-to-End Benchmark")
@@ -340,11 +373,15 @@ def main():
 
     print("  EntDB...", end="", flush=True)
     entdb_w1 = asyncio.run(bench_entdb_writes(NUM_EVENTS))
-    print(f"  {entdb_w1['throughput']:>7.1f}/sec  avg={entdb_w1['avg_ms']:.2f}ms  p50={entdb_w1['p50_ms']:.2f}ms  p99={entdb_w1['p99_ms']:.2f}ms")
+    print(
+        f"  {entdb_w1['throughput']:>7.1f}/sec  avg={entdb_w1['avg_ms']:.2f}ms  p50={entdb_w1['p50_ms']:.2f}ms  p99={entdb_w1['p99_ms']:.2f}ms"
+    )
 
     print("  PG...   ", end="", flush=True)
     pg_w1 = bench_pg_writes_single(NUM_EVENTS)
-    print(f"  {pg_w1['throughput']:>7.1f}/sec  avg={pg_w1['avg_ms']:.2f}ms  p50={pg_w1['p50_ms']:.2f}ms  p99={pg_w1['p99_ms']:.2f}ms")
+    print(
+        f"  {pg_w1['throughput']:>7.1f}/sec  avg={pg_w1['avg_ms']:.2f}ms  p50={pg_w1['p50_ms']:.2f}ms  p99={pg_w1['p99_ms']:.2f}ms"
+    )
 
     print()
     print("-" * 80)
@@ -353,7 +390,9 @@ def main():
 
     for bs in [10, 50]:
         print(f"\n  batch_size={bs}:")
-        print("    EntDB:  (writes always go through Kafka — batch_size affects applier, not client)")
+        print(
+            "    EntDB:  (writes always go through Kafka — batch_size affects applier, not client)"
+        )
 
         pg_wb = bench_pg_writes_batched(NUM_EVENTS, bs)
         print(f"    PG:     {pg_wb['throughput']:>7.1f}/sec  avg={pg_wb['avg_ms']:.2f}ms/event")
@@ -366,11 +405,15 @@ def main():
 
     print("  EntDB...", end="", flush=True)
     entdb_r = asyncio.run(bench_entdb_reads(NUM_EVENTS))
-    print(f"  {entdb_r['throughput']:>7.1f}/sec  avg={entdb_r['avg_ms']:.2f}ms  p50={entdb_r['p50_ms']:.2f}ms  p99={entdb_r['p99_ms']:.2f}ms")
+    print(
+        f"  {entdb_r['throughput']:>7.1f}/sec  avg={entdb_r['avg_ms']:.2f}ms  p50={entdb_r['p50_ms']:.2f}ms  p99={entdb_r['p99_ms']:.2f}ms"
+    )
 
     print("  PG...   ", end="", flush=True)
     pg_r = bench_pg_reads(NUM_EVENTS)
-    print(f"  {pg_r['throughput']:>7.1f}/sec  avg={pg_r['avg_ms']:.2f}ms  p50={pg_r['p50_ms']:.2f}ms  p99={pg_r['p99_ms']:.2f}ms")
+    print(
+        f"  {pg_r['throughput']:>7.1f}/sec  avg={pg_r['avg_ms']:.2f}ms  p50={pg_r['p50_ms']:.2f}ms  p99={pg_r['p99_ms']:.2f}ms"
+    )
 
     # --- SUMMARY ---
     print()
@@ -380,26 +423,34 @@ def main():
     print(f"{'':20} {'EntDB':>12} {'PostgreSQL':>12} {'Winner':>15}")
     print("-" * 60)
 
-    print(f"{'Write throughput':<20} {entdb_w1['throughput']:>8.0f}/sec {pg_w1['throughput']:>8.0f}/sec", end="")
-    if entdb_w1['throughput'] > pg_w1['throughput']:
+    print(
+        f"{'Write throughput':<20} {entdb_w1['throughput']:>8.0f}/sec {pg_w1['throughput']:>8.0f}/sec",
+        end="",
+    )
+    if entdb_w1["throughput"] > pg_w1["throughput"]:
         print(f"  {'EntDB':>10} {entdb_w1['throughput']/pg_w1['throughput']:.1f}x")
     else:
         print(f"  {'PG':>10} {pg_w1['throughput']/entdb_w1['throughput']:.1f}x")
 
-    print(f"{'Write p50 latency':<20} {entdb_w1['p50_ms']:>7.2f}ms {pg_w1['p50_ms']:>7.2f}ms", end="")
-    if entdb_w1['p50_ms'] < pg_w1['p50_ms']:
+    print(
+        f"{'Write p50 latency':<20} {entdb_w1['p50_ms']:>7.2f}ms {pg_w1['p50_ms']:>7.2f}ms", end=""
+    )
+    if entdb_w1["p50_ms"] < pg_w1["p50_ms"]:
         print(f"  {'EntDB':>10} {pg_w1['p50_ms']/entdb_w1['p50_ms']:.1f}x")
     else:
         print(f"  {'PG':>10} {entdb_w1['p50_ms']/pg_w1['p50_ms']:.1f}x")
 
-    print(f"{'Read throughput':<20} {entdb_r['throughput']:>8.0f}/sec {pg_r['throughput']:>8.0f}/sec", end="")
-    if entdb_r['throughput'] > pg_r['throughput']:
+    print(
+        f"{'Read throughput':<20} {entdb_r['throughput']:>8.0f}/sec {pg_r['throughput']:>8.0f}/sec",
+        end="",
+    )
+    if entdb_r["throughput"] > pg_r["throughput"]:
         print(f"  {'EntDB':>10} {entdb_r['throughput']/pg_r['throughput']:.1f}x")
     else:
         print(f"  {'PG':>10} {pg_r['throughput']/entdb_r['throughput']:.1f}x")
 
     print(f"{'Read p50 latency':<20} {entdb_r['p50_ms']:>7.2f}ms {pg_r['p50_ms']:>7.2f}ms", end="")
-    if entdb_r['p50_ms'] < pg_r['p50_ms']:
+    if entdb_r["p50_ms"] < pg_r["p50_ms"]:
         print(f"  {'EntDB':>10} {pg_r['p50_ms']/entdb_r['p50_ms']:.1f}x")
     else:
         print(f"  {'PG':>10} {entdb_r['p50_ms']/pg_r['p50_ms']:.1f}x")

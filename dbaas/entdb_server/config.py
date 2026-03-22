@@ -426,9 +426,10 @@ class ApplierConfig:
 
 class ArchiveFlushMode(Enum):
     """How the archiver flushes events to S3."""
-    BATCHED = "batched"          # Buffer events, flush periodically (default)
-    INDIVIDUAL = "individual"    # Flush each event immediately (expensive)
-    DISABLED = "disabled"        # Archiver is off — no S3 writes
+
+    BATCHED = "batched"  # Buffer events, flush periodically (default)
+    INDIVIDUAL = "individual"  # Flush each event immediately (expensive)
+    DISABLED = "disabled"  # Archiver is off — no S3 writes
 
 
 @dataclass(frozen=True)
@@ -474,7 +475,9 @@ class ArchiverConfig:
             enabled=enabled,
             flush_mode=flush_mode,
             flush_interval_seconds=int(os.getenv("ARCHIVE_FLUSH_SECONDS", "60")),
-            max_segment_size_bytes=int(os.getenv("ARCHIVE_MAX_SEGMENT_BYTES", str(100 * 1024 * 1024))),
+            max_segment_size_bytes=int(
+                os.getenv("ARCHIVE_MAX_SEGMENT_BYTES", str(100 * 1024 * 1024))
+            ),
             max_segment_events=int(os.getenv("ARCHIVE_MAX_SEGMENT_EVENTS", "10000")),
             min_segment_events=int(os.getenv("ARCHIVE_MIN_SEGMENT_EVENTS", "1")),
             compression=os.getenv("ARCHIVE_COMPRESSION", "gzip"),
@@ -765,7 +768,9 @@ class ServerConfig:
                 "recovery_archive_replay": self.recovery.archive_replay_enabled,
                 "snapshot_enabled": self.snapshot.enabled,
                 "node_id": self.sharding.node_id,
-                "assigned_tenants": sorted(self.sharding.assigned_tenants) if self.sharding.assigned_tenants else "all",
+                "assigned_tenants": sorted(self.sharding.assigned_tenants)
+                if self.sharding.assigned_tenants
+                else "all",
                 "log_level": self.observability.log_level,
             },
         )

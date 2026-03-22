@@ -1,4 +1,5 @@
 """Unit tests for object storage configurations."""
+
 import pytest
 
 from dbaas.entdb_server.config import (

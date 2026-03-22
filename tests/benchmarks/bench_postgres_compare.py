@@ -9,6 +9,7 @@ Run:
 
 Requires Docker.
 """
+
 from __future__ import annotations
 
 import json
@@ -187,7 +188,8 @@ def build_images():
     subprocess.run(
         ["docker", "build", "-t", "entdb-bench", "-f", "-", "."],
         input="FROM python:3.11-slim-bookworm\nWORKDIR /app\nCOPY pyproject.toml .\nCOPY dbaas/ dbaas/\nCOPY sdk/ sdk/\nRUN pip install --no-cache-dir -e '.[server]' 2>/dev/null\n",
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
         cwd="/Users/arun/projects/opensource/tenant-shard-db",
     )
     print("Done.")
@@ -199,21 +201,35 @@ def start_postgres(tier: dict) -> str:
     subprocess.run(["docker", "rm", "-f", "bench-pg"], capture_output=True)
 
     cmd = [
-        "docker", "run", "-d",
-        "--name", "bench-pg",
-        "--cpus", tier["cpus"],
-        "--memory", tier["memory"],
-        "-e", "POSTGRES_USER=bench",
-        "-e", "POSTGRES_PASSWORD=bench",
-        "-e", "POSTGRES_DB=bench",
-        "-p", "5433:5432",
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "bench-pg",
+        "--cpus",
+        tier["cpus"],
+        "--memory",
+        tier["memory"],
+        "-e",
+        "POSTGRES_USER=bench",
+        "-e",
+        "POSTGRES_PASSWORD=bench",
+        "-e",
+        "POSTGRES_DB=bench",
+        "-p",
+        "5433:5432",
         # Tune for benchmarks
-        "-e", "POSTGRES_INITDB_ARGS=--data-checksums",
+        "-e",
+        "POSTGRES_INITDB_ARGS=--data-checksums",
         "postgres:16-bookworm",
-        "-c", "shared_buffers=64MB",
-        "-c", "fsync=on",
-        "-c", "synchronous_commit=on",
-        "-c", "max_connections=20",
+        "-c",
+        "shared_buffers=64MB",
+        "-c",
+        "fsync=on",
+        "-c",
+        "synchronous_commit=on",
+        "-c",
+        "max_connections=20",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -224,7 +240,8 @@ def start_postgres(tier: dict) -> str:
     for _ in range(30):
         check = subprocess.run(
             ["docker", "exec", "bench-pg", "pg_isready", "-U", "bench"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
         )
         if check.returncode == 0:
             return result.stdout.strip()
@@ -241,13 +258,23 @@ def stop_postgres():
 def run_sqlite_bench(tier: dict, batch_size: int) -> dict | None:
     """Run SQLite benchmark in constrained container."""
     cmd = [
-        "docker", "run", "--rm",
-        "--cpus", tier["cpus"],
-        "--memory", tier["memory"],
-        "-v", "/Users/arun/projects/opensource/tenant-shard-db:/app:ro",
-        "-w", "/app",
+        "docker",
+        "run",
+        "--rm",
+        "--cpus",
+        tier["cpus"],
+        "--memory",
+        tier["memory"],
+        "-v",
+        "/Users/arun/projects/opensource/tenant-shard-db:/app:ro",
+        "-w",
+        "/app",
         "entdb-bench",
-        "python", "-c", SQLITE_SCRIPT, str(NUM_EVENTS), str(batch_size),
+        "python",
+        "-c",
+        SQLITE_SCRIPT,
+        str(NUM_EVENTS),
+        str(batch_size),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
@@ -263,7 +290,9 @@ def run_postgres_bench(batch_size: int) -> dict | None:
     try:
         result = subprocess.run(
             [sys.executable, "-c", PG_BENCH_SCRIPT, str(NUM_EVENTS), str(batch_size)],
-            capture_output=True, text=True, timeout=120,
+            capture_output=True,
+            text=True,
+            timeout=120,
             cwd="/Users/arun/projects/opensource/tenant-shard-db",
         )
         if result.returncode != 0:
@@ -281,8 +310,9 @@ def main():
         import psycopg2  # noqa: F401
     except ImportError:
         print("Installing psycopg2-binary...")
-        subprocess.run([sys.executable, "-m", "pip", "install", "psycopg2-binary"],
-                       capture_output=True)
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "psycopg2-binary"], capture_output=True
+        )
 
     build_images()
 
@@ -308,7 +338,9 @@ def main():
             sys.stdout.flush()
             sq = run_sqlite_bench(tier, bs)
             if sq:
-                print(f"writes={sq['write_throughput']:>8.1f}/sec  reads={sq['read_throughput']:>8.1f}/sec")
+                print(
+                    f"writes={sq['write_throughput']:>8.1f}/sec  reads={sq['read_throughput']:>8.1f}/sec"
+                )
                 tier_result[f"sqlite_bs{bs}"] = sq
             else:
                 print("FAILED")
@@ -319,7 +351,9 @@ def main():
             sys.stdout.flush()
             pg = run_postgres_bench(bs)
             if pg:
-                print(f"writes={pg['write_throughput']:>8.1f}/sec  reads={pg['read_throughput']:>8.1f}/sec")
+                print(
+                    f"writes={pg['write_throughput']:>8.1f}/sec  reads={pg['read_throughput']:>8.1f}/sec"
+                )
                 tier_result[f"pg_bs{bs}"] = pg
             else:
                 print("FAILED")
@@ -367,17 +401,24 @@ def main():
     print("WINNER PER TIER (best batch size, write throughput)")
     print(f"{'='*90}")
     for res in results:
-        best_sq = max(res.get(f"sqlite_bs{bs}", {}).get("write_throughput", 0) for bs in BATCH_SIZES)
+        best_sq = max(
+            res.get(f"sqlite_bs{bs}", {}).get("write_throughput", 0) for bs in BATCH_SIZES
+        )
         best_pg = max(res.get(f"pg_bs{bs}", {}).get("write_throughput", 0) for bs in BATCH_SIZES)
         if best_sq > 0 and best_pg > 0:
             ratio = best_sq / best_pg
             winner = "SQLite" if ratio > 1 else "PostgreSQL"
-            print(f"  {res['tier']:<28} SQLite={best_sq:>8.0f}  PG={best_pg:>8.0f}  → {winner} {max(ratio, 1/ratio):.1f}x faster")
+            print(
+                f"  {res['tier']:<28} SQLite={best_sq:>8.0f}  PG={best_pg:>8.0f}  → {winner} {max(ratio, 1/ratio):.1f}x faster"
+            )
         else:
             print(f"  {res['tier']:<28} incomplete data")
 
     # Save
-    with open("/Users/arun/projects/opensource/tenant-shard-db/tests/benchmarks/pg-compare-results.json", "w") as f:
+    with open(
+        "/Users/arun/projects/opensource/tenant-shard-db/tests/benchmarks/pg-compare-results.json",
+        "w",
+    ) as f:
         json.dump(results, f, indent=2)
     print("\nRaw results saved to tests/benchmarks/pg-compare-results.json")
 

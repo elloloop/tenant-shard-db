@@ -90,9 +90,7 @@ class TestS3ObjectStore:
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
 
-            mock_session.create_client.assert_called_once_with(
-                "s3", region_name="us-east-1"
-            )
+            mock_session.create_client.assert_called_once_with("s3", region_name="us-east-1")
 
     @pytest.mark.asyncio
     async def test_connect_with_endpoint_url(self):
@@ -322,9 +320,7 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch(
-                "dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True
-            ),
+            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
                 "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
@@ -336,9 +332,7 @@ class TestAzureBlobObjectStore:
             store = AzureBlobObjectStore(config)
             await store.connect()
 
-            mock_cls.from_connection_string.assert_called_once_with(
-                config.connection_string
-            )
+            mock_cls.from_connection_string.assert_called_once_with(config.connection_string)
 
     @pytest.mark.asyncio
     async def test_put_uploads_blob(self):
@@ -353,9 +347,7 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch(
-                "dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True
-            ),
+            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
                 "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
@@ -388,9 +380,7 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch(
-                "dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True
-            ),
+            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
                 "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
@@ -421,9 +411,7 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch(
-                "dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True
-            ),
+            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
                 "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
@@ -472,9 +460,7 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch(
-                "dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True
-            ),
+            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
                 "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
@@ -499,9 +485,7 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch(
-                "dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True
-            ),
+            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
                 "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
@@ -678,9 +662,7 @@ class TestGcsObjectStore:
             await store.connect()
             results = await store.list_objects("snapshots/")
 
-            mock_gcs_client.list_blobs.assert_called_once_with(
-                mock_bucket, prefix="snapshots/"
-            )
+            mock_gcs_client.list_blobs.assert_called_once_with(mock_bucket, prefix="snapshots/")
             assert len(results) == 2
             assert results[0].key == "snapshots/a.bin"
             assert results[0].size_bytes == 512

@@ -145,6 +145,7 @@ class Server:
             data = yaml.safe_load(raw)
         else:
             import json
+
             data = json.loads(raw)
 
         if not data:
@@ -190,8 +191,7 @@ class Server:
             }
             if et.get("props"):
                 edge_dict["props"] = [
-                    {"field_id": p["id"], "name": p["name"], "kind": p["kind"]}
-                    for p in et["props"]
+                    {"field_id": p["id"], "name": p["name"], "kind": p["kind"]} for p in et["props"]
                 ]
             edge_type = EdgeTypeDef.from_dict(edge_dict)
             registry.register_edge_type(edge_type)  # type: ignore[attr-defined]

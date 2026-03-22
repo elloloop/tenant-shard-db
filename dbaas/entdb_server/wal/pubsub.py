@@ -296,9 +296,7 @@ class PubSubWalStream:
 
         try:
             # Build subscription path
-            subscription_path = self._subscriber.subscription_path(
-                self.config.project_id, group_id
-            )
+            subscription_path = self._subscriber.subscription_path(self.config.project_id, group_id)
 
             logger.info(
                 "Subscribed to Pub/Sub",
@@ -328,9 +326,7 @@ class PubSubWalStream:
                         ack_id = received_message.ack_id
 
                         # Convert attributes to headers
-                        headers = {
-                            k: v.encode("utf-8") for k, v in msg.attributes.items()
-                        }
+                        headers = {k: v.encode("utf-8") for k, v in msg.attributes.items()}
 
                         # Extract ordering key as record key
                         record_key = msg.ordering_key or ""
@@ -442,9 +438,7 @@ class PubSubWalStream:
             await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: self._publisher.get_topic(
-                        request={"topic": self._topic_path}
-                    ),
+                    lambda: self._publisher.get_topic(request={"topic": self._topic_path}),
                 ),
                 timeout=5.0,
             )

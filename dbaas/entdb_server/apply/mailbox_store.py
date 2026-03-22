@@ -733,13 +733,13 @@ class MailboxStore:
             return users
         for p in sorted(self.data_dir.glob(f"{prefix}*.db")):
             name = p.stem  # e.g. "mailbox_default_user_42"
-            safe_user = name[len(prefix):]
+            safe_user = name[len(prefix) :]
             if safe_user:
                 # Reverse sanitization: first _ back to :
                 # The original _get_db_path replaces ":" with "_"
                 # We restore the first "_" to ":" to get e.g. "user:42"
                 idx = safe_user.find("_")
-                user_id = safe_user[:idx] + ":" + safe_user[idx + 1:] if idx != -1 else safe_user
+                user_id = safe_user[:idx] + ":" + safe_user[idx + 1 :] if idx != -1 else safe_user
                 users.append(user_id)
         return users
 

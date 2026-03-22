@@ -196,9 +196,7 @@ class TestKafkaWalStream:
     async def test_append_with_headers(self):
         """append() converts header dict to Kafka header list."""
         mock_producer = AsyncMock()
-        record_meta = MagicMock(
-            topic="entdb-wal", partition=0, offset=1, timestamp=1700000000000
-        )
+        record_meta = MagicMock(topic="entdb-wal", partition=0, offset=1, timestamp=1700000000000)
         mock_producer.send_and_wait.return_value = record_meta
 
         with (
@@ -351,12 +349,8 @@ class TestKinesisWalStream:
             wal = KinesisWalStream(_make_kinesis_config())
             await wal.connect()
 
-            mock_session.create_client.assert_called_once_with(
-                "kinesis", region_name="us-east-1"
-            )
-            mock_client.describe_stream.assert_awaited_once_with(
-                StreamName="entdb-wal"
-            )
+            mock_session.create_client.assert_called_once_with("kinesis", region_name="us-east-1")
+            mock_client.describe_stream.assert_awaited_once_with(StreamName="entdb-wal")
             assert wal.is_connected
 
     @pytest.mark.asyncio
@@ -548,12 +542,8 @@ class TestPubSubWalStream:
 
             mock_pub_cls.assert_called_once()
             mock_sub_cls.assert_called_once()
-            mock_publisher.topic_path.assert_called_once_with(
-                "my-project", "entdb-wal"
-            )
-            mock_subscriber.subscription_path.assert_called_once_with(
-                "my-project", "entdb-sub"
-            )
+            mock_publisher.topic_path.assert_called_once_with("my-project", "entdb-wal")
+            mock_subscriber.subscription_path.assert_called_once_with("my-project", "entdb-sub")
             assert wal.is_connected
 
     @pytest.mark.asyncio
@@ -564,9 +554,7 @@ class TestPubSubWalStream:
         mock_subscriber = MagicMock()
         mock_pub_cls.return_value = mock_publisher
         mock_sub_cls.return_value = mock_subscriber
-        mock_publisher.topic_path.return_value = (
-            "projects/my-project/topics/entdb-wal"
-        )
+        mock_publisher.topic_path.return_value = "projects/my-project/topics/entdb-wal"
         mock_subscriber.subscription_path.return_value = (
             "projects/my-project/subscriptions/entdb-sub"
         )
@@ -617,9 +605,7 @@ class TestPubSubWalStream:
         mock_subscriber = MagicMock()
         mock_pub_cls.return_value = mock_publisher
         mock_sub_cls.return_value = mock_subscriber
-        mock_publisher.topic_path.return_value = (
-            "projects/my-project/topics/entdb-wal"
-        )
+        mock_publisher.topic_path.return_value = "projects/my-project/topics/entdb-wal"
         mock_subscriber.subscription_path.return_value = (
             "projects/my-project/subscriptions/entdb-sub"
         )
@@ -666,9 +652,7 @@ class TestPubSubWalStream:
         mock_subscriber = MagicMock()
         mock_pub_cls.return_value = mock_publisher
         mock_sub_cls.return_value = mock_subscriber
-        mock_publisher.topic_path.return_value = (
-            "projects/my-project/topics/entdb-wal"
-        )
+        mock_publisher.topic_path.return_value = "projects/my-project/topics/entdb-wal"
         mock_subscriber.subscription_path.return_value = (
             "projects/my-project/subscriptions/entdb-sub"
         )
@@ -743,9 +727,7 @@ class TestSqsWalStream:
             wal = SqsWalStream(_make_sqs_config())
             await wal.connect()
 
-            mock_session.create_client.assert_called_once_with(
-                "sqs", region_name="us-east-1"
-            )
+            mock_session.create_client.assert_called_once_with("sqs", region_name="us-east-1")
             assert wal.is_connected
 
     @pytest.mark.asyncio
@@ -826,9 +808,7 @@ class TestSqsWalStream:
         """connect() wraps SDK errors into WalConnectionError."""
         mock_session = MagicMock()
         mock_client_ctx = AsyncMock()
-        mock_client_ctx.__aenter__ = AsyncMock(
-            side_effect=Exception("endpoint unreachable")
-        )
+        mock_client_ctx.__aenter__ = AsyncMock(side_effect=Exception("endpoint unreachable"))
         mock_session.create_client.return_value = mock_client_ctx
 
         mock_aio_session_mod = MagicMock()
@@ -877,9 +857,7 @@ class TestSqsWalStream:
             # Simulate a pending ack
             wal._pending_acks["1"] = "receipt-handle-abc"
 
-            record = _sample_record(
-                topic=config.queue_url, partition=0, offset=1
-            )
+            record = _sample_record(topic=config.queue_url, partition=0, offset=1)
             await wal.commit(record)
 
             mock_client.delete_message.assert_awaited_once_with(
@@ -934,9 +912,7 @@ class TestServiceBusWalStream:
             mock_sb_client_cls.from_connection_string.assert_called_once_with(
                 conn_str=config.connection_string
             )
-            mock_client.get_queue_sender.assert_called_once_with(
-                queue_name="entdb-wal"
-            )
+            mock_client.get_queue_sender.assert_called_once_with(queue_name="entdb-wal")
             assert wal.is_connected
 
     @pytest.mark.asyncio
@@ -968,9 +944,7 @@ class TestServiceBusWalStream:
             await wal.connect()
             pos = await wal.append("entdb-wal", "tenant_1", b"payload")
 
-            mock_sb_message_cls.assert_called_once_with(
-                body=b"payload", session_id="tenant_1"
-            )
+            mock_sb_message_cls.assert_called_once_with(body=b"payload", session_id="tenant_1")
             mock_sender.send_messages.assert_awaited_once_with(mock_message)
             assert pos.topic == "entdb-wal"
             assert pos.partition == 0
@@ -1040,9 +1014,7 @@ class TestServiceBusWalStream:
             from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
-            with pytest.raises(
-                WalConnectionError, match="invalid connection string"
-            ):
+            with pytest.raises(WalConnectionError, match="invalid connection string"):
                 await wal.connect()
             assert not wal.is_connected
 
@@ -1244,9 +1216,7 @@ class TestEventHubsWalStream:
             await wal.connect()
             await wal.append("entdb-wal", "tenant_1", b"payload")
 
-            mock_producer.create_batch.assert_awaited_once_with(
-                partition_key="tenant_1"
-            )
+            mock_producer.create_batch.assert_awaited_once_with(partition_key="tenant_1")
 
     @pytest.mark.asyncio
     async def test_close_closes_clients(self):
@@ -1304,9 +1274,7 @@ class TestEventHubsWalStream:
             from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
-            with pytest.raises(
-                WalConnectionError, match="invalid connection string"
-            ):
+            with pytest.raises(WalConnectionError, match="invalid connection string"):
                 await wal.connect()
             assert not wal.is_connected
 

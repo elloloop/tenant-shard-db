@@ -4,6 +4,7 @@ Azure Blob Storage backend.
 
 Requires: pip install azure-storage-blob
 """
+
 from __future__ import annotations
 
 import logging
@@ -35,9 +36,7 @@ class AzureBlobObjectStore:
         self._client = None
 
     async def connect(self) -> None:
-        self._client = BlobServiceClient.from_connection_string(
-            self._config.connection_string
-        )
+        self._client = BlobServiceClient.from_connection_string(self._config.connection_string)
         logger.info(
             "Connected to Azure Blob Storage",
             extra={"container": self._config.container_name},

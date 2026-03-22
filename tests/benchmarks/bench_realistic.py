@@ -24,6 +24,7 @@ Benchmarks (run against a random tenant):
 Run:
   python tests/benchmarks/bench_realistic.py
 """
+
 from __future__ import annotations
 
 import json
@@ -42,16 +43,28 @@ import uuid
 # college-2: small college, 6 months               → 400K nodes
 TENANT_CONFIGS = {
     "college-0": {
-        "users": 4_000, "messages": 1_500_000, "posts": 100_000,
-        "comments": 400_000, "tasks": 50_000, "edges": 500_000,
+        "users": 4_000,
+        "messages": 1_500_000,
+        "posts": 100_000,
+        "comments": 400_000,
+        "tasks": 50_000,
+        "edges": 500_000,
     },
     "college-1": {
-        "users": 4_000, "messages": 800_000, "posts": 60_000,
-        "comments": 200_000, "tasks": 30_000, "edges": 300_000,
+        "users": 4_000,
+        "messages": 800_000,
+        "posts": 60_000,
+        "comments": 200_000,
+        "tasks": 30_000,
+        "edges": 300_000,
     },
     "college-2": {
-        "users": 2_000, "messages": 300_000, "posts": 30_000,
-        "comments": 60_000, "tasks": 10_000, "edges": 100_000,
+        "users": 2_000,
+        "messages": 300_000,
+        "posts": 30_000,
+        "comments": 60_000,
+        "tasks": 10_000,
+        "edges": 100_000,
     },
 }
 
@@ -100,50 +113,61 @@ TOTAL_ALL_ROWS = TOTAL_ALL_NODES + TOTAL_ALL_EDGES
 def _rand_payload(type_name: str, i: int, num_users: int = 4000) -> str:
     """Generate a realistic JSON payload for each node type."""
     if type_name == "user":
-        return json.dumps({
-            "name": f"Student {i}",
-            "email": f"student{i}@college.edu",
-            "major": random.choice(["CS", "Math", "Physics", "English", "History", "Bio"]),
-            "year": random.choice([1, 2, 3, 4]),
-            "bio": f"I am student {i}. " + "x" * random.randint(50, 200),
-        })
+        return json.dumps(
+            {
+                "name": f"Student {i}",
+                "email": f"student{i}@college.edu",
+                "major": random.choice(["CS", "Math", "Physics", "English", "History", "Bio"]),
+                "year": random.choice([1, 2, 3, 4]),
+                "bio": f"I am student {i}. " + "x" * random.randint(50, 200),
+            }
+        )
     if type_name == "message":
         chan = random.randint(1, 200)
         thread = random.randint(1, 5000)
-        return json.dumps({
-            "text": f"Message {i}: " + "lorem ipsum " * random.randint(3, 30),
-            "channel": f"channel-{chan}",
-            "thread_id": f"thread-{thread}",
-        })
+        return json.dumps(
+            {
+                "text": f"Message {i}: " + "lorem ipsum " * random.randint(3, 30),
+                "channel": f"channel-{chan}",
+                "thread_id": f"thread-{thread}",
+            }
+        )
     if type_name == "post":
-        return json.dumps({
-            "title": f"Post {i}: " + " ".join(
-                random.choices(
-                    ["help", "question", "discussion", "announcement", "meme", "event"], k=3
-                )
-            ),
-            "body": "Post body content. " * random.randint(5, 50),
-            "subreddit": random.choice(
-                ["general", "cs101", "dorms", "food", "sports", "clubs", "memes"]
-            ),
-            "score": random.randint(-10, 500),
-        })
+        return json.dumps(
+            {
+                "title": f"Post {i}: "
+                + " ".join(
+                    random.choices(
+                        ["help", "question", "discussion", "announcement", "meme", "event"], k=3
+                    )
+                ),
+                "body": "Post body content. " * random.randint(5, 50),
+                "subreddit": random.choice(
+                    ["general", "cs101", "dorms", "food", "sports", "clubs", "memes"]
+                ),
+                "score": random.randint(-10, 500),
+            }
+        )
     if type_name == "comment":
-        return json.dumps({
-            "text": "Comment text. " * random.randint(1, 10),
-            "score": random.randint(-5, 100),
-        })
+        return json.dumps(
+            {
+                "text": "Comment text. " * random.randint(1, 10),
+                "score": random.randint(-5, 100),
+            }
+        )
     if type_name == "task":
         month = random.randint(1, 12)
         day = random.randint(1, 28)
         assignee_idx = random.randint(0, num_users - 1)
-        return json.dumps({
-            "title": f"Task {i}",
-            "description": "Task description. " * random.randint(2, 10),
-            "status": random.choice(["todo", "in_progress", "done"]),
-            "due_date": f"2026-{month:02d}-{day:02d}",
-            "assignee": f"student{assignee_idx}@college.edu",
-        })
+        return json.dumps(
+            {
+                "title": f"Task {i}",
+                "description": "Task description. " * random.randint(2, 10),
+                "status": random.choice(["todo", "in_progress", "done"]),
+                "due_date": f"2026-{month:02d}-{day:02d}",
+                "assignee": f"student{assignee_idx}@college.edu",
+            }
+        )
     return json.dumps({"data": f"item-{i}"})
 
 
@@ -294,9 +318,7 @@ def bench_pg_point_reads(num: int, tenant_id: str, all_ids: list[str]) -> dict:
     for _ in range(num):
         nid = random.choice(all_ids)
         t0 = time.perf_counter()
-        cur.execute(
-            "SELECT * FROM nodes WHERE tenant_id = %s AND node_id = %s", (tenant_id, nid)
-        )
+        cur.execute("SELECT * FROM nodes WHERE tenant_id = %s AND node_id = %s", (tenant_id, nid))
         cur.fetchone()
         latencies.append(time.perf_counter() - t0)
 
@@ -465,9 +487,7 @@ def bench_entdb_point_reads(num: int, tenant_id: str, all_ids: list[str]) -> dic
         type_id = _type_id_from_node_id(nid)
         t0 = time.perf_counter()
         try:  # noqa: SIM105
-            stub.GetNode(
-                entdb_pb2.GetNodeRequest(context=ctx, type_id=type_id, node_id=nid)
-            )
+            stub.GetNode(entdb_pb2.GetNodeRequest(context=ctx, type_id=type_id, node_id=nid))
         except grpc.RpcError:
             pass  # still record latency below
         latencies.append(time.perf_counter() - t0)
@@ -494,8 +514,12 @@ def bench_entdb_type_query(num: int, tenant_id: str) -> dict:
         try:  # noqa: SIM105
             stub.QueryNodes(
                 entdb_pb2.QueryNodesRequest(
-                    context=ctx, type_id=3, limit=20, offset=offset,
-                    order_by="created_at", descending=True,
+                    context=ctx,
+                    type_id=3,
+                    limit=20,
+                    offset=offset,
+                    order_by="created_at",
+                    descending=True,
                 )
             )
         except grpc.RpcError:
@@ -521,9 +545,7 @@ def bench_entdb_edge_query(num: int, tenant_id: str, all_ids: list[str]) -> dict
         nid = random.choice(all_ids)
         t0 = time.perf_counter()
         try:  # noqa: SIM105
-            stub.GetEdgesFrom(
-                entdb_pb2.GetEdgesRequest(context=ctx, node_id=nid)
-            )
+            stub.GetEdgesFrom(entdb_pb2.GetEdgesRequest(context=ctx, node_id=nid))
         except grpc.RpcError:
             pass
         latencies.append(time.perf_counter() - t0)
@@ -621,9 +643,7 @@ def bench_entdb_cross_tenant(
         r_ctx = entdb_pb2.RequestContext(tenant_id=read_tenant, actor="bench")
         t0 = time.perf_counter()
         try:  # noqa: SIM105
-            stub.GetNode(
-                entdb_pb2.GetNodeRequest(context=r_ctx, type_id=type_id, node_id=nid)
-            )
+            stub.GetNode(entdb_pb2.GetNodeRequest(context=r_ctx, type_id=type_id, node_id=nid))
         except grpc.RpcError:
             pass  # still record latency below
         read_latencies.append(time.perf_counter() - t0)
@@ -728,25 +748,45 @@ def start_infra() -> bool:
     subprocess.run(["docker", "rm", "-f", "bench-entdb"], capture_output=True)
     subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", "bench-entdb",
-            "--network", "bench-net",
-            "--cpus", TIER["cpus"],
-            "--memory", TIER["memory"],
-            "-p", "50052:50051",
-            "-e", "GRPC_BIND=0.0.0.0:50051",
-            "-e", "WAL_BACKEND=kafka",
-            "-e", "KAFKA_BROKERS=bench-rp0:9092,bench-rp1:9092,bench-rp2:9092",
-            "-e", "KAFKA_TOPIC=entdb-realistic",
-            "-e", "KAFKA_CONSUMER_GROUP=bench-realistic",
-            "-e", "APPLIER_BATCH_SIZE=50",
-            "-e", "S3_BUCKET=entdb-storage",
-            "-e", "S3_ENDPOINT=http://bench-minio:9000",
-            "-e", "AWS_ACCESS_KEY_ID=minioadmin",
-            "-e", "AWS_SECRET_ACCESS_KEY=minioadmin",
-            "-e", "ARCHIVER_ENABLED=false",
-            "-e", "SNAPSHOT_ENABLED=false",
-            "-e", "LOG_LEVEL=WARNING",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            "bench-entdb",
+            "--network",
+            "bench-net",
+            "--cpus",
+            TIER["cpus"],
+            "--memory",
+            TIER["memory"],
+            "-p",
+            "50052:50051",
+            "-e",
+            "GRPC_BIND=0.0.0.0:50051",
+            "-e",
+            "WAL_BACKEND=kafka",
+            "-e",
+            "KAFKA_BROKERS=bench-rp0:9092,bench-rp1:9092,bench-rp2:9092",
+            "-e",
+            "KAFKA_TOPIC=entdb-realistic",
+            "-e",
+            "KAFKA_CONSUMER_GROUP=bench-realistic",
+            "-e",
+            "APPLIER_BATCH_SIZE=50",
+            "-e",
+            "S3_BUCKET=entdb-storage",
+            "-e",
+            "S3_ENDPOINT=http://bench-minio:9000",
+            "-e",
+            "AWS_ACCESS_KEY_ID=minioadmin",
+            "-e",
+            "AWS_SECRET_ACCESS_KEY=minioadmin",
+            "-e",
+            "ARCHIVER_ENABLED=false",
+            "-e",
+            "SNAPSHOT_ENABLED=false",
+            "-e",
+            "LOG_LEVEL=WARNING",
             "entdb-server-bench",
         ],
         capture_output=True,
@@ -755,8 +795,17 @@ def start_infra() -> bool:
     # Create topic
     subprocess.run(
         [
-            "docker", "exec", "bench-rp0", "rpk", "topic", "create",
-            "entdb-realistic", "-r", "3", "-p", "3",
+            "docker",
+            "exec",
+            "bench-rp0",
+            "rpk",
+            "topic",
+            "create",
+            "entdb-realistic",
+            "-r",
+            "3",
+            "-p",
+            "3",
         ],
         capture_output=True,
     )
@@ -787,19 +836,32 @@ def start_infra() -> bool:
     subprocess.run(["docker", "rm", "-f", "bench-pg"], capture_output=True)
     subprocess.run(
         [
-            "docker", "run", "-d",
-            "--name", "bench-pg",
-            "--network", "bench-net",
-            "--cpus", TIER["cpus"],
-            "--memory", TIER["memory"],
-            "-e", "POSTGRES_USER=bench",
-            "-e", "POSTGRES_PASSWORD=bench",
-            "-e", "POSTGRES_DB=bench",
-            "-p", "5434:5432",
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            "bench-pg",
+            "--network",
+            "bench-net",
+            "--cpus",
+            TIER["cpus"],
+            "--memory",
+            TIER["memory"],
+            "-e",
+            "POSTGRES_USER=bench",
+            "-e",
+            "POSTGRES_PASSWORD=bench",
+            "-e",
+            "POSTGRES_DB=bench",
+            "-p",
+            "5434:5432",
             "postgres:16-bookworm",
-            "-c", "shared_buffers=128MB",
-            "-c", "fsync=on",
-            "-c", "synchronous_commit=on",
+            "-c",
+            "shared_buffers=128MB",
+            "-c",
+            "fsync=on",
+            "-c",
+            "synchronous_commit=on",
         ],
         capture_output=True,
     )
@@ -850,7 +912,9 @@ def main() -> None:
         return
 
     # --- Seed Postgres ---
-    print(f"\nSeeding PostgreSQL: {TOTAL_ALL_NODES:,} nodes + {TOTAL_ALL_EDGES:,} edges across {NUM_TENANTS} tenants...")
+    print(
+        f"\nSeeding PostgreSQL: {TOTAL_ALL_NODES:,} nodes + {TOTAL_ALL_EDGES:,} edges across {NUM_TENANTS} tenants..."
+    )
     pg_seed_time = seed_postgres(NUM_TENANTS)
     pg_rate = int(TOTAL_ALL_NODES / pg_seed_time)
     print(f"  Done in {pg_seed_time:.1f}s ({pg_rate:,} nodes/sec)")
@@ -878,46 +942,64 @@ def main() -> None:
     print(f"\n  Point reads ({BENCH_READS} random lookups from {bench_nodes:,} rows)...")
     print("    PG...   ", end="", flush=True)
     pg_reads = bench_pg_point_reads(BENCH_READS, bench_tenant, all_node_ids)
-    print(f"{pg_reads['throughput']:>7.1f}/sec  p50={pg_reads['p50_ms']:.2f}ms  p99={pg_reads['p99_ms']:.2f}ms")
+    print(
+        f"{pg_reads['throughput']:>7.1f}/sec  p50={pg_reads['p50_ms']:.2f}ms  p99={pg_reads['p99_ms']:.2f}ms"
+    )
 
     print("    EntDB...", end="", flush=True)
     entdb_reads = bench_entdb_point_reads(BENCH_READS, bench_tenant, all_node_ids)
-    print(f"{entdb_reads['throughput']:>7.1f}/sec  p50={entdb_reads['p50_ms']:.2f}ms  p99={entdb_reads['p99_ms']:.2f}ms")
+    print(
+        f"{entdb_reads['throughput']:>7.1f}/sec  p50={entdb_reads['p50_ms']:.2f}ms  p99={entdb_reads['p99_ms']:.2f}ms"
+    )
 
     # Type queries (paginated)
     print(f"\n  Type queries ({BENCH_READS} paginated queries across {bench_posts:,} posts)...")
     print("    PG...   ", end="", flush=True)
     pg_type = bench_pg_type_query(BENCH_READS, bench_tenant)
-    print(f"{pg_type['throughput']:>7.1f}/sec  p50={pg_type['p50_ms']:.2f}ms  p99={pg_type['p99_ms']:.2f}ms")
+    print(
+        f"{pg_type['throughput']:>7.1f}/sec  p50={pg_type['p50_ms']:.2f}ms  p99={pg_type['p99_ms']:.2f}ms"
+    )
 
     print("    EntDB...", end="", flush=True)
     entdb_type = bench_entdb_type_query(BENCH_READS, bench_tenant)
-    print(f"{entdb_type['throughput']:>7.1f}/sec  p50={entdb_type['p50_ms']:.2f}ms  p99={entdb_type['p99_ms']:.2f}ms")
+    print(
+        f"{entdb_type['throughput']:>7.1f}/sec  p50={entdb_type['p50_ms']:.2f}ms  p99={entdb_type['p99_ms']:.2f}ms"
+    )
 
     # Edge queries
     print(f"\n  Edge queries ({BENCH_READS} lookups across {bench_edges:,} edges)...")
     print("    PG...   ", end="", flush=True)
     pg_edges = bench_pg_edge_query(BENCH_READS, bench_tenant, all_node_ids)
-    print(f"{pg_edges['throughput']:>7.1f}/sec  p50={pg_edges['p50_ms']:.2f}ms  p99={pg_edges['p99_ms']:.2f}ms")
+    print(
+        f"{pg_edges['throughput']:>7.1f}/sec  p50={pg_edges['p50_ms']:.2f}ms  p99={pg_edges['p99_ms']:.2f}ms"
+    )
 
     print("    EntDB...", end="", flush=True)
     entdb_edges = bench_entdb_edge_query(BENCH_READS, bench_tenant, all_node_ids)
-    print(f"{entdb_edges['throughput']:>7.1f}/sec  p50={entdb_edges['p50_ms']:.2f}ms  p99={entdb_edges['p99_ms']:.2f}ms")
+    print(
+        f"{entdb_edges['throughput']:>7.1f}/sec  p50={entdb_edges['p50_ms']:.2f}ms  p99={entdb_edges['p99_ms']:.2f}ms"
+    )
 
     # Writes (into populated table)
     print(f"\n  Writes ({BENCH_WRITES} new messages into {bench_messages:,} existing)...")
     print("    PG...   ", end="", flush=True)
     pg_writes = bench_pg_writes(BENCH_WRITES, bench_tenant)
-    print(f"{pg_writes['throughput']:>7.1f}/sec  p50={pg_writes['p50_ms']:.2f}ms  p99={pg_writes['p99_ms']:.2f}ms")
+    print(
+        f"{pg_writes['throughput']:>7.1f}/sec  p50={pg_writes['p50_ms']:.2f}ms  p99={pg_writes['p99_ms']:.2f}ms"
+    )
 
     print("    EntDB...", end="", flush=True)
     entdb_writes = bench_entdb_writes(BENCH_WRITES, bench_tenant)
-    print(f"{entdb_writes['throughput']:>7.1f}/sec  p50={entdb_writes['p50_ms']:.2f}ms  p99={entdb_writes['p99_ms']:.2f}ms")
+    print(
+        f"{entdb_writes['throughput']:>7.1f}/sec  p50={entdb_writes['p50_ms']:.2f}ms  p99={entdb_writes['p99_ms']:.2f}ms"
+    )
 
     # Cross-tenant isolation
     other_tenants = [t for t in TENANT_IDS if t != bench_tenant]
     write_tenant = random.choice(other_tenants)
-    print(f"\n  Cross-tenant isolation ({BENCH_MIXED_OPS} ops: read {bench_tenant} while writing {write_tenant})...")
+    print(
+        f"\n  Cross-tenant isolation ({BENCH_MIXED_OPS} ops: read {bench_tenant} while writing {write_tenant})..."
+    )
 
     print("    PG...   ", end="", flush=True)
     pg_cross_reads, pg_cross_writes = bench_pg_cross_tenant(
@@ -959,9 +1041,13 @@ def main() -> None:
     print("SEED TIME")
     print(separator)
     pg_seed_rate = int(TOTAL_ALL_NODES / pg_seed_time)
-    print(f"  Postgres:  {pg_seed_time:>7.1f}s  ({pg_seed_rate:>8,} nodes/sec, {NUM_TENANTS} tenants)")
+    print(
+        f"  Postgres:  {pg_seed_time:>7.1f}s  ({pg_seed_rate:>8,} nodes/sec, {NUM_TENANTS} tenants)"
+    )
     entdb_seed_rate = int(TOTAL_ALL_NODES / entdb_seed_time)
-    print(f"  EntDB:     {entdb_seed_time:>7.1f}s  ({entdb_seed_rate:>8,} nodes/sec via gRPC, {NUM_TENANTS} tenants)")
+    print(
+        f"  EntDB:     {entdb_seed_time:>7.1f}s  ({entdb_seed_rate:>8,} nodes/sec via gRPC, {NUM_TENANTS} tenants)"
+    )
 
     # Save results
     results = {
@@ -996,8 +1082,7 @@ def main() -> None:
         },
     }
     results_path = (
-        "/Users/arun/projects/opensource/tenant-shard-db/"
-        "tests/benchmarks/realistic-results.json"
+        "/Users/arun/projects/opensource/tenant-shard-db/" "tests/benchmarks/realistic-results.json"
     )
     with open(results_path, "w") as fout:
         json.dump(results, fout, indent=2)

@@ -4,6 +4,7 @@ Local filesystem object storage backend.
 Stores objects as files on disk. No external dependencies.
 Perfect for development and single-machine deployments.
 """
+
 from __future__ import annotations
 
 import logging
