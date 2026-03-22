@@ -10,6 +10,7 @@ Backends tested:
   - PubSubWalStream (google-cloud-pubsub)
   - SqsWalStream (aiobotocore / SQS)
   - ServiceBusWalStream (azure-servicebus)
+  - EventHubsWalStream (azure-eventhub)
 
 InMemoryWalStream is tested separately in test_wal_memory.py.
 """
@@ -97,6 +98,18 @@ def _make_servicebus_config(**overrides):
     cfg.connection_string = "Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=key"
     cfg.queue_name = "entdb-wal"
     cfg.max_wait_time_seconds = 5
+    for k, v in overrides.items():
+        setattr(cfg, k, v)
+    return cfg
+
+
+def _make_eventhubs_config(**overrides):
+    cfg = MagicMock()
+    cfg.connection_string = "Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=key"
+    cfg.eventhub_name = "entdb-wal"
+    cfg.consumer_group = "$Default"
+    cfg.max_batch_size = 50
+    cfg.max_wait_time = 5
     for k, v in overrides.items():
         setattr(cfg, k, v)
     return cfg
@@ -1099,3 +1112,238 @@ class TestServiceBusWalStream:
             await wal.append("entdb-wal", "t1", b"data", headers=headers)
 
             assert mock_message.application_properties == {"x-type": "create"}
+
+
+# ===================================================================
+# Event Hubs
+# ===================================================================
+
+
+@pytest.mark.unit
+class TestEventHubsWalStream:
+    """Mock-based tests for Azure Event Hubs WAL backend."""
+
+    @pytest.mark.asyncio
+    async def test_connect_creates_clients(self):
+        """connect() creates producer and consumer clients from connection string."""
+        mock_producer = MagicMock()
+        mock_consumer = MagicMock()
+
+        mock_producer_cls = MagicMock()
+        mock_producer_cls.from_connection_string.return_value = mock_producer
+
+        mock_consumer_cls = MagicMock()
+        mock_consumer_cls.from_connection_string.return_value = mock_consumer
+
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                mock_producer_cls,
+            ),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                mock_consumer_cls,
+            ),
+            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            config = _make_eventhubs_config()
+            wal = EventHubsWalStream(config)
+            await wal.connect()
+
+            mock_producer_cls.from_connection_string.assert_called_once_with(
+                conn_str=config.connection_string,
+                eventhub_name=config.eventhub_name,
+            )
+            mock_consumer_cls.from_connection_string.assert_called_once_with(
+                conn_str=config.connection_string,
+                consumer_group=config.consumer_group,
+                eventhub_name=config.eventhub_name,
+            )
+            assert wal.is_connected
+
+    @pytest.mark.asyncio
+    async def test_append_sends_event_data(self):
+        """append() creates EventData and sends via producer batch."""
+        mock_producer = MagicMock()
+        mock_batch = MagicMock()
+        mock_producer.create_batch = AsyncMock(return_value=mock_batch)
+        mock_producer.send_batch = AsyncMock()
+
+        mock_producer_cls = MagicMock()
+        mock_producer_cls.from_connection_string.return_value = mock_producer
+
+        mock_consumer_cls = MagicMock()
+        mock_consumer_cls.from_connection_string.return_value = MagicMock()
+
+        mock_event_data = MagicMock()
+        mock_event_data_cls = MagicMock(return_value=mock_event_data)
+
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                mock_producer_cls,
+            ),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                mock_consumer_cls,
+            ),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventData",
+                mock_event_data_cls,
+            ),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            wal = EventHubsWalStream(_make_eventhubs_config())
+            await wal.connect()
+            pos = await wal.append("entdb-wal", "tenant_1", b"payload")
+
+            mock_event_data_cls.assert_called_once_with(body=b"payload")
+            mock_producer.send_batch.assert_awaited_once_with(mock_batch)
+            assert pos.topic == "entdb-wal"
+            assert pos.partition == 0
+
+    @pytest.mark.asyncio
+    async def test_append_sets_partition_key(self):
+        """append() sets partition_key on the batch for ordering."""
+        mock_producer = MagicMock()
+        mock_batch = MagicMock()
+        mock_producer.create_batch = AsyncMock(return_value=mock_batch)
+        mock_producer.send_batch = AsyncMock()
+
+        mock_producer_cls = MagicMock()
+        mock_producer_cls.from_connection_string.return_value = mock_producer
+
+        mock_consumer_cls = MagicMock()
+        mock_consumer_cls.from_connection_string.return_value = MagicMock()
+
+        mock_event_data_cls = MagicMock(return_value=MagicMock())
+
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                mock_producer_cls,
+            ),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                mock_consumer_cls,
+            ),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventData",
+                mock_event_data_cls,
+            ),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            wal = EventHubsWalStream(_make_eventhubs_config())
+            await wal.connect()
+            await wal.append("entdb-wal", "tenant_1", b"payload")
+
+            mock_producer.create_batch.assert_awaited_once_with(
+                partition_key="tenant_1"
+            )
+
+    @pytest.mark.asyncio
+    async def test_close_closes_clients(self):
+        """close() closes both producer and consumer clients."""
+        mock_producer = MagicMock()
+        mock_producer.close = AsyncMock()
+        mock_consumer = MagicMock()
+        mock_consumer.close = AsyncMock()
+
+        mock_producer_cls = MagicMock()
+        mock_producer_cls.from_connection_string.return_value = mock_producer
+
+        mock_consumer_cls = MagicMock()
+        mock_consumer_cls.from_connection_string.return_value = mock_consumer
+
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                mock_producer_cls,
+            ),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                mock_consumer_cls,
+            ),
+            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            wal = EventHubsWalStream(_make_eventhubs_config())
+            await wal.connect()
+            await wal.close()
+
+            mock_producer.close.assert_awaited_once()
+            mock_consumer.close.assert_awaited_once()
+            assert not wal.is_connected
+
+    @pytest.mark.asyncio
+    async def test_connect_failure_raises(self):
+        """connect() wraps SDK errors into WalConnectionError."""
+        mock_producer_cls = MagicMock()
+        mock_producer_cls.from_connection_string.side_effect = Exception(
+            "invalid connection string"
+        )
+
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                mock_producer_cls,
+            ),
+            patch("dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient"),
+            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            wal = EventHubsWalStream(_make_eventhubs_config())
+            with pytest.raises(
+                WalConnectionError, match="invalid connection string"
+            ):
+                await wal.connect()
+            assert not wal.is_connected
+
+    @pytest.mark.asyncio
+    async def test_is_connected(self):
+        """is_connected is False before connect() and True after."""
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("dbaas.entdb_server.wal.eventhubs.EventHubProducerClient"),
+            patch("dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient"),
+            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            wal = EventHubsWalStream(_make_eventhubs_config())
+            assert not wal.is_connected
+
+    @pytest.mark.asyncio
+    async def test_commit_updates_checkpoint(self):
+        """commit() removes the checkpoint entry for the record."""
+        with (
+            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("dbaas.entdb_server.wal.eventhubs.EventHubProducerClient"),
+            patch("dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient"),
+            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+        ):
+            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+
+            wal = EventHubsWalStream(_make_eventhubs_config())
+
+            # Simulate a pending checkpoint
+            wal._checkpoints["1"] = {
+                "sequence_number": 1,
+                "offset": "100",
+            }
+
+            record = _sample_record(offset=1)
+            await wal.commit(record)
+
+            assert "1" not in wal._checkpoints

@@ -3,6 +3,7 @@
 import pytest
 
 from dbaas.entdb_server.config import (
+    EventHubsConfig,
     ServiceBusConfig,
     SqsConfig,
     WalBackend,
@@ -17,6 +18,7 @@ class TestWalBackendEnum:
         assert WalBackend.PUBSUB.value == "pubsub"
         assert WalBackend.SQS.value == "sqs"
         assert WalBackend.SERVICEBUS.value == "servicebus"
+        assert WalBackend.EVENTHUBS.value == "eventhubs"
         assert WalBackend.LOCAL.value == "local"
 
 
@@ -61,6 +63,27 @@ class TestServiceBusConfig:
         config = ServiceBusConfig.from_env()
         assert "test.servicebus" in config.connection_string
         assert config.queue_name == "my-queue"
+
+
+@pytest.mark.unit
+class TestEventHubsConfig:
+    def test_defaults(self):
+        config = EventHubsConfig()
+        assert config.eventhub_name == "entdb-wal"
+        assert config.consumer_group == "$Default"
+        assert config.max_batch_size == 50
+        assert config.max_wait_time == 5
+
+    def test_from_env(self, monkeypatch):
+        monkeypatch.setenv(
+            "EVENTHUBS_CONNECTION_STRING",
+            "Endpoint=sb://test.servicebus.windows.net/;"
+            "SharedAccessKeyName=key;SharedAccessKey=val",
+        )
+        monkeypatch.setenv("EVENTHUBS_NAME", "my-hub")
+        config = EventHubsConfig.from_env()
+        assert "test.servicebus" in config.connection_string
+        assert config.eventhub_name == "my-hub"
 
 
 @pytest.mark.unit

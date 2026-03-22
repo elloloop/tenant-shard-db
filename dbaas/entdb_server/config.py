@@ -35,6 +35,7 @@ class WalBackend(Enum):
     PUBSUB = "pubsub"
     SQS = "sqs"
     SERVICEBUS = "servicebus"
+    EVENTHUBS = "eventhubs"
     LOCAL = "local"
 
 
@@ -264,6 +265,36 @@ class ServiceBusConfig:
             queue_name=os.getenv("SERVICEBUS_QUEUE_NAME", "entdb-wal"),
             max_messages=int(os.getenv("SERVICEBUS_MAX_MESSAGES", "20")),
             max_wait_time_seconds=int(os.getenv("SERVICEBUS_MAX_WAIT", "5")),
+        )
+
+
+@dataclass(frozen=True)
+class EventHubsConfig:
+    """Azure Event Hubs WAL backend configuration.
+
+    Attributes:
+        connection_string: Event Hubs connection string
+        eventhub_name: Event Hub name
+        consumer_group: Consumer group name
+        max_batch_size: Maximum events per receive call
+        max_wait_time: Maximum wait time for receive operations in seconds
+    """
+
+    connection_string: str = ""
+    eventhub_name: str = "entdb-wal"
+    consumer_group: str = "$Default"
+    max_batch_size: int = 50
+    max_wait_time: int = 5
+
+    @classmethod
+    def from_env(cls) -> EventHubsConfig:
+        """Load configuration from environment variables."""
+        return cls(
+            connection_string=os.getenv("EVENTHUBS_CONNECTION_STRING", ""),
+            eventhub_name=os.getenv("EVENTHUBS_NAME", "entdb-wal"),
+            consumer_group=os.getenv("EVENTHUBS_CONSUMER_GROUP", "$Default"),
+            max_batch_size=int(os.getenv("EVENTHUBS_MAX_BATCH_SIZE", "50")),
+            max_wait_time=int(os.getenv("EVENTHUBS_MAX_WAIT_TIME", "5")),
         )
 
 
@@ -576,6 +607,7 @@ class ServerConfig:
     pubsub: PubSubConfig = field(default_factory=PubSubConfig)
     sqs: SqsConfig = field(default_factory=SqsConfig)
     servicebus: ServiceBusConfig = field(default_factory=ServiceBusConfig)
+    eventhubs: EventHubsConfig = field(default_factory=EventHubsConfig)
     s3: S3Config = field(default_factory=S3Config)
     azure_blob: AzureBlobConfig = field(default_factory=AzureBlobConfig)
     gcs: GcsConfig = field(default_factory=GcsConfig)
@@ -604,7 +636,7 @@ class ServerConfig:
         except ValueError:
             raise ValueError(
                 f"Invalid WAL_BACKEND '{backend_str}'. "
-                "Must be one of: kafka, kinesis, pubsub, sqs, servicebus, local"
+                "Must be one of: kafka, kinesis, pubsub, sqs, servicebus, eventhubs, local"
             )
 
         storage_backend_str = os.getenv("STORAGE_BACKEND", "s3").lower()
@@ -626,6 +658,7 @@ class ServerConfig:
             pubsub=PubSubConfig.from_env(),
             sqs=SqsConfig.from_env(),
             servicebus=ServiceBusConfig.from_env(),
+            eventhubs=EventHubsConfig.from_env(),
             s3=S3Config.from_env(),
             azure_blob=AzureBlobConfig.from_env(),
             gcs=GcsConfig.from_env(),
@@ -667,6 +700,11 @@ class ServerConfig:
             if not self.servicebus.connection_string:
                 raise ValueError(
                     "SERVICEBUS_CONNECTION_STRING is required when WAL_BACKEND=servicebus"
+                )
+        elif self.wal_backend == WalBackend.EVENTHUBS:
+            if not self.eventhubs.connection_string:
+                raise ValueError(
+                    "EVENTHUBS_CONNECTION_STRING is required when WAL_BACKEND=eventhubs"
                 )
 
         # Validate storage config if archiver or snapshotter enabled

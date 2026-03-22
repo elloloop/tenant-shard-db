@@ -358,6 +358,10 @@ def create_wal_stream(config: ServerConfig) -> WalStream:
         from .servicebus import ServiceBusWalStream
 
         return ServiceBusWalStream(config.servicebus)  # type: ignore[return-value]
+    elif config.wal_backend == WalBackend.EVENTHUBS:
+        from .eventhubs import EventHubsWalStream
+
+        return EventHubsWalStream(config.eventhubs)  # type: ignore[return-value]
     elif config.wal_backend == WalBackend.LOCAL:
         from .memory import InMemoryWalStream
 

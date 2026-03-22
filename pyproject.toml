@@ -41,6 +41,9 @@ pubsub = [
 servicebus = [
     "azure-servicebus>=7.11.0",
 ]
+eventhubs = [
+    "azure-eventhub>=5.11.0",
+]
 azure-storage = [
     "azure-storage-blob>=12.19.0",
 ]
@@ -63,7 +66,7 @@ dev = [
     "grpcio-tools>=1.60.0",
 ]
 all = [
-    "entdb[server,sdk,pubsub,servicebus,azure-storage,gcs,dev]",
+    "entdb[server,sdk,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
 ]
 
 [project.scripts]
@@ -168,6 +171,7 @@ module = [
     "dbaas.entdb_server.wal.pubsub",
     "dbaas.entdb_server.wal.sqs",
     "dbaas.entdb_server.wal.servicebus",
+    "dbaas.entdb_server.wal.eventhubs",
     "dbaas.entdb_server.tools.restore",
     "dbaas.entdb_server.tools.schema_cli",
     "dbaas.entdb_server.snapshot.snapshotter",
