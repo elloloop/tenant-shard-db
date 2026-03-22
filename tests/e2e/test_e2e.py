@@ -273,9 +273,9 @@ async def test_create_multiple_nodes(runner: TestRunner):
 
     result = await plan.commit(wait_applied=True)
     assert result.success, f"Commit failed: {result.error}"
-    assert (
-        len(result.created_node_ids) == 3
-    ), f"Expected 3 nodes, got {len(result.created_node_ids)}"
+    assert len(result.created_node_ids) == 3, (
+        f"Expected 3 nodes, got {len(result.created_node_ids)}"
+    )
 
 
 async def test_create_edges(runner: TestRunner):

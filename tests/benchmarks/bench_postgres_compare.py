@@ -319,9 +319,9 @@ def main():
     results = []
 
     for tier in TIERS:
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"TIER: {tier['name']} (cpus={tier['cpus']}, mem={tier['memory']})")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
 
         # Start Postgres with same limits
         print("Starting PostgreSQL...")
@@ -363,12 +363,12 @@ def main():
         stop_postgres()
 
     # Summary table
-    print(f"\n\n{'='*90}")
+    print(f"\n\n{'=' * 90}")
     print("SQLITE vs POSTGRESQL — WRITE THROUGHPUT (events/sec)")
-    print(f"{'='*90}")
+    print(f"{'=' * 90}")
     print(f"{'Tier':<28}", end="")
     for bs in BATCH_SIZES:
-        print(f" {'SQLite bs='+str(bs):>14} {'PG bs='+str(bs):>14}", end="")
+        print(f" {'SQLite bs=' + str(bs):>14} {'PG bs=' + str(bs):>14}", end="")
     print()
     print("-" * 90)
 
@@ -380,9 +380,9 @@ def main():
             print(f" {sq:>10.0f}/sec {pg:>10.0f}/sec", end="")
         print()
 
-    print(f"\n{'='*90}")
+    print(f"\n{'=' * 90}")
     print("SQLITE vs POSTGRESQL — READ THROUGHPUT (reads/sec)")
-    print(f"{'='*90}")
+    print(f"{'=' * 90}")
     print(f"{'Tier':<28}", end="")
     for _bs in BATCH_SIZES:
         print(f" {'SQLite':>14} {'PG':>14}", end="")
@@ -397,9 +397,9 @@ def main():
             print(f" {sq:>10.0f}/sec {pg:>10.0f}/sec", end="")
         print()
 
-    print(f"\n{'='*90}")
+    print(f"\n{'=' * 90}")
     print("WINNER PER TIER (best batch size, write throughput)")
-    print(f"{'='*90}")
+    print(f"{'=' * 90}")
     for res in results:
         best_sq = max(
             res.get(f"sqlite_bs{bs}", {}).get("write_throughput", 0) for bs in BATCH_SIZES
@@ -409,7 +409,7 @@ def main():
             ratio = best_sq / best_pg
             winner = "SQLite" if ratio > 1 else "PostgreSQL"
             print(
-                f"  {res['tier']:<28} SQLite={best_sq:>8.0f}  PG={best_pg:>8.0f}  → {winner} {max(ratio, 1/ratio):.1f}x faster"
+                f"  {res['tier']:<28} SQLite={best_sq:>8.0f}  PG={best_pg:>8.0f}  → {winner} {max(ratio, 1 / ratio):.1f}x faster"
             )
         else:
             print(f"  {res['tier']:<28} incomplete data")

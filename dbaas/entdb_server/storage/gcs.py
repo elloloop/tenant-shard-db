@@ -34,8 +34,7 @@ class GcsObjectStore:
     def __init__(self, config: Any) -> None:
         if not GCS_AVAILABLE:
             raise ImportError(
-                "google-cloud-storage is required for GCS storage. "
-                "pip install google-cloud-storage"
+                "google-cloud-storage is required for GCS storage. pip install google-cloud-storage"
             )
         self._config = config
         self._client = None

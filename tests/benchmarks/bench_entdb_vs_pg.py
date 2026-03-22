@@ -428,32 +428,32 @@ def main():
         end="",
     )
     if entdb_w1["throughput"] > pg_w1["throughput"]:
-        print(f"  {'EntDB':>10} {entdb_w1['throughput']/pg_w1['throughput']:.1f}x")
+        print(f"  {'EntDB':>10} {entdb_w1['throughput'] / pg_w1['throughput']:.1f}x")
     else:
-        print(f"  {'PG':>10} {pg_w1['throughput']/entdb_w1['throughput']:.1f}x")
+        print(f"  {'PG':>10} {pg_w1['throughput'] / entdb_w1['throughput']:.1f}x")
 
     print(
         f"{'Write p50 latency':<20} {entdb_w1['p50_ms']:>7.2f}ms {pg_w1['p50_ms']:>7.2f}ms", end=""
     )
     if entdb_w1["p50_ms"] < pg_w1["p50_ms"]:
-        print(f"  {'EntDB':>10} {pg_w1['p50_ms']/entdb_w1['p50_ms']:.1f}x")
+        print(f"  {'EntDB':>10} {pg_w1['p50_ms'] / entdb_w1['p50_ms']:.1f}x")
     else:
-        print(f"  {'PG':>10} {entdb_w1['p50_ms']/pg_w1['p50_ms']:.1f}x")
+        print(f"  {'PG':>10} {entdb_w1['p50_ms'] / pg_w1['p50_ms']:.1f}x")
 
     print(
         f"{'Read throughput':<20} {entdb_r['throughput']:>8.0f}/sec {pg_r['throughput']:>8.0f}/sec",
         end="",
     )
     if entdb_r["throughput"] > pg_r["throughput"]:
-        print(f"  {'EntDB':>10} {entdb_r['throughput']/pg_r['throughput']:.1f}x")
+        print(f"  {'EntDB':>10} {entdb_r['throughput'] / pg_r['throughput']:.1f}x")
     else:
-        print(f"  {'PG':>10} {pg_r['throughput']/entdb_r['throughput']:.1f}x")
+        print(f"  {'PG':>10} {pg_r['throughput'] / entdb_r['throughput']:.1f}x")
 
     print(f"{'Read p50 latency':<20} {entdb_r['p50_ms']:>7.2f}ms {pg_r['p50_ms']:>7.2f}ms", end="")
     if entdb_r["p50_ms"] < pg_r["p50_ms"]:
-        print(f"  {'EntDB':>10} {pg_r['p50_ms']/entdb_r['p50_ms']:.1f}x")
+        print(f"  {'EntDB':>10} {pg_r['p50_ms'] / entdb_r['p50_ms']:.1f}x")
     else:
-        print(f"  {'PG':>10} {entdb_r['p50_ms']/pg_r['p50_ms']:.1f}x")
+        print(f"  {'PG':>10} {entdb_r['p50_ms'] / pg_r['p50_ms']:.1f}x")
 
     print()
     print("NOTE: EntDB writes go through Kafka (durable WAL) before ACK.")

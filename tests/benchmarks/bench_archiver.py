@@ -343,13 +343,13 @@ class TestCostModel:
 
         monthly_storage_gb = (events_per_day * 30 * avg_event_bytes * compression_ratio) / (1024**3)
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"COST COMPARISON: {events_per_day:,} events/day, {avg_event_bytes}B avg")
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print(
             f"{'Mode':<20} {'PUTs/mo':>10} {'R2 PUT':>10} {'S3 PUT':>10} {'R2 Store':>10} {'S3 Store':>10}"
         )
-        print(f"{'-'*70}")
+        print(f"{'-' * 70}")
 
         for key, cfg in configs.items():
             puts_month = cfg["flushes_day"] * 30
@@ -362,5 +362,5 @@ class TestCostModel:
                 f"{cfg['desc']:<20} {puts_month:>10,} ${r2_put:>9.4f} ${s3_put:>9.4f} ${r2_store:>9.4f} ${s3_store:>9.4f}"
             )
 
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print("Note: R2 egress is FREE. S3 egress is $0.09/GB.")

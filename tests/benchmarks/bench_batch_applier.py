@@ -211,11 +211,11 @@ class TestBatchApplierComparison:
 
         baseline = results[0]["throughput"]
 
-        print(f"\n{'='*72}")
+        print(f"\n{'=' * 72}")
         print(f"BATCH APPLIER THROUGHPUT COMPARISON ({num_events} events)")
-        print(f"{'='*72}")
+        print(f"{'=' * 72}")
         print(f"{'Batch Size':>12} {'Throughput':>14} {'Latency':>12} {'Speedup':>10} {'Time':>10}")
-        print(f"{'-'*72}")
+        print(f"{'-' * 72}")
         for r in results:
             speedup = r["throughput"] / baseline
             print(
@@ -225,4 +225,4 @@ class TestBatchApplierComparison:
                 f"{speedup:>9.2f}x "
                 f"{r['elapsed_sec']:>9.3f}s"
             )
-        print(f"{'='*72}")
+        print(f"{'=' * 72}")

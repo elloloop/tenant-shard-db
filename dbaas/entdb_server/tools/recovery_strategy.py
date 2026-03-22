@@ -272,7 +272,7 @@ class RecoveryStrategy:
             else:
                 # Tier failed — try next tier
                 logger.warning(
-                    f"Recovery tier {tier.value} failed: {tier_result.error}. " "Trying next tier."
+                    f"Recovery tier {tier.value} failed: {tier_result.error}. Trying next tier."
                 )
                 continue
 

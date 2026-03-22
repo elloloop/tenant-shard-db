@@ -577,9 +577,9 @@ def main():
     results = []
 
     for tier in TIERS:
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
         print(f"TIER: {tier['name']}")
-        print(f"{'='*80}")
+        print(f"{'=' * 80}")
 
         tier_result = {"tier": tier["name"]}
 
@@ -645,9 +645,9 @@ def main():
     stop_all()
 
     # Summary — Writes
-    print(f"\n{'='*95}")
+    print(f"\n{'=' * 95}")
     print("WRITES (events/sec) — 3-node Redpanda cluster, RF=3, 1000 events")
-    print(f"{'='*95}")
+    print(f"{'=' * 95}")
     print(
         f"{'Tier':<22} {'acks=all':>12} {'acks=1':>12} {'Postgres':>12}  {'all p50':>8} {'1 p50':>8} {'PG p50':>8}"
     )
@@ -667,9 +667,9 @@ def main():
         )
 
     # Summary — Reads
-    print(f"\n{'='*70}")
+    print(f"\n{'=' * 70}")
     print("READS (queries/sec)")
-    print(f"{'='*70}")
+    print(f"{'=' * 70}")
     print(f"{'Tier':<22} {'EntDB':>12} {'Postgres':>12}  {'EntDB p50':>10} {'PG p50':>8}")
     print("-" * 70)
     for r in results:

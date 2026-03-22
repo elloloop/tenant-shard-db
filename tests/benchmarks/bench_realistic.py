@@ -1082,7 +1082,7 @@ def main() -> None:
         },
     }
     results_path = (
-        "/Users/arun/projects/opensource/tenant-shard-db/" "tests/benchmarks/realistic-results.json"
+        "/Users/arun/projects/opensource/tenant-shard-db/tests/benchmarks/realistic-results.json"
     )
     with open(results_path, "w") as fout:
         json.dump(results, fout, indent=2)
