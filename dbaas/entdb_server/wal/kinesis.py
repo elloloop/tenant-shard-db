@@ -385,6 +385,25 @@ class KinesisWalStream:
         except ClientError as e:
             raise WalError(f"Kinesis subscription error: {e}") from e
 
+    async def poll_batch(
+        self,
+        topic: str,
+        group_id: str,
+        max_records: int = 20,
+        timeout_ms: int = 100,
+        start_position: StreamPos | None = None,
+    ) -> list[StreamRecord]:
+        """Poll for a batch of records from Kinesis."""
+        records: list[StreamRecord] = []
+        try:
+            async for record in self.subscribe(topic, group_id, start_position):
+                records.append(record)
+                if len(records) >= max_records:
+                    break
+        except Exception:
+            pass
+        return records
+
     async def commit(self, record: StreamRecord) -> None:
         """Commit consumed record.
 

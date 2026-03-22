@@ -334,6 +334,52 @@ class KafkaWalStream:
         except KafkaError as e:
             raise WalError(f"Consumer error: {e}") from e
 
+    async def poll_batch(
+        self,
+        topic: str,
+        group_id: str,
+        max_records: int = 20,
+        timeout_ms: int = 100,
+        start_position: StreamPos | None = None,
+    ) -> list[StreamRecord]:
+        """Poll for a batch of records using Kafka's getmany().
+
+        Returns whatever records are available, up to max_records.
+        """
+        if not self._consumer:
+            # Need to set up consumer first
+            async for record in self.subscribe(topic, group_id, start_position):
+                # subscribe sets up consumer, just break after setup
+                return [record]
+            return []
+
+        try:
+            data = await self._consumer.getmany(
+                timeout_ms=timeout_ms,
+                max_records=max_records,
+            )
+        except Exception:
+            return []
+
+        records: list[StreamRecord] = []
+        for _tp, messages in data.items():
+            for msg in messages:
+                headers = dict(msg.headers) if msg.headers else {}
+                records.append(
+                    StreamRecord(
+                        key=msg.key.decode("utf-8") if msg.key else "",
+                        value=msg.value,
+                        position=StreamPos(
+                            topic=msg.topic,
+                            partition=msg.partition,
+                            offset=msg.offset,
+                            timestamp_ms=msg.timestamp or int(time.time() * 1000),
+                        ),
+                        headers=headers,
+                    )
+                )
+        return records
+
     async def commit(self, record: StreamRecord) -> None:
         """Commit consumed record offset.
 
