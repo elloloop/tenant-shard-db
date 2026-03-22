@@ -183,6 +183,7 @@ class Applier:
         fanout_config: MailboxFanoutConfig | None = None,
         batch_size: int = 1,
         poll_timeout_ms: int = 100,
+        assigned_tenants: frozenset[str] | None = None,
     ) -> None:
         """Initialize the applier.
 
@@ -206,6 +207,9 @@ class Applier:
         self.fanout_config = fanout_config or MailboxFanoutConfig()
         self.batch_size = batch_size
         self.poll_timeout_ms = poll_timeout_ms
+
+        self._assigned_tenants = assigned_tenants or frozenset()
+        self._skipped_count = 0
 
         self._running = False
         self._processed_count = 0
@@ -450,6 +454,26 @@ class Applier:
         """
         try:
             data = record.value_json()
+
+            tenant_id = data.get("tenant_id", "")
+
+            # Skip events for tenants not assigned to this node
+            if self._assigned_tenants and tenant_id not in self._assigned_tenants:
+                self._skipped_count += 1
+                return ApplyResult(
+                    success=True,
+                    event=TransactionEvent(
+                        tenant_id=tenant_id,
+                        actor="",
+                        idempotency_key=data.get("idempotency_key", ""),
+                        schema_fingerprint=None,
+                        ts_ms=0,
+                        ops=[],
+                        stream_pos=record.position,
+                    ),
+                    skipped=True,
+                )
+
             event = TransactionEvent.from_dict(data, record.position)
             return await self.apply_event(event)
 
@@ -686,4 +710,5 @@ class Applier:
             "processed_count": self._processed_count,
             "error_count": self._error_count,
             "last_position": str(self._last_position) if self._last_position else None,
+            "skipped_count": self._skipped_count,
         }

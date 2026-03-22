@@ -22,6 +22,8 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 
+from .sharding import ShardingConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -105,7 +107,10 @@ class KafkaConfig:
         return cls(
             brokers=os.getenv("KAFKA_BROKERS", "localhost:9092"),
             topic=os.getenv("KAFKA_TOPIC", "entdb-wal"),
-            consumer_group=os.getenv("KAFKA_CONSUMER_GROUP", "entdb-applier"),
+            consumer_group=os.getenv(
+                "KAFKA_CONSUMER_GROUP",
+                f"entdb-applier-{os.getenv('NODE_ID', 'default')}",
+            ),
             sasl_mechanism=os.getenv("KAFKA_SASL_MECHANISM"),
             sasl_username=os.getenv("KAFKA_SASL_USERNAME"),
             sasl_password=os.getenv("KAFKA_SASL_PASSWORD"),
@@ -433,6 +438,7 @@ class ServerConfig:
     applier: ApplierConfig = field(default_factory=ApplierConfig)
     archiver: ArchiverConfig = field(default_factory=ArchiverConfig)
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
+    sharding: ShardingConfig = field(default_factory=ShardingConfig)
     snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
@@ -463,6 +469,7 @@ class ServerConfig:
             applier=ApplierConfig.from_env(),
             archiver=ArchiverConfig.from_env(),
             recovery=RecoveryConfig.from_env(),
+            sharding=ShardingConfig.from_env(),
             snapshot=SnapshotConfig.from_env(),
             observability=ObservabilityConfig.from_env(),
         )
@@ -534,6 +541,8 @@ class ServerConfig:
                 "recovery_kafka_replay": self.recovery.kafka_replay_enabled,
                 "recovery_archive_replay": self.recovery.archive_replay_enabled,
                 "snapshot_enabled": self.snapshot.enabled,
+                "node_id": self.sharding.node_id,
+                "assigned_tenants": sorted(self.sharding.assigned_tenants) if self.sharding.assigned_tenants else "all",
                 "log_level": self.observability.log_level,
             },
         )
