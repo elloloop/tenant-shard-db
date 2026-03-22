@@ -38,6 +38,15 @@ class WalBackend(Enum):
     LOCAL = "local"
 
 
+class StorageBackend(Enum):
+    """Supported object storage backends."""
+
+    S3 = "s3"  # AWS S3, Cloudflare R2, MinIO
+    AZURE_BLOB = "azure_blob"  # Azure Blob Storage
+    GCS = "gcs"  # Google Cloud Storage
+    LOCAL_FS = "local"  # Local filesystem
+
+
 @dataclass(frozen=True)
 class GrpcConfig:
     """gRPC server configuration.
@@ -295,6 +304,36 @@ class S3Config:
 
 
 @dataclass(frozen=True)
+class AzureBlobConfig:
+    """Azure Blob Storage configuration."""
+
+    connection_string: str = ""
+    container_name: str = "entdb-storage"
+
+    @classmethod
+    def from_env(cls) -> AzureBlobConfig:
+        return cls(
+            connection_string=os.getenv("AZURE_BLOB_CONNECTION_STRING", ""),
+            container_name=os.getenv("AZURE_BLOB_CONTAINER", "entdb-storage"),
+        )
+
+
+@dataclass(frozen=True)
+class GcsConfig:
+    """Google Cloud Storage configuration."""
+
+    project_id: str = ""
+    bucket_name: str = "entdb-storage"
+
+    @classmethod
+    def from_env(cls) -> GcsConfig:
+        return cls(
+            project_id=os.getenv("GCS_PROJECT_ID", os.getenv("GCP_PROJECT_ID", "")),
+            bucket_name=os.getenv("GCS_BUCKET", "entdb-storage"),
+        )
+
+
+@dataclass(frozen=True)
 class StorageConfig:
     """Local storage configuration.
 
@@ -529,6 +568,7 @@ class ServerConfig:
     """
 
     wal_backend: WalBackend = WalBackend.KAFKA
+    storage_backend: StorageBackend = StorageBackend.S3
     schema_file: str | None = None
     grpc: GrpcConfig = field(default_factory=GrpcConfig)
     kafka: KafkaConfig = field(default_factory=KafkaConfig)
@@ -537,6 +577,9 @@ class ServerConfig:
     sqs: SqsConfig = field(default_factory=SqsConfig)
     servicebus: ServiceBusConfig = field(default_factory=ServiceBusConfig)
     s3: S3Config = field(default_factory=S3Config)
+    azure_blob: AzureBlobConfig = field(default_factory=AzureBlobConfig)
+    gcs: GcsConfig = field(default_factory=GcsConfig)
+    local_storage_path: str = "/var/lib/entdb/storage"
     storage: StorageConfig = field(default_factory=StorageConfig)
     applier: ApplierConfig = field(default_factory=ApplierConfig)
     archiver: ArchiverConfig = field(default_factory=ArchiverConfig)
@@ -564,8 +607,18 @@ class ServerConfig:
                 "Must be one of: kafka, kinesis, pubsub, sqs, servicebus, local"
             )
 
+        storage_backend_str = os.getenv("STORAGE_BACKEND", "s3").lower()
+        try:
+            storage_backend = StorageBackend(storage_backend_str)
+        except ValueError:
+            raise ValueError(
+                f"Invalid STORAGE_BACKEND '{storage_backend_str}'. "
+                "Must be one of: s3, azure_blob, gcs, local"
+            )
+
         config = cls(
             wal_backend=wal_backend,
+            storage_backend=storage_backend,
             schema_file=os.getenv("SCHEMA_FILE"),
             grpc=GrpcConfig.from_env(),
             kafka=KafkaConfig.from_env(),
@@ -574,6 +627,9 @@ class ServerConfig:
             sqs=SqsConfig.from_env(),
             servicebus=ServiceBusConfig.from_env(),
             s3=S3Config.from_env(),
+            azure_blob=AzureBlobConfig.from_env(),
+            gcs=GcsConfig.from_env(),
+            local_storage_path=os.getenv("LOCAL_STORAGE_PATH", "/var/lib/entdb/storage"),
             storage=StorageConfig.from_env(),
             applier=ApplierConfig.from_env(),
             archiver=ArchiverConfig.from_env(),
@@ -613,10 +669,19 @@ class ServerConfig:
                     "SERVICEBUS_CONNECTION_STRING is required when WAL_BACKEND=servicebus"
                 )
 
-        # Validate S3 config if archiver or snapshotter enabled
+        # Validate storage config if archiver or snapshotter enabled
         if self.archiver.enabled or self.snapshot.enabled:
-            if not self.s3.bucket:
-                raise ValueError("S3_BUCKET is required when archiver or snapshotter is enabled")
+            if self.storage_backend == StorageBackend.S3:
+                if not self.s3.bucket:
+                    raise ValueError("S3_BUCKET required when STORAGE_BACKEND=s3")
+            elif self.storage_backend == StorageBackend.AZURE_BLOB:
+                if not self.azure_blob.connection_string:
+                    raise ValueError(
+                        "AZURE_BLOB_CONNECTION_STRING required when STORAGE_BACKEND=azure_blob"
+                    )
+            elif self.storage_backend == StorageBackend.GCS:
+                if not self.gcs.project_id:
+                    raise ValueError("GCS_PROJECT_ID required when STORAGE_BACKEND=gcs")
 
         # Warn about recovery configuration
         if self.recovery.archive_replay_enabled and not self.archiver.enabled:
