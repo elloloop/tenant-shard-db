@@ -113,9 +113,11 @@ class KafkaWalStream:
 
         try:
             # Build producer configuration
+            # aiokafka accepts "all" as string but 0/1 must be int
+            acks_val = int(self.config.acks) if self.config.acks.isdigit() else self.config.acks
             producer_config = {
                 "bootstrap_servers": self.config.brokers,
-                "acks": self.config.acks,
+                "acks": acks_val,
                 "enable_idempotence": self.config.enable_idempotence,
                 "max_batch_size": 16384,
                 "linger_ms": 5,  # Small batching for low latency

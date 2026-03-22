@@ -1,0 +1,109 @@
+[
+  {
+    "tier": "0.25 CPU / 512MB",
+    "entdb_acks_all_writes": {
+      "throughput": 113.9,
+      "avg_ms": 8.78,
+      "p50_ms": 6.9,
+      "p99_ms": 9.32
+    },
+    "entdb_acks_all_reads": {
+      "throughput": 881.8,
+      "avg_ms": 1.13,
+      "p50_ms": 0.43,
+      "p99_ms": 60.81
+    },
+    "entdb_acks_1_writes": {
+      "throughput": 141.9,
+      "avg_ms": 7.05,
+      "p50_ms": 6.88,
+      "p99_ms": 9.43
+    },
+    "entdb_acks_1_reads": {
+      "throughput": 923.8,
+      "avg_ms": 1.08,
+      "p50_ms": 0.43,
+      "p99_ms": 58.26
+    },
+    "pg_writes": {},
+    "pg_reads": {}
+  },
+  {
+    "tier": "1 CPU / 1GB",
+    "entdb_acks_all_writes": {
+      "throughput": 152.5,
+      "avg_ms": 6.56,
+      "p50_ms": 6.66,
+      "p99_ms": 8.91
+    },
+    "entdb_acks_all_reads": {
+      "throughput": 2282.2,
+      "avg_ms": 0.44,
+      "p50_ms": 0.43,
+      "p99_ms": 0.66
+    },
+    "entdb_acks_1_writes": {
+      "throughput": 152.5,
+      "avg_ms": 6.56,
+      "p50_ms": 6.61,
+      "p99_ms": 8.43
+    },
+    "entdb_acks_1_reads": {
+      "throughput": 2273.3,
+      "avg_ms": 0.44,
+      "p50_ms": 0.42,
+      "p99_ms": 1.12
+    },
+    "pg_writes": {
+      "throughput": 2527.6,
+      "avg_ms": 0.4,
+      "p50_ms": 0.37,
+      "p99_ms": 0.66
+    },
+    "pg_reads": {
+      "throughput": 6946.6,
+      "avg_ms": 0.14,
+      "p50_ms": 0.14,
+      "p99_ms": 0.27
+    }
+  },
+  {
+    "tier": "2 CPU / 2GB",
+    "entdb_acks_all_writes": {
+      "throughput": 149.7,
+      "avg_ms": 6.68,
+      "p50_ms": 6.68,
+      "p99_ms": 8.76
+    },
+    "entdb_acks_all_reads": {
+      "throughput": 2409.7,
+      "avg_ms": 0.41,
+      "p50_ms": 0.4,
+      "p99_ms": 0.56
+    },
+    "entdb_acks_1_writes": {
+      "throughput": 147.3,
+      "avg_ms": 6.79,
+      "p50_ms": 6.83,
+      "p99_ms": 8.9
+    },
+    "entdb_acks_1_reads": {
+      "throughput": 2253.3,
+      "avg_ms": 0.44,
+      "p50_ms": 0.42,
+      "p99_ms": 0.88
+    },
+    "pg_writes": {
+      "throughput": 2289.0,
+      "avg_ms": 0.44,
+      "p50_ms": 0.38,
+      "p99_ms": 1.29
+    },
+    "pg_reads": {
+      "throughput": 7565.4,
+      "avg_ms": 0.13,
+      "p50_ms": 0.13,
+      "p99_ms": 0.2
+    }
+  }
+]

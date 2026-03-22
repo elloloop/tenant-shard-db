@@ -96,6 +96,8 @@ class KafkaConfig:
     # Consumer settings
     auto_offset_reset: str = "earliest"
     enable_auto_commit: bool = False
+    max_poll_records: int = 100
+    poll_timeout_ms: int = 100
 
     @classmethod
     def from_env(cls) -> KafkaConfig:
@@ -116,6 +118,8 @@ class KafkaConfig:
             max_in_flight=int(os.getenv("KAFKA_MAX_IN_FLIGHT", "5")),
             auto_offset_reset=os.getenv("KAFKA_AUTO_OFFSET_RESET", "earliest"),
             enable_auto_commit=os.getenv("KAFKA_AUTO_COMMIT", "false").lower() == "true",
+            max_poll_records=int(os.getenv("KAFKA_MAX_POLL_RECORDS", "100")),
+            poll_timeout_ms=int(os.getenv("KAFKA_POLL_TIMEOUT_MS", "100")),
         )
 
 

@@ -223,6 +223,78 @@ class InMemoryWalStream:
         finally:
             self._subscribers.discard(consumer_key)
 
+    async def poll_batch(
+        self,
+        topic: str,
+        group_id: str,
+        max_records: int = 20,
+        timeout_ms: int = 100,
+        start_position: StreamPos | None = None,
+    ) -> list[StreamRecord]:
+        """Poll for a batch of records from in-memory stream.
+
+        Returns whatever is available right now, up to max_records.
+
+        Args:
+            topic: Topic name
+            group_id: Consumer group ID
+            max_records: Maximum records to return
+            timeout_ms: How long to wait if no records available
+            start_position: Optional starting position
+
+        Returns:
+            List of available StreamRecord objects
+        """
+        if not self._connected:
+            raise WalConnectionError("Not connected")
+
+        records = self._poll_available(topic, group_id, max_records, start_position)
+
+        # If no records, wait briefly for new ones then try once more
+        if not records:
+            self._new_record_events[topic].clear()
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(
+                    self._new_record_events[topic].wait(),
+                    timeout=timeout_ms / 1000.0,
+                )
+            records = self._poll_available(topic, group_id, max_records, start_position)
+
+        return records
+
+    def _poll_available(
+        self,
+        topic: str,
+        group_id: str,
+        max_records: int,
+        start_position: StreamPos | None = None,
+    ) -> list[StreamRecord]:
+        """Collect available records without locking (caller must handle)."""
+        records: list[StreamRecord] = []
+
+        if topic not in self._topics:
+            return records
+
+        for partition in range(self.num_partitions):
+            part = self._topics[topic].get(partition)
+            if not part:
+                continue
+
+            # Use "default" group for committed offsets (matches commit())
+            if start_position and start_position.partition == partition:
+                current_pos = start_position.offset + 1
+            else:
+                current_pos = self._committed.get("default", {}).get(partition, 0)
+
+            while current_pos < len(part.records) and len(records) < max_records:
+                records.append(part.records[current_pos])
+                current_pos += 1
+
+            if len(records) >= max_records:
+                break
+
+        return records
+
     async def commit(self, record: StreamRecord) -> None:
         """Commit consumed record offset.
 

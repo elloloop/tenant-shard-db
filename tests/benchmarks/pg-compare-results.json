@@ -1,0 +1,119 @@
+[
+  {
+    "tier": "shared-cpu-1x (256MB)",
+    "sqlite_bs1": {
+      "write_throughput": 508.1,
+      "write_latency_ms": 1.968,
+      "read_throughput": 2129.8,
+      "read_latency_ms": 0.47
+    },
+    "pg_bs1": {
+      "write_throughput": 1654.2,
+      "write_latency_ms": 0.605,
+      "read_throughput": 7795.9,
+      "read_latency_ms": 0.128
+    },
+    "sqlite_bs10": {
+      "write_throughput": 3660.9,
+      "write_latency_ms": 0.273,
+      "read_throughput": 3402.2,
+      "read_latency_ms": 0.294
+    },
+    "pg_bs10": {
+      "write_throughput": 11865.8,
+      "write_latency_ms": 0.084,
+      "read_throughput": 6072.3,
+      "read_latency_ms": 0.165
+    },
+    "sqlite_bs50": {
+      "write_throughput": 5372.3,
+      "write_latency_ms": 0.186,
+      "read_throughput": 2371.1,
+      "read_latency_ms": 0.422
+    },
+    "pg_bs50": {
+      "write_throughput": 29631.2,
+      "write_latency_ms": 0.034,
+      "read_throughput": 5640.2,
+      "read_latency_ms": 0.177
+    }
+  },
+  {
+    "tier": "shared-cpu-1x (1GB)",
+    "sqlite_bs1": {
+      "write_throughput": 485.2,
+      "write_latency_ms": 2.061,
+      "read_throughput": 8239.7,
+      "read_latency_ms": 0.121
+    },
+    "pg_bs1": {
+      "write_throughput": 2087.3,
+      "write_latency_ms": 0.479,
+      "read_throughput": 7722.6,
+      "read_latency_ms": 0.129
+    },
+    "sqlite_bs10": {
+      "write_throughput": 4072.4,
+      "write_latency_ms": 0.246,
+      "read_throughput": 6827.0,
+      "read_latency_ms": 0.146
+    },
+    "pg_bs10": {
+      "write_throughput": 12724.9,
+      "write_latency_ms": 0.079,
+      "read_throughput": 5090.0,
+      "read_latency_ms": 0.196
+    },
+    "sqlite_bs50": {
+      "write_throughput": 13606.6,
+      "write_latency_ms": 0.073,
+      "read_throughput": 5599.3,
+      "read_latency_ms": 0.179
+    },
+    "pg_bs50": {
+      "write_throughput": 34892.2,
+      "write_latency_ms": 0.029,
+      "read_throughput": 5427.9,
+      "read_latency_ms": 0.184
+    }
+  },
+  {
+    "tier": "performance-2x (2GB)",
+    "sqlite_bs1": {
+      "write_throughput": 577.5,
+      "write_latency_ms": 1.732,
+      "read_throughput": 8797.5,
+      "read_latency_ms": 0.114
+    },
+    "pg_bs1": {
+      "write_throughput": 2009.4,
+      "write_latency_ms": 0.498,
+      "read_throughput": 6343.8,
+      "read_latency_ms": 0.158
+    },
+    "sqlite_bs10": {
+      "write_throughput": 3552.4,
+      "write_latency_ms": 0.281,
+      "read_throughput": 8507.0,
+      "read_latency_ms": 0.118
+    },
+    "pg_bs10": {
+      "write_throughput": 12799.0,
+      "write_latency_ms": 0.078,
+      "read_throughput": 4788.7,
+      "read_latency_ms": 0.209
+    },
+    "sqlite_bs50": {
+      "write_throughput": 14747.0,
+      "write_latency_ms": 0.068,
+      "read_throughput": 8604.9,
+      "read_latency_ms": 0.116
+    },
+    "pg_bs50": {
+      "write_throughput": 39146.6,
+      "write_latency_ms": 0.026,
+      "read_throughput": 4917.5,
+      "read_latency_ms": 0.203
+    }
+  }
+]
