@@ -99,6 +99,8 @@ exclude = [
     "__pycache__",
     "build",
     "dist",
+    "*_generated*",
+    "*/generated/*",
 ]
 
 [tool.ruff.lint]
