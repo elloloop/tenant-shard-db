@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import grpc
 from grpc import aio as grpc_aio
 
+from ..sharding import ShardingConfig
 from .generated import (
     Edge,
     EntDBServiceServicer,
@@ -93,6 +94,7 @@ class EntDBServicer(EntDBServiceServicer):
         mailbox_store: Any,
         schema_registry: Any,
         topic: str = "entdb-wal",
+        sharding: ShardingConfig | None = None,
     ) -> None:
         """Initialize the gRPC servicer.
 
@@ -102,12 +104,24 @@ class EntDBServicer(EntDBServiceServicer):
             mailbox_store: MailboxStore instance
             schema_registry: SchemaRegistry instance
             topic: WAL topic name
+            sharding: Sharding configuration for multi-node mode
         """
         self.wal = wal
         self.canonical_store = canonical_store
         self.mailbox_store = mailbox_store
         self.schema_registry = schema_registry
         self.topic = topic
+        self._sharding = sharding
+
+    def _check_tenant(self, tenant_id: str, context) -> None:
+        """Reject requests for tenants not owned by this node."""
+        if self._sharding and not self._sharding.is_mine(tenant_id):
+            owner = self._sharding.get_owner(tenant_id)
+            hint = f" (try node {owner})" if owner else ""
+            context.abort(
+                grpc.StatusCode.UNAVAILABLE,
+                f"Tenant '{tenant_id}' is not served by this node{hint}",
+            )
 
     async def ExecuteAtomic(
         self,
@@ -115,6 +129,8 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> ExecuteAtomicResponse:
         """Execute an atomic transaction."""
+        self._check_tenant(request.context.tenant_id, context)
+
         # Extract context
         ctx = request.context
         if not ctx.tenant_id:
@@ -300,6 +316,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetReceiptStatusResponse:
         """Get the status of a transaction receipt."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             applied = await self.canonical_store.check_idempotency(
                 request.context.tenant_id,
@@ -323,6 +340,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetNodeResponse:
         """Get a node by ID."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             node = await self.canonical_store.get_node(
                 request.context.tenant_id,
@@ -354,6 +372,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetNodesResponse:
         """Get multiple nodes by IDs."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             nodes = []
             missing_ids = []
@@ -390,6 +409,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> QueryNodesResponse:
         """Query nodes by type."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             nodes = await self.canonical_store.get_nodes_by_type(
                 request.context.tenant_id,
@@ -426,6 +446,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetEdgesResponse:
         """Get outgoing edges from a node."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             edge_type_id = request.edge_type_id if request.edge_type_id else None
             edges = await self.canonical_store.get_edges_from(
@@ -458,6 +479,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetEdgesResponse:
         """Get incoming edges to a node."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             edge_type_id = request.edge_type_id if request.edge_type_id else None
             edges = await self.canonical_store.get_edges_to(
@@ -490,6 +512,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> SearchMailboxResponse:
         """Search mailbox with full-text search."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             source_type_ids = list(request.source_type_ids) if request.source_type_ids else None
             results = await self.mailbox_store.search(
@@ -534,6 +557,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetMailboxResponse:
         """Get mailbox items for a user."""
+        self._check_tenant(request.context.tenant_id, context)
         try:
             source_type_id = request.source_type_id if request.source_type_id else None
             thread_id = request.thread_id if request.thread_id else None
@@ -593,6 +617,11 @@ class EntDBServicer(EntDBServiceServicer):
             components["wal"] = "unknown"
 
         components["storage"] = "healthy"
+
+        if self._sharding and self._sharding.is_multi_node:
+            components["node_id"] = self._sharding.node_id
+            components["assigned_tenants"] = ",".join(sorted(self._sharding.assigned_tenants))
+
         overall_healthy = all(v == "healthy" for v in components.values())
 
         return HealthResponse(
@@ -609,6 +638,11 @@ class EntDBServicer(EntDBServiceServicer):
         """List all tenants that have data."""
         try:
             tenant_ids = self.canonical_store.list_tenants()
+            if self._sharding and self._sharding.is_multi_node:
+                tenant_ids = [
+                    tid for tid in tenant_ids
+                    if self._sharding.is_mine(tid)
+                ]
             return ListTenantsResponse(
                 tenants=[TenantInfo(tenant_id=tid) for tid in tenant_ids],
             )
@@ -622,6 +656,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> ListMailboxUsersResponse:
         """List mailbox users for a tenant."""
+        self._check_tenant(request.tenant_id, context)
         try:
             user_ids = self.mailbox_store.list_users(request.tenant_id)
             return ListMailboxUsersResponse(user_ids=user_ids)

@@ -255,6 +255,7 @@ class Server:
                 topic=self.config.kafka.topic
                 if self.config.wal_backend == WalBackend.KAFKA
                 else self.config.kinesis.stream_name,
+                sharding=self.config.sharding,
             )
 
             # Start gRPC server
@@ -287,6 +288,7 @@ class Server:
                 poll_timeout_ms=self.config.kafka.poll_timeout_ms
                 if self.config.wal_backend == WalBackend.KAFKA
                 else 100,
+                assigned_tenants=self.config.sharding.assigned_tenants,
             )
             applier_task = asyncio.create_task(self.applier.start())
             self._tasks.append(applier_task)
