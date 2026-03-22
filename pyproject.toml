@@ -35,6 +35,12 @@ server = [
     "aiohttp>=3.9.0",
     "grpcio>=1.60.0",
 ]
+pubsub = [
+    "google-cloud-pubsub>=2.18.0",
+]
+servicebus = [
+    "azure-servicebus>=7.11.0",
+]
 sdk = [
     "grpcio>=1.60.0",
     "protobuf>=4.25.0",
@@ -51,7 +57,7 @@ dev = [
     "grpcio-tools>=1.60.0",
 ]
 all = [
-    "entdb[server,sdk,dev]",
+    "entdb[server,sdk,pubsub,servicebus,dev]",
 ]
 
 [project.scripts]
@@ -153,6 +159,9 @@ ignore_errors = true
 module = [
     "dbaas.entdb_server.wal.kinesis",
     "dbaas.entdb_server.wal.kafka",
+    "dbaas.entdb_server.wal.pubsub",
+    "dbaas.entdb_server.wal.sqs",
+    "dbaas.entdb_server.wal.servicebus",
     "dbaas.entdb_server.tools.restore",
     "dbaas.entdb_server.tools.schema_cli",
     "dbaas.entdb_server.snapshot.snapshotter",

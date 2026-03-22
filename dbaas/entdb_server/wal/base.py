@@ -346,5 +346,21 @@ def create_wal_stream(config: ServerConfig) -> WalStream:
         return KafkaWalStream(config.kafka)  # type: ignore[return-value]
     elif config.wal_backend == WalBackend.KINESIS:
         return KinesisWalStream(config.kinesis)  # type: ignore[return-value]
+    elif config.wal_backend == WalBackend.PUBSUB:
+        from .pubsub import PubSubWalStream
+
+        return PubSubWalStream(config.pubsub)  # type: ignore[return-value]
+    elif config.wal_backend == WalBackend.SQS:
+        from .sqs import SqsWalStream
+
+        return SqsWalStream(config.sqs)  # type: ignore[return-value]
+    elif config.wal_backend == WalBackend.SERVICEBUS:
+        from .servicebus import ServiceBusWalStream
+
+        return ServiceBusWalStream(config.servicebus)  # type: ignore[return-value]
+    elif config.wal_backend == WalBackend.LOCAL:
+        from .memory import InMemoryWalStream
+
+        return InMemoryWalStream()  # type: ignore[return-value]
     else:
         raise ValueError(f"Unsupported WAL backend: {config.wal_backend}")

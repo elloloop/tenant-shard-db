@@ -33,6 +33,9 @@ from .base import (
 from .kafka import KafkaWalStream
 from .kinesis import KinesisWalStream
 from .memory import InMemoryWalStream
+from .pubsub import PubSubWalStream
+from .servicebus import ServiceBusWalStream
+from .sqs import SqsWalStream
 
 __all__ = [
     # Protocol and types
@@ -48,4 +51,7 @@ __all__ = [
     "KafkaWalStream",
     "KinesisWalStream",
     "InMemoryWalStream",
+    "PubSubWalStream",
+    "SqsWalStream",
+    "ServiceBusWalStream",
 ]
