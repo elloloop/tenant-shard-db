@@ -3,6 +3,7 @@ Archiver performance benchmarks.
 
 Run: pytest tests/benchmarks/bench_archiver.py -v --benchmark-only
 """
+
 from __future__ import annotations
 
 import json
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock
 from dbaas.entdb_server.archive.archiver import Archiver
 
 # --- Helpers ---
+
 
 def make_event(tenant_id: str = "bench-tenant", i: int = 0, payload_size: int = 200) -> dict:
     """Create a realistic WAL event."""
@@ -41,11 +43,16 @@ def make_record(event: dict, partition: int = 0, offset: int = 0):
     mock.position = MagicMock()
     mock.position.partition = partition
     mock.position.offset = offset
-    mock.position.to_dict.return_value = {"topic": "bench", "partition": partition, "offset": offset}
+    mock.position.to_dict.return_value = {
+        "topic": "bench",
+        "partition": partition,
+        "offset": offset,
+    }
     return mock
 
 
 # --- Serialization Benchmarks ---
+
 
 class TestSerializationBenchmarks:
     """Benchmark segment serialization and compression."""
@@ -125,6 +132,7 @@ class TestSerializationBenchmarks:
 
 # --- Checksum Benchmarks ---
 
+
 class TestChecksumBenchmarks:
     """Benchmark checksum computation."""
 
@@ -156,6 +164,7 @@ class TestChecksumBenchmarks:
 
 # --- S3 Key Generation Benchmarks ---
 
+
 class TestS3KeyBenchmarks:
     """Benchmark S3 key generation."""
 
@@ -178,6 +187,7 @@ class TestS3KeyBenchmarks:
 
 
 # --- Compression Ratio Analysis ---
+
 
 class TestCompressionRatio:
     """Measure compression ratios for different data patterns."""
@@ -220,20 +230,21 @@ class TestCompressionRatio:
 
 # --- Cost Model ---
 
+
 class TestCostModel:
     """Calculate and compare costs for different archiver configurations."""
 
     # R2 pricing
-    R2_PUT_COST = 4.50 / 1_000_000   # per PUT
-    R2_GET_COST = 0.36 / 1_000_000   # per GET
-    R2_STORAGE_COST = 0.015           # per GB/month
-    R2_EGRESS_COST = 0.0             # FREE
+    R2_PUT_COST = 4.50 / 1_000_000  # per PUT
+    R2_GET_COST = 0.36 / 1_000_000  # per GET
+    R2_STORAGE_COST = 0.015  # per GB/month
+    R2_EGRESS_COST = 0.0  # FREE
 
     # S3 pricing
     S3_PUT_COST = 5.00 / 1_000_000
     S3_GET_COST = 0.40 / 1_000_000
     S3_STORAGE_COST = 0.023
-    S3_EGRESS_COST = 0.09            # per GB
+    S3_EGRESS_COST = 0.09  # per GB
 
     def test_cost_batched_60s_flush(self):
         """Cost model: batched mode, 60s flush interval."""
@@ -286,7 +297,7 @@ class TestCostModel:
 
         monthly_raw = events_per_month * avg_event_bytes
         monthly_compressed = monthly_raw * compression_ratio
-        monthly_gb = monthly_compressed / (1024 ** 3)
+        monthly_gb = monthly_compressed / (1024**3)
 
         print("\n--- Storage growth (300k events/month) ---")
         print(f"Raw: {monthly_raw / 1024 / 1024:.1f} MB/month")
@@ -330,13 +341,15 @@ class TestCostModel:
             "disabled": {"flushes_day": 0, "desc": "Disabled"},
         }
 
-        monthly_storage_gb = (events_per_day * 30 * avg_event_bytes * compression_ratio) / (1024 ** 3)
+        monthly_storage_gb = (events_per_day * 30 * avg_event_bytes * compression_ratio) / (1024**3)
 
-        print(f"\n{'='*70}")
+        print(f"\n{'=' * 70}")
         print(f"COST COMPARISON: {events_per_day:,} events/day, {avg_event_bytes}B avg")
-        print(f"{'='*70}")
-        print(f"{'Mode':<20} {'PUTs/mo':>10} {'R2 PUT':>10} {'S3 PUT':>10} {'R2 Store':>10} {'S3 Store':>10}")
-        print(f"{'-'*70}")
+        print(f"{'=' * 70}")
+        print(
+            f"{'Mode':<20} {'PUTs/mo':>10} {'R2 PUT':>10} {'S3 PUT':>10} {'R2 Store':>10} {'S3 Store':>10}"
+        )
+        print(f"{'-' * 70}")
 
         for key, cfg in configs.items():
             puts_month = cfg["flushes_day"] * 30
@@ -345,7 +358,9 @@ class TestCostModel:
             r2_store = monthly_storage_gb * self.R2_STORAGE_COST if key != "disabled" else 0
             s3_store = monthly_storage_gb * self.S3_STORAGE_COST if key != "disabled" else 0
 
-            print(f"{cfg['desc']:<20} {puts_month:>10,} ${r2_put:>9.4f} ${s3_put:>9.4f} ${r2_store:>9.4f} ${s3_store:>9.4f}")
+            print(
+                f"{cfg['desc']:<20} {puts_month:>10,} ${r2_put:>9.4f} ${s3_put:>9.4f} ${r2_store:>9.4f} ${s3_store:>9.4f}"
+            )
 
-        print(f"{'='*70}")
+        print(f"{'=' * 70}")
         print("Note: R2 egress is FREE. S3 egress is $0.09/GB.")

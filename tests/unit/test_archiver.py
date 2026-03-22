@@ -4,6 +4,7 @@ Unit tests for archiver logic.
 Tests cover serialization, S3 key generation, checksum computation,
 flush mode behavior, and segment management.
 """
+
 from __future__ import annotations
 
 import gzip
@@ -30,12 +31,21 @@ def _make_archiver(**kwargs):
     return Archiver(**defaults)
 
 
-def _make_record(tenant_id: str = "t1", partition: int = 0, offset: int = 0, payload_size: int = 100):
+def _make_record(
+    tenant_id: str = "t1", partition: int = 0, offset: int = 0, payload_size: int = 100
+):
     """Create a mock StreamRecord."""
     event = {
         "tenant_id": tenant_id,
         "idempotency_key": f"key-{offset}",
-        "ops": [{"op": "create_node", "type_id": 1, "id": f"n-{offset}", "data": {"v": "x" * payload_size}}],
+        "ops": [
+            {
+                "op": "create_node",
+                "type_id": 1,
+                "id": f"n-{offset}",
+                "data": {"v": "x" * payload_size},
+            }
+        ],
     }
     value = json.dumps(event).encode()
     mock = MagicMock()
@@ -44,7 +54,11 @@ def _make_record(tenant_id: str = "t1", partition: int = 0, offset: int = 0, pay
     mock.position = MagicMock()
     mock.position.partition = partition
     mock.position.offset = offset
-    mock.position.to_dict.return_value = {"topic": "test-wal", "partition": partition, "offset": offset}
+    mock.position.to_dict.return_value = {
+        "topic": "test-wal",
+        "partition": partition,
+        "offset": offset,
+    }
     return mock
 
 
@@ -53,7 +67,10 @@ class TestS3KeyGeneration:
     def test_key_format_gzip(self):
         archiver = _make_archiver()
         key = archiver._build_s3_key("tenant-1", 0, 100, 200)
-        assert key == "archive/tenant=tenant-1/partition=0/from=00000000000000000100_to=00000000000000000200.jsonl.gz"
+        assert (
+            key
+            == "archive/tenant=tenant-1/partition=0/from=00000000000000000100_to=00000000000000000200.jsonl.gz"
+        )
 
     def test_key_format_no_compression(self):
         archiver = _make_archiver(compression="none")

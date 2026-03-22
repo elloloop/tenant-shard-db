@@ -86,7 +86,7 @@ def _validate_field_value(
             return f"Field '{name}' must be an integer, got {type(value).__name__}"
 
     elif kind == FieldKind.FLOAT:
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
+        if not isinstance(value, int | float) or isinstance(value, bool):
             return f"Field '{name}' must be a number, got {type(value).__name__}"
 
     elif kind == FieldKind.BOOLEAN:

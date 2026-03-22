@@ -7,6 +7,7 @@ using InMemoryWalStream and real SQLite.
 Run:
   pytest tests/benchmarks/bench_batch_applier.py -v -s --benchmark-disable
 """
+
 from __future__ import annotations
 
 import json
@@ -139,56 +140,56 @@ class TestBatchApplierThroughput:
     @pytest.mark.asyncio
     async def test_batch_size_1(self, tmp_path):
         """Baseline: no batching (batch_size=1)."""
-        result = await _run_applier_benchmark(
-            str(tmp_path), self.NUM_EVENTS, batch_size=1
+        result = await _run_applier_benchmark(str(tmp_path), self.NUM_EVENTS, batch_size=1)
+        print(
+            f"\n  batch_size=1:   {result['throughput']:>8.1f} events/sec  "
+            f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)"
         )
-        print(f"\n  batch_size=1:   {result['throughput']:>8.1f} events/sec  "
-              f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)")
 
     @pytest.mark.asyncio
     async def test_batch_size_5(self, tmp_path):
         """Batch size 5."""
-        result = await _run_applier_benchmark(
-            str(tmp_path), self.NUM_EVENTS, batch_size=5
+        result = await _run_applier_benchmark(str(tmp_path), self.NUM_EVENTS, batch_size=5)
+        print(
+            f"\n  batch_size=5:   {result['throughput']:>8.1f} events/sec  "
+            f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)"
         )
-        print(f"\n  batch_size=5:   {result['throughput']:>8.1f} events/sec  "
-              f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)")
 
     @pytest.mark.asyncio
     async def test_batch_size_10(self, tmp_path):
         """Batch size 10."""
-        result = await _run_applier_benchmark(
-            str(tmp_path), self.NUM_EVENTS, batch_size=10
+        result = await _run_applier_benchmark(str(tmp_path), self.NUM_EVENTS, batch_size=10)
+        print(
+            f"\n  batch_size=10:  {result['throughput']:>8.1f} events/sec  "
+            f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)"
         )
-        print(f"\n  batch_size=10:  {result['throughput']:>8.1f} events/sec  "
-              f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)")
 
     @pytest.mark.asyncio
     async def test_batch_size_20(self, tmp_path):
         """Batch size 20."""
-        result = await _run_applier_benchmark(
-            str(tmp_path), self.NUM_EVENTS, batch_size=20
+        result = await _run_applier_benchmark(str(tmp_path), self.NUM_EVENTS, batch_size=20)
+        print(
+            f"\n  batch_size=20:  {result['throughput']:>8.1f} events/sec  "
+            f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)"
         )
-        print(f"\n  batch_size=20:  {result['throughput']:>8.1f} events/sec  "
-              f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)")
 
     @pytest.mark.asyncio
     async def test_batch_size_50(self, tmp_path):
         """Batch size 50."""
-        result = await _run_applier_benchmark(
-            str(tmp_path), self.NUM_EVENTS, batch_size=50
+        result = await _run_applier_benchmark(str(tmp_path), self.NUM_EVENTS, batch_size=50)
+        print(
+            f"\n  batch_size=50:  {result['throughput']:>8.1f} events/sec  "
+            f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)"
         )
-        print(f"\n  batch_size=50:  {result['throughput']:>8.1f} events/sec  "
-              f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)")
 
     @pytest.mark.asyncio
     async def test_batch_size_100(self, tmp_path):
         """Batch size 100."""
-        result = await _run_applier_benchmark(
-            str(tmp_path), self.NUM_EVENTS, batch_size=100
+        result = await _run_applier_benchmark(str(tmp_path), self.NUM_EVENTS, batch_size=100)
+        print(
+            f"\n  batch_size=100: {result['throughput']:>8.1f} events/sec  "
+            f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)"
         )
-        print(f"\n  batch_size=100: {result['throughput']:>8.1f} events/sec  "
-              f"({result['elapsed_sec']:.3f}s, {result['avg_latency_ms']:.3f}ms/event)")
 
 
 class TestBatchApplierComparison:
@@ -210,11 +211,11 @@ class TestBatchApplierComparison:
 
         baseline = results[0]["throughput"]
 
-        print(f"\n{'='*72}")
+        print(f"\n{'=' * 72}")
         print(f"BATCH APPLIER THROUGHPUT COMPARISON ({num_events} events)")
-        print(f"{'='*72}")
+        print(f"{'=' * 72}")
         print(f"{'Batch Size':>12} {'Throughput':>14} {'Latency':>12} {'Speedup':>10} {'Time':>10}")
-        print(f"{'-'*72}")
+        print(f"{'-' * 72}")
         for r in results:
             speedup = r["throughput"] / baseline
             print(
@@ -224,4 +225,4 @@ class TestBatchApplierComparison:
                 f"{speedup:>9.2f}x "
                 f"{r['elapsed_sec']:>9.3f}s"
             )
-        print(f"{'='*72}")
+        print(f"{'=' * 72}")

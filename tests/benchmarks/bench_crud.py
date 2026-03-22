@@ -15,6 +15,7 @@ Run:
   pytest tests/benchmarks/bench_crud.py -v --benchmark-only
   pytest tests/benchmarks/bench_crud.py -v --benchmark-columns=mean,stddev,rounds,iterations
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -24,6 +25,7 @@ import pytest
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 
 # --- Fixtures ---
+
 
 @pytest.fixture
 def store(tmp_path):
@@ -72,6 +74,7 @@ def populated_store(initialized_store):
 
 
 # --- Node Create Benchmarks ---
+
 
 class TestNodeCreateBenchmarks:
     """Benchmark node creation operations."""
@@ -166,6 +169,7 @@ class TestNodeCreateBenchmarks:
 
 # --- Node Read Benchmarks ---
 
+
 class TestNodeReadBenchmarks:
     """Benchmark node read operations."""
 
@@ -174,9 +178,7 @@ class TestNodeReadBenchmarks:
         store, node_ids = populated_store
 
         def run():
-            return asyncio.get_event_loop().run_until_complete(
-                store.get_node("bench", "node-0500")
-            )
+            return asyncio.get_event_loop().run_until_complete(store.get_node("bench", "node-0500"))
 
         node = benchmark(run)
         assert node is not None
@@ -221,6 +223,7 @@ class TestNodeReadBenchmarks:
 
 # --- Node Update Benchmarks ---
 
+
 class TestNodeUpdateBenchmarks:
     """Benchmark node update operations."""
 
@@ -232,9 +235,7 @@ class TestNodeUpdateBenchmarks:
         def run():
             counter[0] += 1
             return asyncio.get_event_loop().run_until_complete(
-                store.update_node(
-                    "bench", "node-0100", {"name": f"Updated {counter[0]}"}
-                )
+                store.update_node("bench", "node-0100", {"name": f"Updated {counter[0]}"})
             )
 
         node = benchmark(run)
@@ -265,6 +266,7 @@ class TestNodeUpdateBenchmarks:
 
 
 # --- Node Delete Benchmarks ---
+
 
 class TestNodeDeleteBenchmarks:
     """Benchmark node deletion (including cascade to edges and visibility)."""
@@ -300,6 +302,7 @@ class TestNodeDeleteBenchmarks:
 
 
 # --- Edge Benchmarks ---
+
 
 class TestEdgeBenchmarks:
     """Benchmark edge operations."""
@@ -366,6 +369,7 @@ class TestEdgeBenchmarks:
 
 # --- Idempotency Benchmarks ---
 
+
 class TestIdempotencyBenchmarks:
     """Benchmark idempotency check and record operations."""
 
@@ -420,6 +424,7 @@ class TestIdempotencyBenchmarks:
 
 # --- Multi-Tenant Benchmarks ---
 
+
 class TestMultiTenantBenchmarks:
     """Benchmark operations across multiple tenants."""
 
@@ -446,12 +451,8 @@ class TestMultiTenantBenchmarks:
         def run():
             counter[0] += 1
             tid = f"mt-{counter[0] % 10}"
-            node = loop.run_until_complete(
-                store.create_node(tid, 1, {"n": counter[0]}, "user")
-            )
-            fetched = loop.run_until_complete(
-                store.get_node(tid, node.node_id)
-            )
+            node = loop.run_until_complete(store.create_node(tid, 1, {"n": counter[0]}, "user"))
+            fetched = loop.run_until_complete(store.get_node(tid, node.node_id))
             return fetched
 
         result = benchmark(run)
@@ -459,6 +460,7 @@ class TestMultiTenantBenchmarks:
 
 
 # --- Scale Benchmarks ---
+
 
 class TestScaleBenchmarks:
     """Benchmark behavior at scale."""
@@ -468,9 +470,7 @@ class TestScaleBenchmarks:
         store, _ = populated_store
 
         def run():
-            return asyncio.get_event_loop().run_until_complete(
-                store.get_node("bench", "node-0999")
-            )
+            return asyncio.get_event_loop().run_until_complete(store.get_node("bench", "node-0999"))
 
         node = benchmark(run)
         assert node is not None

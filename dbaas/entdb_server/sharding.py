@@ -50,9 +50,7 @@ class ShardingConfig:
         node_id = os.getenv("NODE_ID", "default")
 
         tenants_str = os.getenv("ASSIGNED_TENANTS", "")
-        assigned = frozenset(
-            t.strip() for t in tenants_str.split(",") if t.strip()
-        )
+        assigned = frozenset(t.strip() for t in tenants_str.split(",") if t.strip())
 
         # Optional tenant registry for routing hints
         registry_str = os.getenv("TENANT_REGISTRY", "")

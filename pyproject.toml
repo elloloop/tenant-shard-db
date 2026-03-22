@@ -30,34 +30,43 @@ dependencies = []
 
 [project.optional-dependencies]
 server = [
-    "aiokafka>=0.10.0",
-    "aiobotocore>=2.11.0",
-    "aiohttp>=3.9.0",
-    "grpcio>=1.60.0",
+    "aiokafka==0.10.0",
+    "aiobotocore==2.11.2",
+    "aiohttp==3.9.5",
+    "grpcio==1.60.1",
 ]
 pubsub = [
-    "google-cloud-pubsub>=2.18.0",
+    "google-cloud-pubsub==2.18.4",
 ]
 servicebus = [
-    "azure-servicebus>=7.11.0",
+    "azure-servicebus==7.11.4",
+]
+eventhubs = [
+    "azure-eventhub==5.11.7",
+]
+azure-storage = [
+    "azure-storage-blob==12.19.1",
+]
+gcs = [
+    "google-cloud-storage==2.14.0",
 ]
 sdk = [
-    "grpcio>=1.60.0",
-    "protobuf>=4.25.0",
+    "grpcio==1.60.1",
+    "protobuf==4.25.3",
 ]
 dev = [
     "entdb[server,sdk]",
-    "pytest>=7.4.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=4.1.0",
-    "pytest-timeout>=2.2.0",
-    "ruff>=0.1.0",
-    "mypy>=1.8.0",
-    "httpx>=0.26.0",
-    "grpcio-tools>=1.60.0",
+    "pytest==7.4.4",
+    "pytest-asyncio==0.23.8",
+    "pytest-cov==4.1.0",
+    "pytest-timeout==2.2.0",
+    "ruff==0.15.7",
+    "mypy==1.19.1",
+    "httpx==0.26.0",
+    "grpcio-tools==1.60.1",
 ]
 all = [
-    "entdb[server,sdk,pubsub,servicebus,dev]",
+    "entdb[server,sdk,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
 ]
 
 [project.scripts]
@@ -90,6 +99,8 @@ exclude = [
     "__pycache__",
     "build",
     "dist",
+    "*_generated*",
+    "*/generated/*",
 ]
 
 [tool.ruff.lint]
@@ -162,10 +173,14 @@ module = [
     "dbaas.entdb_server.wal.pubsub",
     "dbaas.entdb_server.wal.sqs",
     "dbaas.entdb_server.wal.servicebus",
+    "dbaas.entdb_server.wal.eventhubs",
     "dbaas.entdb_server.tools.restore",
     "dbaas.entdb_server.tools.schema_cli",
     "dbaas.entdb_server.snapshot.snapshotter",
     "dbaas.entdb_server.archive.archiver",
+    "dbaas.entdb_server.storage.s3",
+    "dbaas.entdb_server.storage.azure_blob",
+    "dbaas.entdb_server.storage.gcs",
 ]
 strict_optional = false
 warn_return_any = false

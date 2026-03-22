@@ -1,6 +1,7 @@
 """
 Unit tests for multi-node tenant sharding.
 """
+
 from __future__ import annotations
 
 import pytest

@@ -10,6 +10,7 @@ Run:
 This script is run directly (not via pytest) because it orchestrates
 Docker containers externally.
 """
+
 from __future__ import annotations
 
 import json
@@ -160,13 +161,23 @@ def build_bench_image():
 def run_benchmark(tier: dict, batch_size: int, num_events: int) -> dict | None:
     """Run benchmark inside a constrained container."""
     cmd = [
-        "docker", "run", "--rm",
-        "--cpus", tier["cpus"],
-        "--memory", tier["memory"],
-        "-v", "/Users/arun/projects/opensource/tenant-shard-db:/app:ro",
-        "-w", "/app",
+        "docker",
+        "run",
+        "--rm",
+        "--cpus",
+        tier["cpus"],
+        "--memory",
+        tier["memory"],
+        "-v",
+        "/Users/arun/projects/opensource/tenant-shard-db:/app:ro",
+        "-w",
+        "/app",
         "entdb-bench",
-        "python", "-c", BENCH_SCRIPT, str(num_events), str(batch_size),
+        "python",
+        "-c",
+        BENCH_SCRIPT,
+        str(num_events),
+        str(batch_size),
     ]
 
     try:
@@ -249,16 +260,16 @@ def main():
     print("\nCAPACITY vs COLLEGE WORKLOAD (500 writes/sec peak)")
     print("-" * 60)
     for res in all_results:
-        best = max(
-            res.get(f"bs{bs}", {}).get("throughput", 0)
-            for bs in BATCH_SIZES
-        )
+        best = max(res.get(f"bs{bs}", {}).get("throughput", 0) for bs in BATCH_SIZES)
         headroom = best / 500 if best > 0 else 0
         status = "OK" if headroom >= 1.5 else "TIGHT" if headroom >= 1.0 else "NO"
         print(f"  {res['tier']:<30} {best:>8.0f}/sec  {headroom:>5.1f}x headroom  [{status}]")
 
     # Save raw results
-    with open("/Users/arun/projects/opensource/tenant-shard-db/tests/benchmarks/container-results.json", "w") as f:
+    with open(
+        "/Users/arun/projects/opensource/tenant-shard-db/tests/benchmarks/container-results.json",
+        "w",
+    ) as f:
         json.dump(all_results, f, indent=2)
     print("\nRaw results saved to tests/benchmarks/container-results.json")
 

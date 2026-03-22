@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 class RecoveryTier(Enum):
     """Recovery data source tiers, in priority order."""
+
     SNAPSHOT = "snapshot"
     KAFKA_WAL = "kafka_wal"
     S3_ARCHIVE = "s3_archive"
@@ -54,6 +55,7 @@ class TierResult:
         skipped: Whether the tier was skipped (disabled or unavailable)
         skip_reason: Why the tier was skipped
     """
+
     tier: RecoveryTier
     success: bool
     events_replayed: int = 0
@@ -73,6 +75,7 @@ class RecoveryPlan:
         snapshot_key: S3 key of the snapshot to restore (if found)
         snapshot_stream_pos: Last stream position in the snapshot
     """
+
     tenant_id: str
     tiers: list[RecoveryTier] = field(default_factory=list)
     snapshot_key: str | None = None
@@ -92,6 +95,7 @@ class RecoveryResult:
         duration_ms: Total recovery duration in milliseconds
         error: Error message if failed
     """
+
     success: bool
     tier_results: list[TierResult] = field(default_factory=list)
     snapshot_used: str | None = None
@@ -116,9 +120,7 @@ class SnapshotProvider(Protocol):
 class KafkaReplayProvider(Protocol):
     """Protocol for replaying events from Kafka."""
 
-    async def check_kafka_coverage(
-        self, topic: str, start_pos: str | None
-    ) -> bool:
+    async def check_kafka_coverage(self, topic: str, start_pos: str | None) -> bool:
         """Check if Kafka still has events from the given position."""
         ...
 
@@ -221,9 +223,7 @@ class RecoveryStrategy:
         """Alias for plan() for readability."""
         return await self.plan(tenant_id)
 
-    async def execute(
-        self, plan_or_tenant: RecoveryPlan | str, db_path: str
-    ) -> RecoveryResult:
+    async def execute(self, plan_or_tenant: RecoveryPlan | str, db_path: str) -> RecoveryResult:
         """Execute the recovery plan tier by tier.
 
         Args:
@@ -272,16 +272,14 @@ class RecoveryStrategy:
             else:
                 # Tier failed — try next tier
                 logger.warning(
-                    f"Recovery tier {tier.value} failed: {tier_result.error}. "
-                    "Trying next tier."
+                    f"Recovery tier {tier.value} failed: {tier_result.error}. Trying next tier."
                 )
                 continue
 
         # If only snapshot was available and succeeded, that's still a success
         if not result.success and len(result.tier_results) > 0:
             snapshot_results = [
-                r for r in result.tier_results
-                if r.tier == RecoveryTier.SNAPSHOT and r.success
+                r for r in result.tier_results if r.tier == RecoveryTier.SNAPSHOT and r.success
             ]
             if snapshot_results:
                 result.success = True
@@ -290,6 +288,7 @@ class RecoveryStrategy:
         if result.success and self._verify:
             try:
                 import sqlite3
+
                 conn = sqlite3.connect(db_path)
                 try:
                     cursor = conn.execute("PRAGMA integrity_check")
@@ -347,16 +346,12 @@ class RecoveryStrategy:
             elif tier == RecoveryTier.S3_ARCHIVE:
                 return await self._execute_archive(plan, db_path, current_pos)
             else:
-                return TierResult(
-                    tier=tier, success=False, error=f"Unknown tier: {tier}"
-                )
+                return TierResult(tier=tier, success=False, error=f"Unknown tier: {tier}")
         except Exception as e:
             logger.error(f"Tier {tier.value} error: {e}", exc_info=True)
             return TierResult(tier=tier, success=False, error=str(e))
 
-    async def _execute_snapshot(
-        self, plan: RecoveryPlan, db_path: str
-    ) -> TierResult:
+    async def _execute_snapshot(self, plan: RecoveryPlan, db_path: str) -> TierResult:
         """Restore from snapshot."""
         if not self._snapshot or not plan.snapshot_key:
             return TierResult(
@@ -400,16 +395,14 @@ class RecoveryStrategy:
 
         # Check if Kafka has data from our position
         start_pos = current_pos or plan.snapshot_stream_pos
-        has_data = await self._kafka.check_kafka_coverage(
-            self._kafka_topic, start_pos
-        )
+        has_data = await self._kafka.check_kafka_coverage(self._kafka_topic, start_pos)
 
         if not has_data:
             return TierResult(
                 tier=RecoveryTier.KAFKA_WAL,
                 success=False,
                 error="Kafka data does not cover the required position "
-                      "(retention may have expired)",
+                "(retention may have expired)",
             )
 
         events, final_pos = await self._kafka.replay_from_kafka(

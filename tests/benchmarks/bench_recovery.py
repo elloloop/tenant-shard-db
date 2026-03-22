@@ -3,6 +3,7 @@ Recovery strategy performance benchmarks.
 
 Run: pytest tests/benchmarks/bench_recovery.py -v --benchmark-only
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -14,6 +15,7 @@ from dbaas.entdb_server.tools.recovery_strategy import (
 )
 
 # --- Mock providers for benchmarks ---
+
 
 class BenchSnapshotProvider:
     """Creates a real SQLite database for benchmarking."""
@@ -129,6 +131,7 @@ class BenchArchiveProvider:
 
 # --- Plan benchmarks ---
 
+
 class TestPlanBenchmarks:
     """Benchmark recovery plan creation."""
 
@@ -141,15 +144,14 @@ class TestPlanBenchmarks:
         )
 
         def run():
-            return asyncio.get_event_loop().run_until_complete(
-                strategy.plan("bench-tenant")
-            )
+            return asyncio.get_event_loop().run_until_complete(strategy.plan("bench-tenant"))
 
         plan = benchmark(run)
         assert len(plan.tiers) == 3
 
 
 # --- Execute benchmarks ---
+
 
 class TestExecuteBenchmarks:
     """Benchmark full recovery execution."""

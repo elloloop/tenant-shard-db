@@ -639,10 +639,7 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             tenant_ids = self.canonical_store.list_tenants()
             if self._sharding and self._sharding.is_multi_node:
-                tenant_ids = [
-                    tid for tid in tenant_ids
-                    if self._sharding.is_mine(tid)
-                ]
+                tenant_ids = [tid for tid in tenant_ids if self._sharding.is_mine(tid)]
             return ListTenantsResponse(
                 tenants=[TenantInfo(tenant_id=tid) for tid in tenant_ids],
             )

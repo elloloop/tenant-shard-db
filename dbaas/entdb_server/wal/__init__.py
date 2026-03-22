@@ -30,6 +30,7 @@ from .base import (
     WalTimeoutError,
     create_wal_stream,
 )
+from .eventhubs import EventHubsWalStream
 from .kafka import KafkaWalStream
 from .kinesis import KinesisWalStream
 from .memory import InMemoryWalStream
@@ -54,4 +55,5 @@ __all__ = [
     "PubSubWalStream",
     "SqsWalStream",
     "ServiceBusWalStream",
+    "EventHubsWalStream",
 ]
