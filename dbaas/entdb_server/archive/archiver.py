@@ -261,9 +261,7 @@ class Archiver:
             segment.size_estimate += len(record.value)
 
             # Check if segment should be flushed
-            if self.flush_mode == "individual":
-                await self._flush_segment(segment_key)
-            elif (
+            if self.flush_mode == "individual" or (
                 segment.size_estimate >= self.max_segment_size_bytes
                 or len(segment.events) >= self.max_segment_events
             ):

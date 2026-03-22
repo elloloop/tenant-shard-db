@@ -739,10 +739,7 @@ class MailboxStore:
                 # The original _get_db_path replaces ":" with "_"
                 # We restore the first "_" to ":" to get e.g. "user:42"
                 idx = safe_user.find("_")
-                if idx != -1:
-                    user_id = safe_user[:idx] + ":" + safe_user[idx + 1:]
-                else:
-                    user_id = safe_user
+                user_id = safe_user[:idx] + ":" + safe_user[idx + 1:] if idx != -1 else safe_user
                 users.append(user_id)
         return users
 
