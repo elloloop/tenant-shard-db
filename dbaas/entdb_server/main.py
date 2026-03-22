@@ -283,6 +283,10 @@ class Server:
                 if self.config.wal_backend == WalBackend.KAFKA
                 else "entdb-applier",
                 schema_fingerprint=fingerprint,
+                batch_size=self.config.applier.batch_size,
+                poll_timeout_ms=self.config.kafka.poll_timeout_ms
+                if self.config.wal_backend == WalBackend.KAFKA
+                else 100,
             )
             applier_task = asyncio.create_task(self.applier.start())
             self._tasks.append(applier_task)

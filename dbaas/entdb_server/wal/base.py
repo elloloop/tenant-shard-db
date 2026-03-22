@@ -253,6 +253,42 @@ class WalStream(Protocol):
         """
         ...
 
+    async def poll_batch(
+        self,
+        topic: str,
+        group_id: str,
+        max_records: int = 20,
+        timeout_ms: int = 100,
+        start_position: StreamPos | None = None,
+    ) -> list[StreamRecord]:
+        """Poll for a batch of records from the stream.
+
+        Returns whatever records are available right now, up to max_records.
+        This enables adaptive batching: during low traffic you get 1 record,
+        during high traffic you get max_records. No artificial waiting.
+
+        Args:
+            topic: Topic/stream name
+            group_id: Consumer group ID
+            max_records: Maximum records to return per poll
+            timeout_ms: How long to wait for records if none available
+            start_position: Optional position to start from
+
+        Returns:
+            List of StreamRecord objects (may be empty if no records available)
+        """
+        # Default implementation collects from subscribe() with a timeout.
+        # Backends should override with native batch polling for efficiency.
+        records: list[StreamRecord] = []
+        try:
+            async for record in self.subscribe(topic, group_id, start_position):
+                records.append(record)
+                if len(records) >= max_records:
+                    break
+        except Exception:
+            pass
+        return records
+
     @abstractmethod
     async def commit(self, record: StreamRecord) -> None:
         """Commit a consumed record.

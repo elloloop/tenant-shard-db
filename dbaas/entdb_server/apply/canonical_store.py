@@ -299,6 +299,88 @@ class CanonicalStore:
             VALUES (1, strftime('%s', 'now') * 1000);
         """)
 
+    @contextmanager
+    def batch_transaction(self, tenant_id: str) -> Iterator[sqlite3.Connection]:
+        """Open a single transaction for multiple operations.
+
+        Use this to batch multiple creates/updates/deletes into one
+        SQLite transaction, amortizing the fsync cost across all operations.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Yields:
+            SQLite connection with an open transaction
+
+        Example:
+            >>> with store.batch_transaction("tenant_1") as conn:
+            ...     for event in batch:
+            ...         store.create_node_raw(conn, ...)
+        """
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    def create_node_raw(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        payload: dict[str, Any],
+        owner_actor: str,
+        node_id: str | None = None,
+        acl: list[dict[str, str]] | None = None,
+        created_at: int | None = None,
+    ) -> Node:
+        """Create a node within an existing transaction (no BEGIN/COMMIT).
+
+        Use inside batch_transaction() for batched writes.
+
+        Args:
+            conn: SQLite connection with open transaction
+            tenant_id: Tenant identifier
+            type_id: Node type identifier
+            payload: Field values
+            owner_actor: Actor creating the node
+            node_id: Optional specific node ID
+            acl: Access control list entries
+            created_at: Optional creation timestamp
+
+        Returns:
+            Created Node object
+        """
+        if node_id is None:
+            node_id = str(uuid.uuid4())
+        now = created_at or int(time.time() * 1000)
+        acl = acl or []
+
+        conn.execute(
+            """
+            INSERT INTO nodes (tenant_id, node_id, type_id, payload_json,
+                               created_at, updated_at, owner_actor, acl_blob)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (tenant_id, node_id, type_id, json.dumps(payload), now, now, owner_actor, json.dumps(acl)),
+        )
+
+        self._update_visibility(conn, tenant_id, node_id, owner_actor, acl)
+
+        return Node(
+            tenant_id=tenant_id,
+            node_id=node_id,
+            type_id=type_id,
+            payload=payload,
+            created_at=now,
+            updated_at=now,
+            owner_actor=owner_actor,
+            acl=acl,
+        )
+
     async def initialize_tenant(self, tenant_id: str) -> None:
         """Initialize database for a new tenant.
 

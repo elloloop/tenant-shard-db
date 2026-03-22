@@ -1,0 +1,97 @@
+[
+  {
+    "tier": "shared-cpu-1x (256MB)",
+    "label": "free",
+    "bs1": {
+      "throughput": 371.6,
+      "elapsed": 1.346,
+      "latency_ms": 2.691
+    },
+    "bs10": {
+      "throughput": 3073.7,
+      "elapsed": 0.163,
+      "latency_ms": 0.325
+    },
+    "bs50": {
+      "throughput": 5011.7,
+      "elapsed": 0.1,
+      "latency_ms": 0.2
+    }
+  },
+  {
+    "tier": "shared-cpu-1x (512MB)",
+    "label": "small",
+    "bs1": {
+      "throughput": 505.9,
+      "elapsed": 0.988,
+      "latency_ms": 1.977
+    },
+    "bs10": {
+      "throughput": 2963.8,
+      "elapsed": 0.169,
+      "latency_ms": 0.337
+    },
+    "bs50": {
+      "throughput": 3775.7,
+      "elapsed": 0.132,
+      "latency_ms": 0.265
+    }
+  },
+  {
+    "tier": "shared-cpu-1x (1GB)",
+    "label": "medium",
+    "bs1": {
+      "throughput": 531.1,
+      "elapsed": 0.941,
+      "latency_ms": 1.883
+    },
+    "bs10": {
+      "throughput": 3491.9,
+      "elapsed": 0.143,
+      "latency_ms": 0.286
+    },
+    "bs50": {
+      "throughput": 14954.9,
+      "elapsed": 0.033,
+      "latency_ms": 0.067
+    }
+  },
+  {
+    "tier": "performance-2x (2GB)",
+    "label": "standard",
+    "bs1": {
+      "throughput": 448.4,
+      "elapsed": 1.115,
+      "latency_ms": 2.23
+    },
+    "bs10": {
+      "throughput": 2382.8,
+      "elapsed": 0.21,
+      "latency_ms": 0.42
+    },
+    "bs50": {
+      "throughput": 10732.9,
+      "elapsed": 0.047,
+      "latency_ms": 0.093
+    }
+  },
+  {
+    "tier": "performance-4x (4GB)",
+    "label": "large",
+    "bs1": {
+      "throughput": 311.6,
+      "elapsed": 1.605,
+      "latency_ms": 3.209
+    },
+    "bs10": {
+      "throughput": 3103.1,
+      "elapsed": 0.161,
+      "latency_ms": 0.322
+    },
+    "bs50": {
+      "throughput": 12138.6,
+      "elapsed": 0.041,
+      "latency_ms": 0.082
+    }
+  }
+]

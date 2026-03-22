@@ -181,6 +181,8 @@ class Applier:
         schema_fingerprint: str | None = None,
         acl_manager: AclManager | None = None,
         fanout_config: MailboxFanoutConfig | None = None,
+        batch_size: int = 1,
+        poll_timeout_ms: int = 100,
     ) -> None:
         """Initialize the applier.
 
@@ -202,6 +204,8 @@ class Applier:
         self.schema_fingerprint = schema_fingerprint
         self.acl_manager = acl_manager or get_acl_manager()
         self.fanout_config = fanout_config or MailboxFanoutConfig()
+        self.batch_size = batch_size
+        self.poll_timeout_ms = poll_timeout_ms
 
         self._running = False
         self._processed_count = 0
@@ -213,54 +217,33 @@ class Applier:
         """Start the applier loop.
 
         This runs until stop() is called, consuming and applying events.
+
+        When batch_size > 1, uses poll_batch() to fetch multiple records
+        at once from the WAL and applies them in a single SQLite transaction.
+        This dramatically improves throughput by amortizing the fsync cost.
+
+        When batch_size == 1 (default), uses the original single-record
+        subscribe() loop for backward compatibility.
         """
         if self._running:
             logger.warning("Applier already running")
             return
 
         self._running = True
-        logger.info("Starting applier", extra={"topic": self.topic, "group_id": self.group_id})
+        logger.info(
+            "Starting applier",
+            extra={
+                "topic": self.topic,
+                "group_id": self.group_id,
+                "batch_size": self.batch_size,
+            },
+        )
 
         try:
-            async for record in self.wal.subscribe(self.topic, self.group_id):  # type: ignore[attr-defined]
-                if not self._running:
-                    break
-
-                result = await self._process_record(record)
-
-                if result.success and not result.skipped:
-                    self._processed_count += 1
-                    logger.debug(
-                        "Applied event",
-                        extra={
-                            "tenant_id": result.event.tenant_id,
-                            "idempotency_key": result.event.idempotency_key,
-                            "nodes": len(result.created_nodes),
-                            "edges": len(result.created_edges),
-                        },
-                    )
-                elif result.skipped:
-                    logger.debug(
-                        "Skipped duplicate event",
-                        extra={
-                            "tenant_id": result.event.tenant_id,
-                            "idempotency_key": result.event.idempotency_key,
-                        },
-                    )
-                else:
-                    self._error_count += 1
-                    logger.error(
-                        "Failed to apply event",
-                        extra={
-                            "tenant_id": result.event.tenant_id,
-                            "idempotency_key": result.event.idempotency_key,
-                            "error": result.error,
-                        },
-                    )
-
-                # Commit the position
-                await self.wal.commit(record)
-                self._last_position = record.position
+            if self.batch_size > 1:
+                await self._start_batched()
+            else:
+                await self._start_single()
 
         except asyncio.CancelledError:
             logger.info("Applier cancelled")
@@ -270,6 +253,92 @@ class Applier:
 
         finally:
             self._running = False
+
+    async def _start_single(self) -> None:
+        """Original single-record processing loop."""
+        async for record in self.wal.subscribe(self.topic, self.group_id):  # type: ignore[attr-defined]
+            if not self._running:
+                break
+
+            result = await self._process_record(record)
+            self._log_result(result)
+
+            # Commit the position
+            await self.wal.commit(record)
+            self._last_position = record.position
+
+    async def _start_batched(self) -> None:
+        """Batch processing loop using poll_batch().
+
+        Fetches whatever records are available (up to batch_size),
+        applies them all, then commits the last record's position.
+        During low traffic, this degrades to single-record processing.
+        During high traffic, it batches up to batch_size for one commit.
+        """
+        while self._running:
+            records = await self.wal.poll_batch(  # type: ignore[attr-defined]
+                topic=self.topic,
+                group_id=self.group_id,
+                max_records=self.batch_size,
+                timeout_ms=self.poll_timeout_ms,
+            )
+
+            if not records:
+                continue
+
+            # Apply all records in this batch
+            for record in records:
+                if not self._running:
+                    break
+
+                result = await self._process_record(record)
+                self._log_result(result)
+
+            # Commit only the last record's position
+            last_record = records[-1]
+            await self.wal.commit(last_record)
+            self._last_position = last_record.position
+
+            if len(records) > 1:
+                logger.debug(
+                    "Applied batch",
+                    extra={
+                        "batch_size": len(records),
+                        "last_offset": last_record.position.offset,
+                    },
+                )
+
+    def _log_result(self, result: ApplyResult) -> None:
+        """Log the result of applying an event."""
+        if result.success and not result.skipped:
+            self._processed_count += 1
+            logger.debug(
+                "Applied event",
+                extra={
+                    "tenant_id": result.event.tenant_id,
+                    "idempotency_key": result.event.idempotency_key,
+                    "nodes": len(result.created_nodes),
+                    "edges": len(result.created_edges),
+                },
+            )
+        elif result.skipped:
+            logger.debug(
+                "Skipped duplicate event",
+                extra={
+                    "tenant_id": result.event.tenant_id,
+                    "idempotency_key": result.event.idempotency_key,
+                },
+            )
+        else:
+            self._error_count += 1
+            logger.error(
+                "Failed to apply event",
+                extra={
+                    "tenant_id": result.event.tenant_id,
+                    "idempotency_key": result.event.idempotency_key,
+                    "error": result.error,
+                },
+            )
 
     async def stop(self) -> None:
         """Stop the applier loop."""
