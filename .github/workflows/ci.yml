@@ -67,8 +67,11 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -e ".[dev]"
 
-      - name: Run unit tests
-        run: pytest tests/unit -v --cov=dbaas --cov=sdk --cov-report=xml
+      - name: Install parallel runner
+        run: uv pip install --system pytest-xdist==3.5.0
+
+      - name: Run unit tests (parallel)
+        run: pytest tests/unit -v -n auto --cov=dbaas --cov=sdk --cov-report=xml
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
@@ -91,8 +94,11 @@ jobs:
       - name: Install dependencies
         run: uv pip install --system -e ".[dev]"
 
-      - name: Run integration tests
-        run: pytest tests/integration -v
+      - name: Install parallel runner
+        run: uv pip install --system pytest-xdist==3.5.0
+
+      - name: Run integration tests (parallel)
+        run: pytest tests/integration -v -n auto
 
   schema-compat:
     name: Schema Compatibility Check
