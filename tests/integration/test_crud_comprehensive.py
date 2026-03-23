@@ -550,7 +550,13 @@ class TestApplierFullFlow:
             schema_fingerprint=None,
             ts_ms=int(time.time() * 1000),
             ops=[
-                {"op": "create_node", "type_id": 1, "id": "a", "data": {"name": "A"}, "as": "nodeA"},
+                {
+                    "op": "create_node",
+                    "type_id": 1,
+                    "id": "a",
+                    "data": {"name": "A"},
+                    "as": "nodeA",
+                },
                 {"op": "create_node", "type_id": 1, "id": "b", "data": {"name": "B"}},
                 {"op": "create_edge", "edge_id": 1, "from": "a", "to": "b"},
             ],
@@ -603,12 +609,14 @@ class TestApplierFullFlow:
         assert r1.success and not r1.skipped
 
         # Blocked tenant: create a mock record to test _process_record
-        event_bytes = json.dumps({
-            "tenant_id": "blocked",
-            "actor": "user:1",
-            "idempotency_key": "nope",
-            "ops": [{"op": "create_node", "type_id": 1, "data": {}}],
-        }).encode()
+        event_bytes = json.dumps(
+            {
+                "tenant_id": "blocked",
+                "actor": "user:1",
+                "idempotency_key": "nope",
+                "ops": [{"op": "create_node", "type_id": 1, "data": {}}],
+            }
+        ).encode()
         await wal.append("test-wal", "blocked", event_bytes)
 
         records = await wal.poll_batch("test-wal", "test", max_records=1)
