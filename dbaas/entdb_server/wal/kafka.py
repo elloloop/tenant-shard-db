@@ -457,6 +457,91 @@ class KafkaWalStream:
             logger.warning(f"Failed to get positions: {e}")
             return {}
 
+    async def poll_batch(
+        self,
+        topic: str,
+        group_id: str,
+        max_records: int = 20,
+        timeout_ms: int = 100,
+        start_position: StreamPos | None = None,
+    ) -> list[StreamRecord]:
+        """Poll for a batch of records from Kafka.
+
+        Uses aiokafka's getmany() for efficient batch consumption.
+        Returns whatever records are available, up to max_records.
+
+        Args:
+            topic: Kafka topic name
+            group_id: Consumer group ID
+            max_records: Maximum records to return per poll
+            timeout_ms: How long to wait for records if none available
+            start_position: Optional position to start from
+
+        Returns:
+            List of StreamRecord objects (may be empty)
+        """
+        # Ensure consumer is set up for this topic/group
+        if (
+            not self._consumer
+            or self._consumer_topic != topic
+            or self._consumer_group != group_id
+        ):
+            if self._consumer:
+                await self._consumer.stop()
+
+            consumer_config = {
+                "bootstrap_servers": self.config.brokers,
+                "group_id": group_id,
+                "auto_offset_reset": self.config.auto_offset_reset,
+                "enable_auto_commit": False,
+                "max_poll_records": max_records,
+                "session_timeout_ms": 30000,
+                "heartbeat_interval_ms": 10000,
+            }
+
+            if self.config.security_protocol != "PLAINTEXT":
+                consumer_config["security_protocol"] = self.config.security_protocol
+            if self.config.sasl_mechanism:
+                consumer_config["sasl_mechanism"] = self.config.sasl_mechanism
+                consumer_config["sasl_plain_username"] = self.config.sasl_username
+                consumer_config["sasl_plain_password"] = self.config.sasl_password
+            if self.config.ssl_cafile:
+                consumer_config["ssl_cafile"] = self.config.ssl_cafile
+
+            self._consumer = AIOKafkaConsumer(topic, **consumer_config)
+            await self._consumer.start()
+            self._consumer_topic = topic
+            self._consumer_group = group_id
+
+            if start_position and start_position.topic == topic:
+                tp = TopicPartition(topic, start_position.partition)
+                self._consumer.seek(tp, start_position.offset)
+
+        # Fetch a batch of messages
+        data = await self._consumer.getmany(
+            timeout_ms=timeout_ms, max_records=max_records
+        )
+
+        records: list[StreamRecord] = []
+        for tp, messages in data.items():
+            for msg in messages:
+                headers = dict(msg.headers) if msg.headers else {}
+                records.append(
+                    StreamRecord(
+                        key=msg.key.decode("utf-8") if msg.key else "",
+                        value=msg.value,
+                        position=StreamPos(
+                            topic=msg.topic,
+                            partition=msg.partition,
+                            offset=msg.offset,
+                            timestamp_ms=msg.timestamp or int(time.time() * 1000),
+                        ),
+                        headers=headers,
+                    )
+                )
+
+        return records
+
     async def health_check(self) -> bool:
         """Check if Kafka connection is healthy.
 
