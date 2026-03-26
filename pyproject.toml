@@ -33,7 +33,7 @@ server = [
     "aiokafka==0.10.0",
     "aiobotocore==2.11.2",
     "aiohttp==3.9.5",
-    "grpcio==1.60.1",
+    "grpcio==1.63.2",
 ]
 pubsub = [
     "google-cloud-pubsub==2.18.4",
@@ -59,7 +59,7 @@ tracing = [
     "opentelemetry-exporter-otlp-proto-grpc==1.29.0",
 ]
 sdk = [
-    "grpcio==1.60.1",
+    "grpcio==1.63.2",
     "protobuf==4.25.3",
 ]
 dev = [
@@ -71,7 +71,7 @@ dev = [
     "ruff==0.15.7",
     "mypy==1.19.1",
     "httpx==0.26.0",
-    "grpcio-tools==1.60.1",
+    "grpcio-tools==1.63.2",
 ]
 all = [
     "entdb[server,sdk,metrics,tracing,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
