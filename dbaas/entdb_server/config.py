@@ -61,6 +61,9 @@ class GrpcConfig:
         auth_api_keys: Set of valid API keys (empty = auth disabled)
         tls_cert_file: Path to TLS certificate file (PEM)
         tls_key_file: Path to TLS private key file (PEM)
+        rate_limit_enabled: Whether per-tenant rate limiting is enabled
+        rate_limit_rps: Requests per second per tenant
+        rate_limit_burst: Burst capacity per tenant
     """
 
     bind_address: str = "0.0.0.0:50051"
@@ -71,6 +74,9 @@ class GrpcConfig:
     auth_api_keys: frozenset[str] = frozenset()
     tls_cert_file: str | None = None
     tls_key_file: str | None = None
+    rate_limit_enabled: bool = False
+    rate_limit_rps: float = 100.0
+    rate_limit_burst: int = 200
 
     @classmethod
     def from_env(cls) -> GrpcConfig:
@@ -86,6 +92,9 @@ class GrpcConfig:
             ),
             tls_cert_file=os.getenv("GRPC_TLS_CERT"),
             tls_key_file=os.getenv("GRPC_TLS_KEY"),
+            rate_limit_enabled=os.getenv("RATE_LIMIT_ENABLED", "false").lower() == "true",
+            rate_limit_rps=float(os.getenv("RATE_LIMIT_RPS", "100.0")),
+            rate_limit_burst=int(os.getenv("RATE_LIMIT_BURST", "200")),
         )
 
 
