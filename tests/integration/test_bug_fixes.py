@@ -113,9 +113,6 @@ class TestAtomicIdempotency:
         assert r2.success and r2.skipped
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="apply_event() single path lacks atomic idempotency — batch path is fixed"
-    )
     async def test_concurrent_same_event_only_one_applies(self, tmp_path):
         """Two concurrent tasks applying the same event: only one
         should create the node."""
@@ -895,9 +892,6 @@ class TestPartialEventProtection:
         assert recorded is False, "Idempotency key recorded despite partial failure"
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="apply_event() single path lacks atomic rollback — batch path is fixed"
-    )
     async def test_retry_after_partial_failure(self, tmp_path):
         """Event fails mid-way, retry after fixing -- all ops apply."""
         applier, store, _, _ = await _make_applier(tmp_path)
@@ -944,9 +938,6 @@ class TestPartialEventProtection:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.xfail(
-        reason="apply_event() single path lacks atomic rollback — batch path is fixed"
-    )
     async def test_multi_op_all_or_nothing(self, tmp_path):
         """Event with 5 creates: if any fails, none should be in DB.
         Tests atomicity of the apply_event path."""
