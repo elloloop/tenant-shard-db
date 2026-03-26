@@ -417,8 +417,8 @@ class Applier:
                         )
                     elif op_type == "create_edge":
                         edge_type_id = op["edge_id"]
-                        from_ref = self._resolve_ref(op["from"])
-                        to_ref = self._resolve_ref(op["to"])
+                        from_ref = self._resolve_node_ref(op["from"])
+                        to_ref = self._resolve_node_ref(op["to"])
                         props = op.get("props", {})
                         conn.execute(
                             "INSERT OR REPLACE INTO edges "
@@ -435,8 +435,8 @@ class Applier:
                         )
                     elif op_type == "delete_edge":
                         edge_type_id = op["edge_id"]
-                        from_ref = self._resolve_ref(op["from"])
-                        to_ref = self._resolve_ref(op["to"])
+                        from_ref = self._resolve_node_ref(op["from"])
+                        to_ref = self._resolve_node_ref(op["to"])
                         conn.execute(
                             "DELETE FROM edges WHERE tenant_id = ? AND edge_type_id = ? "
                             "AND from_node_id = ? AND to_node_id = ?",
@@ -502,10 +502,11 @@ class Applier:
         logger.info("Stopping applier")
 
     async def apply_event(self, event: TransactionEvent) -> ApplyResult:
-        """Apply a single transaction event.
+        """Apply a single transaction event atomically.
 
-        This is the core application logic, separate from the stream
-        consumption loop for testability.
+        All operations + idempotency check + record happen in a single
+        SQLite transaction. If any operation fails, everything rolls back
+        (including the idempotency record), so retries are safe.
 
         Args:
             event: Transaction event to apply
@@ -517,68 +518,146 @@ class Applier:
         if not await self.canonical_store.tenant_exists(event.tenant_id):
             await self.canonical_store.initialize_tenant(event.tenant_id)
 
-        # Check idempotency
-        if await self.canonical_store.check_idempotency(event.tenant_id, event.idempotency_key):
-            return ApplyResult(
-                success=True,
-                event=event,
-                skipped=True,
-            )
-
         # Check schema fingerprint if required
         if self.schema_fingerprint and event.schema_fingerprint:
             if event.schema_fingerprint != self.schema_fingerprint:
                 return ApplyResult(
                     success=False,
                     event=event,
-                    error=f"Schema mismatch: expected {self.schema_fingerprint}, got {event.schema_fingerprint}",
+                    error=f"Schema mismatch: expected {self.schema_fingerprint}, "
+                    f"got {event.schema_fingerprint}",
                 )
 
-        # Apply operations
+        # Apply all operations atomically in a single transaction
         try:
-            created_nodes = []
-            created_edges = []
+            created_nodes: list[str] = []
+            created_edges: list[tuple] = []
             self._node_alias_map.clear()
+            tenant_id = event.tenant_id
 
-            for op in event.ops:
-                op_type = op.get("op")
+            with self.canonical_store.batch_transaction(tenant_id) as conn:
+                # Check idempotency within the transaction
+                cursor = conn.execute(
+                    "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
+                    (tenant_id, event.idempotency_key),
+                )
+                if cursor.fetchone():
+                    # Already applied — rollback is automatic since we
+                    # haven't modified anything, but batch_transaction
+                    # will COMMIT the empty transaction (harmless).
+                    return ApplyResult(success=True, event=event, skipped=True)
 
-                if op_type == "create_node":
-                    node = await self._apply_create_node(event, op)
-                    created_nodes.append(node.node_id)
+                for op in event.ops:
+                    op_type = op.get("op")
 
-                    # Store alias for references
-                    alias = op.get("as")
-                    if alias:
-                        self._node_alias_map[alias] = node.node_id
+                    if op_type == "create_node":
+                        node = self.canonical_store.create_node_raw(
+                            conn,
+                            tenant_id=tenant_id,
+                            type_id=op["type_id"],
+                            payload=op.get("data", {}),
+                            owner_actor=event.actor,
+                            node_id=op.get("id"),
+                            acl=op.get("acl", []),
+                            created_at=event.ts_ms,
+                        )
+                        created_nodes.append(node.node_id)
+                        alias = op.get("as")
+                        if alias:
+                            self._node_alias_map[alias] = node.node_id
 
-                    # Trigger mailbox fanout if configured
-                    if self.fanout_config.enabled:
-                        await self._fanout_node(event, node, op)
+                    elif op_type == "update_node":
+                        node_id = self._resolve_ref(op.get("id", ""))
+                        patch = op.get("patch", {})
+                        cursor = conn.execute(
+                            "SELECT payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            existing = json.loads(
+                                row[0] if isinstance(row, tuple) else row["payload_json"]
+                            )
+                            existing.update(patch)
+                            conn.execute(
+                                "UPDATE nodes SET payload_json = ?, updated_at = ? "
+                                "WHERE tenant_id = ? AND node_id = ?",
+                                (json.dumps(existing), event.ts_ms, tenant_id, node_id),
+                            )
 
-                elif op_type == "update_node":
-                    await self._apply_update_node(event, op)
+                    elif op_type == "delete_node":
+                        node_id = self._resolve_ref(op.get("id", ""))
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND (from_node_id = ? OR to_node_id = ?)",
+                            (tenant_id, node_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
 
-                elif op_type == "delete_node":
-                    await self._apply_delete_node(event, op)
+                    elif op_type == "create_edge":
+                        edge_type_id = op["edge_id"]
+                        from_ref = self._resolve_node_ref(op["from"])
+                        to_ref = self._resolve_node_ref(op["to"])
+                        props = op.get("props", {})
+                        conn.execute(
+                            "INSERT OR REPLACE INTO edges "
+                            "(tenant_id, edge_type_id, from_node_id, to_node_id, "
+                            "props_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            (
+                                tenant_id,
+                                edge_type_id,
+                                from_ref,
+                                to_ref,
+                                json.dumps(props),
+                                event.ts_ms,
+                            ),
+                        )
+                        created_edges.append((edge_type_id, from_ref, to_ref))
 
-                elif op_type == "create_edge":
-                    edge = await self._apply_create_edge(event, op)
-                    created_edges.append((edge.edge_type_id, edge.from_node_id, edge.to_node_id))
+                    elif op_type == "delete_edge":
+                        edge_type_id = op["edge_id"]
+                        from_ref = self._resolve_node_ref(op["from"])
+                        to_ref = self._resolve_node_ref(op["to"])
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND edge_type_id = ? AND from_node_id = ? "
+                            "AND to_node_id = ?",
+                            (tenant_id, edge_type_id, from_ref, to_ref),
+                        )
 
-                elif op_type == "delete_edge":
-                    await self._apply_delete_edge(event, op)
+                    else:
+                        logger.warning(f"Unknown operation type: {op_type}")
 
-                else:
-                    logger.warning(f"Unknown operation type: {op_type}")
+                # Record the event as applied — same transaction
+                stream_pos_str = str(event.stream_pos) if event.stream_pos else None
+                conn.execute(
+                    "INSERT INTO applied_events "
+                    "(tenant_id, idempotency_key, stream_pos, applied_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        tenant_id,
+                        event.idempotency_key,
+                        stream_pos_str,
+                        int(time.time() * 1000),
+                    ),
+                )
 
-            # Record the event as applied
-            stream_pos_str = str(event.stream_pos) if event.stream_pos else None
-            await self.canonical_store.record_applied_event(
-                event.tenant_id,
-                event.idempotency_key,
-                stream_pos_str,
-            )
+            # Mailbox fanout happens AFTER the transaction commits
+            # (outside the batch_transaction context manager)
+            if self.fanout_config.enabled and created_nodes:
+                for op in event.ops:
+                    if op.get("op") == "create_node":
+                        node_id = op.get("id") or created_nodes[0]
+                        node = await self.canonical_store.get_node(tenant_id, node_id)
+                        if node:
+                            await self._fanout_node(event, node, op)
 
             return ApplyResult(
                 success=True,
