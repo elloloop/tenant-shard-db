@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 import grpc
 from grpc import aio as grpc_aio
 
+from ..metrics import record_grpc_request
 from ..sharding import ShardingConfig
 from .generated import (
     Edge,
@@ -129,87 +130,95 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> ExecuteAtomicResponse:
         """Execute an atomic transaction."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
+        try:
+            self._check_tenant(request.context.tenant_id, context)
 
-        # Extract context
-        ctx = request.context
-        if not ctx.tenant_id:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
-        if not ctx.actor:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
-        if not request.operations:
-            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "operations list is empty")
+            # Extract context
+            ctx = request.context
+            if not ctx.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+            if not ctx.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.operations:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "operations list is empty")
 
-        # Generate idempotency key if not provided
-        idempotency_key = request.idempotency_key or str(uuid.uuid4())
+            # Generate idempotency key if not provided
+            idempotency_key = request.idempotency_key or str(uuid.uuid4())
 
-        # Validate schema fingerprint if provided
-        if request.schema_fingerprint and self.schema_registry.fingerprint:
-            if request.schema_fingerprint != self.schema_registry.fingerprint:
-                return ExecuteAtomicResponse(
-                    success=False,
-                    error=f"Schema mismatch: server has {self.schema_registry.fingerprint}",
-                    error_code="SCHEMA_MISMATCH",
+            # Validate schema fingerprint if provided
+            if request.schema_fingerprint and self.schema_registry.fingerprint:
+                if request.schema_fingerprint != self.schema_registry.fingerprint:
+                    record_grpc_request("ExecuteAtomic", "ok", time.perf_counter() - start)
+                    return ExecuteAtomicResponse(
+                        success=False,
+                        error=f"Schema mismatch: server has {self.schema_registry.fingerprint}",
+                        error_code="SCHEMA_MISMATCH",
+                    )
+
+            # Convert operations to internal format
+            ops = self._convert_operations(request.operations)
+
+            # Assign IDs to create_node ops that don't have one
+            created_node_ids = []
+            for op in ops:
+                if op.get("op") == "create_node":
+                    if not op.get("id"):
+                        op["id"] = str(uuid.uuid4())
+                    created_node_ids.append(op["id"])
+
+            # Build transaction event
+            event = {
+                "tenant_id": ctx.tenant_id,
+                "actor": ctx.actor,
+                "idempotency_key": idempotency_key,
+                "schema_fingerprint": self.schema_registry.fingerprint,
+                "ts_ms": int(time.time() * 1000),
+                "ops": ops,
+            }
+
+            try:
+                # Append to WAL
+                event_bytes = json.dumps(event).encode("utf-8")
+                stream_pos = await self.wal.append(
+                    self.topic,
+                    ctx.tenant_id,  # Partition key
+                    event_bytes,
                 )
 
-        # Convert operations to internal format
-        ops = self._convert_operations(request.operations)
+                receipt = Receipt(
+                    tenant_id=ctx.tenant_id,
+                    idempotency_key=idempotency_key,
+                    stream_position=str(stream_pos) if stream_pos else "",
+                )
 
-        # Assign IDs to create_node ops that don't have one
-        created_node_ids = []
-        for op in ops:
-            if op.get("op") == "create_node":
-                if not op.get("id"):
-                    op["id"] = str(uuid.uuid4())
-                created_node_ids.append(op["id"])
+                # Wait for application if requested
+                applied_status = ReceiptStatus.RECEIPT_STATUS_PENDING
+                if request.wait_applied:
+                    timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                    applied = await self._wait_for_applied(ctx.tenant_id, idempotency_key, timeout)
+                    if applied:
+                        applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
 
-        # Build transaction event
-        event = {
-            "tenant_id": ctx.tenant_id,
-            "actor": ctx.actor,
-            "idempotency_key": idempotency_key,
-            "schema_fingerprint": self.schema_registry.fingerprint,
-            "ts_ms": int(time.time() * 1000),
-            "ops": ops,
-        }
+                record_grpc_request("ExecuteAtomic", "ok", time.perf_counter() - start)
+                return ExecuteAtomicResponse(
+                    success=True,
+                    receipt=receipt,
+                    created_node_ids=created_node_ids,
+                    applied_status=applied_status,
+                )
 
-        try:
-            # Append to WAL
-            event_bytes = json.dumps(event).encode("utf-8")
-            stream_pos = await self.wal.append(
-                self.topic,
-                ctx.tenant_id,  # Partition key
-                event_bytes,
-            )
-
-            receipt = Receipt(
-                tenant_id=ctx.tenant_id,
-                idempotency_key=idempotency_key,
-                stream_position=str(stream_pos) if stream_pos else "",
-            )
-
-            # Wait for application if requested
-            applied_status = ReceiptStatus.RECEIPT_STATUS_PENDING
-            if request.wait_applied:
-                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
-                applied = await self._wait_for_applied(ctx.tenant_id, idempotency_key, timeout)
-                if applied:
-                    applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
-
-            return ExecuteAtomicResponse(
-                success=True,
-                receipt=receipt,
-                created_node_ids=created_node_ids,
-                applied_status=applied_status,
-            )
-
-        except Exception as e:
-            logger.error(f"ExecuteAtomic failed: {e}", exc_info=True)
-            return ExecuteAtomicResponse(
-                success=False,
-                error=str(e),
-                error_code="INTERNAL",
-            )
+            except Exception as e:
+                logger.error(f"ExecuteAtomic failed: {e}", exc_info=True)
+                record_grpc_request("ExecuteAtomic", "error", time.perf_counter() - start)
+                return ExecuteAtomicResponse(
+                    success=False,
+                    error=str(e),
+                    error_code="INTERNAL",
+                )
+        except Exception:
+            record_grpc_request("ExecuteAtomic", "error", time.perf_counter() - start)
+            raise
 
     def _convert_operations(self, operations: list) -> list[dict[str, Any]]:
         """Convert protobuf operations to internal format."""
@@ -316,8 +325,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetReceiptStatusResponse:
         """Get the status of a transaction receipt."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             applied = await self.canonical_store.check_idempotency(
                 request.context.tenant_id,
                 request.idempotency_key,
@@ -327,8 +337,10 @@ class EntDBServicer(EntDBServiceServicer):
                 if applied
                 else ReceiptStatus.RECEIPT_STATUS_PENDING
             )
+            record_grpc_request("GetReceiptStatus", "ok", time.perf_counter() - start)
             return GetReceiptStatusResponse(status=status)
         except Exception as e:
+            record_grpc_request("GetReceiptStatus", "error", time.perf_counter() - start)
             return GetReceiptStatusResponse(
                 status=ReceiptStatus.RECEIPT_STATUS_UNKNOWN,
                 error=str(e),
@@ -340,15 +352,18 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetNodeResponse:
         """Get a node by ID."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             node = await self.canonical_store.get_node(
                 request.context.tenant_id,
                 request.node_id,
             )
             if not node:
+                record_grpc_request("GetNode", "ok", time.perf_counter() - start)
                 return GetNodeResponse(found=False)
 
+            record_grpc_request("GetNode", "ok", time.perf_counter() - start)
             return GetNodeResponse(
                 found=True,
                 node=Node(
@@ -363,6 +378,7 @@ class EntDBServicer(EntDBServiceServicer):
                 ),
             )
         except Exception as e:
+            record_grpc_request("GetNode", "error", time.perf_counter() - start)
             logger.error(f"GetNode failed: {e}", exc_info=True)
             return GetNodeResponse(found=False)
 
@@ -372,8 +388,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetNodesResponse:
         """Get multiple nodes by IDs."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             nodes = []
             missing_ids = []
 
@@ -398,8 +415,10 @@ class EntDBServicer(EntDBServiceServicer):
                 else:
                     missing_ids.append(node_id)
 
+            record_grpc_request("GetNodes", "ok", time.perf_counter() - start)
             return GetNodesResponse(nodes=nodes, missing_ids=missing_ids)
         except Exception as e:
+            record_grpc_request("GetNodes", "error", time.perf_counter() - start)
             logger.error(f"GetNodes failed: {e}", exc_info=True)
             return GetNodesResponse(nodes=[], missing_ids=list(request.node_ids))
 
@@ -409,8 +428,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> QueryNodesResponse:
         """Query nodes by type with optional payload filtering."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             filter_dict = None
             if request.filter_json:
                 try:
@@ -442,11 +462,13 @@ class EntDBServicer(EntDBServiceServicer):
                 for n in nodes
             ]
 
+            record_grpc_request("QueryNodes", "ok", time.perf_counter() - start)
             return QueryNodesResponse(
                 nodes=proto_nodes,
                 has_more=len(nodes) == (request.limit or 100),
             )
         except Exception as e:
+            record_grpc_request("QueryNodes", "error", time.perf_counter() - start)
             logger.error(f"QueryNodes failed: {e}", exc_info=True)
             return QueryNodesResponse(nodes=[])
 
@@ -456,8 +478,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetEdgesResponse:
         """Get outgoing edges from a node."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             edge_type_id = request.edge_type_id if request.edge_type_id else None
             edges = await self.canonical_store.get_edges_from(
                 request.context.tenant_id,
@@ -478,8 +501,10 @@ class EntDBServicer(EntDBServiceServicer):
                 for e in edges[:limit]
             ]
 
+            record_grpc_request("GetEdgesFrom", "ok", time.perf_counter() - start)
             return GetEdgesResponse(edges=proto_edges, has_more=len(edges) > limit)
         except Exception as e:
+            record_grpc_request("GetEdgesFrom", "error", time.perf_counter() - start)
             logger.error(f"GetEdgesFrom failed: {e}", exc_info=True)
             return GetEdgesResponse(edges=[])
 
@@ -489,8 +514,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetEdgesResponse:
         """Get incoming edges to a node."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             edge_type_id = request.edge_type_id if request.edge_type_id else None
             edges = await self.canonical_store.get_edges_to(
                 request.context.tenant_id,
@@ -511,8 +537,10 @@ class EntDBServicer(EntDBServiceServicer):
                 for e in edges[:limit]
             ]
 
+            record_grpc_request("GetEdgesTo", "ok", time.perf_counter() - start)
             return GetEdgesResponse(edges=proto_edges, has_more=len(edges) > limit)
         except Exception as e:
+            record_grpc_request("GetEdgesTo", "error", time.perf_counter() - start)
             logger.error(f"GetEdgesTo failed: {e}", exc_info=True)
             return GetEdgesResponse(edges=[])
 
@@ -522,8 +550,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> SearchMailboxResponse:
         """Search mailbox with full-text search."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             source_type_ids = list(request.source_type_ids) if request.source_type_ids else None
             results = await self.mailbox_store.search(
                 request.context.tenant_id,
@@ -553,11 +582,13 @@ class EntDBServicer(EntDBServiceServicer):
                 for r in results
             ]
 
+            record_grpc_request("SearchMailbox", "ok", time.perf_counter() - start)
             return SearchMailboxResponse(
                 results=proto_results,
                 has_more=len(results) == (request.limit or 20),
             )
         except Exception as e:
+            record_grpc_request("SearchMailbox", "error", time.perf_counter() - start)
             logger.error(f"SearchMailbox failed: {e}", exc_info=True)
             return SearchMailboxResponse(results=[])
 
@@ -567,8 +598,9 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> GetMailboxResponse:
         """Get mailbox items for a user."""
-        self._check_tenant(request.context.tenant_id, context)
+        start = time.perf_counter()
         try:
+            self._check_tenant(request.context.tenant_id, context)
             source_type_id = request.source_type_id if request.source_type_id else None
             thread_id = request.thread_id if request.thread_id else None
 
@@ -602,12 +634,14 @@ class EntDBServicer(EntDBServiceServicer):
                 for item in items
             ]
 
+            record_grpc_request("GetMailbox", "ok", time.perf_counter() - start)
             return GetMailboxResponse(
                 items=proto_items,
                 unread_count=unread_count,
                 has_more=len(items) == (request.limit or 50),
             )
         except Exception as e:
+            record_grpc_request("GetMailbox", "error", time.perf_counter() - start)
             logger.error(f"GetMailbox failed: {e}", exc_info=True)
             return GetMailboxResponse(items=[], unread_count=0)
 
@@ -617,28 +651,34 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> HealthResponse:
         """Get server health status."""
-        components = {}
-
-        # Check WAL connection
+        start = time.perf_counter()
         try:
-            wal_healthy = self.wal.is_connected if hasattr(self.wal, "is_connected") else True
-            components["wal"] = "healthy" if wal_healthy else "unhealthy"
+            components = {}
+
+            # Check WAL connection
+            try:
+                wal_healthy = self.wal.is_connected if hasattr(self.wal, "is_connected") else True
+                components["wal"] = "healthy" if wal_healthy else "unhealthy"
+            except Exception:
+                components["wal"] = "unknown"
+
+            components["storage"] = "healthy"
+
+            if self._sharding and self._sharding.is_multi_node:
+                components["node_id"] = self._sharding.node_id
+                components["assigned_tenants"] = ",".join(sorted(self._sharding.assigned_tenants))
+
+            overall_healthy = all(v == "healthy" for v in components.values())
+
+            record_grpc_request("Health", "ok", time.perf_counter() - start)
+            return HealthResponse(
+                healthy=overall_healthy,
+                version="1.0.0",
+                components=components,
+            )
         except Exception:
-            components["wal"] = "unknown"
-
-        components["storage"] = "healthy"
-
-        if self._sharding and self._sharding.is_multi_node:
-            components["node_id"] = self._sharding.node_id
-            components["assigned_tenants"] = ",".join(sorted(self._sharding.assigned_tenants))
-
-        overall_healthy = all(v == "healthy" for v in components.values())
-
-        return HealthResponse(
-            healthy=overall_healthy,
-            version="1.0.0",
-            components=components,
-        )
+            record_grpc_request("Health", "error", time.perf_counter() - start)
+            raise
 
     async def ListTenants(
         self,
@@ -646,14 +686,17 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> ListTenantsResponse:
         """List all tenants that have data."""
+        start = time.perf_counter()
         try:
             tenant_ids = self.canonical_store.list_tenants()
             if self._sharding and self._sharding.is_multi_node:
                 tenant_ids = [tid for tid in tenant_ids if self._sharding.is_mine(tid)]
+            record_grpc_request("ListTenants", "ok", time.perf_counter() - start)
             return ListTenantsResponse(
                 tenants=[TenantInfo(tenant_id=tid) for tid in tenant_ids],
             )
         except Exception as e:
+            record_grpc_request("ListTenants", "error", time.perf_counter() - start)
             logger.error(f"ListTenants failed: {e}", exc_info=True)
             return ListTenantsResponse(tenants=[])
 
@@ -681,6 +724,7 @@ class EntDBServicer(EntDBServiceServicer):
         Returns registry schema. When registry is empty and tenant_id is provided,
         builds minimal schema from distinct type_ids in the data.
         """
+        start = time.perf_counter()
         try:
             schema_dict = self.schema_registry.to_dict()
             has_registry_types = bool(
@@ -732,11 +776,13 @@ class EntDBServicer(EntDBServiceServicer):
                     or e.get("to_type_id") == request.type_id
                 ]
 
+            record_grpc_request("GetSchema", "ok", time.perf_counter() - start)
             return GetSchemaResponse(
                 schema_json=json.dumps(schema_dict),
                 fingerprint=self.schema_registry.fingerprint or "",
             )
         except Exception as e:
+            record_grpc_request("GetSchema", "error", time.perf_counter() - start)
             logger.error(f"GetSchema failed: {e}", exc_info=True)
             return GetSchemaResponse(schema_json="{}", fingerprint="")
 

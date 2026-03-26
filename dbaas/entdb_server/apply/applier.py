@@ -466,8 +466,11 @@ class Applier:
 
     def _log_result(self, result: ApplyResult) -> None:
         """Log the result of applying an event."""
+        from ..metrics import record_applier_event
+
         if result.success and not result.skipped:
             self._processed_count += 1
+            record_applier_event("applied")
             logger.debug(
                 "Applied event",
                 extra={
@@ -478,6 +481,7 @@ class Applier:
                 },
             )
         elif result.skipped:
+            record_applier_event("skipped")
             logger.debug(
                 "Skipped duplicate event",
                 extra={
@@ -487,6 +491,7 @@ class Applier:
             )
         else:
             self._error_count += 1
+            record_applier_event("error")
             logger.error(
                 "Failed to apply event",
                 extra={
