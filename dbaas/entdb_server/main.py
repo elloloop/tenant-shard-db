@@ -296,6 +296,12 @@ class Server:
             )
             await self.grpc_server.start()
 
+            # Start Prometheus metrics if enabled
+            if self.config.observability.metrics_enabled:
+                from .metrics import init_metrics
+
+                init_metrics(self.config.observability.metrics_port)
+
             # Start applier
             if self.config.wal_backend == WalBackend.KAFKA:
                 group_id = self.config.kafka.consumer_group
