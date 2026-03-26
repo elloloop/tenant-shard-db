@@ -408,14 +408,24 @@ class EntDBServicer(EntDBServiceServicer):
         request: QueryNodesRequest,
         context: grpc_aio.ServicerContext,
     ) -> QueryNodesResponse:
-        """Query nodes by type."""
+        """Query nodes by type with optional payload filtering."""
         self._check_tenant(request.context.tenant_id, context)
         try:
-            nodes = await self.canonical_store.get_nodes_by_type(
-                request.context.tenant_id,
-                request.type_id,
+            filter_dict = None
+            if request.filter_json:
+                try:
+                    filter_dict = json.loads(request.filter_json)
+                except json.JSONDecodeError:
+                    filter_dict = None
+
+            nodes = await self.canonical_store.query_nodes(
+                tenant_id=request.context.tenant_id,
+                type_id=request.type_id,
+                filter_json=filter_dict,
                 limit=request.limit or 100,
                 offset=request.offset or 0,
+                order_by=request.order_by or "created_at",
+                descending=request.descending,
             )
 
             proto_nodes = [
@@ -757,6 +767,9 @@ class GrpcServer:
         auth_api_keys: frozenset[str] = frozenset(),
         tls_cert_file: str | None = None,
         tls_key_file: str | None = None,
+        rate_limit_enabled: bool = False,
+        rate_limit_rps: float = 100.0,
+        rate_limit_burst: int = 200,
     ) -> None:
         """Initialize the gRPC server.
 
@@ -770,6 +783,9 @@ class GrpcServer:
             auth_api_keys: Set of valid API keys
             tls_cert_file: Path to TLS certificate file (PEM)
             tls_key_file: Path to TLS private key file (PEM)
+            rate_limit_enabled: Whether per-tenant rate limiting is enabled
+            rate_limit_rps: Requests per second per tenant
+            rate_limit_burst: Burst capacity per tenant
         """
         self.servicer = servicer
         self.host = host
@@ -780,6 +796,9 @@ class GrpcServer:
         self.auth_api_keys = auth_api_keys
         self.tls_cert_file = tls_cert_file
         self.tls_key_file = tls_key_file
+        self.rate_limit_enabled = rate_limit_enabled
+        self.rate_limit_rps = rate_limit_rps
+        self.rate_limit_burst = rate_limit_burst
         self._server: grpc_aio.Server | None = None
         self._running = False
 
@@ -791,6 +810,14 @@ class GrpcServer:
 
         # Build interceptor list
         interceptors = []
+        if self.rate_limit_enabled:
+            from .rate_limiter import RateLimitInterceptor
+
+            interceptors.append(RateLimitInterceptor(self.rate_limit_rps, self.rate_limit_burst))
+            logger.info(
+                "Rate limiting enabled",
+                extra={"rps": self.rate_limit_rps, "burst": self.rate_limit_burst},
+            )
         if self.auth_enabled and self.auth_api_keys:
             from .auth import ApiKeyInterceptor
 

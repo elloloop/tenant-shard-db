@@ -60,6 +60,7 @@ Table schema:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import sqlite3
@@ -143,7 +144,7 @@ class CanonicalStore:
     - Transaction support
 
     Thread safety:
-        Each database connection is created per-operation.
+        One pooled connection per tenant database file.
         SQLite handles concurrent access via WAL mode.
 
     Example:
@@ -180,11 +181,16 @@ class CanonicalStore:
         self.busy_timeout_ms = busy_timeout_ms
         self.cache_size_pages = cache_size_pages
         self._connections: dict[str, sqlite3.Connection] = {}
+        # Single-thread executor — SQLite connections are not thread-safe,
+        # so all DB ops must run on the same thread when using connection pooling.
+        from concurrent.futures import ThreadPoolExecutor
+
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entdb-sqlite")
 
     async def _run_sync(self, fn: Callable, *args: Any) -> Any:
-        """Run a synchronous function in the default executor to avoid blocking the event loop."""
+        """Run a synchronous function in a dedicated thread to avoid blocking the event loop."""
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, fn, *args)
+        return await loop.run_in_executor(self._executor, fn, *args)
 
     def _get_db_path(self, tenant_id: str) -> Path:
         """Get database file path for a tenant."""
@@ -195,6 +201,9 @@ class CanonicalStore:
     @contextmanager
     def _get_connection(self, tenant_id: str, create: bool = False) -> Iterator[sqlite3.Connection]:
         """Get a database connection for a tenant.
+
+        Returns a pooled connection (one per tenant db path). Connections are
+        reused across operations and PRAGMAs are configured only once.
 
         Args:
             tenant_id: Tenant identifier
@@ -214,15 +223,18 @@ class CanonicalStore:
         # Ensure directory exists
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        conn = sqlite3.connect(
-            str(db_path),
-            timeout=self.busy_timeout_ms / 1000.0,
-            isolation_level=None,  # Autocommit by default, explicit transactions
-        )
-        conn.row_factory = sqlite3.Row
+        # Reuse cached connection
+        cache_key = str(db_path)
+        if cache_key not in self._connections:
+            conn = sqlite3.connect(
+                str(db_path),
+                timeout=self.busy_timeout_ms / 1000.0,
+                isolation_level=None,  # Autocommit by default, explicit transactions
+                check_same_thread=False,
+            )
+            conn.row_factory = sqlite3.Row
 
-        try:
-            # Configure connection
+            # Configure connection — only once per cached connection
             conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
             conn.execute(f"PRAGMA cache_size = {self.cache_size_pages}")
             if self.wal_mode:
@@ -230,9 +242,17 @@ class CanonicalStore:
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA foreign_keys = ON")
 
-            yield conn
-        finally:
-            conn.close()
+            self._connections[cache_key] = conn
+
+        yield self._connections[cache_key]
+        # Don't close — connection is pooled
+
+    def close_all(self) -> None:
+        """Close all pooled connections."""
+        for conn in self._connections.values():
+            with contextlib.suppress(Exception):
+                conn.close()
+        self._connections.clear()
 
     def _create_schema(self, conn: sqlite3.Connection) -> None:
         """Create database schema."""
@@ -845,6 +865,73 @@ class CanonicalStore:
             List of nodes
         """
         return await self._run_sync(self._sync_get_nodes_by_type, tenant_id, type_id, limit, offset)
+
+    # ── query_nodes (with payload filtering) ─────────────────────────
+
+    def _sync_query_nodes(
+        self,
+        tenant_id: str,
+        type_id: int,
+        filter_json: dict[str, Any] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        order_by: str = "created_at",
+        descending: bool = True,
+    ) -> list[Node]:
+        """Query nodes with optional payload field filtering."""
+        with self._get_connection(tenant_id) as conn:
+            order = "DESC" if descending else "ASC"
+            valid_columns = {"created_at", "updated_at", "node_id", "type_id"}
+            if order_by not in valid_columns:
+                order_by = "created_at"
+
+            cursor = conn.execute(
+                f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
+                f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
+                (tenant_id, type_id, limit, offset),
+            )
+
+            nodes = []
+            for row in cursor.fetchall():
+                payload = json.loads(row["payload_json"])
+                if filter_json:
+                    if not all(payload.get(k) == v for k, v in filter_json.items()):
+                        continue
+                nodes.append(
+                    Node(
+                        tenant_id=row["tenant_id"],
+                        node_id=row["node_id"],
+                        type_id=row["type_id"],
+                        payload=payload,
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        owner_actor=row["owner_actor"],
+                        acl=json.loads(row["acl_blob"]),
+                    )
+                )
+            return nodes
+
+    async def query_nodes(
+        self,
+        tenant_id: str,
+        type_id: int,
+        filter_json: dict[str, Any] | None = None,
+        limit: int = 100,
+        offset: int = 0,
+        order_by: str = "created_at",
+        descending: bool = True,
+    ) -> list[Node]:
+        """Query nodes with optional payload filtering."""
+        return await self._run_sync(
+            self._sync_query_nodes,
+            tenant_id,
+            type_id,
+            filter_json,
+            limit,
+            offset,
+            order_by,
+            descending,
+        )
 
     # ── create_edge ────────────────────────────────────────────────────
 

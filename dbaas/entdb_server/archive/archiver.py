@@ -120,6 +120,7 @@ class Archiver:
         flush_mode: str = "batched",
         min_segment_events: int = 1,
         s3_storage_class: str = "STANDARD",
+        deduplicate: bool = True,
     ) -> None:
         """Initialize the archiver.
 
@@ -135,6 +136,7 @@ class Archiver:
             flush_mode: How events are flushed ("batched", "individual", "disabled")
             min_segment_events: Minimum events required to flush a segment
             s3_storage_class: S3 storage class for archive objects
+            deduplicate: Whether to skip duplicate events (by tenant, partition, offset)
         """
         self.wal = wal
         self.s3_config = s3_config
@@ -147,6 +149,7 @@ class Archiver:
         self.flush_mode = flush_mode  # "batched", "individual", "disabled"
         self.min_segment_events = min_segment_events
         self.s3_storage_class = s3_storage_class
+        self.deduplicate = deduplicate
 
         self._running = False
         self._pending_segments: dict[str, PendingSegment] = {}  # key = tenant:partition
@@ -154,6 +157,7 @@ class Archiver:
         self._archived_count = 0
         self._s3_client = None
         self._session = None
+        self._archived_offsets: set[tuple[str, int, int]] = set()  # (tenant, partition, offset)
 
     async def start(self) -> None:
         """Start the archiver loop."""
@@ -238,6 +242,16 @@ class Archiver:
             event_data = record.value_json()
             tenant_id = event_data.get("tenant_id", "unknown")
             partition = record.position.partition
+
+            if self.deduplicate:
+                dedup_key = (tenant_id, partition, record.position.offset)
+                if dedup_key in self._archived_offsets:
+                    logger.debug(
+                        "Skipping duplicate archive event",
+                        extra={"offset": record.position.offset},
+                    )
+                    return
+                self._archived_offsets.add(dedup_key)
 
             # Create archive entry
             archive_entry = {
@@ -341,6 +355,14 @@ class Archiver:
                 s3_key=s3_key,
                 created_at=int(time.time() * 1000),
             )
+
+            if self.deduplicate:
+                # Clean up dedup set for flushed offsets
+                flushed_offsets = {
+                    (segment.tenant_id, segment.partition, entry["position"]["offset"])
+                    for entry in segment.events
+                }
+                self._archived_offsets -= flushed_offsets
 
             logger.info(
                 "Flushed archive segment",
