@@ -65,7 +65,7 @@ import logging
 import sqlite3
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,7 +180,11 @@ class CanonicalStore:
         self.busy_timeout_ms = busy_timeout_ms
         self.cache_size_pages = cache_size_pages
         self._connections: dict[str, sqlite3.Connection] = {}
-        self._lock = asyncio.Lock()
+
+    async def _run_sync(self, fn: Callable, *args: Any) -> Any:
+        """Run a synchronous function in the default executor to avoid blocking the event loop."""
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, fn, *args)
 
     def _get_db_path(self, tenant_id: str) -> Path:
         """Get database file path for a tenant."""
@@ -398,14 +402,27 @@ class CanonicalStore:
         Args:
             tenant_id: Tenant identifier
         """
-        async with self._lock:
-            with self._get_connection(tenant_id, create=True) as conn:
-                self._create_schema(conn)
-                logger.info(f"Initialized tenant database: {tenant_id}")
+        with self._get_connection(tenant_id, create=True) as conn:
+            self._create_schema(conn)
+            logger.info(f"Initialized tenant database: {tenant_id}")
 
     async def tenant_exists(self, tenant_id: str) -> bool:
         """Check if tenant database exists."""
         return self._get_db_path(tenant_id).exists()
+
+    # ── check_idempotency ──────────────────────────────────────────────
+
+    def _sync_check_idempotency(
+        self,
+        tenant_id: str,
+        idempotency_key: str,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
+                (tenant_id, idempotency_key),
+            )
+            return cursor.fetchone() is not None
 
     async def check_idempotency(
         self,
@@ -421,12 +438,29 @@ class CanonicalStore:
         Returns:
             True if event was already applied, False otherwise
         """
+        return await self._run_sync(self._sync_check_idempotency, tenant_id, idempotency_key)
+
+    # ── record_applied_event ───────────────────────────────────────────
+
+    def _sync_record_applied_event(
+        self,
+        tenant_id: str,
+        idempotency_key: str,
+        stream_pos: str | None,
+    ) -> None:
         with self._get_connection(tenant_id) as conn:
-            cursor = conn.execute(
-                "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
-                (tenant_id, idempotency_key),
+            conn.execute(
+                """
+                INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    idempotency_key,
+                    stream_pos,
+                    int(time.time() * 1000),
+                ),
             )
-            return cursor.fetchone() is not None
 
     async def record_applied_event(
         self,
@@ -441,45 +475,80 @@ class CanonicalStore:
             idempotency_key: Event idempotency key
             stream_pos: Stream position string
         """
-        with self._get_connection(tenant_id) as conn:
-            conn.execute(
-                """
-                INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (tenant_id, idempotency_key, stream_pos, int(time.time() * 1000)),
-            )
+        await self._run_sync(
+            self._sync_record_applied_event,
+            tenant_id,
+            idempotency_key,
+            stream_pos,
+        )
 
-    async def create_node(
+    # ── apply_with_idempotency (synchronous, transaction context) ──────
+
+    def apply_with_idempotency(
+        self,
+        tenant_id: str,
+        idempotency_key: str,
+        stream_pos: str | None,
+        apply_fn: Callable,
+    ) -> bool:
+        """Apply operations atomically with idempotency check.
+
+        Checks idempotency, calls apply_fn(conn) within the same transaction,
+        and records the event -- all in one BEGIN/COMMIT. Returns True if applied,
+        False if already applied (idempotent skip).
+        """
+        with self._get_connection(tenant_id) as conn:
+            # Check idempotency within this transaction
+            cursor = conn.execute(
+                "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
+                (tenant_id, idempotency_key),
+            )
+            if cursor.fetchone():
+                return False  # Already applied
+
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Re-check under exclusive lock
+                cursor = conn.execute(
+                    "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
+                    (tenant_id, idempotency_key),
+                )
+                if cursor.fetchone():
+                    conn.execute("ROLLBACK")
+                    return False
+
+                # Apply operations
+                apply_fn(conn)
+
+                # Record applied event
+                conn.execute(
+                    "INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        tenant_id,
+                        idempotency_key,
+                        stream_pos,
+                        int(time.time() * 1000),
+                    ),
+                )
+                conn.execute("COMMIT")
+                return True
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    # ── create_node ────────────────────────────────────────────────────
+
+    def _sync_create_node(
         self,
         tenant_id: str,
         type_id: int,
         payload: dict[str, Any],
         owner_actor: str,
-        node_id: str | None = None,
-        acl: list[dict[str, str]] | None = None,
-        created_at: int | None = None,
+        node_id: str,
+        acl: list[dict[str, str]],
+        now: int,
     ) -> Node:
-        """Create a new node.
-
-        Args:
-            tenant_id: Tenant identifier
-            type_id: Node type identifier
-            payload: Field values
-            owner_actor: Actor creating the node
-            node_id: Optional specific node ID (generated if not provided)
-            acl: Access control list entries
-            created_at: Optional creation timestamp
-
-        Returns:
-            Created Node object
-        """
-        if node_id is None:
-            node_id = str(uuid.uuid4())
-
-        now = created_at or int(time.time() * 1000)
-        acl = acl or []
-
         with self._get_connection(tenant_id) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -530,28 +599,55 @@ class CanonicalStore:
             acl=acl,
         )
 
-    async def update_node(
+    async def create_node(
+        self,
+        tenant_id: str,
+        type_id: int,
+        payload: dict[str, Any],
+        owner_actor: str,
+        node_id: str | None = None,
+        acl: list[dict[str, str]] | None = None,
+        created_at: int | None = None,
+    ) -> Node:
+        """Create a new node.
+
+        Args:
+            tenant_id: Tenant identifier
+            type_id: Node type identifier
+            payload: Field values
+            owner_actor: Actor creating the node
+            node_id: Optional specific node ID (generated if not provided)
+            acl: Access control list entries
+            created_at: Optional creation timestamp
+
+        Returns:
+            Created Node object
+        """
+        if node_id is None:
+            node_id = str(uuid.uuid4())
+        now = created_at or int(time.time() * 1000)
+        acl = acl or []
+
+        return await self._run_sync(
+            self._sync_create_node,
+            tenant_id,
+            type_id,
+            payload,
+            owner_actor,
+            node_id,
+            acl,
+            now,
+        )
+
+    # ── update_node ────────────────────────────────────────────────────
+
+    def _sync_update_node(
         self,
         tenant_id: str,
         node_id: str,
         patch: dict[str, Any],
-        updated_at: int | None = None,
+        now: int,
     ) -> Node | None:
-        """Update a node's payload.
-
-        Uses PATCH semantics - merges with existing payload.
-
-        Args:
-            tenant_id: Tenant identifier
-            node_id: Node identifier
-            patch: Fields to update
-            updated_at: Optional update timestamp
-
-        Returns:
-            Updated Node or None if not found
-        """
-        now = updated_at or int(time.time() * 1000)
-
         with self._get_connection(tenant_id) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -595,16 +691,32 @@ class CanonicalStore:
                 conn.execute("ROLLBACK")
                 raise
 
-    async def delete_node(self, tenant_id: str, node_id: str) -> bool:
-        """Delete a node and its edges.
+    async def update_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        patch: dict[str, Any],
+        updated_at: int | None = None,
+    ) -> Node | None:
+        """Update a node's payload.
+
+        Uses PATCH semantics - merges with existing payload.
 
         Args:
             tenant_id: Tenant identifier
             node_id: Node identifier
+            patch: Fields to update
+            updated_at: Optional update timestamp
 
         Returns:
-            True if deleted, False if not found
+            Updated Node or None if not found
         """
+        now = updated_at or int(time.time() * 1000)
+        return await self._run_sync(self._sync_update_node, tenant_id, node_id, patch, now)
+
+    # ── delete_node ────────────────────────────────────────────────────
+
+    def _sync_delete_node(self, tenant_id: str, node_id: str) -> bool:
         with self._get_connection(tenant_id) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -633,16 +745,21 @@ class CanonicalStore:
                 conn.execute("ROLLBACK")
                 raise
 
-    async def get_node(self, tenant_id: str, node_id: str) -> Node | None:
-        """Get a node by ID.
+    async def delete_node(self, tenant_id: str, node_id: str) -> bool:
+        """Delete a node and its edges.
 
         Args:
             tenant_id: Tenant identifier
             node_id: Node identifier
 
         Returns:
-            Node or None if not found
+            True if deleted, False if not found
         """
+        return await self._run_sync(self._sync_delete_node, tenant_id, node_id)
+
+    # ── get_node ───────────────────────────────────────────────────────
+
+    def _sync_get_node(self, tenant_id: str, node_id: str) -> Node | None:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
                 "SELECT * FROM nodes WHERE tenant_id = ? AND node_id = ?",
@@ -663,24 +780,27 @@ class CanonicalStore:
                 acl=json.loads(row["acl_blob"]),
             )
 
-    async def get_nodes_by_type(
-        self,
-        tenant_id: str,
-        type_id: int,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> list[Node]:
-        """Get nodes by type.
+    async def get_node(self, tenant_id: str, node_id: str) -> Node | None:
+        """Get a node by ID.
 
         Args:
             tenant_id: Tenant identifier
-            type_id: Node type identifier
-            limit: Maximum nodes to return
-            offset: Pagination offset
+            node_id: Node identifier
 
         Returns:
-            List of nodes
+            Node or None if not found
         """
+        return await self._run_sync(self._sync_get_node, tenant_id, node_id)
+
+    # ── get_nodes_by_type ──────────────────────────────────────────────
+
+    def _sync_get_nodes_by_type(
+        self,
+        tenant_id: str,
+        type_id: int,
+        limit: int,
+        offset: int,
+    ) -> list[Node]:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
                 """
@@ -705,6 +825,73 @@ class CanonicalStore:
                 )
                 for row in cursor.fetchall()
             ]
+
+    async def get_nodes_by_type(
+        self,
+        tenant_id: str,
+        type_id: int,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Node]:
+        """Get nodes by type.
+
+        Args:
+            tenant_id: Tenant identifier
+            type_id: Node type identifier
+            limit: Maximum nodes to return
+            offset: Pagination offset
+
+        Returns:
+            List of nodes
+        """
+        return await self._run_sync(self._sync_get_nodes_by_type, tenant_id, type_id, limit, offset)
+
+    # ── create_edge ────────────────────────────────────────────────────
+
+    def _sync_create_edge(
+        self,
+        tenant_id: str,
+        edge_type_id: int,
+        from_node_id: str,
+        to_node_id: str,
+        props: dict[str, Any],
+        now: int,
+    ) -> Edge:
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO edges
+                (tenant_id, edge_type_id, from_node_id, to_node_id, props_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    tenant_id,
+                    edge_type_id,
+                    from_node_id,
+                    to_node_id,
+                    json.dumps(props),
+                    now,
+                ),
+            )
+
+        logger.debug(
+            "Created edge",
+            extra={
+                "tenant_id": tenant_id,
+                "edge_type_id": edge_type_id,
+                "from": from_node_id,
+                "to": to_node_id,
+            },
+        )
+
+        return Edge(
+            tenant_id=tenant_id,
+            edge_type_id=edge_type_id,
+            from_node_id=from_node_id,
+            to_node_id=to_node_id,
+            props=props,
+            created_at=now,
+        )
 
     async def create_edge(
         self,
@@ -731,34 +918,34 @@ class CanonicalStore:
         now = created_at or int(time.time() * 1000)
         props = props or {}
 
+        return await self._run_sync(
+            self._sync_create_edge,
+            tenant_id,
+            edge_type_id,
+            from_node_id,
+            to_node_id,
+            props,
+            now,
+        )
+
+    # ── delete_edge ────────────────────────────────────────────────────
+
+    def _sync_delete_edge(
+        self,
+        tenant_id: str,
+        edge_type_id: int,
+        from_node_id: str,
+        to_node_id: str,
+    ) -> bool:
         with self._get_connection(tenant_id) as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
-                INSERT OR REPLACE INTO edges
-                (tenant_id, edge_type_id, from_node_id, to_node_id, props_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                DELETE FROM edges
+                WHERE tenant_id = ? AND edge_type_id = ? AND from_node_id = ? AND to_node_id = ?
                 """,
-                (tenant_id, edge_type_id, from_node_id, to_node_id, json.dumps(props), now),
+                (tenant_id, edge_type_id, from_node_id, to_node_id),
             )
-
-        logger.debug(
-            "Created edge",
-            extra={
-                "tenant_id": tenant_id,
-                "edge_type_id": edge_type_id,
-                "from": from_node_id,
-                "to": to_node_id,
-            },
-        )
-
-        return Edge(
-            tenant_id=tenant_id,
-            edge_type_id=edge_type_id,
-            from_node_id=from_node_id,
-            to_node_id=to_node_id,
-            props=props,
-            created_at=now,
-        )
+            return cursor.rowcount > 0
 
     async def delete_edge(
         self,
@@ -778,15 +965,48 @@ class CanonicalStore:
         Returns:
             True if deleted, False if not found
         """
+        return await self._run_sync(
+            self._sync_delete_edge,
+            tenant_id,
+            edge_type_id,
+            from_node_id,
+            to_node_id,
+        )
+
+    # ── get_edges_from ─────────────────────────────────────────────────
+
+    def _sync_get_edges_from(
+        self,
+        tenant_id: str,
+        node_id: str,
+        edge_type_id: int | None,
+    ) -> list[Edge]:
         with self._get_connection(tenant_id) as conn:
-            cursor = conn.execute(
-                """
-                DELETE FROM edges
-                WHERE tenant_id = ? AND edge_type_id = ? AND from_node_id = ? AND to_node_id = ?
-                """,
-                (tenant_id, edge_type_id, from_node_id, to_node_id),
-            )
-            return cursor.rowcount > 0
+            if edge_type_id is not None:
+                cursor = conn.execute(
+                    """
+                    SELECT * FROM edges
+                    WHERE tenant_id = ? AND from_node_id = ? AND edge_type_id = ?
+                    """,
+                    (tenant_id, node_id, edge_type_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT * FROM edges WHERE tenant_id = ? AND from_node_id = ?",
+                    (tenant_id, node_id),
+                )
+
+            return [
+                Edge(
+                    tenant_id=row["tenant_id"],
+                    edge_type_id=row["edge_type_id"],
+                    from_node_id=row["from_node_id"],
+                    to_node_id=row["to_node_id"],
+                    props=json.loads(row["props_json"]),
+                    created_at=row["created_at"],
+                )
+                for row in cursor.fetchall()
+            ]
 
     async def get_edges_from(
         self,
@@ -804,18 +1024,28 @@ class CanonicalStore:
         Returns:
             List of edges
         """
+        return await self._run_sync(self._sync_get_edges_from, tenant_id, node_id, edge_type_id)
+
+    # ── get_edges_to ───────────────────────────────────────────────────
+
+    def _sync_get_edges_to(
+        self,
+        tenant_id: str,
+        node_id: str,
+        edge_type_id: int | None,
+    ) -> list[Edge]:
         with self._get_connection(tenant_id) as conn:
             if edge_type_id is not None:
                 cursor = conn.execute(
                     """
                     SELECT * FROM edges
-                    WHERE tenant_id = ? AND from_node_id = ? AND edge_type_id = ?
+                    WHERE tenant_id = ? AND to_node_id = ? AND edge_type_id = ?
                     """,
                     (tenant_id, node_id, edge_type_id),
                 )
             else:
                 cursor = conn.execute(
-                    "SELECT * FROM edges WHERE tenant_id = ? AND from_node_id = ?",
+                    "SELECT * FROM edges WHERE tenant_id = ? AND to_node_id = ?",
                     (tenant_id, node_id),
                 )
 
@@ -847,32 +1077,9 @@ class CanonicalStore:
         Returns:
             List of edges
         """
-        with self._get_connection(tenant_id) as conn:
-            if edge_type_id is not None:
-                cursor = conn.execute(
-                    """
-                    SELECT * FROM edges
-                    WHERE tenant_id = ? AND to_node_id = ? AND edge_type_id = ?
-                    """,
-                    (tenant_id, node_id, edge_type_id),
-                )
-            else:
-                cursor = conn.execute(
-                    "SELECT * FROM edges WHERE tenant_id = ? AND to_node_id = ?",
-                    (tenant_id, node_id),
-                )
+        return await self._run_sync(self._sync_get_edges_to, tenant_id, node_id, edge_type_id)
 
-            return [
-                Edge(
-                    tenant_id=row["tenant_id"],
-                    edge_type_id=row["edge_type_id"],
-                    from_node_id=row["from_node_id"],
-                    to_node_id=row["to_node_id"],
-                    props=json.loads(row["props_json"]),
-                    created_at=row["created_at"],
-                )
-                for row in cursor.fetchall()
-            ]
+    # ── remaining async methods (not in critical list) ─────────────────
 
     async def get_visible_nodes(
         self,
@@ -1024,7 +1231,10 @@ class CanonicalStore:
                 (tenant_id,),
             )
             return [
-                {"edge_type_id": row["edge_type_id"], "edge_count": row["edge_count"]}
+                {
+                    "edge_type_id": row["edge_type_id"],
+                    "edge_count": row["edge_count"],
+                }
                 for row in cursor.fetchall()
             ]
 
@@ -1047,7 +1257,8 @@ class CanonicalStore:
             stats["edges"] = cursor.fetchone()[0]
 
             cursor = conn.execute(
-                "SELECT COUNT(*) FROM applied_events WHERE tenant_id = ?", (tenant_id,)
+                "SELECT COUNT(*) FROM applied_events WHERE tenant_id = ?",
+                (tenant_id,),
             )
             stats["applied_events"] = cursor.fetchone()[0]
 

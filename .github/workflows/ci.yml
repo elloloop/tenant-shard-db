@@ -17,64 +17,41 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv tool install ruff@0.15.7
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
 
       - name: Run ruff
-        run: ruff check .
+        run: uvx ruff@0.15.7 check .
 
       - name: Run ruff format check
-        run: ruff format --check .
+        run: uvx ruff@0.15.7 format --check .
 
   type-check:
     name: Type Check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv venv && uv pip install -e ".[dev]"
 
       - name: Run mypy
-        continue-on-error: true  # Pre-existing type errors in generated code
-        run: mypy dbaas sdk --exclude '(_generated|api/generated)'
+        continue-on-error: true
+        run: uv run mypy dbaas sdk --exclude '(_generated|api/generated)'
 
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
-
-      - name: Install parallel runner
-        run: uv pip install --system pytest-xdist==3.5.0
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv venv && uv pip install -e ".[dev]" pytest-xdist==3.5.0
 
       - name: Run unit tests (parallel)
-        run: pytest tests/unit -v -n auto --cov=dbaas --cov=sdk --cov-report=xml
+        run: uv run pytest tests/unit -v -n auto --cov=dbaas --cov=sdk --cov-report=xml
 
-      - name: Upload coverage
-        uses: codecov/codecov-action@v4
+      - uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
@@ -84,21 +61,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
-
-      - name: Install parallel runner
-        run: uv pip install --system pytest-xdist==3.5.0
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv venv && uv pip install -e ".[dev]" pytest-xdist==3.5.0
 
       - name: Run integration tests (parallel)
-        run: pytest tests/integration -v -n auto
+        run: uv run pytest tests/integration -v -n auto
 
   schema-compat:
     name: Schema Compatibility Check
@@ -107,20 +75,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: uv pip install --system -e ".[dev]"
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv venv && uv pip install -e ".[dev]"
 
       - name: Check schema compatibility
         run: |
           if [ -f ".schema-snapshot.json" ]; then
-            python -m dbaas.entdb_server.tools.schema_cli check --baseline .schema-snapshot.json
+            uv run python -m dbaas.entdb_server.tools.schema_cli check --baseline .schema-snapshot.json
           else
             echo "No schema baseline found, skipping compatibility check"
           fi
@@ -130,12 +92,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build test image
-        uses: docker/build-push-action@v5
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
         with:
           context: .
           push: false
@@ -150,12 +108,8 @@ jobs:
     needs: [docker-build]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Run E2E tests
-        run: |
+      - uses: docker/setup-buildx-action@v3
+      - run: |
           chmod +x tests/e2e/run-e2e.sh
           tests/e2e/run-e2e.sh --logs
 
@@ -164,9 +118,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+      - uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -179,5 +131,4 @@ jobs:
     runs-on: ubuntu-latest
     needs: [lint, unit-tests, integration-tests, docker-build, e2e-tests]
     steps:
-      - name: All checks passed
-        run: echo "All CI checks passed!"
+      - run: echo "All CI checks passed!"
