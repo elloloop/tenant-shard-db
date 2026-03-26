@@ -289,6 +289,10 @@ class Server:
                 port=int(port),
                 max_workers=self.config.grpc.max_workers,
                 reflection_enabled=self.config.grpc.reflection_enabled,
+                auth_enabled=self.config.grpc.auth_enabled,
+                auth_api_keys=self.config.grpc.auth_api_keys,
+                tls_cert_file=self.config.grpc.tls_cert_file,
+                tls_key_file=self.config.grpc.tls_key_file,
             )
             await self.grpc_server.start()
 

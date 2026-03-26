@@ -57,12 +57,20 @@ class GrpcConfig:
         max_workers: Maximum number of thread pool workers
         max_message_size: Maximum message size in bytes
         reflection_enabled: Whether to enable gRPC reflection for debugging
+        auth_enabled: Whether API key authentication is enabled
+        auth_api_keys: Set of valid API keys (empty = auth disabled)
+        tls_cert_file: Path to TLS certificate file (PEM)
+        tls_key_file: Path to TLS private key file (PEM)
     """
 
     bind_address: str = "0.0.0.0:50051"
     max_workers: int = 10
     max_message_size: int = 64 * 1024 * 1024  # 64MB
     reflection_enabled: bool = True
+    auth_enabled: bool = False
+    auth_api_keys: frozenset[str] = frozenset()
+    tls_cert_file: str | None = None
+    tls_key_file: str | None = None
 
     @classmethod
     def from_env(cls) -> GrpcConfig:
@@ -72,6 +80,12 @@ class GrpcConfig:
             max_workers=int(os.getenv("GRPC_MAX_WORKERS", "10")),
             max_message_size=int(os.getenv("GRPC_MAX_MESSAGE_SIZE", str(64 * 1024 * 1024))),
             reflection_enabled=os.getenv("GRPC_REFLECTION", "true").lower() == "true",
+            auth_enabled=os.getenv("AUTH_ENABLED", "false").lower() == "true",
+            auth_api_keys=frozenset(
+                k.strip() for k in os.getenv("AUTH_API_KEYS", "").split(",") if k.strip()
+            ),
+            tls_cert_file=os.getenv("GRPC_TLS_CERT"),
+            tls_key_file=os.getenv("GRPC_TLS_KEY"),
         )
 
 

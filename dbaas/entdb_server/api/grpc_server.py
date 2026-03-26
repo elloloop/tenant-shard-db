@@ -753,6 +753,10 @@ class GrpcServer:
         port: int = 50051,
         max_workers: int = 10,
         reflection_enabled: bool = True,
+        auth_enabled: bool = False,
+        auth_api_keys: frozenset[str] = frozenset(),
+        tls_cert_file: str | None = None,
+        tls_key_file: str | None = None,
     ) -> None:
         """Initialize the gRPC server.
 
@@ -762,12 +766,20 @@ class GrpcServer:
             port: Port to listen on
             max_workers: Maximum concurrent RPCs
             reflection_enabled: Whether to enable gRPC reflection
+            auth_enabled: Whether API key authentication is enabled
+            auth_api_keys: Set of valid API keys
+            tls_cert_file: Path to TLS certificate file (PEM)
+            tls_key_file: Path to TLS private key file (PEM)
         """
         self.servicer = servicer
         self.host = host
         self.port = port
         self.max_workers = max_workers
         self.reflection_enabled = reflection_enabled
+        self.auth_enabled = auth_enabled
+        self.auth_api_keys = auth_api_keys
+        self.tls_cert_file = tls_cert_file
+        self.tls_key_file = tls_key_file
         self._server: grpc_aio.Server | None = None
         self._running = False
 
@@ -777,13 +789,22 @@ class GrpcServer:
             logger.warning("Server already running")
             return
 
+        # Build interceptor list
+        interceptors = []
+        if self.auth_enabled and self.auth_api_keys:
+            from .auth import ApiKeyInterceptor
+
+            interceptors.append(ApiKeyInterceptor(self.auth_api_keys))
+            logger.info("API key authentication enabled")
+
         # Create async gRPC server
         self._server = grpc_aio.server(
+            interceptors=interceptors,
             options=[
                 ("grpc.max_send_message_length", 50 * 1024 * 1024),  # 50MB
                 ("grpc.max_receive_message_length", 50 * 1024 * 1024),  # 50MB
                 ("grpc.max_concurrent_streams", self.max_workers),
-            ]
+            ],
         )
 
         # Register servicer
@@ -804,9 +825,18 @@ class GrpcServer:
             except ImportError:
                 logger.warning("grpc-reflection not installed, skipping reflection")
 
-        # Bind to address
+        # Bind to address with optional TLS
         bind_address = f"{self.host}:{self.port}"
-        self._server.add_insecure_port(bind_address)
+        if self.tls_cert_file and self.tls_key_file:
+            with open(self.tls_cert_file, "rb") as f:
+                cert = f.read()
+            with open(self.tls_key_file, "rb") as f:
+                key = f.read()
+            creds = grpc.ssl_server_credentials([(key, cert)])
+            self._server.add_secure_port(bind_address, creds)
+            logger.info("gRPC server using TLS", extra={"port": self.port})
+        else:
+            self._server.add_insecure_port(bind_address)
 
         # Start server
         await self._server.start()

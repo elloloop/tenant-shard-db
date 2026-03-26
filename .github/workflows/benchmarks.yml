@@ -20,33 +20,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-
-      - name: Set up Python
-        run: uv python install ${{ env.PYTHON_VERSION }}
-
-      - name: Install dependencies
-        run: |
-          uv pip install --system -e ".[dev]"
-          uv pip install --system pytest-benchmark==5.2.3
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv venv && uv pip install -e ".[dev]" pytest-benchmark==5.2.3
 
       - name: Run benchmarks
         run: |
-          pytest tests/benchmarks/ -v \
+          uv run pytest tests/benchmarks/ -v \
             --benchmark-only \
             --benchmark-json=benchmark-results.json \
             --benchmark-min-rounds=5
 
       - name: Run cost model
         run: |
-          pytest tests/benchmarks/bench_archiver.py::TestCostModel -v -s \
+          uv run pytest tests/benchmarks/bench_archiver.py::TestCostModel -v -s \
             --no-header 2>&1 | tee cost-report.txt
 
       - name: Run compression analysis
         run: |
-          pytest tests/benchmarks/bench_archiver.py::TestCompressionRatio -v -s \
+          uv run pytest tests/benchmarks/bench_archiver.py::TestCompressionRatio -v -s \
             --no-header 2>&1 | tee compression-report.txt
 
       - name: Store benchmark results

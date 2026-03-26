@@ -275,9 +275,8 @@ class Applier:
         """Batch processing loop using poll_batch().
 
         Fetches whatever records are available (up to batch_size),
-        applies them all, then commits the last record's position.
-        During low traffic, this degrades to single-record processing.
-        During high traffic, it batches up to batch_size for one commit.
+        groups them by tenant, applies each tenant's events in a single
+        SQLite transaction, then commits the last record's position.
         """
         while self._running:
             records = await self.wal.poll_batch(  # type: ignore[attr-defined]
@@ -290,27 +289,180 @@ class Applier:
             if not records:
                 continue
 
-            # Apply all records in this batch
+            # Group records by tenant for per-tenant batch transactions
+            tenant_records: dict[str, list] = {}
             for record in records:
                 if not self._running:
                     break
+                try:
+                    data = record.value_json()
+                    tenant_id = data.get("tenant_id", "")
 
-                result = await self._process_record(record)
-                self._log_result(result)
+                    # Skip events for unassigned tenants
+                    if self._assigned_tenants and tenant_id not in self._assigned_tenants:
+                        self._skipped_count += 1
+                        continue
+
+                    if tenant_id not in tenant_records:
+                        tenant_records[tenant_id] = []
+                    tenant_records[tenant_id].append((record, data))
+                except Exception as e:
+                    logger.error(f"Error parsing record: {e}", exc_info=True)
+                    self._error_count += 1
+
+            # Apply each tenant's batch in a single transaction
+            for tenant_id, items in tenant_records.items():
+                try:
+                    await self._apply_tenant_batch(tenant_id, items)
+                except Exception as e:
+                    logger.error(
+                        f"Error applying batch for {tenant_id}: {e}",
+                        exc_info=True,
+                    )
+                    # Fall back to individual processing
+                    for record, _data in items:
+                        result = await self._process_record(record)
+                        self._log_result(result)
 
             # Commit only the last record's position
-            last_record = records[-1]
-            await self.wal.commit(last_record)
-            self._last_position = last_record.position
+            if records:
+                last_record = records[-1]
+                await self.wal.commit(last_record)
+                self._last_position = last_record.position
 
-            if len(records) > 1:
-                logger.debug(
-                    "Applied batch",
-                    extra={
-                        "batch_size": len(records),
-                        "last_offset": last_record.position.offset,
-                    },
+                if len(records) > 1:
+                    logger.debug(
+                        "Applied batch",
+                        extra={
+                            "batch_size": len(records),
+                            "tenants": len(tenant_records),
+                            "last_offset": last_record.position.offset,
+                        },
+                    )
+
+    async def _apply_tenant_batch(self, tenant_id: str, items: list[tuple]) -> None:
+        """Apply a batch of events for a single tenant in one transaction."""
+        # Ensure tenant exists
+        if not await self.canonical_store.tenant_exists(tenant_id):
+            await self.canonical_store.initialize_tenant(tenant_id)
+
+        applied_count = 0
+        skipped_count = 0
+
+        with self.canonical_store.batch_transaction(tenant_id) as conn:
+            for record, data in items:
+                idempotency_key = data.get("idempotency_key", "")
+
+                # Check idempotency within the transaction
+                cursor = conn.execute(
+                    "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
+                    (tenant_id, idempotency_key),
                 )
+                if cursor.fetchone():
+                    skipped_count += 1
+                    continue
+
+                # Apply operations
+                event = TransactionEvent.from_dict(data, record.position)
+                self._node_alias_map.clear()
+
+                for op in event.ops:
+                    op_type = op.get("op")
+                    if op_type == "create_node":
+                        node = self.canonical_store.create_node_raw(
+                            conn,
+                            tenant_id=event.tenant_id,
+                            type_id=op["type_id"],
+                            payload=op.get("data", {}),
+                            owner_actor=event.actor,
+                            node_id=op.get("id"),
+                            acl=op.get("acl", []),
+                            created_at=event.ts_ms,
+                        )
+                        alias = op.get("as")
+                        if alias:
+                            self._node_alias_map[alias] = node.node_id
+                    elif op_type == "update_node":
+                        node_id = self._resolve_ref(op.get("id", ""))
+                        patch = op.get("patch", {})
+                        cursor = conn.execute(
+                            "SELECT payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        row = cursor.fetchone()
+                        if row:
+                            existing = json.loads(
+                                row[0] if isinstance(row, tuple) else row["payload_json"]
+                            )
+                            existing.update(patch)
+                            conn.execute(
+                                "UPDATE nodes SET payload_json = ?, updated_at = ? "
+                                "WHERE tenant_id = ? AND node_id = ?",
+                                (json.dumps(existing), event.ts_ms, tenant_id, node_id),
+                            )
+                    elif op_type == "delete_node":
+                        node_id = self._resolve_ref(op.get("id", ""))
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND (from_node_id = ? OR to_node_id = ?)",
+                            (tenant_id, node_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                    elif op_type == "create_edge":
+                        edge_type_id = op["edge_id"]
+                        from_ref = self._resolve_ref(op["from"])
+                        to_ref = self._resolve_ref(op["to"])
+                        props = op.get("props", {})
+                        conn.execute(
+                            "INSERT OR REPLACE INTO edges "
+                            "(tenant_id, edge_type_id, from_node_id, to_node_id, props_json, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            (
+                                tenant_id,
+                                edge_type_id,
+                                from_ref,
+                                to_ref,
+                                json.dumps(props),
+                                event.ts_ms,
+                            ),
+                        )
+                    elif op_type == "delete_edge":
+                        edge_type_id = op["edge_id"]
+                        from_ref = self._resolve_ref(op["from"])
+                        to_ref = self._resolve_ref(op["to"])
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? AND edge_type_id = ? "
+                            "AND from_node_id = ? AND to_node_id = ?",
+                            (tenant_id, edge_type_id, from_ref, to_ref),
+                        )
+
+                # Record applied event within the same transaction
+                stream_pos_str = str(event.stream_pos) if event.stream_pos else None
+                conn.execute(
+                    "INSERT INTO applied_events "
+                    "(tenant_id, idempotency_key, stream_pos, applied_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (tenant_id, idempotency_key, stream_pos_str, int(time.time() * 1000)),
+                )
+                applied_count += 1
+
+        self._processed_count += applied_count
+        if applied_count > 0:
+            logger.debug(
+                "Batch applied",
+                extra={
+                    "tenant_id": tenant_id,
+                    "applied": applied_count,
+                    "skipped": skipped_count,
+                },
+            )
 
     def _log_result(self, result: ApplyResult) -> None:
         """Log the result of applying an event."""
