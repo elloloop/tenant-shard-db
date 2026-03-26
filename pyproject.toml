@@ -53,6 +53,11 @@ gcs = [
 metrics = [
     "prometheus_client==0.21.1",
 ]
+tracing = [
+    "opentelemetry-api==1.29.0",
+    "opentelemetry-sdk==1.29.0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.29.0",
+]
 sdk = [
     "grpcio==1.60.1",
     "protobuf==4.25.3",
@@ -69,7 +74,7 @@ dev = [
     "grpcio-tools==1.60.1",
 ]
 all = [
-    "entdb[server,sdk,metrics,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
+    "entdb[server,sdk,metrics,tracing,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
 ]
 
 [project.scripts]
