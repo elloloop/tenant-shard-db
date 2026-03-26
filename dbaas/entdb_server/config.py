@@ -581,14 +581,20 @@ class ObservabilityConfig:
         log_format: Log format (json, text)
         metrics_enabled: Whether to expose Prometheus metrics
         metrics_port: Port for metrics endpoint
+        trace_enabled: Whether OpenTelemetry tracing is enabled
         trace_sampling_rate: OpenTelemetry trace sampling rate (0.0-1.0)
+        trace_exporter: Trace exporter type (console, otlp, jaeger)
+        trace_endpoint: Trace collector endpoint URL
     """
 
     log_level: str = "INFO"
     log_format: str = "json"
     metrics_enabled: bool = True
     metrics_port: int = 9090
+    trace_enabled: bool = False
     trace_sampling_rate: float = 0.1
+    trace_exporter: str = "console"  # console, otlp, jaeger
+    trace_endpoint: str | None = None
 
     @classmethod
     def from_env(cls) -> ObservabilityConfig:
@@ -598,7 +604,10 @@ class ObservabilityConfig:
             log_format=os.getenv("LOG_FORMAT", "json"),
             metrics_enabled=os.getenv("METRICS_ENABLED", "true").lower() == "true",
             metrics_port=int(os.getenv("METRICS_PORT", "9090")),
+            trace_enabled=os.getenv("TRACE_ENABLED", "false").lower() == "true",
             trace_sampling_rate=float(os.getenv("TRACE_SAMPLING_RATE", "0.1")),
+            trace_exporter=os.getenv("TRACE_EXPORTER", "console"),
+            trace_endpoint=os.getenv("TRACE_ENDPOINT"),
         )
 
 

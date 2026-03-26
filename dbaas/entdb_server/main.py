@@ -302,6 +302,16 @@ class Server:
 
                 init_metrics(self.config.observability.metrics_port)
 
+            # Start OpenTelemetry tracing if enabled
+            if self.config.observability.trace_enabled:
+                from .tracing import init_tracing
+
+                init_tracing(
+                    sampling_rate=self.config.observability.trace_sampling_rate,
+                    exporter=self.config.observability.trace_exporter,
+                    endpoint=self.config.observability.trace_endpoint,
+                )
+
             # Start applier
             if self.config.wal_backend == WalBackend.KAFKA:
                 group_id = self.config.kafka.consumer_group

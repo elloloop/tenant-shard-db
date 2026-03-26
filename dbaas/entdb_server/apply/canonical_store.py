@@ -189,7 +189,15 @@ class CanonicalStore:
 
     async def _run_sync(self, fn: Callable, *args: Any) -> Any:
         """Run a synchronous function in a dedicated thread to avoid blocking the event loop."""
-        loop = asyncio.get_event_loop()
+        from ..metrics import record_sqlite_op
+
+        op_type = (
+            "write"
+            if "create" in fn.__name__ or "update" in fn.__name__ or "delete" in fn.__name__
+            else "read"
+        )
+        record_sqlite_op(op_type)
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._executor, fn, *args)
 
     def _get_db_path(self, tenant_id: str) -> Path:
