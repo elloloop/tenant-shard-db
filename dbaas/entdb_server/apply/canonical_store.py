@@ -197,7 +197,11 @@ class CanonicalStore:
             else "read"
         )
         record_sqlite_op(op_type)
-        loop = asyncio.get_running_loop()
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No running loop (e.g., pytest-xdist worker) — run directly
+            return fn(*args)
         return await loop.run_in_executor(self._executor, fn, *args)
 
     def _get_db_path(self, tenant_id: str) -> Path:
@@ -436,12 +440,9 @@ class CanonicalStore:
             self._create_schema(conn)
             logger.info(f"Initialized tenant database: {tenant_id}")
 
-    def _sync_tenant_exists(self, tenant_id: str) -> bool:
-        return self._get_db_path(tenant_id).exists()
-
     async def tenant_exists(self, tenant_id: str) -> bool:
         """Check if tenant database exists."""
-        return await self._run_sync(self._sync_tenant_exists, tenant_id)
+        return self._get_db_path(tenant_id).exists()
 
     # ── check_idempotency ──────────────────────────────────────────────
 

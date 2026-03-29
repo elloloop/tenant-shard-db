@@ -240,23 +240,12 @@ class TestTenantExistsUsesExecutor:
     """Async methods must delegate to _run_sync to avoid blocking the event loop."""
 
     @pytest.mark.asyncio
-    async def test_tenant_exists_uses_executor(self):
+    async def test_tenant_exists_is_direct(self):
+        """tenant_exists is a fast path (just Path.exists), no executor needed."""
         with tempfile.TemporaryDirectory() as tmpdir:
             store = CanonicalStore(tmpdir, wal_mode=False)
-            # Spy on _run_sync to verify it's called
-            original_run_sync = store._run_sync
-
-            call_log = []
-
-            async def tracking_run_sync(fn, *args):
-                call_log.append(fn.__name__)
-                return await original_run_sync(fn, *args)
-
-            store._run_sync = tracking_run_sync
-
             result = await store.tenant_exists("nonexistent")
             assert result is False
-            assert "_sync_tenant_exists" in call_log
 
     @pytest.mark.asyncio
     async def test_get_stats_uses_executor(self):
