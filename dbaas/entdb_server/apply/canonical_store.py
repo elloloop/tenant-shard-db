@@ -426,6 +426,8 @@ class CanonicalStore:
         """Initialize database for a new tenant.
 
         Creates the database file and schema if they don't exist.
+        Runs synchronously (not in executor) because it's only called
+        once per tenant and modifies the connection pool.
 
         Args:
             tenant_id: Tenant identifier
@@ -434,9 +436,12 @@ class CanonicalStore:
             self._create_schema(conn)
             logger.info(f"Initialized tenant database: {tenant_id}")
 
+    def _sync_tenant_exists(self, tenant_id: str) -> bool:
+        return self._get_db_path(tenant_id).exists()
+
     async def tenant_exists(self, tenant_id: str) -> bool:
         """Check if tenant database exists."""
-        return self._get_db_path(tenant_id).exists()
+        return await self._run_sync(self._sync_tenant_exists, tenant_id)
 
     # ── check_idempotency ──────────────────────────────────────────────
 
@@ -893,31 +898,57 @@ class CanonicalStore:
             if order_by not in valid_columns:
                 order_by = "created_at"
 
-            cursor = conn.execute(
-                f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
-                f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
-                (tenant_id, type_id, limit, offset),
-            )
-
-            nodes = []
-            for row in cursor.fetchall():
-                payload = json.loads(row["payload_json"])
-                if filter_json:
+            if filter_json:
+                # Fetch all matching rows for this type, filter in Python, then paginate
+                cursor = conn.execute(
+                    f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
+                    f"ORDER BY {order_by} {order}",
+                    (tenant_id, type_id),
+                )
+                nodes = []
+                skipped = 0
+                for row in cursor:
+                    payload = json.loads(row["payload_json"])
                     if not all(payload.get(k) == v for k, v in filter_json.items()):
                         continue
-                nodes.append(
+                    if skipped < offset:
+                        skipped += 1
+                        continue
+                    if len(nodes) >= limit:
+                        break
+                    nodes.append(
+                        Node(
+                            tenant_id=row["tenant_id"],
+                            node_id=row["node_id"],
+                            type_id=row["type_id"],
+                            payload=payload,
+                            created_at=row["created_at"],
+                            updated_at=row["updated_at"],
+                            owner_actor=row["owner_actor"],
+                            acl=json.loads(row["acl_blob"]),
+                        )
+                    )
+                return nodes
+            else:
+                # No filter — use SQL LIMIT/OFFSET (efficient)
+                cursor = conn.execute(
+                    f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
+                    f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
+                    (tenant_id, type_id, limit, offset),
+                )
+                return [
                     Node(
                         tenant_id=row["tenant_id"],
                         node_id=row["node_id"],
                         type_id=row["type_id"],
-                        payload=payload,
+                        payload=json.loads(row["payload_json"]),
                         created_at=row["created_at"],
                         updated_at=row["updated_at"],
                         owner_actor=row["owner_actor"],
                         acl=json.loads(row["acl_blob"]),
                     )
-                )
-            return nodes
+                    for row in cursor.fetchall()
+                ]
 
     async def query_nodes(
         self,
@@ -1176,26 +1207,14 @@ class CanonicalStore:
 
     # ── remaining async methods (not in critical list) ─────────────────
 
-    async def get_visible_nodes(
+    def _sync_get_visible_nodes(
         self,
         tenant_id: str,
         principal: str,
-        type_id: int | None = None,
-        limit: int = 100,
-        offset: int = 0,
+        type_id: int | None,
+        limit: int,
+        offset: int,
     ) -> list[Node]:
-        """Get nodes visible to a principal.
-
-        Args:
-            tenant_id: Tenant identifier
-            principal: Actor identifier
-            type_id: Optional filter by type
-            limit: Maximum nodes to return
-            offset: Pagination offset
-
-        Returns:
-            List of visible nodes
-        """
         with self._get_connection(tenant_id) as conn:
             # Build query based on principal patterns
             # Supports: exact match, owner match, tenant wildcard
@@ -1233,6 +1252,30 @@ class CanonicalStore:
                 )
                 for row in cursor.fetchall()
             ]
+
+    async def get_visible_nodes(
+        self,
+        tenant_id: str,
+        principal: str,
+        type_id: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[Node]:
+        """Get nodes visible to a principal.
+
+        Args:
+            tenant_id: Tenant identifier
+            principal: Actor identifier
+            type_id: Optional filter by type
+            limit: Maximum nodes to return
+            offset: Pagination offset
+
+        Returns:
+            List of visible nodes
+        """
+        return await self._run_sync(
+            self._sync_get_visible_nodes, tenant_id, principal, type_id, limit, offset
+        )
 
     def _update_visibility(
         self,
@@ -1288,15 +1331,7 @@ class CanonicalStore:
                 tenants.append(tenant_id)
         return tenants
 
-    async def get_distinct_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
-        """Get distinct node type_ids with counts for a tenant.
-
-        Args:
-            tenant_id: Tenant identifier
-
-        Returns:
-            List of dicts with "type_id" and "node_count" keys.
-        """
+    def _sync_get_distinct_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
                 """SELECT type_id, COUNT(*) as node_count
@@ -1309,15 +1344,18 @@ class CanonicalStore:
                 for row in cursor.fetchall()
             ]
 
-    async def get_distinct_edge_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
-        """Get distinct edge type_ids with counts for a tenant.
+    async def get_distinct_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Get distinct node type_ids with counts for a tenant.
 
         Args:
             tenant_id: Tenant identifier
 
         Returns:
-            List of dicts with "edge_type_id" and "edge_count" keys.
+            List of dicts with "type_id" and "node_count" keys.
         """
+        return await self._run_sync(self._sync_get_distinct_type_ids, tenant_id)
+
+    def _sync_get_distinct_edge_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
                 """SELECT edge_type_id, COUNT(*) as edge_count
@@ -1333,15 +1371,18 @@ class CanonicalStore:
                 for row in cursor.fetchall()
             ]
 
-    async def get_stats(self, tenant_id: str) -> dict[str, int]:
-        """Get statistics for a tenant.
+    async def get_distinct_edge_type_ids(self, tenant_id: str) -> list[dict[str, Any]]:
+        """Get distinct edge type_ids with counts for a tenant.
 
         Args:
             tenant_id: Tenant identifier
 
         Returns:
-            Dictionary with counts
+            List of dicts with "edge_type_id" and "edge_count" keys.
         """
+        return await self._run_sync(self._sync_get_distinct_edge_type_ids, tenant_id)
+
+    def _sync_get_stats(self, tenant_id: str) -> dict[str, int]:
         with self._get_connection(tenant_id) as conn:
             stats = {}
 
@@ -1359,15 +1400,18 @@ class CanonicalStore:
 
             return stats
 
-    async def get_last_applied_position(self, tenant_id: str) -> str | None:
-        """Get the last applied stream position.
+    async def get_stats(self, tenant_id: str) -> dict[str, int]:
+        """Get statistics for a tenant.
 
         Args:
             tenant_id: Tenant identifier
 
         Returns:
-            Stream position string or None
+            Dictionary with counts
         """
+        return await self._run_sync(self._sync_get_stats, tenant_id)
+
+    def _sync_get_last_applied_position(self, tenant_id: str) -> str | None:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
                 """
@@ -1380,6 +1424,17 @@ class CanonicalStore:
             )
             row = cursor.fetchone()
             return row[0] if row else None
+
+    async def get_last_applied_position(self, tenant_id: str) -> str | None:
+        """Get the last applied stream position.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            Stream position string or None
+        """
+        return await self._run_sync(self._sync_get_last_applied_position, tenant_id)
 
     def get_db_path(self, tenant_id: str) -> Path:
         """Get the database file path for a tenant.
