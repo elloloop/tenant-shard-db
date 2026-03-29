@@ -225,3 +225,13 @@ class TestInMemoryWalStream:
         # Reconnect and verify data is gone
         await wal.connect()
         assert wal.get_record_count("test") == 0
+
+    def test_num_partitions_zero_raises(self):
+        """num_partitions=0 raises ValueError instead of later ZeroDivisionError."""
+        with pytest.raises(ValueError, match="num_partitions must be >= 1"):
+            InMemoryWalStream(num_partitions=0)
+
+    def test_num_partitions_negative_raises(self):
+        """Negative num_partitions raises ValueError."""
+        with pytest.raises(ValueError, match="num_partitions must be >= 1"):
+            InMemoryWalStream(num_partitions=-3)

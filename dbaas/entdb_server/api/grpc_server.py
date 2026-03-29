@@ -114,12 +114,12 @@ class EntDBServicer(EntDBServiceServicer):
         self.topic = topic
         self._sharding = sharding
 
-    def _check_tenant(self, tenant_id: str, context) -> None:
+    async def _check_tenant(self, tenant_id: str, context) -> None:
         """Reject requests for tenants not owned by this node."""
         if self._sharding and not self._sharding.is_mine(tenant_id):
             owner = self._sharding.get_owner(tenant_id)
             hint = f" (try node {owner})" if owner else ""
-            context.abort(
+            await context.abort(
                 grpc.StatusCode.UNAVAILABLE,
                 f"Tenant '{tenant_id}' is not served by this node{hint}",
             )
@@ -132,7 +132,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Execute an atomic transaction."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
 
             # Extract context
             ctx = request.context
@@ -327,7 +327,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Get the status of a transaction receipt."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             applied = await self.canonical_store.check_idempotency(
                 request.context.tenant_id,
                 request.idempotency_key,
@@ -354,7 +354,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Get a node by ID."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             node = await self.canonical_store.get_node(
                 request.context.tenant_id,
                 request.node_id,
@@ -390,7 +390,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Get multiple nodes by IDs."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             nodes = []
             missing_ids = []
 
@@ -430,7 +430,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Query nodes by type with optional payload filtering."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             filter_dict = None
             if request.filter_json:
                 try:
@@ -480,7 +480,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Get outgoing edges from a node."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             edge_type_id = request.edge_type_id if request.edge_type_id else None
             edges = await self.canonical_store.get_edges_from(
                 request.context.tenant_id,
@@ -516,7 +516,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Get incoming edges to a node."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             edge_type_id = request.edge_type_id if request.edge_type_id else None
             edges = await self.canonical_store.get_edges_to(
                 request.context.tenant_id,
@@ -552,7 +552,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Search mailbox with full-text search."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             source_type_ids = list(request.source_type_ids) if request.source_type_ids else None
             results = await self.mailbox_store.search(
                 request.context.tenant_id,
@@ -600,7 +600,7 @@ class EntDBServicer(EntDBServiceServicer):
         """Get mailbox items for a user."""
         start = time.perf_counter()
         try:
-            self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant(request.context.tenant_id, context)
             source_type_id = request.source_type_id if request.source_type_id else None
             thread_id = request.thread_id if request.thread_id else None
 
@@ -668,7 +668,9 @@ class EntDBServicer(EntDBServiceServicer):
                 components["node_id"] = self._sharding.node_id
                 components["assigned_tenants"] = ",".join(sorted(self._sharding.assigned_tenants))
 
-            overall_healthy = all(v == "healthy" for v in components.values())
+            overall_healthy = all(
+                v == "healthy" for k, v in components.items() if k in ("wal", "storage")
+            )
 
             record_grpc_request("Health", "ok", time.perf_counter() - start)
             return HealthResponse(
@@ -706,7 +708,7 @@ class EntDBServicer(EntDBServiceServicer):
         context: grpc_aio.ServicerContext,
     ) -> ListMailboxUsersResponse:
         """List mailbox users for a tenant."""
-        self._check_tenant(request.tenant_id, context)
+        await self._check_tenant(request.tenant_id, context)
         try:
             user_ids = self.mailbox_store.list_users(request.tenant_id)
             return ListMailboxUsersResponse(user_ids=user_ids)

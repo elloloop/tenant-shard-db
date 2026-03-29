@@ -21,6 +21,15 @@ class LocalFsObjectStore:
     def __init__(self, base_path: str = "/var/lib/entdb/storage") -> None:
         self._base = Path(base_path)
 
+    def _validate_key(self, key: str) -> Path:
+        """Resolve key to path and validate it's within base directory."""
+        path = (self._base / key).resolve()
+        if not path.is_relative_to(self._base.resolve()):
+            raise ValueError(
+                f"Path traversal detected: key '{key}' resolves outside base directory"
+            )
+        return path
+
     async def connect(self) -> None:
         self._base.mkdir(parents=True, exist_ok=True)
         logger.info("Using local filesystem storage", extra={"path": str(self._base)})
@@ -35,17 +44,18 @@ class LocalFsObjectStore:
         content_type: str = "application/octet-stream",
         storage_class: str | None = None,
     ) -> None:
-        path = self._base / key
+        path = self._validate_key(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
 
     async def get(self, key: str) -> bytes:
-        path = self._base / key
+        path = self._validate_key(key)
         if not path.exists():
             raise FileNotFoundError(f"Object not found: {key}")
         return path.read_bytes()
 
     async def list_objects(self, prefix: str) -> list[ObjectMeta]:
+        self._validate_key(prefix)
         prefix_path = self._base / prefix
         base_dir = prefix_path.parent if not prefix_path.is_dir() else prefix_path
         if not base_dir.exists():
