@@ -74,8 +74,13 @@ class InMemoryWalStream:
         """Initialize in-memory WAL stream.
 
         Args:
-            num_partitions: Number of partitions per topic
+            num_partitions: Number of partitions per topic (must be >= 1)
+
+        Raises:
+            ValueError: If num_partitions is less than 1
         """
+        if num_partitions < 1:
+            raise ValueError(f"num_partitions must be >= 1, got {num_partitions}")
         self.num_partitions = num_partitions
         self._topics: dict[str, dict[int, InMemoryPartition]] = defaultdict(
             lambda: {i: InMemoryPartition() for i in range(self.num_partitions)}
