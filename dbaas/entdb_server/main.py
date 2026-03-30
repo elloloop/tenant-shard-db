@@ -389,10 +389,11 @@ class Server:
             raise
 
     async def stop(self) -> None:
-        """Stop the server gracefully."""
-        if not self._running:
-            return
+        """Stop the server gracefully.
 
+        Cleans up all components that were initialised during start(),
+        even if start() failed partway through (partial startup).
+        """
         logger.info("Stopping EntDB server")
 
         # Stop background tasks
