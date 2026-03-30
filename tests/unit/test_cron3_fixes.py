@@ -6,12 +6,11 @@ Tests for cron cycle #3 fixes:
 
 import asyncio
 import tempfile
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from dbaas.entdb_server.apply.mailbox_store import MailboxStore
-
 
 # ── Fix 1: FTS5 query sanitisation ──────────────────────────────────
 
@@ -83,16 +82,16 @@ class TestFts5QuerySanitisation:
 
         # These would crash or behave unexpectedly without sanitisation
         dangerous_queries = [
-            'hello AND world',
-            'hello OR world',
-            'NOT hello',
-            'hello NEAR world',
-            'hello NEAR/2 world',
+            "hello AND world",
+            "hello OR world",
+            "NOT hello",
+            "hello NEAR world",
+            "hello NEAR/2 world",
             '"unbalanced quote',
-            'col:value',
-            '(hello OR world) AND test',
-            'hello*',
-            ') OR rowid > 0 --',
+            "col:value",
+            "(hello OR world) AND test",
+            "hello*",
+            ") OR rowid > 0 --",
             '""',
             '""; DROP TABLE fts_mailbox; --',
         ]
