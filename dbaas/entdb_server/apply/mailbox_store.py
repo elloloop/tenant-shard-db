@@ -489,6 +489,37 @@ class MailboxStore:
         except FileNotFoundError:
             return []
 
+    @staticmethod
+    def _sanitize_fts5_query(query: str) -> str:
+        """Sanitize a user-supplied string for safe use in an FTS5 MATCH clause.
+
+        FTS5 has its own query syntax where characters like ``*``, ``"``,
+        ``(``, ``)``, ``:``, ``+``, ``-``, ``^``, ``NEAR``, ``AND``,
+        ``OR``, ``NOT`` have special meaning.  Passing raw user input
+        directly into MATCH can cause:
+        - ``sqlite3.OperationalError`` on malformed queries
+        - Unexpected result manipulation via FTS5 boolean operators
+
+        The safe approach is to wrap every whitespace-delimited token in
+        double-quotes (escaping any embedded double-quotes by doubling
+        them) so FTS5 treats each token as a literal phrase.
+
+        Args:
+            query: Raw user input string.
+
+        Returns:
+            Sanitised FTS5 query string safe for MATCH.
+        """
+        if not query or not query.strip():
+            return '""'
+
+        tokens: list[str] = []
+        for token in query.split():
+            # Double any embedded quotes so FTS5 treats them literally.
+            escaped = token.replace('"', '""')
+            tokens.append(f'"{escaped}"')
+        return " ".join(tokens)
+
     async def search(
         self,
         tenant_id: str,
@@ -513,6 +544,9 @@ class MailboxStore:
         """
         try:
             with self._get_connection(tenant_id, user_id, create=False) as conn:
+                # Sanitize the query to prevent FTS5 syntax injection
+                safe_query = self._sanitize_fts5_query(query)
+
                 # Build search query
                 sql = """
                     SELECT m.*, fts.rank, highlight(fts_mailbox, 0, '<b>', '</b>') as highlights
@@ -520,7 +554,7 @@ class MailboxStore:
                     JOIN fts_mailbox fts ON m.rowid = fts.rowid
                     WHERE fts_mailbox MATCH ?
                 """
-                params: list[Any] = [query]
+                params: list[Any] = [safe_query]
 
                 if source_type_ids:
                     placeholders = ",".join("?" * len(source_type_ids))
