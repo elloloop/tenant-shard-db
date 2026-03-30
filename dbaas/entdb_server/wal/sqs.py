@@ -93,6 +93,8 @@ class SqsWalStream:
         self._counter = 0
         # Map of message_id -> receipt_handle for pending acknowledgments
         self._pending_acks: dict[str, str] = {}
+        # Reverse map: offset_key -> message_id, so commit() can clean up both entries
+        self._offset_to_message_id: dict[str, str] = {}
 
     @property
     def is_connected(self) -> bool:
@@ -151,6 +153,7 @@ class SqsWalStream:
 
         self._connected = False
         self._pending_acks.clear()
+        self._offset_to_message_id.clear()
         logger.info("SQS connection closed")
 
     async def append(
@@ -313,7 +316,9 @@ class SqsWalStream:
                     # Store receipt handle for later acknowledgment
                     self._pending_acks[message_id] = receipt_handle
                     # Also store by offset for commit() lookup
-                    self._pending_acks[str(self._counter)] = receipt_handle
+                    offset_key = str(self._counter)
+                    self._pending_acks[offset_key] = receipt_handle
+                    self._offset_to_message_id[offset_key] = message_id
 
                     yield record
 
@@ -393,7 +398,9 @@ class SqsWalStream:
             )
 
             self._pending_acks[message_id] = receipt_handle
-            self._pending_acks[str(self._counter)] = receipt_handle
+            offset_key = str(self._counter)
+            self._pending_acks[offset_key] = receipt_handle
+            self._offset_to_message_id[offset_key] = message_id
 
             records.append(record)
 
@@ -415,6 +422,11 @@ class SqsWalStream:
             # Look up receipt handle by offset
             ack_key = str(record.position.offset)
             receipt_handle = self._pending_acks.pop(ack_key, None)
+
+            # Also remove the message_id -> receipt_handle entry to prevent leak
+            message_id = self._offset_to_message_id.pop(ack_key, None)
+            if message_id:
+                self._pending_acks.pop(message_id, None)
 
             if not receipt_handle:
                 logger.warning(

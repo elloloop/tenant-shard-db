@@ -47,6 +47,10 @@ except ImportError:
     PUBSUB_AVAILABLE = False
     PublisherClient = None
     SubscriberClient = None
+    PullRequest = None
+    DeadlineExceeded = None
+    NotFound = None
+    GoogleAPICallError = None
 
 
 class PubSubWalStream:
@@ -371,15 +375,78 @@ class PubSubWalStream:
         timeout_ms: int = 100,
         start_position: StreamPos | None = None,
     ) -> list[StreamRecord]:
-        """Poll for a batch of records from Pub/Sub."""
+        """Poll for a batch of records from Pub/Sub.
+
+        Uses a single synchronous pull call (via executor) instead of
+        delegating to subscribe(), which loops forever and would cause
+        poll_batch to hang when fewer than max_records are available.
+
+        Args:
+            topic: Topic ID
+            group_id: Subscription ID
+            max_records: Maximum messages to pull
+            timeout_ms: Timeout in milliseconds
+            start_position: Not supported
+
+        Returns:
+            List of StreamRecord objects (may be empty)
+        """
+        if not self._subscriber:
+            raise WalConnectionError("Not connected to Pub/Sub")
+
         records: list[StreamRecord] = []
         try:
-            async for record in self.subscribe(topic, group_id, start_position):
+            subscription_path = self._subscriber.subscription_path(
+                self.config.project_id, group_id
+            )
+            timeout_seconds = max(1, timeout_ms // 1000)
+
+            pull_request = PullRequest(
+                subscription=subscription_path,
+                max_messages=max_records,
+            )
+
+            loop = asyncio.get_event_loop()
+
+            def _pull():
+                return self._subscriber.pull(
+                    request=pull_request,
+                    timeout=timeout_seconds,
+                )
+
+            response = await loop.run_in_executor(None, _pull)
+
+            for received_message in response.received_messages:
+                msg = received_message.message
+                ack_id = received_message.ack_id
+
+                headers = {k: v.encode("utf-8") for k, v in msg.attributes.items()}
+                record_key = msg.ordering_key or ""
+                publish_time_ms = int(msg.publish_time.timestamp() * 1000)
+
+                record = StreamRecord(
+                    key=record_key,
+                    value=msg.data,
+                    position=StreamPos(
+                        topic=topic,
+                        partition=0,
+                        offset=publish_time_ms,
+                        timestamp_ms=publish_time_ms,
+                    ),
+                    headers=headers,
+                )
+
+                self._pending_acks[str(publish_time_ms)] = ack_id
                 records.append(record)
-                if len(records) >= max_records:
-                    break
-        except Exception:
+
+        except DeadlineExceeded:
+            # No messages available within timeout
             pass
+        except NotFound as e:
+            raise WalConnectionError(f"Pub/Sub subscription not found: {e}") from e
+        except GoogleAPICallError as e:
+            raise WalError(f"Pub/Sub poll error: {e}") from e
+
         return records
 
     async def commit(self, record: StreamRecord) -> None:
