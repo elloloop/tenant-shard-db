@@ -324,11 +324,15 @@ class Applier:
                         result = await self._process_record(record)
                         self._log_result(result)
 
-            # Commit only the last record's position
+            # Commit the last record for EACH partition to avoid
+            # re-delivering records from non-last partitions on next poll.
             if records:
-                last_record = records[-1]
-                await self.wal.commit(last_record)
-                self._last_position = last_record.position
+                per_partition: dict[int, StreamRecord] = {}
+                for record in records:
+                    per_partition[record.position.partition] = record
+                for record in per_partition.values():
+                    await self.wal.commit(record)
+                self._last_position = records[-1].position
 
                 if len(records) > 1:
                     logger.debug(
@@ -336,7 +340,7 @@ class Applier:
                         extra={
                             "batch_size": len(records),
                             "tenants": len(tenant_records),
-                            "last_offset": last_record.position.offset,
+                            "last_offset": records[-1].position.offset,
                         },
                     )
 
@@ -351,6 +355,20 @@ class Applier:
 
         with self.canonical_store.batch_transaction(tenant_id) as conn:
             for record, data in items:
+                # Check schema fingerprint (same guard as apply_event)
+                if self.schema_fingerprint and data.get("schema_fingerprint"):
+                    if data["schema_fingerprint"] != self.schema_fingerprint:
+                        logger.warning(
+                            "Schema mismatch in batch, skipping event",
+                            extra={
+                                "tenant_id": tenant_id,
+                                "expected": self.schema_fingerprint,
+                                "got": data["schema_fingerprint"],
+                            },
+                        )
+                        self._error_count += 1
+                        continue
+
                 idempotency_key = data.get("idempotency_key", "")
 
                 # Check idempotency within the transaction
