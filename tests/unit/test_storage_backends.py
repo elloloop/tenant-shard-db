@@ -282,6 +282,63 @@ class TestS3ObjectStore:
             assert results == []
 
     @pytest.mark.asyncio
+    async def test_list_objects_paginates_truncated_responses(self):
+        """list_objects() follows ContinuationToken when IsTruncated is True."""
+        mock_session, _mock_ctx, mock_client = self._setup_s3_mocks()
+        mock_last_modified = MagicMock()
+        mock_last_modified.timestamp.return_value = 1700000000.0
+
+        # First page: truncated with continuation token
+        page1 = {
+            "IsTruncated": True,
+            "NextContinuationToken": "token-abc",
+            "Contents": [
+                {
+                    "Key": "snapshots/a.bin",
+                    "Size": 100,
+                    "LastModified": mock_last_modified,
+                },
+            ],
+        }
+        # Second page: not truncated
+        page2 = {
+            "IsTruncated": False,
+            "Contents": [
+                {
+                    "Key": "snapshots/b.bin",
+                    "Size": 200,
+                    "LastModified": mock_last_modified,
+                },
+            ],
+        }
+        mock_client.list_objects_v2.side_effect = [page1, page2]
+
+        with (
+            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.storage.s3.get_session",
+                return_value=mock_session,
+            ),
+        ):
+            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+
+            store = S3ObjectStore(_make_s3_config())
+            await store.connect()
+            results = await store.list_objects("snapshots/")
+
+            # Should have called list_objects_v2 twice
+            assert mock_client.list_objects_v2.await_count == 2
+
+            # Second call should include ContinuationToken
+            second_call_kwargs = mock_client.list_objects_v2.call_args_list[1][1]
+            assert second_call_kwargs["ContinuationToken"] == "token-abc"
+
+            # All objects from both pages collected
+            assert len(results) == 2
+            assert results[0].key == "snapshots/a.bin"
+            assert results[1].key == "snapshots/b.bin"
+
+    @pytest.mark.asyncio
     async def test_close_exits_client_context(self):
         """close() exits the aiobotocore client context."""
         mock_session, mock_ctx, _mock_client = self._setup_s3_mocks()
