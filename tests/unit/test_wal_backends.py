@@ -682,6 +682,96 @@ class TestPubSubWalStream:
             with pytest.raises(WalError, match="No active subscriber"):
                 await wal.commit(_sample_record())
 
+    @pytest.mark.asyncio
+    async def test_poll_batch_returns_without_hanging(self):
+        """poll_batch() must return promptly even when fewer than max_records
+        are available, rather than hanging forever in subscribe()'s while-True
+        loop.
+
+        Previously poll_batch delegated to subscribe() which is an infinite
+        loop. If the pull returned fewer messages than max_records, poll_batch
+        would wait forever for more messages that might never arrive.
+        """
+        p1, p2, p3, mock_pub_cls, mock_sub_cls = self._patch_pubsub()
+        mock_publisher = MagicMock()
+        mock_subscriber = MagicMock()
+        mock_pub_cls.return_value = mock_publisher
+        mock_sub_cls.return_value = mock_subscriber
+        mock_publisher.topic_path.return_value = "projects/my-project/topics/entdb-wal"
+        mock_subscriber.subscription_path.return_value = (
+            "projects/my-project/subscriptions/entdb-sub"
+        )
+
+        # Create a mock pull response with 2 messages (less than max_records=10)
+        mock_msg_1 = MagicMock()
+        mock_msg_1.message.data = b'{"op":"create"}'
+        mock_msg_1.message.attributes = {}
+        mock_msg_1.message.ordering_key = "tenant_1"
+        mock_msg_1.message.publish_time.timestamp.return_value = 1700000.0
+        mock_msg_1.ack_id = "ack-1"
+
+        mock_msg_2 = MagicMock()
+        mock_msg_2.message.data = b'{"op":"update"}'
+        mock_msg_2.message.attributes = {"key": "val"}
+        mock_msg_2.message.ordering_key = "tenant_2"
+        mock_msg_2.message.publish_time.timestamp.return_value = 1700001.0
+        mock_msg_2.ack_id = "ack-2"
+
+        mock_response = MagicMock()
+        mock_response.received_messages = [mock_msg_1, mock_msg_2]
+        mock_subscriber.pull.return_value = mock_response
+
+        mock_pull_request = MagicMock()
+        mock_deadline_exceeded = type("DeadlineExceeded", (Exception,), {})
+        mock_not_found = type("NotFound", (Exception,), {})
+        mock_google_api_error = type("GoogleAPICallError", (Exception,), {})
+
+        with (
+            p1,
+            p2,
+            p3,
+            patch("dbaas.entdb_server.wal.pubsub.PullRequest", mock_pull_request),
+            patch("dbaas.entdb_server.wal.pubsub.DeadlineExceeded", mock_deadline_exceeded),
+            patch("dbaas.entdb_server.wal.pubsub.NotFound", mock_not_found),
+            patch("dbaas.entdb_server.wal.pubsub.GoogleAPICallError", mock_google_api_error),
+        ):
+            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+
+            wal = PubSubWalStream(self._pubsub_config())
+            wal._publisher = mock_publisher
+            wal._subscriber = mock_subscriber
+            wal._topic_path = "projects/my-project/topics/entdb-wal"
+            wal._subscription_path = "projects/my-project/subscriptions/entdb-sub"
+            wal._connected = True
+
+            # This should return promptly with 2 records, not hang
+            import asyncio
+
+            records = await asyncio.wait_for(
+                wal.poll_batch("entdb-wal", "entdb-sub", max_records=10, timeout_ms=1000),
+                timeout=5.0,  # test fails if poll_batch hangs
+            )
+
+            assert len(records) == 2
+            assert records[0].key == "tenant_1"
+            assert records[0].value == b'{"op":"create"}'
+            assert records[1].key == "tenant_2"
+            assert records[1].value == b'{"op":"update"}'
+
+            # Verify ack_ids were stored for later commit
+            assert len(wal._pending_acks) == 2
+
+    @pytest.mark.asyncio
+    async def test_poll_batch_not_connected_raises(self):
+        """poll_batch() raises WalConnectionError when not connected."""
+        p1, p2, p3, _mock_pub_cls, _mock_sub_cls = self._patch_pubsub()
+        with p1, p2, p3:
+            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+
+            wal = PubSubWalStream(self._pubsub_config())
+            with pytest.raises(WalConnectionError):
+                await wal.poll_batch("topic", "group")
+
 
 # ===================================================================
 # SQS
@@ -874,6 +964,52 @@ class TestSqsWalStream:
             wal = SqsWalStream(_make_sqs_config())
             with pytest.raises(WalError, match="No active SQS client"):
                 await wal.commit(_sample_record())
+
+    @pytest.mark.asyncio
+    async def test_commit_cleans_up_message_id_entry(self):
+        """commit() must remove both the offset and message_id entries from
+        _pending_acks to prevent an unbounded memory leak.
+
+        Previously, subscribe/poll_batch stored two entries per message:
+          _pending_acks[message_id] = receipt_handle
+          _pending_acks[offset_key] = receipt_handle
+        but commit() only popped the offset entry, leaving the message_id
+        entry leaked forever.
+        """
+        mock_client = AsyncMock()
+
+        with patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
+            from dbaas.entdb_server.wal.sqs import SqsWalStream
+
+            config = _make_sqs_config()
+            wal = SqsWalStream(config)
+            wal._client = mock_client
+            wal._connected = True
+
+            # Simulate what subscribe/poll_batch would store for 3 messages
+            for i in range(1, 4):
+                offset_key = str(i)
+                message_id = f"msg-{i}"
+                wal._pending_acks[message_id] = f"receipt-{i}"
+                wal._pending_acks[offset_key] = f"receipt-{i}"
+                wal._offset_to_message_id[offset_key] = message_id
+
+            assert len(wal._pending_acks) == 6  # 3 offset + 3 message_id entries
+
+            # Commit message with offset=2
+            record = _sample_record(topic=config.queue_url, partition=0, offset=2)
+            await wal.commit(record)
+
+            # Both the offset entry ("2") and message_id entry ("msg-2") should be gone
+            assert "2" not in wal._pending_acks
+            assert "msg-2" not in wal._pending_acks
+            assert "2" not in wal._offset_to_message_id
+            # Other entries remain
+            assert "1" in wal._pending_acks
+            assert "msg-1" in wal._pending_acks
+            assert "3" in wal._pending_acks
+            assert "msg-3" in wal._pending_acks
+            assert len(wal._pending_acks) == 4  # 2 offset + 2 message_id
 
 
 # ===================================================================
