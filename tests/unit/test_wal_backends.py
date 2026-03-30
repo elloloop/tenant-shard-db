@@ -1085,6 +1085,57 @@ class TestServiceBusWalStream:
 
             assert mock_message.application_properties == {"x-type": "create"}
 
+    @pytest.mark.asyncio
+    async def test_poll_batch_keeps_receiver_open_for_commit(self):
+        """poll_batch() keeps the receiver alive so commit() can complete messages."""
+        mock_client = MagicMock()
+        mock_sender = MagicMock()
+        mock_client.get_queue_sender.return_value = mock_sender
+
+        # Build a mock receiver that is NOT used as async context manager
+        mock_receiver = MagicMock()
+        mock_receiver.close = AsyncMock()
+
+        mock_msg = MagicMock()
+        mock_msg.body = [b"payload"]
+        mock_msg.application_properties = None
+        mock_msg.sequence_number = 42
+        mock_msg.session_id = "tenant_1"
+        mock_msg.enqueued_time_utc = None
+
+        mock_receiver.receive_messages = AsyncMock(return_value=[mock_msg])
+        mock_receiver.complete_message = AsyncMock()
+        mock_client.get_queue_receiver.return_value = mock_receiver
+
+        mock_sb_client_cls = MagicMock()
+        mock_sb_client_cls.from_connection_string.return_value = mock_client
+
+        with (
+            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch(
+                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                mock_sb_client_cls,
+            ),
+            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+        ):
+            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+
+            wal = ServiceBusWalStream(_make_servicebus_config())
+            await wal.connect()
+
+            records = await wal.poll_batch("entdb-wal", "group1", max_records=10)
+            assert len(records) == 1
+            assert records[0].key == "tenant_1"
+            assert records[0].value == b"payload"
+
+            # The receiver should NOT have been closed — it is kept alive
+            # so commit() can complete messages through it.
+            mock_receiver.close.assert_not_awaited()
+
+            # Now commit the record — should use the SAME receiver
+            await wal.commit(records[0])
+            mock_receiver.complete_message.assert_awaited_once_with(mock_msg)
+
 
 # ===================================================================
 # Event Hubs

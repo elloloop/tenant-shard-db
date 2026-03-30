@@ -1,4 +1,5 @@
 # mypy: ignore-errors
+
 """
 Azure Service Bus WAL stream implementation.
 
@@ -349,50 +350,59 @@ class ServiceBusWalStream:
         wait_seconds = max(1, timeout_ms // 1000)
 
         try:
+            # Close any previous poll_batch receiver before creating a new one.
+            if self._receiver:
+                try:
+                    await self._receiver.close()
+                except Exception:
+                    pass
+
             receiver = self._client.get_queue_receiver(
                 queue_name=self.config.queue_name,
                 max_wait_time=wait_seconds,
             )
+            # Keep receiver open (no `async with`) so commit() can
+            # complete messages later via the stored reference.
+            self._receiver = receiver
 
-            async with receiver:
-                messages = await receiver.receive_messages(
-                    max_message_count=max_records,
-                    max_wait_time=wait_seconds,
+            messages = await receiver.receive_messages(
+                max_message_count=max_records,
+                max_wait_time=wait_seconds,
+            )
+
+            for msg in messages:
+                self._counter += 1
+
+                body = b"".join(msg.body)
+
+                headers: dict[str, bytes] = {}
+                if msg.application_properties:
+                    for k, v in msg.application_properties.items():
+                        key_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
+                        val_str = v.decode("utf-8") if isinstance(v, bytes) else str(v)
+                        headers[key_str] = val_str.encode("utf-8")
+
+                seq_num = msg.sequence_number or self._counter
+                enqueued_ms = (
+                    int(msg.enqueued_time_utc.timestamp() * 1000)
+                    if msg.enqueued_time_utc
+                    else int(time.time() * 1000)
                 )
 
-                for msg in messages:
-                    self._counter += 1
+                record = StreamRecord(
+                    key=msg.session_id or "",
+                    value=body,
+                    position=StreamPos(
+                        topic=topic,
+                        partition=0,
+                        offset=seq_num,
+                        timestamp_ms=enqueued_ms,
+                    ),
+                    headers=headers,
+                )
 
-                    body = b"".join(msg.body)
-
-                    headers: dict[str, bytes] = {}
-                    if msg.application_properties:
-                        for k, v in msg.application_properties.items():
-                            key_str = k.decode("utf-8") if isinstance(k, bytes) else str(k)
-                            val_str = v.decode("utf-8") if isinstance(v, bytes) else str(v)
-                            headers[key_str] = val_str.encode("utf-8")
-
-                    seq_num = msg.sequence_number or self._counter
-                    enqueued_ms = (
-                        int(msg.enqueued_time_utc.timestamp() * 1000)
-                        if msg.enqueued_time_utc
-                        else int(time.time() * 1000)
-                    )
-
-                    record = StreamRecord(
-                        key=msg.session_id or "",
-                        value=body,
-                        position=StreamPos(
-                            topic=topic,
-                            partition=0,
-                            offset=seq_num,
-                            timestamp_ms=enqueued_ms,
-                        ),
-                        headers=headers,
-                    )
-
-                    self._pending_messages[str(seq_num)] = (receiver, msg)
-                    records.append(record)
+                self._pending_messages[str(seq_num)] = (receiver, msg)
+                records.append(record)
 
         except Exception as e:
             logger.warning(f"Service Bus poll_batch error: {e}")
