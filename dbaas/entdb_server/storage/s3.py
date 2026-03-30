@@ -76,17 +76,25 @@ class S3ObjectStore:
         return await response["Body"].read()
 
     async def list_objects(self, prefix: str) -> list[ObjectMeta]:
-        response = await self._client.list_objects_v2(
-            Bucket=self._config.bucket,
-            Prefix=prefix,
-        )
         results = []
-        for obj in response.get("Contents", []):
-            results.append(
-                ObjectMeta(
-                    key=obj["Key"],
-                    size_bytes=obj["Size"],
-                    last_modified=int(obj["LastModified"].timestamp() * 1000),
+        kwargs = {
+            "Bucket": self._config.bucket,
+            "Prefix": prefix,
+        }
+
+        while True:
+            response = await self._client.list_objects_v2(**kwargs)
+            for obj in response.get("Contents", []):
+                results.append(
+                    ObjectMeta(
+                        key=obj["Key"],
+                        size_bytes=obj["Size"],
+                        last_modified=int(obj["LastModified"].timestamp() * 1000),
+                    )
                 )
-            )
+
+            if not response.get("IsTruncated"):
+                break
+            kwargs["ContinuationToken"] = response["NextContinuationToken"]
+
         return results

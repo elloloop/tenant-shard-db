@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "entdb"
-version = "0.6.2"
+version = "0.6.3"
 description = "Tenant-sharded graph database with nodes and edges"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -132,6 +132,7 @@ ignore = [
     "ARG001", # unused function argument
     "ARG002", # unused method argument
     "SIM102", # nested if (sometimes clearer)
+    "SIM105", # contextlib.suppress doesnt work with async
 ]
 
 [tool.ruff.lint.isort]
