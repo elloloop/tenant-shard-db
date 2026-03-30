@@ -149,7 +149,7 @@ class EntDBServicer(EntDBServiceServicer):
             # Validate schema fingerprint if provided
             if request.schema_fingerprint and self.schema_registry.fingerprint:
                 if request.schema_fingerprint != self.schema_registry.fingerprint:
-                    record_grpc_request("ExecuteAtomic", "ok", time.perf_counter() - start)
+                    record_grpc_request("ExecuteAtomic", "error", time.perf_counter() - start)
                     return ExecuteAtomicResponse(
                         success=False,
                         error=f"Schema mismatch: server has {self.schema_registry.fingerprint}",
