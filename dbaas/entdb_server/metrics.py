@@ -32,6 +32,16 @@ except ImportError:
 # Metrics (created lazily when enabled)
 _metrics: dict[str, Any] = {}
 
+# Fast path: module-level flag to skip all metrics work when disabled.
+# Checked by hot-path callers (e.g. _run_sync) to avoid function-call
+# overhead on every SQLite operation.
+_enabled: bool = False
+
+
+def metrics_enabled() -> bool:
+    """Return True when metrics collection is active."""
+    return _enabled
+
 
 def init_metrics(port: int = 9090) -> bool:
     """Initialize and start Prometheus metrics server."""
@@ -39,7 +49,7 @@ def init_metrics(port: int = 9090) -> bool:
         logger.warning("prometheus_client not installed, metrics disabled")
         return False
 
-    global _metrics
+    global _metrics, _enabled
     _metrics = {
         "grpc_requests": Counter(
             "entdb_grpc_requests_total",
@@ -81,6 +91,8 @@ def init_metrics(port: int = 9090) -> bool:
             "Number of active tenants",
         ),
     }
+
+    _enabled = True
 
     start_http_server(port)
     logger.info("Prometheus metrics server started", extra={"port": port})
