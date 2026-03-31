@@ -535,6 +535,10 @@ class CanonicalStore:
         now = created_at or int(time.time() * 1000)
         acl = acl or []
 
+        # Serialize once; reuse for both the INSERT and the Node object.
+        payload_str = json.dumps(payload)
+        acl_str = json.dumps(acl)
+
         conn.execute(
             """
             INSERT INTO nodes (tenant_id, node_id, type_id, payload_json,
@@ -545,11 +549,11 @@ class CanonicalStore:
                 tenant_id,
                 node_id,
                 type_id,
-                json.dumps(payload),
+                payload_str,
                 now,
                 now,
                 owner_actor,
-                json.dumps(acl),
+                acl_str,
             ),
         )
 
@@ -559,11 +563,11 @@ class CanonicalStore:
             tenant_id=tenant_id,
             node_id=node_id,
             type_id=type_id,
-            payload=payload,
             created_at=now,
             updated_at=now,
             owner_actor=owner_actor,
-            acl=acl,
+            payload_json=payload_str,
+            acl_json=acl_str,
         )
 
     async def initialize_tenant(self, tenant_id: str) -> None:
@@ -723,6 +727,10 @@ class CanonicalStore:
         acl: list[dict[str, str]],
         now: int,
     ) -> Node:
+        # Serialize once; reuse for both the INSERT and the Node object.
+        payload_str = json.dumps(payload)
+        acl_str = json.dumps(acl)
+
         with self._get_connection(tenant_id) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -736,11 +744,11 @@ class CanonicalStore:
                         tenant_id,
                         node_id,
                         type_id,
-                        json.dumps(payload),
+                        payload_str,
                         now,
                         now,
                         owner_actor,
-                        json.dumps(acl),
+                        acl_str,
                     ),
                 )
 
@@ -766,11 +774,11 @@ class CanonicalStore:
             tenant_id=tenant_id,
             node_id=node_id,
             type_id=type_id,
-            payload=payload,
             created_at=now,
             updated_at=now,
             owner_actor=owner_actor,
-            acl=acl,
+            payload_json=payload_str,
+            acl_json=acl_str,
         )
 
     async def create_node(
@@ -838,6 +846,7 @@ class CanonicalStore:
                 # Merge payloads
                 existing_payload = json.loads(row["payload_json"])
                 existing_payload.update(patch)
+                payload_str = json.dumps(existing_payload)
 
                 # Update node
                 conn.execute(
@@ -845,7 +854,7 @@ class CanonicalStore:
                     UPDATE nodes SET payload_json = ?, updated_at = ?
                     WHERE tenant_id = ? AND node_id = ?
                     """,
-                    (json.dumps(existing_payload), now, tenant_id, node_id),
+                    (payload_str, now, tenant_id, node_id),
                 )
 
                 conn.execute("COMMIT")
@@ -854,10 +863,10 @@ class CanonicalStore:
                     tenant_id=tenant_id,
                     node_id=node_id,
                     type_id=row["type_id"],
-                    payload=existing_payload,
                     created_at=row["created_at"],
                     updated_at=now,
                     owner_actor=row["owner_actor"],
+                    payload_json=payload_str,
                     acl_json=row["acl_blob"],
                 )
 
