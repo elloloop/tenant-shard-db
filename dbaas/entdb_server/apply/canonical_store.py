@@ -68,7 +68,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -90,29 +90,155 @@ class IdempotencyViolationError(Exception):
     pass
 
 
-@dataclass
 class Node:
     """Represents a node in the graph.
+
+    Stores payload and ACL as raw JSON strings internally to avoid
+    unnecessary json.loads/json.dumps round-trips on the read path.
+    The parsed forms are available via lazy properties.
 
     Attributes:
         tenant_id: Tenant identifier
         node_id: Unique node identifier (UUID)
         type_id: Node type identifier
-        payload: Field values
+        payload: Field values (lazy-parsed from payload_json)
         created_at: Creation timestamp (Unix ms)
         updated_at: Last update timestamp (Unix ms)
         owner_actor: Actor who created the node
-        acl: Access control list
+        acl: Access control list (lazy-parsed from acl_json)
+        payload_json: Raw JSON string for payload
+        acl_json: Raw JSON string for ACL
     """
 
-    tenant_id: str
-    node_id: str
-    type_id: int
-    payload: dict[str, Any]
-    created_at: int
-    updated_at: int
-    owner_actor: str
-    acl: list[dict[str, str]] = field(default_factory=list)
+    __slots__ = (
+        "tenant_id",
+        "node_id",
+        "type_id",
+        "_payload_json",
+        "_payload_parsed",
+        "created_at",
+        "updated_at",
+        "owner_actor",
+        "_acl_json",
+        "_acl_parsed",
+    )
+
+    _SENTINEL = object()
+
+    def __init__(
+        self,
+        tenant_id: str,
+        node_id: str,
+        type_id: int,
+        payload: dict[str, Any] | None = None,
+        created_at: int = 0,
+        updated_at: int = 0,
+        owner_actor: str = "",
+        acl: list[dict[str, str]] | None = None,
+        *,
+        payload_json: str | None = None,
+        acl_json: str | None = None,
+    ) -> None:
+        self.tenant_id = tenant_id
+        self.node_id = node_id
+        self.type_id = type_id
+        self.created_at = created_at
+        self.updated_at = updated_at
+        self.owner_actor = owner_actor
+
+        # Payload: prefer raw JSON string to avoid serialization round-trip
+        if payload_json is not None:
+            self._payload_json: str = payload_json
+            self._payload_parsed: Any = Node._SENTINEL
+        elif payload is not None:
+            self._payload_json = json.dumps(payload)
+            self._payload_parsed = payload
+        else:
+            self._payload_json = "{}"
+            self._payload_parsed: Any = {}
+
+        # ACL: same approach
+        if acl_json is not None:
+            self._acl_json: str = acl_json
+            self._acl_parsed: Any = Node._SENTINEL
+        elif acl is not None:
+            self._acl_json = json.dumps(acl)
+            self._acl_parsed = acl
+        else:
+            self._acl_json = "[]"
+            self._acl_parsed: Any = []
+
+    @classmethod
+    def from_row(
+        cls,
+        tenant_id: str,
+        node_id: str,
+        type_id: int,
+        payload_json: str,
+        created_at: int,
+        updated_at: int,
+        owner_actor: str,
+        acl_json: str,
+    ) -> Node:
+        """Construct from raw SQLite row data without parsing JSON."""
+        return cls(
+            tenant_id=tenant_id,
+            node_id=node_id,
+            type_id=type_id,
+            created_at=created_at,
+            updated_at=updated_at,
+            owner_actor=owner_actor,
+            payload_json=payload_json,
+            acl_json=acl_json,
+        )
+
+    @property
+    def payload(self) -> dict[str, Any]:
+        """Lazily parse payload from JSON string."""
+        val = self._payload_parsed
+        if val is Node._SENTINEL:
+            val = json.loads(self._payload_json)
+            self._payload_parsed = val
+        return val
+
+    @property
+    def acl(self) -> list[dict[str, str]]:
+        """Lazily parse ACL from JSON string."""
+        val = self._acl_parsed
+        if val is Node._SENTINEL:
+            val = json.loads(self._acl_json)
+            self._acl_parsed = val
+        return val
+
+    @property
+    def payload_json(self) -> str:
+        """Raw JSON string for payload -- no serialization needed."""
+        return self._payload_json
+
+    @property
+    def acl_json(self) -> str:
+        """Raw JSON string for ACL -- no serialization needed."""
+        return self._acl_json
+
+    def __repr__(self) -> str:
+        return (
+            f"Node(tenant_id={self.tenant_id!r}, node_id={self.node_id!r}, "
+            f"type_id={self.type_id!r}, created_at={self.created_at!r})"
+        )
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Node):
+            return NotImplemented
+        return (
+            self.tenant_id == other.tenant_id
+            and self.node_id == other.node_id
+            and self.type_id == other.type_id
+            and self.created_at == other.created_at
+            and self.updated_at == other.updated_at
+            and self.owner_actor == other.owner_actor
+            and self._payload_json == other._payload_json
+            and self._acl_json == other._acl_json
+        )
 
 
 @dataclass
@@ -732,7 +858,7 @@ class CanonicalStore:
                     created_at=row["created_at"],
                     updated_at=now,
                     owner_actor=row["owner_actor"],
-                    acl=json.loads(row["acl_blob"]),
+                    acl_json=row["acl_blob"],
                 )
 
             except Exception:
@@ -817,15 +943,15 @@ class CanonicalStore:
             if not row:
                 return None
 
-            return Node(
+            return Node.from_row(
                 tenant_id=row["tenant_id"],
                 node_id=row["node_id"],
                 type_id=row["type_id"],
-                payload=json.loads(row["payload_json"]),
+                payload_json=row["payload_json"],
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
                 owner_actor=row["owner_actor"],
-                acl=json.loads(row["acl_blob"]),
+                acl_json=row["acl_blob"],
             )
 
     async def get_node(self, tenant_id: str, node_id: str) -> Node | None:
@@ -861,15 +987,15 @@ class CanonicalStore:
             )
 
             return [
-                Node(
+                Node.from_row(
                     tenant_id=row["tenant_id"],
                     node_id=row["node_id"],
                     type_id=row["type_id"],
-                    payload=json.loads(row["payload_json"]),
+                    payload_json=row["payload_json"],
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     owner_actor=row["owner_actor"],
-                    acl=json.loads(row["acl_blob"]),
+                    acl_json=row["acl_blob"],
                 )
                 for row in cursor.fetchall()
             ]
@@ -914,7 +1040,8 @@ class CanonicalStore:
                 order_by = "created_at"
 
             if filter_json:
-                # Fetch all matching rows for this type, filter in Python, then paginate
+                # Fetch all matching rows for this type, filter in Python, then paginate.
+                # Note: payload must be parsed here for filtering, but ACL can stay raw.
                 cursor = conn.execute(
                     f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
                     f"ORDER BY {order_by} {order}",
@@ -931,6 +1058,7 @@ class CanonicalStore:
                         continue
                     if len(nodes) >= limit:
                         break
+                    # payload already parsed for filtering; pass both raw + parsed
                     nodes.append(
                         Node(
                             tenant_id=row["tenant_id"],
@@ -940,27 +1068,27 @@ class CanonicalStore:
                             created_at=row["created_at"],
                             updated_at=row["updated_at"],
                             owner_actor=row["owner_actor"],
-                            acl=json.loads(row["acl_blob"]),
+                            acl_json=row["acl_blob"],
                         )
                     )
                 return nodes
             else:
-                # No filter — use SQL LIMIT/OFFSET (efficient)
+                # No filter -- use SQL LIMIT/OFFSET (efficient)
                 cursor = conn.execute(
                     f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
                     f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
                     (tenant_id, type_id, limit, offset),
                 )
                 return [
-                    Node(
+                    Node.from_row(
                         tenant_id=row["tenant_id"],
                         node_id=row["node_id"],
                         type_id=row["type_id"],
-                        payload=json.loads(row["payload_json"]),
+                        payload_json=row["payload_json"],
                         created_at=row["created_at"],
                         updated_at=row["updated_at"],
                         owner_actor=row["owner_actor"],
-                        acl=json.loads(row["acl_blob"]),
+                        acl_json=row["acl_blob"],
                     )
                     for row in cursor.fetchall()
                 ]
@@ -1255,15 +1383,15 @@ class CanonicalStore:
             cursor = conn.execute(query, params)
 
             return [
-                Node(
+                Node.from_row(
                     tenant_id=row["tenant_id"],
                     node_id=row["node_id"],
                     type_id=row["type_id"],
-                    payload=json.loads(row["payload_json"]),
+                    payload_json=row["payload_json"],
                     created_at=row["created_at"],
                     updated_at=row["updated_at"],
                     owner_actor=row["owner_actor"],
-                    acl=json.loads(row["acl_blob"]),
+                    acl_json=row["acl_blob"],
                 )
                 for row in cursor.fetchall()
             ]
