@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..metrics import record_applier_event
 from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
 from .canonical_store import CanonicalStore, Edge, Node
@@ -484,8 +485,6 @@ class Applier:
 
     def _log_result(self, result: ApplyResult) -> None:
         """Log the result of applying an event."""
-        from ..metrics import record_applier_event
-
         if result.success and not result.skipped:
             self._processed_count += 1
             record_applier_event("applied")
