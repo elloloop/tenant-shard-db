@@ -34,6 +34,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SENTINEL = object()  # Cache-miss marker for StreamRecord.value_json()
+
 
 class WalError(Exception):
     """Base exception for WAL operations."""
@@ -128,9 +130,14 @@ class StreamRecord:
     value: bytes
     position: StreamPos
     headers: dict[str, bytes] = field(default_factory=dict)
+    _cached_json: Any = field(default=_SENTINEL, init=False, repr=False, compare=False)
 
     def value_json(self) -> Any:
-        """Parse value as JSON.
+        """Parse value as JSON, caching the result.
+
+        The parsed dict is cached so repeated calls (e.g. applier batch
+        grouping then per-event processing) avoid redundant json.loads
+        on the same bytes.
 
         Returns:
             Parsed JSON value
@@ -138,10 +145,15 @@ class StreamRecord:
         Raises:
             WalSerializationError: If value is not valid JSON
         """
+        cached = self._cached_json
+        if cached is not _SENTINEL:
+            return cached
         try:
-            return json.loads(self.value.decode("utf-8"))
+            parsed = json.loads(self.value.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as e:
             raise WalSerializationError(f"Failed to parse record value as JSON: {e}")
+        self._cached_json = parsed
+        return parsed
 
     def __str__(self) -> str:
         return f"StreamRecord(key={self.key}, pos={self.position})"
