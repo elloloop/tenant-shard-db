@@ -6,13 +6,150 @@ Tests cover:
 - Edge CRUD operations
 - Idempotency checking
 - Visibility management
+- Node lazy JSON passthrough (read-path optimization)
 """
 
+import json
 import tempfile
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from dbaas.entdb_server.apply.canonical_store import CanonicalStore, Node
+
+
+class TestNodeLazyJson:
+    """Tests for Node lazy JSON string passthrough."""
+
+    def test_from_row_skips_json_parsing(self):
+        """Node.from_row stores raw JSON without parsing."""
+        node = Node.from_row(
+            tenant_id="t1",
+            node_id="n1",
+            type_id=1,
+            payload_json='{"name": "Alice"}',
+            created_at=1000,
+            updated_at=2000,
+            owner_actor="user:alice",
+            acl_json='[{"principal": "user:alice", "permission": "read"}]',
+        )
+        # Raw strings should pass through unchanged
+        assert node.payload_json == '{"name": "Alice"}'
+        assert node.acl_json == '[{"principal": "user:alice", "permission": "read"}]'
+
+        # Parsed forms should NOT be materialized yet
+        assert node._payload_parsed is Node._SENTINEL
+        assert node._acl_parsed is Node._SENTINEL
+
+    def test_lazy_payload_parsed_on_access(self):
+        """Accessing .payload triggers json.loads and caches result."""
+        node = Node.from_row(
+            tenant_id="t1",
+            node_id="n1",
+            type_id=1,
+            payload_json='{"key": "value"}',
+            created_at=0,
+            updated_at=0,
+            owner_actor="u",
+            acl_json="[]",
+        )
+        # Before access
+        assert node._payload_parsed is Node._SENTINEL
+
+        # Access triggers parse
+        payload = node.payload
+        assert payload == {"key": "value"}
+        assert node._payload_parsed is not Node._SENTINEL
+
+        # Second access returns cached value (same object)
+        assert node.payload is payload
+
+    def test_lazy_acl_parsed_on_access(self):
+        """Accessing .acl triggers json.loads and caches result."""
+        node = Node.from_row(
+            tenant_id="t1",
+            node_id="n1",
+            type_id=1,
+            payload_json="{}",
+            created_at=0,
+            updated_at=0,
+            owner_actor="u",
+            acl_json='[{"principal": "user:x"}]',
+        )
+        assert node._acl_parsed is Node._SENTINEL
+        acl = node.acl
+        assert acl == [{"principal": "user:x"}]
+        assert node.acl is acl
+
+    def test_constructor_with_dict_payload(self):
+        """Constructing with payload dict serializes immediately."""
+        node = Node(
+            tenant_id="t1",
+            node_id="n1",
+            type_id=1,
+            payload={"a": 1},
+            created_at=0,
+            updated_at=0,
+            owner_actor="u",
+        )
+        assert node.payload_json == '{"a": 1}'
+        assert node.payload == {"a": 1}
+        assert node._payload_parsed is not Node._SENTINEL
+
+    def test_constructor_defaults(self):
+        """Default payload is {} and default ACL is []."""
+        node = Node(tenant_id="t", node_id="n", type_id=1)
+        assert node.payload == {}
+        assert node.acl == []
+        assert node.payload_json == "{}"
+        assert node.acl_json == "[]"
+
+    def test_payload_json_matches_json_dumps(self):
+        """payload_json from dict construction matches json.dumps output."""
+        data = {"x": [1, 2, 3], "y": {"nested": True}}
+        node = Node(
+            tenant_id="t",
+            node_id="n",
+            type_id=1,
+            payload=data,
+            created_at=0,
+            updated_at=0,
+            owner_actor="u",
+        )
+        assert json.loads(node.payload_json) == data
+
+    def test_read_path_no_roundtrip(self):
+        """Simulates full read path: from_row -> payload_json should be zero-copy."""
+        raw_payload = '{"title": "My Post", "body": "Hello world", "views": 42}'
+        raw_acl = '[{"principal": "user:bob", "permission": "read"}]'
+        node = Node.from_row(
+            tenant_id="t1",
+            node_id="n1",
+            type_id=1,
+            payload_json=raw_payload,
+            created_at=0,
+            updated_at=0,
+            owner_actor="u",
+            acl_json=raw_acl,
+        )
+        # The gRPC layer would use payload_json directly:
+        assert node.payload_json is raw_payload  # exact same string object
+        assert node.acl_json is raw_acl
+        # And _payload_parsed was never touched
+        assert node._payload_parsed is Node._SENTINEL
+
+    def test_equality(self):
+        """Two nodes with same data are equal."""
+        n1 = Node(
+            tenant_id="t",
+            node_id="n",
+            type_id=1,
+            payload={"a": 1},
+            created_at=0,
+            updated_at=0,
+            owner_actor="u",
+        )
+        n2 = Node.from_row("t", "n", 1, '{"a": 1}', 0, 0, "u", "[]")
+        assert n1 == n2
 
 
 class TestCanonicalStore:

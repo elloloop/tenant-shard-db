@@ -370,11 +370,11 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=node.tenant_id,
                     node_id=node.node_id,
                     type_id=node.type_id,
-                    payload_json=json.dumps(node.payload),
+                    payload_json=node.payload_json,
                     created_at=node.created_at,
                     updated_at=node.updated_at,
                     owner_actor=node.owner_actor,
-                    acl_json=json.dumps(node.acl),
+                    acl_json=node.acl_json,
                 ),
             )
         except Exception as e:
@@ -405,11 +405,11 @@ class EntDBServicer(EntDBServiceServicer):
                             tenant_id=node.tenant_id,
                             node_id=node.node_id,
                             type_id=node.type_id,
-                            payload_json=json.dumps(node.payload),
+                            payload_json=node.payload_json,
                             created_at=node.created_at,
                             updated_at=node.updated_at,
                             owner_actor=node.owner_actor,
-                            acl_json=json.dumps(node.acl),
+                            acl_json=node.acl_json,
                         )
                     )
                 else:
@@ -453,11 +453,11 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=n.tenant_id,
                     node_id=n.node_id,
                     type_id=n.type_id,
-                    payload_json=json.dumps(n.payload),
+                    payload_json=n.payload_json,
                     created_at=n.created_at,
                     updated_at=n.updated_at,
                     owner_actor=n.owner_actor,
-                    acl_json=json.dumps(n.acl),
+                    acl_json=n.acl_json,
                 )
                 for n in nodes
             ]
