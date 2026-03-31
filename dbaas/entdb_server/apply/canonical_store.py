@@ -72,6 +72,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..metrics import metrics_enabled as _metrics_enabled
+from ..metrics import record_sqlite_op as _record_sqlite_op
+
 logger = logging.getLogger(__name__)
 
 
@@ -187,16 +190,27 @@ class CanonicalStore:
 
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entdb-sqlite")
 
+    # Pre-computed op-type cache: avoids repeated string-in-name checks
+    # on every _run_sync call.  Populated lazily per function object.
+    _op_type_cache: dict[Callable, str] = {}
+
+    @staticmethod
+    def _classify_op(fn: Callable) -> str:
+        """Classify a sync helper as 'read' or 'write' by its name."""
+        name = fn.__name__
+        if "create" in name or "update" in name or "delete" in name:
+            return "write"
+        return "read"
+
     async def _run_sync(self, fn: Callable, *args: Any) -> Any:
         """Run a synchronous function in a dedicated thread to avoid blocking the event loop."""
-        from ..metrics import record_sqlite_op
-
-        op_type = (
-            "write"
-            if "create" in fn.__name__ or "update" in fn.__name__ or "delete" in fn.__name__
-            else "read"
-        )
-        record_sqlite_op(op_type)
+        if _metrics_enabled():
+            cache = CanonicalStore._op_type_cache
+            op_type = cache.get(fn)
+            if op_type is None:
+                op_type = self._classify_op(fn)
+                cache[fn] = op_type
+            _record_sqlite_op(op_type)
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
