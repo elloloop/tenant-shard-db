@@ -482,3 +482,100 @@ class TestCanonicalStore:
         assert len(t2_nodes) == 1
         assert t1_nodes[0].payload["name"] == "Tenant 1 User"
         assert t2_nodes[0].payload["name"] == "Tenant 2 User"
+
+
+class TestWritePathSingleSerialize:
+    """Tests that write-path methods serialize JSON once, not twice."""
+
+    @pytest.fixture
+    def data_dir(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            yield tmpdir
+
+    @pytest.fixture
+    def store(self, data_dir):
+        return CanonicalStore(data_dir, wal_mode=False)
+
+    @pytest.mark.asyncio
+    async def test_create_node_raw_returns_prebuilt_json(self, store):
+        """create_node_raw returns Node with payload_json/acl_json pre-built,
+        not re-serialized from the dict.  _payload_parsed must be SENTINEL
+        (i.e. lazy, not eagerly materialized)."""
+        tenant_id = "t_raw"
+        await store.initialize_tenant(tenant_id)
+
+        payload = {"title": "Hello", "count": 42}
+        acl = [{"principal": "user:alice", "permission": "read"}]
+
+        with store.batch_transaction(tenant_id) as conn:
+            node = store.create_node_raw(
+                conn,
+                tenant_id=tenant_id,
+                type_id=1,
+                payload=payload,
+                owner_actor="user:alice",
+                node_id="node-1",
+                acl=acl,
+                created_at=9999,
+            )
+
+        # The node must have been constructed via payload_json= kwarg,
+        # so _payload_parsed should be SENTINEL (not eagerly parsed).
+        assert node._payload_parsed is Node._SENTINEL
+        assert node._acl_parsed is Node._SENTINEL
+
+        # The raw JSON strings must match what json.dumps would produce.
+        assert json.loads(node.payload_json) == payload
+        assert json.loads(node.acl_json) == acl
+
+        # Accessing .payload lazily parses and returns the same data.
+        assert node.payload == payload
+        assert node.acl == acl
+
+    @pytest.mark.asyncio
+    async def test_create_node_returns_prebuilt_json(self, store):
+        """Async create_node also returns Node with pre-built JSON strings."""
+        tenant_id = "t_async"
+        await store.initialize_tenant(tenant_id)
+
+        payload = {"x": [1, 2, 3]}
+        acl = [{"principal": "user:bob", "permission": "write"}]
+
+        node = await store.create_node(
+            tenant_id=tenant_id,
+            type_id=2,
+            payload=payload,
+            owner_actor="user:bob",
+            acl=acl,
+        )
+
+        # Should be constructed via payload_json= (SENTINEL means lazy).
+        assert node._payload_parsed is Node._SENTINEL
+        assert node._acl_parsed is Node._SENTINEL
+        assert json.loads(node.payload_json) == payload
+        assert json.loads(node.acl_json) == acl
+
+    @pytest.mark.asyncio
+    async def test_update_node_returns_prebuilt_json(self, store):
+        """update_node returns Node with pre-built payload_json string."""
+        tenant_id = "t_upd"
+        await store.initialize_tenant(tenant_id)
+
+        node = await store.create_node(
+            tenant_id=tenant_id,
+            type_id=1,
+            payload={"name": "Original"},
+            owner_actor="user:alice",
+        )
+
+        updated = await store.update_node(
+            tenant_id=tenant_id,
+            node_id=node.node_id,
+            patch={"name": "Patched", "extra": True},
+        )
+
+        assert updated is not None
+        # Should be constructed via payload_json= (SENTINEL means lazy).
+        assert updated._payload_parsed is Node._SENTINEL
+        assert updated._acl_parsed is Node._SENTINEL
+        assert json.loads(updated.payload_json) == {"name": "Patched", "extra": True}
