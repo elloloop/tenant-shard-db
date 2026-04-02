@@ -137,6 +137,7 @@ class Plan:
         tenant_id: str,
         actor: str,
         idempotency_key: str | None = None,
+        trace_id: str | None = None,
     ) -> None:
         """Initialize a plan.
 
@@ -145,11 +146,13 @@ class Plan:
             tenant_id: Tenant identifier
             actor: Actor performing operations
             idempotency_key: Optional unique key for deduplication
+            trace_id: Optional trace ID for distributed tracing
         """
         self._client = client
         self._tenant_id = tenant_id
         self._actor = actor
         self._idempotency_key = idempotency_key or str(uuid.uuid4())
+        self._trace_id = trace_id or str(uuid.uuid4())
         self._operations: list[dict[str, Any]] = []
 
     def create(
@@ -344,11 +347,14 @@ class Plan:
             return {"typed": ref}
         return ref
 
-    async def commit(self, wait_applied: bool = False) -> CommitResult:
+    async def commit(
+        self, wait_applied: bool = False, *, timeout: float | None = None
+    ) -> CommitResult:
         """Commit the transaction.
 
         Args:
             wait_applied: Whether to wait for application
+            timeout: Per-call timeout in seconds
 
         Returns:
             CommitResult indicating success/failure
@@ -362,6 +368,8 @@ class Plan:
             operations=self._operations,
             idempotency_key=self._idempotency_key,
             wait_applied=wait_applied,
+            trace_id=self._trace_id,
+            timeout=timeout,
         )
 
         return result
@@ -383,6 +391,8 @@ class DbClient:
         address: str,
         *,
         secure: bool = False,
+        api_key: str | None = None,
+        max_retries: int = 3,
         registry: SchemaRegistry | None = None,
     ) -> None:
         """Initialize client.
@@ -390,6 +400,8 @@ class DbClient:
         Args:
             address: Server address (host:port or just host)
             secure: Whether to use TLS
+            api_key: Optional API key for authentication
+            max_retries: Maximum number of retries for transient gRPC failures
             registry: Optional schema registry
         """
         # Parse address
@@ -400,9 +412,28 @@ class DbClient:
             host = address
             port = 50051  # Default gRPC port
 
-        self._grpc = GrpcClient(host=host, port=port, secure=secure)
+        self._grpc = GrpcClient(
+            host=host,
+            port=port,
+            secure=secure,
+            api_key=api_key,
+            max_retries=max_retries,
+        )
         self.registry = registry or get_registry()
         self._connected = False
+
+    def _ensure_connected(self) -> None:
+        """Raise if not connected.
+
+        Raises:
+            ConnectionError: If the client is not connected
+        """
+        if not self._connected:
+            raise ConnectionError(
+                "Not connected. Use 'async with DbClient(...)' or call "
+                "'await client.connect()' first.",
+                address=f"{self._grpc._host}:{self._grpc._port}",
+            )
 
     async def connect(self) -> None:
         """Connect to the server."""
@@ -436,6 +467,8 @@ class DbClient:
         tenant_id: str,
         actor: str,
         idempotency_key: str | None = None,
+        *,
+        trace_id: str | None = None,
     ) -> Plan:
         """Create an atomic transaction plan.
 
@@ -443,6 +476,7 @@ class DbClient:
             tenant_id: Tenant identifier
             actor: Actor performing operations
             idempotency_key: Optional deduplication key
+            trace_id: Optional trace ID for distributed tracing
 
         Returns:
             Plan builder
@@ -452,7 +486,8 @@ class DbClient:
             >>> plan.create(Task, {"title": "New Task"})
             >>> await plan.commit()
         """
-        return Plan(self, tenant_id, actor, idempotency_key)
+        self._ensure_connected()
+        return Plan(self, tenant_id, actor, idempotency_key, trace_id=trace_id)
 
     async def get(
         self,
@@ -460,6 +495,9 @@ class DbClient:
         node_id: str,
         tenant_id: str,
         actor: str,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> Node | None:
         """Get a node by ID.
 
@@ -468,15 +506,22 @@ class DbClient:
             node_id: Node identifier
             tenant_id: Tenant identifier
             actor: Actor making request
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Node if found, None otherwise
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         grpc_node = await self._grpc.get_node(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
             node_id=node_id,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
         if grpc_node is None:
@@ -499,6 +544,9 @@ class DbClient:
         node_ids: list[str],
         tenant_id: str,
         actor: str,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> tuple[list[Node], list[str]]:
         """Get multiple nodes by IDs.
 
@@ -507,15 +555,22 @@ class DbClient:
             node_ids: Node identifiers
             tenant_id: Tenant identifier
             actor: Actor making request
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Tuple of (found nodes, missing node IDs)
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         grpc_nodes, missing = await self._grpc.get_nodes(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
             node_ids=node_ids,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
         nodes = [
@@ -539,8 +594,14 @@ class DbClient:
         node_type: NodeTypeDef,
         tenant_id: str,
         actor: str,
+        *,
+        filter: dict[str, Any] | None = None,
         limit: int = 100,
         offset: int = 0,
+        order_by: str = "created_at",
+        descending: bool = True,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> list[Node]:
         """Query nodes by type.
 
@@ -548,18 +609,31 @@ class DbClient:
             node_type: Node type to query
             tenant_id: Tenant identifier
             actor: Actor making request
+            filter: Optional payload field filter (serialized as JSON)
             limit: Maximum nodes to return
             offset: Pagination offset
+            order_by: Field to order results by
+            descending: Whether to sort in descending order
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             List of nodes
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         grpc_nodes, _ = await self._grpc.query_nodes(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
             limit=limit,
             offset=offset,
+            filter_json=json.dumps(filter) if filter else "",
+            order_by=order_by,
+            descending=descending,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
         return [
@@ -582,6 +656,9 @@ class DbClient:
         tenant_id: str,
         actor: str,
         edge_type: EdgeTypeDef | None = None,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> list[Edge]:
         """Get outgoing edges from a node.
 
@@ -590,16 +667,23 @@ class DbClient:
             tenant_id: Tenant identifier
             actor: Actor making request
             edge_type: Optional edge type filter
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             List of edges
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         edge_type_id = edge_type.edge_id if edge_type else None
         grpc_edges, _ = await self._grpc.get_edges_from(
             tenant_id=tenant_id,
             actor=actor,
             node_id=node_id,
             edge_type_id=edge_type_id,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
         return [
@@ -620,6 +704,9 @@ class DbClient:
         tenant_id: str,
         actor: str,
         edge_type: EdgeTypeDef | None = None,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> list[Edge]:
         """Get incoming edges to a node.
 
@@ -628,16 +715,23 @@ class DbClient:
             tenant_id: Tenant identifier
             actor: Actor making request
             edge_type: Optional edge type filter
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             List of edges
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         edge_type_id = edge_type.edge_id if edge_type else None
         grpc_edges, _ = await self._grpc.get_edges_to(
             tenant_id=tenant_id,
             actor=actor,
             node_id=node_id,
             edge_type_id=edge_type_id,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
         return [
@@ -660,6 +754,9 @@ class DbClient:
         actor: str,
         types: list[NodeTypeDef] | None = None,
         limit: int = 20,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> list[dict[str, Any]]:
         """Search user's mailbox.
 
@@ -670,10 +767,15 @@ class DbClient:
             actor: Actor making request
             types: Optional type filter
             limit: Maximum results
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             List of search results
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         source_type_ids = [t.type_id for t in types] if types else None
 
         return await self._grpc.search_mailbox(
@@ -683,15 +785,25 @@ class DbClient:
             query=query,
             source_type_ids=source_type_ids,
             limit=limit,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
-    async def health(self) -> dict[str, Any]:
+    async def health(
+        self,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         """Check server health.
+
+        Args:
+            timeout: Per-call timeout in seconds
 
         Returns:
             Health status dictionary
         """
-        return await self._grpc.health()
+        self._ensure_connected()
+        return await self._grpc.health(timeout=timeout)
 
     async def _execute(
         self,
@@ -700,6 +812,9 @@ class DbClient:
         operations: list[dict[str, Any]],
         idempotency_key: str,
         wait_applied: bool = False,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> CommitResult:
         """Execute atomic transaction.
 
@@ -709,10 +824,15 @@ class DbClient:
             operations: List of operations
             idempotency_key: Deduplication key
             wait_applied: Wait for application
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             CommitResult
         """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
         result = await self._grpc.execute_atomic(
             tenant_id=tenant_id,
             actor=actor,
@@ -720,6 +840,8 @@ class DbClient:
             idempotency_key=idempotency_key,
             schema_fingerprint=self.registry.fingerprint,
             wait_applied=wait_applied,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
         if not result.success:
@@ -747,14 +869,27 @@ class DbClient:
         self,
         tenant_id: str,
         idempotency_key: str,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
     ) -> str:
         """Get receipt status.
 
         Args:
             tenant_id: Tenant identifier
             idempotency_key: Transaction key
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Status string (PENDING, APPLIED, FAILED)
         """
-        return await self._grpc.get_receipt_status(tenant_id, idempotency_key)
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.get_receipt_status(
+            tenant_id,
+            idempotency_key,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
