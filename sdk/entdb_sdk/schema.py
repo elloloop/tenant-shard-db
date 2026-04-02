@@ -99,15 +99,78 @@ class FieldDef:
             raise ValueError(f"enum_values required for ENUM field '{self.name}'")
 
     def validate_value(self, value: Any) -> tuple[bool, str | None]:
-        """Validate a value against this field."""
+        """Validate a value against this field.
+
+        Checks:
+        - None against required constraint
+        - Type compatibility for all FieldKind variants
+        - Enum membership for ENUM fields
+        """
         if value is None:
             if self.required:
                 return False, f"Field '{self.name}' is required"
             return True, None
 
-        if self.kind == FieldKind.ENUM:
+        if self.kind == FieldKind.STRING:
+            if not isinstance(value, str):
+                return False, f"Field '{self.name}' must be a string, got {type(value).__name__}"
+
+        elif self.kind == FieldKind.INTEGER:
+            if not isinstance(value, int) or isinstance(value, bool):
+                return False, f"Field '{self.name}' must be an integer, got {type(value).__name__}"
+
+        elif self.kind == FieldKind.FLOAT:
+            if not isinstance(value, int | float) or isinstance(value, bool):
+                return False, f"Field '{self.name}' must be a number, got {type(value).__name__}"
+
+        elif self.kind == FieldKind.BOOLEAN:
+            if not isinstance(value, bool):
+                return False, f"Field '{self.name}' must be a boolean, got {type(value).__name__}"
+
+        elif self.kind == FieldKind.TIMESTAMP:
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                return False, f"Field '{self.name}' must be a non-negative integer timestamp"
+
+        elif self.kind == FieldKind.ENUM:
+            if not isinstance(value, str):
+                return False, f"Field '{self.name}' must be a string, got {type(value).__name__}"
             if self.enum_values is not None and value not in self.enum_values:
                 return False, f"Field '{self.name}' must be one of {self.enum_values}"
+
+        elif self.kind == FieldKind.JSON:
+            if not isinstance(value, dict | list):
+                return False, f"Field '{self.name}' must be a dict or list, got {type(value).__name__}"
+
+        elif self.kind == FieldKind.BYTES:
+            if not isinstance(value, bytes | str):
+                return False, f"Field '{self.name}' must be bytes or string, got {type(value).__name__}"
+
+        elif self.kind == FieldKind.REFERENCE:
+            if not isinstance(value, dict):
+                return False, f"Field '{self.name}' must be a reference object (dict)"
+            if "type_id" not in value or "id" not in value:
+                return False, f"Field '{self.name}' must have 'type_id' and 'id'"
+
+        elif self.kind == FieldKind.LIST_STRING:
+            if not isinstance(value, list):
+                return False, f"Field '{self.name}' must be a list, got {type(value).__name__}"
+            for i, item in enumerate(value):
+                if not isinstance(item, str):
+                    return False, f"Field '{self.name}[{i}]' must be a string"
+
+        elif self.kind == FieldKind.LIST_INT:
+            if not isinstance(value, list):
+                return False, f"Field '{self.name}' must be a list, got {type(value).__name__}"
+            for i, item in enumerate(value):
+                if not isinstance(item, int) or isinstance(item, bool):
+                    return False, f"Field '{self.name}[{i}]' must be an integer"
+
+        elif self.kind == FieldKind.LIST_REF:
+            if not isinstance(value, list):
+                return False, f"Field '{self.name}' must be a list, got {type(value).__name__}"
+            for i, item in enumerate(value):
+                if not isinstance(item, dict):
+                    return False, f"Field '{self.name}[{i}]' must be a reference object"
 
         return True, None
 

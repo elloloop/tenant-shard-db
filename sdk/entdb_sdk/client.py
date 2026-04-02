@@ -154,6 +154,15 @@ class Plan:
         self._idempotency_key = idempotency_key or str(uuid.uuid4())
         self._trace_id = trace_id or str(uuid.uuid4())
         self._operations: list[dict[str, Any]] = []
+        self._committed = False
+
+    def _ensure_not_committed(self) -> None:
+        """Raise if this Plan has already been committed."""
+        if self._committed:
+            raise RuntimeError(
+                "Plan has already been committed. Create a new Plan for "
+                "additional operations."
+            )
 
     def create(
         self,
@@ -179,9 +188,12 @@ class Plan:
             Self for chaining
 
         Raises:
+            RuntimeError: If Plan has already been committed
             ValidationError: If payload validation fails
             UnknownFieldError: If unknown field is provided
         """
+        self._ensure_not_committed()
+
         # Merge data and kwargs
         payload = dict(data or {})
         payload.update(kwargs)
@@ -234,6 +246,8 @@ class Plan:
         Returns:
             Self for chaining
         """
+        self._ensure_not_committed()
+
         op: dict[str, Any] = {
             "update_node": {
                 "type_id": node_type.type_id,
@@ -262,6 +276,8 @@ class Plan:
         Returns:
             Self for chaining
         """
+        self._ensure_not_committed()
+
         self._operations.append(
             {
                 "delete_node": {
@@ -290,6 +306,8 @@ class Plan:
         Returns:
             Self for chaining
         """
+        self._ensure_not_committed()
+
         # Validate props
         if props:
             is_valid, errors = edge_type.validate_props(props)
@@ -326,6 +344,8 @@ class Plan:
         Returns:
             Self for chaining
         """
+        self._ensure_not_committed()
+
         self._operations.append(
             {
                 "delete_edge": {
@@ -358,8 +378,18 @@ class Plan:
 
         Returns:
             CommitResult indicating success/failure
+
+        Raises:
+            RuntimeError: If commit() has already been called on this Plan
         """
+        if self._committed:
+            raise RuntimeError(
+                "Plan has already been committed. Create a new Plan for "
+                "additional operations."
+            )
+
         if not self._operations:
+            self._committed = True
             return CommitResult(success=True, created_node_ids=[])
 
         result = await self._client._execute(
@@ -372,6 +402,7 @@ class Plan:
             timeout=timeout,
         )
 
+        self._committed = True
         return result
 
 
