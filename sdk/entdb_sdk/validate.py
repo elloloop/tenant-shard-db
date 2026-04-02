@@ -94,7 +94,7 @@ def _validate_field_value(
             return f"Field '{name}' must be a boolean, got {type(value).__name__}"
 
     elif kind == FieldKind.TIMESTAMP:
-        if not isinstance(value, int) or value < 0:
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
             return f"Field '{name}' must be a positive integer timestamp"
 
     elif kind == FieldKind.ENUM:
@@ -102,6 +102,14 @@ def _validate_field_value(
             return f"Field '{name}' must be a string, got {type(value).__name__}"
         if enum_values and value not in enum_values:
             return f"Field '{name}' must be one of {enum_values}, got '{value}'"
+
+    elif kind == FieldKind.JSON:
+        if not isinstance(value, dict | list):
+            return f"Field '{name}' must be a dict or list, got {type(value).__name__}"
+
+    elif kind == FieldKind.BYTES:
+        if not isinstance(value, bytes | str):
+            return f"Field '{name}' must be bytes or string, got {type(value).__name__}"
 
     elif kind == FieldKind.LIST_STRING:
         if not isinstance(value, list):
@@ -122,6 +130,13 @@ def _validate_field_value(
             return f"Field '{name}' must be a reference object"
         if "type_id" not in value or "id" not in value:
             return f"Field '{name}' must have 'type_id' and 'id'"
+
+    elif kind == FieldKind.LIST_REF:
+        if not isinstance(value, list):
+            return f"Field '{name}' must be a list, got {type(value).__name__}"
+        for i, item in enumerate(value):
+            if not isinstance(item, dict):
+                return f"Field '{name}[{i}]' must be a reference object"
 
     return None
 
