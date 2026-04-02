@@ -9,6 +9,7 @@ Users should use DbClient instead, which provides a clean Python API.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -44,6 +45,12 @@ from ._generated import (
 )
 
 logger = logging.getLogger(__name__)
+
+_RETRYABLE_STATUS_CODES = frozenset(
+    {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED}
+)
+
+_DEFAULT_TIMEOUT: float = 30.0
 
 
 @dataclass
@@ -109,6 +116,8 @@ class GrpcClient:
         *,
         secure: bool = False,
         credentials: grpc.ChannelCredentials | None = None,
+        api_key: str | None = None,
+        max_retries: int = 3,
     ) -> None:
         """Initialize the gRPC client.
 
@@ -117,11 +126,15 @@ class GrpcClient:
             port: Server port
             secure: Whether to use TLS
             credentials: Optional TLS credentials
+            api_key: Optional API key for authentication
+            max_retries: Maximum number of retries for transient failures
         """
         self._host = host
         self._port = port
         self._secure = secure
         self._credentials = credentials
+        self._api_key = api_key
+        self._max_retries = max_retries
         self._channel: grpc_aio.Channel | None = None
         self._stub: EntDBServiceStub | None = None
 
@@ -173,9 +186,55 @@ class GrpcClient:
             raise RuntimeError("Not connected. Call connect() first.")
         return self._stub
 
-    def _make_context(self, tenant_id: str, actor: str) -> RequestContext:
-        """Create a request context."""
-        return RequestContext(tenant_id=tenant_id, actor=actor)
+    def _build_metadata(self) -> list[tuple[str, str]]:
+        """Build gRPC call metadata including authentication."""
+        metadata: list[tuple[str, str]] = []
+        if self._api_key:
+            metadata.append(("authorization", f"Bearer {self._api_key}"))
+        return metadata
+
+    def _make_context(self, tenant_id: str, actor: str, trace_id: str = "") -> RequestContext:
+        """Create a request context.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            trace_id: Optional trace ID for distributed tracing
+        """
+        return RequestContext(tenant_id=tenant_id, actor=actor, trace_id=trace_id)
+
+    async def _retry(
+        self,
+        fn: Any,
+        *args: Any,
+        max_retries: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Retry on transient gRPC errors (UNAVAILABLE, DEADLINE_EXCEEDED).
+
+        Args:
+            fn: Async callable to retry
+            *args: Positional arguments for fn
+            max_retries: Override for max retry attempts
+            **kwargs: Keyword arguments for fn
+
+        Returns:
+            Result of the callable
+
+        Raises:
+            grpc.RpcError: If all retries are exhausted or error is non-retryable
+        """
+        retries = max_retries if max_retries is not None else self._max_retries
+        last_error: grpc.RpcError | None = None
+        for attempt in range(retries + 1):
+            try:
+                return await fn(*args, **kwargs)
+            except grpc.RpcError as e:
+                if e.code() not in _RETRYABLE_STATUS_CODES or attempt == retries:
+                    raise
+                last_error = e
+                await asyncio.sleep(0.1 * (2**attempt))
+        raise last_error  # type: ignore[misc]
 
     async def execute_atomic(
         self,
@@ -187,6 +246,8 @@ class GrpcClient:
         schema_fingerprint: str | None = None,
         wait_applied: bool = False,
         wait_timeout_ms: int = 30000,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> GrpcCommitResult:
         """Execute an atomic transaction.
 
@@ -198,17 +259,20 @@ class GrpcClient:
             schema_fingerprint: Schema fingerprint for validation
             wait_applied: Whether to wait for application
             wait_timeout_ms: Timeout for wait_applied
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             GrpcCommitResult with success/failure info
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         # Convert operations to protobuf format
         proto_ops = self._convert_operations(operations)
 
         request = ExecuteAtomicRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             idempotency_key=idempotency_key or "",
             schema_fingerprint=schema_fingerprint or "",
             operations=proto_ops,
@@ -217,7 +281,12 @@ class GrpcClient:
         )
 
         try:
-            response = await stub.ExecuteAtomic(request)
+            response = await self._retry(
+                stub.ExecuteAtomic,
+                request,
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+            )
 
             receipt = None
             if response.receipt and response.receipt.idempotency_key:
@@ -328,20 +397,35 @@ class GrpcClient:
         self,
         tenant_id: str,
         idempotency_key: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> str:
         """Get the status of a transaction receipt.
+
+        Args:
+            tenant_id: Tenant identifier
+            idempotency_key: Transaction key
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Status string: "PENDING", "APPLIED", "FAILED", or "UNKNOWN"
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetReceiptStatusRequest(
-            context=self._make_context(tenant_id, "system"),
+            context=self._make_context(tenant_id, "system", trace_id),
             idempotency_key=idempotency_key,
         )
 
-        response = await stub.GetReceiptStatus(request)
+        response = await self._retry(
+            stub.GetReceiptStatus,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         status_map = {
             ReceiptStatus.RECEIPT_STATUS_PENDING: "PENDING",
@@ -357,17 +441,38 @@ class GrpcClient:
         actor: str,
         type_id: int,
         node_id: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> GrpcNode | None:
-        """Get a node by ID."""
+        """Get a node by ID.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            type_id: Node type ID
+            node_id: Node identifier
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            GrpcNode if found, None otherwise
+        """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetNodeRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             node_id=node_id,
         )
 
-        response = await stub.GetNode(request)
+        response = await self._retry(
+            stub.GetNode,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         if not response.found:
             return None
@@ -390,21 +495,38 @@ class GrpcClient:
         actor: str,
         type_id: int,
         node_ids: list[str],
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> tuple[list[GrpcNode], list[str]]:
         """Get multiple nodes by IDs.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            type_id: Node type ID
+            node_ids: Node identifiers
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Tuple of (found nodes, missing node IDs)
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetNodesRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             node_ids=node_ids,
         )
 
-        response = await stub.GetNodes(request)
+        response = await self._retry(
+            stub.GetNodes,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         nodes = [
             GrpcNode(
@@ -433,16 +555,31 @@ class GrpcClient:
         filter_json: str | None = None,
         order_by: str | None = None,
         descending: bool = False,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> tuple[list[GrpcNode], bool]:
         """Query nodes by type.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            type_id: Node type ID
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            filter_json: JSON-encoded filter expression
+            order_by: Field to order results by
+            descending: Whether to sort in descending order
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Tuple of (nodes, has_more)
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = QueryNodesRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             limit=limit,
             offset=offset,
@@ -451,7 +588,12 @@ class GrpcClient:
             descending=descending,
         )
 
-        response = await stub.QueryNodes(request)
+        response = await self._retry(
+            stub.QueryNodes,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         nodes = [
             GrpcNode(
@@ -476,22 +618,40 @@ class GrpcClient:
         node_id: str,
         edge_type_id: int | None = None,
         limit: int = 100,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> tuple[list[GrpcEdge], bool]:
         """Get outgoing edges from a node.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            node_id: Source node ID
+            edge_type_id: Optional edge type filter
+            limit: Maximum edges to return
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Tuple of (edges, has_more)
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetEdgesRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             node_id=node_id,
             edge_type_id=edge_type_id or 0,
             limit=limit,
         )
 
-        response = await stub.GetEdgesFrom(request)
+        response = await self._retry(
+            stub.GetEdgesFrom,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         edges = [
             GrpcEdge(
@@ -514,22 +674,40 @@ class GrpcClient:
         node_id: str,
         edge_type_id: int | None = None,
         limit: int = 100,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> tuple[list[GrpcEdge], bool]:
         """Get incoming edges to a node.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            node_id: Target node ID
+            edge_type_id: Optional edge type filter
+            limit: Maximum edges to return
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Tuple of (edges, has_more)
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetEdgesRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             node_id=node_id,
             edge_type_id=edge_type_id or 0,
             limit=limit,
         )
 
-        response = await stub.GetEdgesTo(request)
+        response = await self._retry(
+            stub.GetEdgesTo,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         edges = [
             GrpcEdge(
@@ -555,12 +733,30 @@ class GrpcClient:
         source_type_ids: list[int] | None = None,
         limit: int = 20,
         offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> list[dict[str, Any]]:
-        """Search user's mailbox with full-text search."""
+        """Search user's mailbox with full-text search.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            user_id: User whose mailbox to search
+            query: Search query string
+            source_type_ids: Optional type ID filter
+            limit: Maximum results
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of search result dictionaries
+        """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = SearchMailboxRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             user_id=user_id,
             query=query,
             limit=limit,
@@ -569,7 +765,12 @@ class GrpcClient:
         if source_type_ids:
             request.source_type_ids.extend(source_type_ids)
 
-        response = await stub.SearchMailbox(request)
+        response = await self._retry(
+            stub.SearchMailbox,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         return [
             {
@@ -601,16 +802,31 @@ class GrpcClient:
         unread_only: bool = False,
         limit: int = 50,
         offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
     ) -> tuple[list[dict[str, Any]], int, bool]:
         """Get mailbox items for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            user_id: User whose mailbox to retrieve
+            source_type_id: Optional type ID filter
+            thread_id: Optional thread filter
+            unread_only: Whether to return only unread items
+            limit: Maximum items to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
 
         Returns:
             Tuple of (items, unread_count, has_more)
         """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetMailboxRequest(
-            context=self._make_context(tenant_id, actor),
+            context=self._make_context(tenant_id, actor, trace_id),
             user_id=user_id,
             source_type_id=source_type_id or 0,
             thread_id=thread_id or "",
@@ -619,7 +835,12 @@ class GrpcClient:
             offset=offset,
         )
 
-        response = await stub.GetMailbox(request)
+        response = await self._retry(
+            stub.GetMailbox,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         items = [
             {
@@ -638,11 +859,28 @@ class GrpcClient:
 
         return items, response.unread_count, response.has_more
 
-    async def health(self) -> dict[str, Any]:
-        """Get server health status."""
-        stub = self._ensure_connected()
+    async def health(
+        self,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Get server health status.
 
-        response = await stub.Health(HealthRequest())
+        Args:
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Health status dictionary
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        response = await self._retry(
+            stub.Health,
+            HealthRequest(),
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         return {
             "healthy": response.healthy,
@@ -650,12 +888,31 @@ class GrpcClient:
             "components": dict(response.components),
         }
 
-    async def get_schema(self, type_id: int | None = None) -> dict[str, Any]:
-        """Get schema information."""
+    async def get_schema(
+        self,
+        type_id: int | None = None,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Get schema information.
+
+        Args:
+            type_id: Optional type ID to retrieve specific schema
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Schema information dictionary
+        """
         stub = self._ensure_connected()
+        metadata = self._build_metadata()
 
         request = GetSchemaRequest(type_id=type_id or 0)
-        response = await stub.GetSchema(request)
+        response = await self._retry(
+            stub.GetSchema,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
 
         return {
             "schema": json.loads(response.schema_json) if response.schema_json else {},
