@@ -101,12 +101,12 @@ jobs:
           echo "__version__ = \"$VER\"" > sdk/entdb_sdk/_version.py
 
       - name: Install build tools
-        run: uv pip install --system build==1.2.2 twine==6.1.0
+        run: uv venv && uv pip install build twine
 
       - name: Build SDK package
         run: |
           cd sdk
-          python -m build
+          uv run python -m build
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
