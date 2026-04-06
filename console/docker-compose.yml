@@ -46,8 +46,8 @@ services:
   # EntDB Console (Web UI + REST API)
   entdb-console:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: console/Dockerfile
     ports:
       - "8080:8080"
     environment:

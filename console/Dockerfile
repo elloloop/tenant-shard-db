@@ -1,5 +1,8 @@
-# EntDB HTTP Gateway - Multi-stage Dockerfile
-# This builds both the frontend and the backend gateway
+# EntDB Console - Multi-stage Dockerfile
+# Builds frontend (React/Vite) + backend (FastAPI gateway)
+#
+# Build context must be the tenant-shard-db root (parent of console/)
+# so that the SDK is accessible for the gateway.
 
 # ============================================
 # Stage 1: Build frontend
@@ -9,11 +12,11 @@ FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 
 # Install dependencies
-COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm ci --silent
+COPY console/frontend/package.json console/frontend/package-lock.json* ./
+RUN npm install --silent
 
 # Copy source and build
-COPY frontend/ ./
+COPY console/frontend/ ./
 RUN npm run build
 
 # ============================================
@@ -42,9 +45,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install dependencies
-COPY requirements.txt ./
+# Install console dependencies
+COPY console/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Install EntDB SDK from local source
+COPY sdk/ /tmp/sdk/
+RUN pip install --no-cache-dir /tmp/sdk/
 
 # ============================================
 # Stage 4: Production image
@@ -59,10 +66,10 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN groupadd -r gateway && useradd -r -g gateway gateway
 
 # Copy gateway code
-COPY gateway/ ./gateway/
+COPY console/gateway/ ./gateway/
 
 # Copy built frontend
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+COPY --from=frontend-builder /app/frontend/dist ./console/static
 
 # Set ownership
 RUN chown -R gateway:gateway /app
