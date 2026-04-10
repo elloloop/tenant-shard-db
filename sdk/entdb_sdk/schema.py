@@ -34,6 +34,42 @@ from enum import Enum
 from typing import Any
 
 
+@dataclass(frozen=True)
+class AclDefaults:
+    """Default ACL configuration for a node type.
+
+    Controls how a node's access is determined at creation time.
+
+    Attributes:
+        public: Whether nodes of this type are world-readable by default
+        tenant_visible: Whether nodes are visible to all tenant members
+        inherit: Whether to inherit ACL from the structural parent.
+            When False, the node is private — only direct grants and
+            owner have access. No acl_inherit row is created.
+    """
+
+    public: bool = False
+    tenant_visible: bool = True
+    inherit: bool = True
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "public": self.public,
+            "tenant_visible": self.tenant_visible,
+            "inherit": self.inherit,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> AclDefaults:
+        """Create from dictionary."""
+        return cls(
+            public=data.get("public", False),
+            tenant_visible=data.get("tenant_visible", True),
+            inherit=data.get("inherit", True),
+        )
+
+
 class FieldKind(Enum):
     """Supported field types."""
 
@@ -281,6 +317,7 @@ class NodeTypeDef:
     type_id: int
     name: str
     fields: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
+    acl_defaults: AclDefaults = dataclass_field(default_factory=AclDefaults)
     deprecated: bool = False
     description: str = ""
 
@@ -336,6 +373,7 @@ class NodeTypeDef:
             "type_id": self.type_id,
             "name": self.name,
             "fields": [f.to_dict() for f in self.fields],
+            "acl_defaults": self.acl_defaults.to_dict(),
             "deprecated": self.deprecated,
             "description": self.description,
         }
@@ -417,6 +455,7 @@ class EdgeTypeDef:
     from_type: NodeTypeDef | int
     to_type: NodeTypeDef | int
     props: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
+    propagate_share: bool = False
     unique_per_from: bool = False
     deprecated: bool = False
     description: str = ""
@@ -467,6 +506,7 @@ class EdgeTypeDef:
             "from_type_id": self.from_type_id,
             "to_type_id": self.to_type_id,
             "props": [p.to_dict() for p in self.props],
+            "propagate_share": self.propagate_share,
             "unique_per_from": self.unique_per_from,
             "deprecated": self.deprecated,
             "description": self.description,

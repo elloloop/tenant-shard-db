@@ -35,6 +35,9 @@ class Permission(Enum):
     WRITE = "write"
     DELETE = "delete"
     ADMIN = "admin"
+    SHARE = "share"
+    COMMENT = "comment"
+    DENY = "deny"
 
 
 class AccessDeniedError(Exception):
@@ -185,9 +188,12 @@ class AclManager:
     # Permission hierarchy (higher includes lower)
     PERMISSION_HIERARCHY = {
         Permission.READ: {Permission.READ},
-        Permission.WRITE: {Permission.READ, Permission.WRITE},
-        Permission.DELETE: {Permission.READ, Permission.WRITE, Permission.DELETE},
-        Permission.ADMIN: {Permission.READ, Permission.WRITE, Permission.DELETE, Permission.ADMIN},
+        Permission.COMMENT: {Permission.READ, Permission.COMMENT},
+        Permission.WRITE: {Permission.READ, Permission.COMMENT, Permission.WRITE},
+        Permission.SHARE: {Permission.READ, Permission.COMMENT, Permission.WRITE, Permission.SHARE},
+        Permission.DELETE: {Permission.READ, Permission.COMMENT, Permission.WRITE, Permission.DELETE},
+        Permission.ADMIN: {Permission.READ, Permission.COMMENT, Permission.WRITE, Permission.SHARE, Permission.DELETE, Permission.ADMIN},
+        Permission.DENY: set(),  # DENY grants nothing — it blocks access
     }
 
     def check_permission(
@@ -221,23 +227,28 @@ class AclManager:
         if actor == owner_actor:
             return True
 
-        # Check each ACL entry
+        # Two-pass: check for explicit DENY first, then check for ALLOW
+        has_allow = False
         for entry_dict in acl:
             try:
                 entry = AclEntry.from_dict(entry_dict)
+                if not entry.principal.matches(actor):
+                    continue
 
-                # Check if principal matches actor
-                if entry.principal.matches(actor):
-                    # Check if permission level is sufficient
-                    granted_perms = self.PERMISSION_HIERARCHY.get(entry.permission, set())
-                    if required in granted_perms:
-                        return True
+                # Explicit DENY always wins
+                if entry.permission == Permission.DENY:
+                    return False
+
+                # Check if permission level is sufficient
+                granted_perms = self.PERMISSION_HIERARCHY.get(entry.permission, set())
+                if required in granted_perms:
+                    has_allow = True
 
             except (ValueError, KeyError) as e:
                 logger.warning(f"Invalid ACL entry: {entry_dict}, error: {e}")
                 continue
 
-        return False
+        return has_allow
 
     def check_permission_or_raise(
         self,
