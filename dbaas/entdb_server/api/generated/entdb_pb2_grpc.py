@@ -100,6 +100,46 @@ class EntDBServiceStub(object):
                 request_serializer=entdb__pb2.ListMailboxUsersRequest.SerializeToString,
                 response_deserializer=entdb__pb2.ListMailboxUsersResponse.FromString,
                 _registered_method=True)
+        self.WaitForOffset = channel.unary_unary(
+                '/entdb.v1.EntDBService/WaitForOffset',
+                request_serializer=entdb__pb2.WaitForOffsetRequest.SerializeToString,
+                response_deserializer=entdb__pb2.WaitForOffsetResponse.FromString,
+                _registered_method=True)
+        self.GetConnectedNodes = channel.unary_unary(
+                '/entdb.v1.EntDBService/GetConnectedNodes',
+                request_serializer=entdb__pb2.GetConnectedNodesRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GetConnectedNodesResponse.FromString,
+                _registered_method=True)
+        self.ShareNode = channel.unary_unary(
+                '/entdb.v1.EntDBService/ShareNode',
+                request_serializer=entdb__pb2.ShareNodeRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ShareNodeResponse.FromString,
+                _registered_method=True)
+        self.RevokeAccess = channel.unary_unary(
+                '/entdb.v1.EntDBService/RevokeAccess',
+                request_serializer=entdb__pb2.RevokeAccessRequest.SerializeToString,
+                response_deserializer=entdb__pb2.RevokeAccessResponse.FromString,
+                _registered_method=True)
+        self.ListSharedWithMe = channel.unary_unary(
+                '/entdb.v1.EntDBService/ListSharedWithMe',
+                request_serializer=entdb__pb2.ListSharedWithMeRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ListSharedWithMeResponse.FromString,
+                _registered_method=True)
+        self.AddGroupMember = channel.unary_unary(
+                '/entdb.v1.EntDBService/AddGroupMember',
+                request_serializer=entdb__pb2.GroupMemberRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GroupMemberResponse.FromString,
+                _registered_method=True)
+        self.RemoveGroupMember = channel.unary_unary(
+                '/entdb.v1.EntDBService/RemoveGroupMember',
+                request_serializer=entdb__pb2.GroupMemberRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GroupMemberResponse.FromString,
+                _registered_method=True)
+        self.TransferOwnership = channel.unary_unary(
+                '/entdb.v1.EntDBService/TransferOwnership',
+                request_serializer=entdb__pb2.TransferOwnershipRequest.SerializeToString,
+                response_deserializer=entdb__pb2.TransferOwnershipResponse.FromString,
+                _registered_method=True)
 
 
 class EntDBServiceServicer(object):
@@ -198,6 +238,62 @@ class EntDBServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def WaitForOffset(self, request, context):
+        """Wait for a specific stream position to be applied
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetConnectedNodes(self, request, context):
+        """ACL v2 - Get connected nodes with ACL filtering
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ShareNode(self, request, context):
+        """ACL v2 - Share a node with an actor
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RevokeAccess(self, request, context):
+        """ACL v2 - Revoke access from an actor
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListSharedWithMe(self, request, context):
+        """ACL v2 - List nodes shared with the caller
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AddGroupMember(self, request, context):
+        """ACL v2 - Add a member to a group
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RemoveGroupMember(self, request, context):
+        """ACL v2 - Remove a member from a group
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TransferOwnership(self, request, context):
+        """ACL v2 - Transfer ownership of a node
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EntDBServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -265,6 +361,46 @@ def add_EntDBServiceServicer_to_server(servicer, server):
                     servicer.ListMailboxUsers,
                     request_deserializer=entdb__pb2.ListMailboxUsersRequest.FromString,
                     response_serializer=entdb__pb2.ListMailboxUsersResponse.SerializeToString,
+            ),
+            'WaitForOffset': grpc.unary_unary_rpc_method_handler(
+                    servicer.WaitForOffset,
+                    request_deserializer=entdb__pb2.WaitForOffsetRequest.FromString,
+                    response_serializer=entdb__pb2.WaitForOffsetResponse.SerializeToString,
+            ),
+            'GetConnectedNodes': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetConnectedNodes,
+                    request_deserializer=entdb__pb2.GetConnectedNodesRequest.FromString,
+                    response_serializer=entdb__pb2.GetConnectedNodesResponse.SerializeToString,
+            ),
+            'ShareNode': grpc.unary_unary_rpc_method_handler(
+                    servicer.ShareNode,
+                    request_deserializer=entdb__pb2.ShareNodeRequest.FromString,
+                    response_serializer=entdb__pb2.ShareNodeResponse.SerializeToString,
+            ),
+            'RevokeAccess': grpc.unary_unary_rpc_method_handler(
+                    servicer.RevokeAccess,
+                    request_deserializer=entdb__pb2.RevokeAccessRequest.FromString,
+                    response_serializer=entdb__pb2.RevokeAccessResponse.SerializeToString,
+            ),
+            'ListSharedWithMe': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListSharedWithMe,
+                    request_deserializer=entdb__pb2.ListSharedWithMeRequest.FromString,
+                    response_serializer=entdb__pb2.ListSharedWithMeResponse.SerializeToString,
+            ),
+            'AddGroupMember': grpc.unary_unary_rpc_method_handler(
+                    servicer.AddGroupMember,
+                    request_deserializer=entdb__pb2.GroupMemberRequest.FromString,
+                    response_serializer=entdb__pb2.GroupMemberResponse.SerializeToString,
+            ),
+            'RemoveGroupMember': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveGroupMember,
+                    request_deserializer=entdb__pb2.GroupMemberRequest.FromString,
+                    response_serializer=entdb__pb2.GroupMemberResponse.SerializeToString,
+            ),
+            'TransferOwnership': grpc.unary_unary_rpc_method_handler(
+                    servicer.TransferOwnership,
+                    request_deserializer=entdb__pb2.TransferOwnershipRequest.FromString,
+                    response_serializer=entdb__pb2.TransferOwnershipResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -619,6 +755,222 @@ class EntDBService(object):
             '/entdb.v1.EntDBService/ListMailboxUsers',
             entdb__pb2.ListMailboxUsersRequest.SerializeToString,
             entdb__pb2.ListMailboxUsersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def WaitForOffset(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/WaitForOffset',
+            entdb__pb2.WaitForOffsetRequest.SerializeToString,
+            entdb__pb2.WaitForOffsetResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetConnectedNodes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/GetConnectedNodes',
+            entdb__pb2.GetConnectedNodesRequest.SerializeToString,
+            entdb__pb2.GetConnectedNodesResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ShareNode(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/ShareNode',
+            entdb__pb2.ShareNodeRequest.SerializeToString,
+            entdb__pb2.ShareNodeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RevokeAccess(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/RevokeAccess',
+            entdb__pb2.RevokeAccessRequest.SerializeToString,
+            entdb__pb2.RevokeAccessResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListSharedWithMe(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/ListSharedWithMe',
+            entdb__pb2.ListSharedWithMeRequest.SerializeToString,
+            entdb__pb2.ListSharedWithMeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AddGroupMember(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/AddGroupMember',
+            entdb__pb2.GroupMemberRequest.SerializeToString,
+            entdb__pb2.GroupMemberResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RemoveGroupMember(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/RemoveGroupMember',
+            entdb__pb2.GroupMemberRequest.SerializeToString,
+            entdb__pb2.GroupMemberResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TransferOwnership(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/TransferOwnership',
+            entdb__pb2.TransferOwnershipRequest.SerializeToString,
+            entdb__pb2.TransferOwnershipResponse.FromString,
             options,
             channel_credentials,
             insecure,
