@@ -92,11 +92,11 @@ def _make_db_client(mock_grpc: MagicMock, **kwargs) -> DbClient:
 
 
 class TestQueryFilter:
-    """Tests for query with filter_json, order_by, descending."""
+    """Tests for query with typed filter dict."""
 
     @pytest.mark.asyncio
     async def test_query_passes_filter_dict(self, task_type, mock_grpc_client):
-        """Filter dict is serialized to JSON and passed to gRPC."""
+        """Filter dict is passed as-is to gRPC client."""
         db = _make_db_client(mock_grpc_client)
         filter_dict = {"status": "active", "priority": 1}
 
@@ -104,17 +104,17 @@ class TestQueryFilter:
 
         mock_grpc_client.query_nodes.assert_awaited_once()
         call_kwargs = mock_grpc_client.query_nodes.call_args.kwargs
-        assert call_kwargs["filter_json"] == json.dumps(filter_dict)
+        assert call_kwargs["filter"] == filter_dict
 
     @pytest.mark.asyncio
     async def test_query_empty_filter(self, task_type, mock_grpc_client):
-        """No filter results in empty filter_json."""
+        """No filter results in empty dict."""
         db = _make_db_client(mock_grpc_client)
 
         await db.query(task_type, "t1", "user:1")
 
         call_kwargs = mock_grpc_client.query_nodes.call_args.kwargs
-        assert call_kwargs["filter_json"] == ""
+        assert call_kwargs["filter"] == {}
 
     @pytest.mark.asyncio
     async def test_query_filter_with_pagination(self, task_type, mock_grpc_client):
@@ -124,7 +124,7 @@ class TestQueryFilter:
         await db.query(task_type, "t1", "user:1", filter={"done": True}, limit=10, offset=5)
 
         call_kwargs = mock_grpc_client.query_nodes.call_args.kwargs
-        assert call_kwargs["filter_json"] == json.dumps({"done": True})
+        assert call_kwargs["filter"] == {"done": True}
         assert call_kwargs["limit"] == 10
         assert call_kwargs["offset"] == 5
 

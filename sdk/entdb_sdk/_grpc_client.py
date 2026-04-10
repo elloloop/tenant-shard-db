@@ -352,22 +352,20 @@ class GrpcClient:
 
             if "create_node" in op:
                 create = op["create_node"]
-                data_dict = json.loads(create.get("data_json", "{}")) if create.get("data_json") else {}
                 create_op = CreateNodeOp(
                     type_id=create.get("type_id", 0),
                     id=create.get("id", ""),
-                    data=_dict_to_struct(data_dict),
                 )
-                acl_json_str = create.get("acl_json", "")
-                if acl_json_str:
-                    acl_list = json.loads(acl_json_str)
-                    for entry in acl_list:
-                        create_op.acl.append(AclEntry(
-                            principal=entry.get("principal", ""),
-                            permission=entry.get("permission", ""),
-                        ))
+                data = create.get("data")
+                if data:
+                    create_op.data.update(data)
+                acl = create.get("acl")
+                if acl:
+                    create_op.acl.extend([
+                        AclEntry(principal=e.get("principal", ""), permission=e.get("permission", ""))
+                        for e in acl
+                    ])
                 if create.get("as"):
-                    # protobuf field is named 'as' but Python keyword conflict
                     setattr(create_op, "as", create["as"])
                 if create.get("fanout_to"):
                     create_op.fanout_to.extend(create["fanout_to"])
@@ -375,12 +373,13 @@ class GrpcClient:
 
             elif "update_node" in op:
                 update = op["update_node"]
-                patch_dict = json.loads(update.get("patch_json", "{}")) if update.get("patch_json") else {}
                 update_op = UpdateNodeOp(
                     type_id=update.get("type_id", 0),
                     id=update.get("id", ""),
-                    patch=_dict_to_struct(patch_dict),
                 )
+                patch = update.get("patch")
+                if patch:
+                    update_op.patch.update(patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
                 proto_op.update_node.CopyFrom(update_op)
@@ -396,11 +395,12 @@ class GrpcClient:
 
             elif "create_edge" in op:
                 create = op["create_edge"]
-                props_dict = json.loads(create.get("props_json", "{}")) if create.get("props_json") else {}
                 create_op = CreateEdgeOp(
                     edge_id=create.get("edge_id", 0),
-                    props=_dict_to_struct(props_dict),
                 )
+                props = create.get("props")
+                if props:
+                    create_op.props.update(props)
                 getattr(create_op, "from").CopyFrom(self._convert_node_ref(create.get("from", {})))
                 create_op.to.CopyFrom(self._convert_node_ref(create.get("to", {})))
                 proto_op.create_edge.CopyFrom(create_op)
@@ -644,7 +644,7 @@ class GrpcClient:
         *,
         limit: int = 100,
         offset: int = 0,
-        filter_json: str | None = None,
+        filter: dict[str, Any] | None = None,
         order_by: str | None = None,
         descending: bool = False,
         after_offset: str | None = None,
@@ -660,7 +660,7 @@ class GrpcClient:
             type_id: Node type ID
             limit: Maximum nodes to return
             offset: Pagination offset
-            filter_json: JSON-encoded filter expression
+            filter: Filter dict (field_name → value for equality)
             order_by: Field to order results by
             descending: Whether to sort in descending order
             after_offset: Wait for this offset before reading
@@ -674,12 +674,11 @@ class GrpcClient:
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
-        # Convert filter_json string to repeated FieldFilter
+        # Convert filter dict to repeated FieldFilter
         filters = []
-        if filter_json:
-            filter_dict = json.loads(filter_json)
+        if filter:
             from google.protobuf.struct_pb2 import Value
-            for field_name, field_value in filter_dict.items():
+            for field_name, field_value in filter.items():
                 v = Value()
                 json_format.Parse(json.dumps(field_value), v)
                 filters.append(FieldFilter(field=field_name, value=v))
@@ -1079,11 +1078,11 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
+                payload=json_format.MessageToDict(n.payload) if n.payload and n.payload.fields else {},
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
-                acl=json.loads(n.acl_json) if n.acl_json else [],
+                acl=[{"principal": e.principal, "permission": e.permission} for e in n.acl],
             )
             for n in response.nodes
         ]
@@ -1225,11 +1224,11 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
+                payload=json_format.MessageToDict(n.payload) if n.payload and n.payload.fields else {},
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
-                acl=json.loads(n.acl_json) if n.acl_json else [],
+                acl=[{"principal": e.principal, "permission": e.permission} for e in n.acl],
             )
             for n in response.nodes
         ]

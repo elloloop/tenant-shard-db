@@ -213,12 +213,12 @@ class Plan:
         op: dict[str, Any] = {
             "create_node": {
                 "type_id": node_type.type_id,
-                "data_json": json.dumps(payload),
+                "data": payload,
             }
         }
 
         if acl:
-            op["create_node"]["acl_json"] = json.dumps(acl)
+            op["create_node"]["acl"] = acl
         if as_:
             op["create_node"]["as"] = as_
         if fanout_to:
@@ -252,7 +252,7 @@ class Plan:
             "update_node": {
                 "type_id": node_type.type_id,
                 "id": node_id,
-                "patch_json": json.dumps(patch),
+                "patch": patch,
             }
         }
 
@@ -323,7 +323,7 @@ class Plan:
         }
 
         if props:
-            op["create_edge"]["props_json"] = json.dumps(props)
+            op["create_edge"]["props"] = props
 
         self._operations.append(op)
         return self
@@ -702,7 +702,7 @@ class DbClient:
             type_id=node_type.type_id,
             limit=limit,
             offset=offset,
-            filter_json=json.dumps(filter) if filter else "",
+            filter=filter or {},
             order_by=order_by,
             descending=descending,
             after_offset=after_offset,
