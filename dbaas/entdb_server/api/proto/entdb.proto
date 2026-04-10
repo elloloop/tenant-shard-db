@@ -17,7 +17,9 @@ syntax = "proto3";
 
 package entdb.v1;
 
-option go_package = "github.com/example/entdb/proto/v1";
+import "google/protobuf/struct.proto";
+
+option go_package = "github.com/elloloop/entdb/proto/v1";
 
 // EntDB Service - Main API for database operations
 service EntDBService {
@@ -150,17 +152,19 @@ message CreateNodeOp {
     // Node ID (optional, generated if not provided)
     string id = 2;
 
-    // Payload as JSON string
-    string data_json = 3;
-
-    // ACL entries as JSON array string
-    string acl_json = 4;
+    reserved 3, 4;  // formerly data_json, acl_json (string)
 
     // Alias for referencing this node in subsequent operations
     string as = 5;
 
     // Users to fanout this node to
     repeated string fanout_to = 6;
+
+    // Payload (typed replacement for data_json)
+    google.protobuf.Struct data = 7;
+
+    // ACL entries (typed replacement for acl_json)
+    repeated AclEntry acl = 8;
 }
 
 message UpdateNodeOp {
@@ -170,11 +174,13 @@ message UpdateNodeOp {
     // Node ID or reference (required)
     string id = 2;
 
-    // Patch payload as JSON string
-    string patch_json = 3;
+    reserved 3;  // formerly patch_json (string)
 
     // Field mask for partial updates
     repeated string field_mask = 4;
+
+    // Patch payload (typed replacement for patch_json)
+    google.protobuf.Struct patch = 5;
 }
 
 message DeleteNodeOp {
@@ -195,8 +201,10 @@ message CreateEdgeOp {
     // Target node reference
     NodeRef to = 3;
 
-    // Edge properties as JSON string
-    string props_json = 4;
+    reserved 4;  // formerly props_json (string)
+
+    // Edge properties (typed replacement for props_json)
+    google.protobuf.Struct props = 5;
 }
 
 message DeleteEdgeOp {
@@ -303,8 +311,7 @@ message QueryNodesRequest {
     RequestContext context = 1;
     int32 type_id = 2;
 
-    // Filter conditions as JSON
-    string filter_json = 3;
+    reserved 3;  // formerly filter_json (string)
 
     // Pagination
     int32 limit = 4;
@@ -313,6 +320,9 @@ message QueryNodesRequest {
     // Sort order
     string order_by = 6;
     bool descending = 7;
+
+    // Filter conditions (typed replacement for filter_json)
+    repeated FieldFilter filters = 8;
 
     // Wait for this stream position to be applied before reading
     string after_offset = 10;
@@ -329,11 +339,16 @@ message Node {
     string tenant_id = 1;
     string node_id = 2;
     int32 type_id = 3;
-    string payload_json = 4;
+    reserved 4, 8;  // formerly payload_json, acl_json (string)
     int64 created_at = 5;
     int64 updated_at = 6;
     string owner_actor = 7;
-    string acl_json = 8;
+
+    // Payload (typed replacement for payload_json)
+    google.protobuf.Struct payload = 9;
+
+    // ACL entries (typed replacement for acl_json)
+    repeated AclEntry acl = 10;
 }
 
 // Edge operations
@@ -360,8 +375,11 @@ message Edge {
     int32 edge_type_id = 2;
     string from_node_id = 3;
     string to_node_id = 4;
-    string props_json = 5;
+    reserved 5;  // formerly props_json (string)
     int64 created_at = 6;
+
+    // Edge properties (typed replacement for props_json)
+    google.protobuf.Struct props = 7;
 }
 
 // Mailbox operations
@@ -421,9 +439,14 @@ message MailboxItem {
     string source_node_id = 4;
     string thread_id = 5;
     int64 ts = 6;
-    string state_json = 7;
+    reserved 7, 9;  // formerly state_json, metadata_json (string)
     string snippet = 8;
-    string metadata_json = 9;
+
+    // State (typed replacement for state_json)
+    google.protobuf.Struct state = 10;
+
+    // Metadata (typed replacement for metadata_json)
+    google.protobuf.Struct metadata = 11;
 }
 
 // Health and Schema
@@ -445,8 +468,11 @@ message GetSchemaRequest {
 }
 
 message GetSchemaResponse {
-    string schema_json = 1;
+    reserved 1;  // formerly schema_json (string)
     string fingerprint = 2;
+
+    // Schema (typed replacement for schema_json)
+    google.protobuf.Struct schema = 3;
 }
 
 // Tenant listing
@@ -482,6 +508,38 @@ message WaitForOffsetRequest {
 message WaitForOffsetResponse {
     bool reached = 1;
     string current_position = 2;
+}
+
+// Typed field definitions (replacing JSON strings)
+
+message AclEntry {
+    // Principal string: "user:ID", "group:ID", "tenant:*", "role:NAME"
+    string principal = 1;
+
+    // Permission level: "read", "write", "delete", "admin", "share", "comment", "deny"
+    string permission = 2;
+}
+
+message FieldFilter {
+    // Field name to filter on
+    string field = 1;
+
+    // Comparison operator
+    FilterOp op = 2;
+
+    // Value to compare against
+    google.protobuf.Value value = 3;
+}
+
+enum FilterOp {
+    FILTER_OP_EQ = 0;
+    FILTER_OP_NEQ = 1;
+    FILTER_OP_GT = 2;
+    FILTER_OP_GTE = 3;
+    FILTER_OP_LT = 4;
+    FILTER_OP_LTE = 5;
+    FILTER_OP_CONTAINS = 6;
+    FILTER_OP_IN = 7;
 }
 
 // ACL v2 messages
