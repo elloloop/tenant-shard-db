@@ -1,0 +1,64 @@
+---
+import DocsLayout from "../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Installation">
+  <h1>Installation</h1>
+
+  <h2>Python SDK</h2>
+  <pre><code>pip install entdb-sdk</code></pre>
+  <p>Or with <code>uv</code>:</p>
+  <pre><code>uv add entdb-sdk</code></pre>
+
+  <h2>Go SDK</h2>
+  <pre><code>go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest</code></pre>
+
+  <h2>Server (Docker)</h2>
+  <pre><code># Pull the latest image
+docker pull ghcr.io/elloloop/entdb:latest
+
+# Run with default settings (in-memory WAL, local storage)
+docker run -p 50051:50051 ghcr.io/elloloop/entdb:latest</code></pre>
+
+  <h2>Server (Docker Compose)</h2>
+  <p>For production with Kafka WAL and S3 storage:</p>
+  <pre><code>git clone https://github.com/elloloop/tenant-shard-db.git
+cd tenant-shard-db
+docker compose up -d</code></pre>
+  <p>This starts EntDB + Redpanda (Kafka) + MinIO (S3) + Redpanda Console.</p>
+
+  <h2>From Source</h2>
+  <pre><code>git clone https://github.com/elloloop/tenant-shard-db.git
+cd tenant-shard-db
+
+# Install server
+pip install -e .
+
+# Install SDK
+pip install -e ./sdk
+
+# Run server
+entdb</code></pre>
+
+  <h2>Verify Installation</h2>
+  <pre><code>python -c "
+import asyncio
+from entdb_sdk import DbClient
+
+async def check():
+    async with DbClient('localhost:50051') as db:
+        health = await db.health()
+        print(health)
+
+asyncio.run(check())
+"</code></pre>
+
+  <h2>Requirements</h2>
+  <table>
+    <tr><th>Component</th><th>Requirement</th></tr>
+    <tr><td>Python</td><td>&ge; 3.10</td></tr>
+    <tr><td>Go</td><td>&ge; 1.21</td></tr>
+    <tr><td>Docker</td><td>&ge; 20.10</td></tr>
+    <tr><td>Server RAM</td><td>&ge; 256 MB (0.25 vCPU works)</td></tr>
+  </table>
+</DocsLayout>

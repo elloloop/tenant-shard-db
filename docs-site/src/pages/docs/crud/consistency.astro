@@ -1,0 +1,66 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Read-after-Write Consistency">
+  <h1>Read-after-Write Consistency</h1>
+  <p>EntDB uses event sourcing: writes go to the WAL first, then the applier processes them into SQLite. By default, reads are <strong>eventually consistent</strong>. For immediate consistency, use the <code>after_offset</code> mechanism.</p>
+
+  <h2>The Problem</h2>
+  <pre><code># Without consistency guarantee:
+result = await plan.commit()
+
+# This might return None — applier hasn't processed the event yet
+task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
+# task could be None!</code></pre>
+
+  <h2>Solution 1: Wait During Commit</h2>
+  <p>The simplest approach &mdash; block until the write is applied:</p>
+  <pre><code>result = await plan.commit(wait_applied=True, timeout=5.0)
+# Returns only after the applier has processed the event
+
+# Now reads are guaranteed to see the data
+task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
+# task is always found</code></pre>
+  <p>Latency: typically &lt;50ms. The server uses event-driven notification (not polling).</p>
+
+  <h2>Solution 2: Offset-Based Reads</h2>
+  <p>More flexible &mdash; commit fast, wait only when you need to read:</p>
+  <pre><code>result = await plan.commit()  # returns immediately after WAL append
+
+# Do other work...
+
+# When you need to read, pass the offset
+task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
+                    after_offset=result.receipt.stream_position)
+# Server waits for the offset to be applied, then reads</code></pre>
+  <p>This is useful when the write and read happen in different parts of your code.</p>
+
+  <h2>Solution 3: Explicit Wait</h2>
+  <pre><code>result = await plan.commit()
+
+# Wait for the offset explicitly
+await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)
+
+# All subsequent reads are consistent
+tasks = await db.query(Task, "acme", "user:alice")</code></pre>
+
+  <h2>When to Use What</h2>
+  <table>
+    <tr><th>Pattern</th><th>Use When</th><th>Latency</th></tr>
+    <tr><td><code>wait_applied=True</code></td><td>Simple CRUD, user-facing writes</td><td>+10-50ms</td></tr>
+    <tr><td><code>after_offset</code></td><td>Write in one place, read in another</td><td>+0ms (if already applied)</td></tr>
+    <tr><td><code>wait_for_offset()</code></td><td>Batch writes, then consistent read</td><td>+10-50ms once</td></tr>
+    <tr><td>No guarantee</td><td>Background jobs, analytics, search</td><td>+0ms</td></tr>
+  </table>
+
+  <h2>How It Works Internally</h2>
+  <ol>
+    <li><code>plan.commit()</code> appends event to WAL, receives <code>stream_position</code></li>
+    <li>Applier processes events, updates <code>applied_offset</code> per tenant</li>
+    <li>When a read with <code>after_offset</code> arrives, server checks: is <code>applied_offset &ge; requested_offset</code>?</li>
+    <li>If yes: execute read immediately</li>
+    <li>If no: wait on an <code>asyncio.Condition</code> (event-driven, not polling)</li>
+    <li>Applier notifies condition when it catches up</li>
+  </ol>
+</DocsLayout>
