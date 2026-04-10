@@ -42,6 +42,8 @@ from ._generated import (
     SearchMailboxRequest,
     TypedNodeRef,
     UpdateNodeOp,
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
     # ACL v2
     GetConnectedNodesRequest,
     ShareNodeRequest,
@@ -442,6 +444,45 @@ class GrpcClient:
         }
         return status_map.get(response.status, "UNKNOWN")
 
+    async def wait_for_offset(
+        self,
+        tenant_id: str,
+        stream_position: str,
+        *,
+        timeout_ms: int = 30000,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> tuple[bool, str]:
+        """Wait for a stream position to be applied.
+
+        Args:
+            tenant_id: Tenant identifier
+            stream_position: Target stream position
+            timeout_ms: Server-side wait timeout in milliseconds
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call gRPC timeout in seconds
+
+        Returns:
+            Tuple of (reached, current_position)
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = WaitForOffsetRequest(
+            context=self._make_context(tenant_id, "system", trace_id),
+            stream_position=stream_position,
+            timeout_ms=timeout_ms,
+        )
+
+        response = await self._retry(
+            stub.WaitForOffset,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.reached, response.current_position
+
     async def get_node(
         self,
         tenant_id: str,
@@ -449,6 +490,8 @@ class GrpcClient:
         type_id: int,
         node_id: str,
         *,
+        after_offset: str | None = None,
+        wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> GrpcNode | None:
@@ -459,6 +502,8 @@ class GrpcClient:
             actor: Actor making request
             type_id: Node type ID
             node_id: Node identifier
+            after_offset: Wait for this offset before reading
+            wait_timeout_ms: Timeout for offset wait
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -472,6 +517,8 @@ class GrpcClient:
             context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             node_id=node_id,
+            after_offset=after_offset or "",
+            wait_timeout_ms=wait_timeout_ms,
         )
 
         response = await self._retry(
@@ -503,6 +550,8 @@ class GrpcClient:
         type_id: int,
         node_ids: list[str],
         *,
+        after_offset: str | None = None,
+        wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[GrpcNode], list[str]]:
@@ -513,6 +562,8 @@ class GrpcClient:
             actor: Actor making request
             type_id: Node type ID
             node_ids: Node identifiers
+            after_offset: Wait for this offset before reading
+            wait_timeout_ms: Timeout for offset wait
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -526,6 +577,8 @@ class GrpcClient:
             context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             node_ids=node_ids,
+            after_offset=after_offset or "",
+            wait_timeout_ms=wait_timeout_ms,
         )
 
         response = await self._retry(
@@ -562,6 +615,8 @@ class GrpcClient:
         filter_json: str | None = None,
         order_by: str | None = None,
         descending: bool = False,
+        after_offset: str | None = None,
+        wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[GrpcNode], bool]:
@@ -576,6 +631,8 @@ class GrpcClient:
             filter_json: JSON-encoded filter expression
             order_by: Field to order results by
             descending: Whether to sort in descending order
+            after_offset: Wait for this offset before reading
+            wait_timeout_ms: Timeout for offset wait
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -593,6 +650,8 @@ class GrpcClient:
             filter_json=filter_json or "",
             order_by=order_by or "",
             descending=descending,
+            after_offset=after_offset or "",
+            wait_timeout_ms=wait_timeout_ms,
         )
 
         response = await self._retry(

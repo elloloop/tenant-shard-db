@@ -207,11 +207,13 @@ class EntDBServicer(EntDBServiceServicer):
                     stream_position=str(stream_pos) if stream_pos else "",
                 )
 
-                # Wait for application if requested
+                # Wait for application if requested (event-driven via offset)
                 applied_status = ReceiptStatus.RECEIPT_STATUS_PENDING
-                if request.wait_applied:
+                if request.wait_applied and stream_pos is not None:
                     timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
-                    applied = await self._wait_for_applied(ctx.tenant_id, idempotency_key, timeout)
+                    applied = await self._wait_for_offset(
+                        ctx.tenant_id, str(stream_pos), timeout
+                    )
                     if applied:
                         applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
 
@@ -317,22 +319,16 @@ class EntDBServicer(EntDBServiceServicer):
             return {"type_id": ref.typed.type_id, "id": ref.typed.id}
         return None
 
-    async def _wait_for_applied(
+    async def _wait_for_offset(
         self,
         tenant_id: str,
-        idempotency_key: str,
+        stream_position: str,
         timeout: float,
     ) -> bool:
-        """Wait for an event to be applied."""
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                if await self.canonical_store.check_idempotency(tenant_id, idempotency_key):
-                    return True
-            except Exception:
-                pass
-            await asyncio.sleep(0.1)
-        return False
+        """Wait for a stream position to be applied (event-driven, no polling)."""
+        return await self.canonical_store.wait_for_offset(
+            tenant_id, stream_position, timeout
+        )
 
     async def GetReceiptStatus(
         self,
@@ -361,6 +357,27 @@ class EntDBServicer(EntDBServiceServicer):
                 error=str(e),
             )
 
+    async def WaitForOffset(
+        self,
+        request: WaitForOffsetRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> WaitForOffsetResponse:
+        """Wait for a stream position to be applied."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            timeout = request.timeout_ms / 1000.0 if request.timeout_ms else 30.0
+            reached = await self._wait_for_offset(
+                request.context.tenant_id, request.stream_position, timeout
+            )
+            current = self.canonical_store.get_applied_offset(request.context.tenant_id) or ""
+            record_grpc_request("WaitForOffset", "ok", time.perf_counter() - start)
+            return WaitForOffsetResponse(reached=reached, current_position=current)
+        except Exception as e:
+            record_grpc_request("WaitForOffset", "error", time.perf_counter() - start)
+            logger.error(f"WaitForOffset failed: {e}", exc_info=True)
+            return WaitForOffsetResponse(reached=False, current_position="")
+
     async def GetNode(
         self,
         request: GetNodeRequest,
@@ -370,6 +387,14 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+
+            # Wait for offset if requested (read-after-write consistency)
+            if request.after_offset:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                await self._wait_for_offset(
+                    request.context.tenant_id, request.after_offset, timeout
+                )
+
             node = await self.canonical_store.get_node(
                 request.context.tenant_id,
                 request.node_id,
@@ -406,6 +431,14 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+
+            # Wait for offset if requested (read-after-write consistency)
+            if request.after_offset:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                await self._wait_for_offset(
+                    request.context.tenant_id, request.after_offset, timeout
+                )
+
             nodes = []
             missing_ids = []
 
@@ -446,6 +479,14 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+
+            # Wait for offset if requested (read-after-write consistency)
+            if request.after_offset:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                await self._wait_for_offset(
+                    request.context.tenant_id, request.after_offset, timeout
+                )
+
             filter_dict = None
             if request.filter_json:
                 try:

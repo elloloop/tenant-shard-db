@@ -520,6 +520,38 @@ class DbClient:
         self._ensure_connected()
         return Plan(self, tenant_id, actor, idempotency_key, trace_id=trace_id)
 
+    async def wait_for_offset(
+        self,
+        tenant_id: str,
+        stream_position: str,
+        timeout_ms: int = 30000,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[bool, str]:
+        """Wait for a stream position to be applied.
+
+        Args:
+            tenant_id: Tenant identifier
+            stream_position: Target stream position string
+            timeout_ms: Server-side wait timeout in milliseconds
+            trace_id: Optional trace ID
+            timeout: Per-call gRPC timeout in seconds
+
+        Returns:
+            Tuple of (reached, current_position)
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.wait_for_offset(
+            tenant_id=tenant_id,
+            stream_position=stream_position,
+            timeout_ms=timeout_ms,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
     async def get(
         self,
         node_type: NodeTypeDef,
@@ -527,6 +559,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
+        after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
@@ -537,6 +570,7 @@ class DbClient:
             node_id: Node identifier
             tenant_id: Tenant identifier
             actor: Actor making request
+            after_offset: Wait for this stream position before reading
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -551,6 +585,8 @@ class DbClient:
             actor=actor,
             type_id=node_type.type_id,
             node_id=node_id,
+            after_offset=after_offset,
+            wait_timeout_ms=30000 if after_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -576,6 +612,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
+        after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> tuple[list[Node], list[str]]:
@@ -586,6 +623,7 @@ class DbClient:
             node_ids: Node identifiers
             tenant_id: Tenant identifier
             actor: Actor making request
+            after_offset: Wait for this stream position before reading
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -600,6 +638,8 @@ class DbClient:
             actor=actor,
             type_id=node_type.type_id,
             node_ids=node_ids,
+            after_offset=after_offset,
+            wait_timeout_ms=30000 if after_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -631,6 +671,7 @@ class DbClient:
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
+        after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -645,6 +686,7 @@ class DbClient:
             offset: Pagination offset
             order_by: Field to order results by
             descending: Whether to sort in descending order
+            after_offset: Wait for this stream position before reading
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -663,6 +705,8 @@ class DbClient:
             filter_json=json.dumps(filter) if filter else "",
             order_by=order_by,
             descending=descending,
+            after_offset=after_offset,
+            wait_timeout_ms=30000 if after_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
