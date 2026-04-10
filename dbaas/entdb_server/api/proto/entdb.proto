@@ -19,7 +19,7 @@ package entdb.v1;
 
 import "google/protobuf/struct.proto";
 
-option go_package = "github.com/elloloop/entdb/proto/v1";
+option go_package = "github.com/example/entdb/proto/v1";
 
 // EntDB Service - Main API for database operations
 service EntDBService {
@@ -62,30 +62,6 @@ service EntDBService {
 
     // List mailbox users for a tenant
     rpc ListMailboxUsers(ListMailboxUsersRequest) returns (ListMailboxUsersResponse);
-
-    // Wait for a specific stream position to be applied
-    rpc WaitForOffset(WaitForOffsetRequest) returns (WaitForOffsetResponse);
-
-    // ACL v2 - Get connected nodes with ACL filtering
-    rpc GetConnectedNodes(GetConnectedNodesRequest) returns (GetConnectedNodesResponse);
-
-    // ACL v2 - Share a node with an actor
-    rpc ShareNode(ShareNodeRequest) returns (ShareNodeResponse);
-
-    // ACL v2 - Revoke access from an actor
-    rpc RevokeAccess(RevokeAccessRequest) returns (RevokeAccessResponse);
-
-    // ACL v2 - List nodes shared with the caller
-    rpc ListSharedWithMe(ListSharedWithMeRequest) returns (ListSharedWithMeResponse);
-
-    // ACL v2 - Add a member to a group
-    rpc AddGroupMember(GroupMemberRequest) returns (GroupMemberResponse);
-
-    // ACL v2 - Remove a member from a group
-    rpc RemoveGroupMember(GroupMemberRequest) returns (GroupMemberResponse);
-
-    // ACL v2 - Transfer ownership of a node
-    rpc TransferOwnership(TransferOwnershipRequest) returns (TransferOwnershipResponse);
 }
 
 // Common message types
@@ -152,7 +128,9 @@ message CreateNodeOp {
     // Node ID (optional, generated if not provided)
     string id = 2;
 
-    reserved 3, 4;  // formerly data_json, acl_json (string)
+    // Reserved: old JSON string fields
+    reserved 3, 4;
+    reserved "data_json", "acl_json";
 
     // Alias for referencing this node in subsequent operations
     string as = 5;
@@ -160,10 +138,10 @@ message CreateNodeOp {
     // Users to fanout this node to
     repeated string fanout_to = 6;
 
-    // Payload (typed replacement for data_json)
+    // Payload as typed Struct
     google.protobuf.Struct data = 7;
 
-    // ACL entries (typed replacement for acl_json)
+    // ACL entries
     repeated AclEntry acl = 8;
 }
 
@@ -174,12 +152,14 @@ message UpdateNodeOp {
     // Node ID or reference (required)
     string id = 2;
 
-    reserved 3;  // formerly patch_json (string)
+    // Reserved: old JSON string field
+    reserved 3;
+    reserved "patch_json";
 
     // Field mask for partial updates
     repeated string field_mask = 4;
 
-    // Patch payload (typed replacement for patch_json)
+    // Patch payload as typed Struct
     google.protobuf.Struct patch = 5;
 }
 
@@ -201,9 +181,11 @@ message CreateEdgeOp {
     // Target node reference
     NodeRef to = 3;
 
-    reserved 4;  // formerly props_json (string)
+    // Reserved: old JSON string field
+    reserved 4;
+    reserved "props_json";
 
-    // Edge properties (typed replacement for props_json)
+    // Edge properties as typed Struct
     google.protobuf.Struct props = 5;
 }
 
@@ -281,10 +263,6 @@ message GetNodeRequest {
     RequestContext context = 1;
     int32 type_id = 2;
     string node_id = 3;
-
-    // Wait for this stream position to be applied before reading
-    string after_offset = 10;
-    int32 wait_timeout_ms = 11;
 }
 
 message GetNodeResponse {
@@ -296,10 +274,6 @@ message GetNodesRequest {
     RequestContext context = 1;
     int32 type_id = 2;
     repeated string node_ids = 3;
-
-    // Wait for this stream position to be applied before reading
-    string after_offset = 10;
-    int32 wait_timeout_ms = 11;
 }
 
 message GetNodesResponse {
@@ -311,7 +285,9 @@ message QueryNodesRequest {
     RequestContext context = 1;
     int32 type_id = 2;
 
-    reserved 3;  // formerly filter_json (string)
+    // Reserved: old JSON string field
+    reserved 3;
+    reserved "filter_json";
 
     // Pagination
     int32 limit = 4;
@@ -321,12 +297,8 @@ message QueryNodesRequest {
     string order_by = 6;
     bool descending = 7;
 
-    // Filter conditions (typed replacement for filter_json)
+    // Typed filter conditions
     repeated FieldFilter filters = 8;
-
-    // Wait for this stream position to be applied before reading
-    string after_offset = 10;
-    int32 wait_timeout_ms = 11;
 }
 
 message QueryNodesResponse {
@@ -339,15 +311,19 @@ message Node {
     string tenant_id = 1;
     string node_id = 2;
     int32 type_id = 3;
-    reserved 4, 8;  // formerly payload_json, acl_json (string)
+
+    // Reserved: old JSON string fields
+    reserved 4, 8;
+    reserved "payload_json", "acl_json";
+
     int64 created_at = 5;
     int64 updated_at = 6;
     string owner_actor = 7;
 
-    // Payload (typed replacement for payload_json)
+    // Payload as typed Struct
     google.protobuf.Struct payload = 9;
 
-    // ACL entries (typed replacement for acl_json)
+    // ACL entries
     repeated AclEntry acl = 10;
 }
 
@@ -375,10 +351,14 @@ message Edge {
     int32 edge_type_id = 2;
     string from_node_id = 3;
     string to_node_id = 4;
-    reserved 5;  // formerly props_json (string)
+
+    // Reserved: old JSON string field
+    reserved 5;
+    reserved "props_json";
+
     int64 created_at = 6;
 
-    // Edge properties (typed replacement for props_json)
+    // Edge properties as typed Struct
     google.protobuf.Struct props = 7;
 }
 
@@ -439,13 +419,17 @@ message MailboxItem {
     string source_node_id = 4;
     string thread_id = 5;
     int64 ts = 6;
-    reserved 7, 9;  // formerly state_json, metadata_json (string)
+
+    // Reserved: old JSON string fields
+    reserved 7, 9;
+    reserved "state_json", "metadata_json";
+
     string snippet = 8;
 
-    // State (typed replacement for state_json)
+    // State as typed Struct
     google.protobuf.Struct state = 10;
 
-    // Metadata (typed replacement for metadata_json)
+    // Metadata as typed Struct
     google.protobuf.Struct metadata = 11;
 }
 
@@ -468,10 +452,13 @@ message GetSchemaRequest {
 }
 
 message GetSchemaResponse {
-    reserved 1;  // formerly schema_json (string)
+    // Reserved: old JSON string field
+    reserved 1;
+    reserved "schema_json";
+
     string fingerprint = 2;
 
-    // Schema (typed replacement for schema_json)
+    // Schema as typed Struct
     google.protobuf.Struct schema = 3;
 }
 
@@ -497,121 +484,26 @@ message ListMailboxUsersResponse {
     repeated string user_ids = 1;
 }
 
-// Wait for offset - read-after-write consistency
-
-message WaitForOffsetRequest {
-    RequestContext context = 1;
-    string stream_position = 2;
-    int32 timeout_ms = 3;
-}
-
-message WaitForOffsetResponse {
-    bool reached = 1;
-    string current_position = 2;
-}
-
-// Typed field definitions (replacing JSON strings)
+// ACL and filter types
 
 message AclEntry {
-    // Principal string: "user:ID", "group:ID", "tenant:*", "role:NAME"
     string principal = 1;
-
-    // Permission level: "read", "write", "delete", "admin", "share", "comment", "deny"
     string permission = 2;
 }
 
 message FieldFilter {
-    // Field name to filter on
     string field = 1;
-
-    // Comparison operator
     FilterOp op = 2;
-
-    // Value to compare against
     google.protobuf.Value value = 3;
 }
 
 enum FilterOp {
-    FILTER_OP_EQ = 0;
-    FILTER_OP_NEQ = 1;
-    FILTER_OP_GT = 2;
-    FILTER_OP_GTE = 3;
-    FILTER_OP_LT = 4;
-    FILTER_OP_LTE = 5;
-    FILTER_OP_CONTAINS = 6;
-    FILTER_OP_IN = 7;
-}
-
-// ACL v2 messages
-
-message GetConnectedNodesRequest {
-    RequestContext context = 1;
-    string node_id = 2;
-    int32 edge_type_id = 3;
-    int32 limit = 4;
-    int32 offset = 5;
-}
-
-message GetConnectedNodesResponse {
-    repeated Node nodes = 1;
-    bool has_more = 2;
-}
-
-message ShareNodeRequest {
-    RequestContext context = 1;
-    string node_id = 2;
-    string actor_id = 3;
-    string permission = 4;
-    string actor_type = 5;
-    int64 expires_at = 6;
-}
-
-message ShareNodeResponse {
-    bool success = 1;
-    string error = 2;
-}
-
-message RevokeAccessRequest {
-    RequestContext context = 1;
-    string node_id = 2;
-    string actor_id = 3;
-}
-
-message RevokeAccessResponse {
-    bool found = 1;
-    string error = 2;
-}
-
-message ListSharedWithMeRequest {
-    RequestContext context = 1;
-    int32 limit = 2;
-    int32 offset = 3;
-}
-
-message ListSharedWithMeResponse {
-    repeated Node nodes = 1;
-    bool has_more = 2;
-}
-
-message GroupMemberRequest {
-    RequestContext context = 1;
-    string group_id = 2;
-    string member_actor_id = 3;
-    string role = 4;
-}
-
-message GroupMemberResponse {
-    bool success = 1;
-    string error = 2;
-}
-
-message TransferOwnershipRequest {
-    RequestContext context = 1;
-    string node_id = 2;
-    string new_owner = 3;
-}
-
-message TransferOwnershipResponse {
-    bool found = 1;
-    string error = 2;
+    EQ = 0;
+    NEQ = 1;
+    GT = 2;
+    GTE = 3;
+    LT = 4;
+    LTE = 5;
+    CONTAINS = 6;
+    IN = 7;
 }

@@ -61,6 +61,7 @@ Do not edit manually - regenerate with scripts/generate_proto.sh
 """
 
 from .entdb_pb2 import (
+    AclEntry,
     CreateEdgeOp,
     CreateNodeOp,
     DeleteEdgeOp,
@@ -69,6 +70,8 @@ from .entdb_pb2 import (
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    FieldFilter,
+    FilterOp,
     # Edges
     GetEdgesRequest,
     GetEdgesResponse,
@@ -134,6 +137,10 @@ __all__ = [
     "DeleteEdgeOp",
     "NodeRef",
     "TypedNodeRef",
+    # ACL and filter types
+    "AclEntry",
+    "FieldFilter",
+    "FilterOp",
     # Receipt
     "GetReceiptStatusRequest",
     "GetReceiptStatusResponse",
@@ -188,6 +195,7 @@ This module is internal to the SDK. Users should not import from here.
 """
 
 from .entdb_pb2 import (
+    AclEntry,
     CreateEdgeOp,
     CreateNodeOp,
     DeleteEdgeOp,
@@ -196,6 +204,8 @@ from .entdb_pb2 import (
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    FieldFilter,
+    FilterOp,
     # Edges
     GetEdgesRequest,
     GetEdgesResponse,
@@ -255,6 +265,9 @@ __all__ = [
     "DeleteEdgeOp",
     "NodeRef",
     "TypedNodeRef",
+    "AclEntry",
+    "FieldFilter",
+    "FilterOp",
     "GetReceiptStatusRequest",
     "GetReceiptStatusResponse",
     "ReceiptStatus",

@@ -16,15 +16,19 @@ from dataclasses import dataclass
 from typing import Any
 
 import grpc
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
 from grpc import aio as grpc_aio
 
 from ._generated import (
+    AclEntry,
     CreateEdgeOp,
     CreateNodeOp,
     DeleteEdgeOp,
     DeleteNodeOp,
     EntDBServiceStub,
     ExecuteAtomicRequest,
+    FieldFilter,
     GetEdgesRequest,
     GetMailboxRequest,
     GetNodeRequest,
@@ -52,6 +56,24 @@ from ._generated import (
     GroupMemberRequest,
     TransferOwnershipRequest,
 )
+
+
+def _dict_to_struct(d):
+    """Convert Python dict to protobuf Struct."""
+    s = Struct()
+    if d:
+        s.update(d)
+    return s
+
+
+def _struct_to_dict(s):
+    """Convert protobuf Struct to Python dict."""
+    return json_format.MessageToDict(s) if s and s.fields else {}
+
+
+def _acl_proto_to_list(acl_entries):
+    """Convert repeated AclEntry to list of dicts."""
+    return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
 
 logger = logging.getLogger(__name__)
 
@@ -330,12 +352,20 @@ class GrpcClient:
 
             if "create_node" in op:
                 create = op["create_node"]
+                data_dict = json.loads(create.get("data_json", "{}")) if create.get("data_json") else {}
                 create_op = CreateNodeOp(
                     type_id=create.get("type_id", 0),
                     id=create.get("id", ""),
-                    data_json=create.get("data_json", "{}"),
-                    acl_json=create.get("acl_json", ""),
+                    data=_dict_to_struct(data_dict),
                 )
+                acl_json_str = create.get("acl_json", "")
+                if acl_json_str:
+                    acl_list = json.loads(acl_json_str)
+                    for entry in acl_list:
+                        create_op.acl.append(AclEntry(
+                            principal=entry.get("principal", ""),
+                            permission=entry.get("permission", ""),
+                        ))
                 if create.get("as"):
                     # protobuf field is named 'as' but Python keyword conflict
                     setattr(create_op, "as", create["as"])
@@ -345,10 +375,11 @@ class GrpcClient:
 
             elif "update_node" in op:
                 update = op["update_node"]
+                patch_dict = json.loads(update.get("patch_json", "{}")) if update.get("patch_json") else {}
                 update_op = UpdateNodeOp(
                     type_id=update.get("type_id", 0),
                     id=update.get("id", ""),
-                    patch_json=update.get("patch_json", "{}"),
+                    patch=_dict_to_struct(patch_dict),
                 )
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
@@ -365,9 +396,10 @@ class GrpcClient:
 
             elif "create_edge" in op:
                 create = op["create_edge"]
+                props_dict = json.loads(create.get("props_json", "{}")) if create.get("props_json") else {}
                 create_op = CreateEdgeOp(
                     edge_id=create.get("edge_id", 0),
-                    props_json=create.get("props_json", "{}"),
+                    props=_dict_to_struct(props_dict),
                 )
                 getattr(create_op, "from").CopyFrom(self._convert_node_ref(create.get("from", {})))
                 create_op.to.CopyFrom(self._convert_node_ref(create.get("to", {})))
@@ -536,11 +568,11 @@ class GrpcClient:
             tenant_id=node.tenant_id,
             node_id=node.node_id,
             type_id=node.type_id,
-            payload=json.loads(node.payload_json) if node.payload_json else {},
+            payload=_struct_to_dict(node.payload),
             created_at=node.created_at,
             updated_at=node.updated_at,
             owner_actor=node.owner_actor,
-            acl=json.loads(node.acl_json) if node.acl_json else [],
+            acl=_acl_proto_to_list(node.acl),
         )
 
     async def get_nodes(
@@ -593,11 +625,11 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
+                payload=_struct_to_dict(n.payload),
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
-                acl=json.loads(n.acl_json) if n.acl_json else [],
+                acl=_acl_proto_to_list(n.acl),
             )
             for n in response.nodes
         ]
@@ -642,12 +674,22 @@ class GrpcClient:
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
+        # Convert filter_json string to repeated FieldFilter
+        filters = []
+        if filter_json:
+            filter_dict = json.loads(filter_json)
+            from google.protobuf.struct_pb2 import Value
+            for field_name, field_value in filter_dict.items():
+                v = Value()
+                json_format.Parse(json.dumps(field_value), v)
+                filters.append(FieldFilter(field=field_name, value=v))
+
         request = QueryNodesRequest(
             context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             limit=limit,
             offset=offset,
-            filter_json=filter_json or "",
+            filters=filters,
             order_by=order_by or "",
             descending=descending,
             after_offset=after_offset or "",
@@ -666,11 +708,11 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
+                payload=_struct_to_dict(n.payload),
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
-                acl=json.loads(n.acl_json) if n.acl_json else [],
+                acl=_acl_proto_to_list(n.acl),
             )
             for n in response.nodes
         ]
@@ -725,7 +767,7 @@ class GrpcClient:
                 edge_type_id=e.edge_type_id,
                 from_node_id=e.from_node_id,
                 to_node_id=e.to_node_id,
-                props=json.loads(e.props_json) if e.props_json else {},
+                props=_struct_to_dict(e.props),
                 created_at=e.created_at,
             )
             for e in response.edges
@@ -781,7 +823,7 @@ class GrpcClient:
                 edge_type_id=e.edge_type_id,
                 from_node_id=e.from_node_id,
                 to_node_id=e.to_node_id,
-                props=json.loads(e.props_json) if e.props_json else {},
+                props=_struct_to_dict(e.props),
                 created_at=e.created_at,
             )
             for e in response.edges
@@ -847,9 +889,9 @@ class GrpcClient:
                     "source_node_id": r.item.source_node_id,
                     "thread_id": r.item.thread_id,
                     "ts": r.item.ts,
-                    "state": json.loads(r.item.state_json) if r.item.state_json else {},
+                    "state": _struct_to_dict(r.item.state),
                     "snippet": r.item.snippet,
-                    "metadata": json.loads(r.item.metadata_json) if r.item.metadata_json else {},
+                    "metadata": _struct_to_dict(r.item.metadata),
                 },
                 "rank": r.rank,
                 "highlights": r.highlights,
@@ -916,9 +958,9 @@ class GrpcClient:
                 "source_node_id": item.source_node_id,
                 "thread_id": item.thread_id,
                 "ts": item.ts,
-                "state": json.loads(item.state_json) if item.state_json else {},
+                "state": _struct_to_dict(item.state),
                 "snippet": item.snippet,
-                "metadata": json.loads(item.metadata_json) if item.metadata_json else {},
+                "metadata": _struct_to_dict(item.metadata),
             }
             for item in response.items
         ]
@@ -981,7 +1023,7 @@ class GrpcClient:
         )
 
         return {
-            "schema": json.loads(response.schema_json) if response.schema_json else {},
+            "schema": _struct_to_dict(response.schema),
             "fingerprint": response.fingerprint,
         }
 
