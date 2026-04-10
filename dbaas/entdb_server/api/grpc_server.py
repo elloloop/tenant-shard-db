@@ -26,11 +26,14 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import grpc
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
 from grpc import aio as grpc_aio
 
 from ..metrics import record_grpc_request
 from ..sharding import ShardingConfig
 from .generated import (
+    AclEntry,
     Edge,
     EntDBServiceServicer,
     # Request/Response types
@@ -72,6 +75,29 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _struct_to_dict(s):
+    """Convert protobuf Struct to Python dict."""
+    return json_format.MessageToDict(s) if s and s.fields else {}
+
+
+def _dict_to_struct(d):
+    """Convert Python dict to protobuf Struct."""
+    s = Struct()
+    if d:
+        s.update(d)
+    return s
+
+
+def _acl_list_to_proto(acl_list):
+    """Convert list of dicts to repeated AclEntry."""
+    return [AclEntry(principal=e.get("principal", ""), permission=e.get("permission", "")) for e in acl_list]
+
+
+def _acl_proto_to_list(acl_entries):
+    """Convert repeated AclEntry to list of dicts."""
+    return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
 
 
 class EntDBServicer(EntDBServiceServicer):
@@ -232,12 +258,12 @@ class EntDBServicer(EntDBServiceServicer):
                 internal_op: dict[str, Any] = {
                     "op": "create_node",
                     "type_id": create.type_id,
-                    "data": json.loads(create.data_json) if create.data_json else {},
+                    "data": _struct_to_dict(create.data),
                 }
                 if create.id:
                     internal_op["id"] = create.id
-                if create.acl_json:
-                    internal_op["acl"] = json.loads(create.acl_json)
+                if create.acl:
+                    internal_op["acl"] = _acl_proto_to_list(create.acl)
                 as_val = getattr(create, "as", "")
                 if as_val:
                     internal_op["as"] = as_val
@@ -252,7 +278,7 @@ class EntDBServicer(EntDBServiceServicer):
                         "op": "update_node",
                         "type_id": update.type_id,
                         "id": update.id,
-                        "patch": json.loads(update.patch_json) if update.patch_json else {},
+                        "patch": _struct_to_dict(update.patch),
                     }
                 )
 
@@ -274,7 +300,7 @@ class EntDBServicer(EntDBServiceServicer):
                         "edge_id": create.edge_id,
                         "from": self._convert_node_ref(getattr(create, "from")),
                         "to": self._convert_node_ref(create.to),
-                        "props": json.loads(create.props_json) if create.props_json else {},
+                        "props": _struct_to_dict(create.props),
                     }
                 )
 
@@ -370,11 +396,11 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=node.tenant_id,
                     node_id=node.node_id,
                     type_id=node.type_id,
-                    payload_json=node.payload_json,
+                    payload=_dict_to_struct(node.payload),
                     created_at=node.created_at,
                     updated_at=node.updated_at,
                     owner_actor=node.owner_actor,
-                    acl_json=node.acl_json,
+                    acl=_acl_list_to_proto(node.acl),
                 ),
             )
         except Exception as e:
@@ -405,11 +431,11 @@ class EntDBServicer(EntDBServiceServicer):
                             tenant_id=node.tenant_id,
                             node_id=node.node_id,
                             type_id=node.type_id,
-                            payload_json=node.payload_json,
+                            payload=_dict_to_struct(node.payload),
                             created_at=node.created_at,
                             updated_at=node.updated_at,
                             owner_actor=node.owner_actor,
-                            acl_json=node.acl_json,
+                            acl=_acl_list_to_proto(node.acl),
                         )
                     )
                 else:
@@ -432,11 +458,11 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             filter_dict = None
-            if request.filter_json:
-                try:
-                    filter_dict = json.loads(request.filter_json)
-                except json.JSONDecodeError:
-                    filter_dict = None
+            if request.filters:
+                filter_dict = {
+                    f.field: json_format.MessageToDict(f.value)
+                    for f in request.filters
+                }
 
             nodes = await self.canonical_store.query_nodes(
                 tenant_id=request.context.tenant_id,
@@ -453,11 +479,11 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=n.tenant_id,
                     node_id=n.node_id,
                     type_id=n.type_id,
-                    payload_json=n.payload_json,
+                    payload=_dict_to_struct(n.payload),
                     created_at=n.created_at,
                     updated_at=n.updated_at,
                     owner_actor=n.owner_actor,
-                    acl_json=n.acl_json,
+                    acl=_acl_list_to_proto(n.acl),
                 )
                 for n in nodes
             ]
@@ -495,7 +521,7 @@ class EntDBServicer(EntDBServiceServicer):
                     edge_type_id=e.edge_type_id,
                     from_node_id=e.from_node_id,
                     to_node_id=e.to_node_id,
-                    props_json=json.dumps(e.props),
+                    props=_dict_to_struct(e.props),
                     created_at=e.created_at,
                 )
                 for e in edges[:limit]
@@ -531,7 +557,7 @@ class EntDBServicer(EntDBServiceServicer):
                     edge_type_id=e.edge_type_id,
                     from_node_id=e.from_node_id,
                     to_node_id=e.to_node_id,
-                    props_json=json.dumps(e.props),
+                    props=_dict_to_struct(e.props),
                     created_at=e.created_at,
                 )
                 for e in edges[:limit]
@@ -572,9 +598,9 @@ class EntDBServicer(EntDBServiceServicer):
                         source_node_id=r.item.source_node_id,
                         thread_id=r.item.thread_id or "",
                         ts=r.item.ts,
-                        state_json=json.dumps(r.item.state),
+                        state=_dict_to_struct(r.item.state),
                         snippet=r.item.snippet or "",
-                        metadata_json=json.dumps(r.item.metadata),
+                        metadata=_dict_to_struct(r.item.metadata),
                     ),
                     rank=r.rank,
                     highlights=r.highlights or "",
@@ -627,9 +653,9 @@ class EntDBServicer(EntDBServiceServicer):
                     source_node_id=item.source_node_id,
                     thread_id=item.thread_id or "",
                     ts=item.ts,
-                    state_json=json.dumps(item.state),
+                    state=_dict_to_struct(item.state),
                     snippet=item.snippet or "",
-                    metadata_json=json.dumps(item.metadata),
+                    metadata=_dict_to_struct(item.metadata),
                 )
                 for item in items
             ]
@@ -780,13 +806,13 @@ class EntDBServicer(EntDBServiceServicer):
 
             record_grpc_request("GetSchema", "ok", time.perf_counter() - start)
             return GetSchemaResponse(
-                schema_json=json.dumps(schema_dict),
+                schema=_dict_to_struct(schema_dict),
                 fingerprint=self.schema_registry.fingerprint or "",
             )
         except Exception as e:
             record_grpc_request("GetSchema", "error", time.perf_counter() - start)
             logger.error(f"GetSchema failed: {e}", exc_info=True)
-            return GetSchemaResponse(schema_json="{}", fingerprint="")
+            return GetSchemaResponse(fingerprint="")
 
 
 class GrpcServer:
