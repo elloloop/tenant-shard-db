@@ -65,7 +65,22 @@ from .generated import (
     SearchMailboxRequest,
     SearchMailboxResponse,
     TenantInfo,
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
     add_EntDBServiceServicer_to_server,
+    # ACL v2
+    GetConnectedNodesRequest,
+    GetConnectedNodesResponse,
+    ShareNodeRequest,
+    ShareNodeResponse,
+    RevokeAccessRequest,
+    RevokeAccessResponse,
+    ListSharedWithMeRequest,
+    ListSharedWithMeResponse,
+    GroupMemberRequest,
+    GroupMemberResponse,
+    TransferOwnershipRequest,
+    TransferOwnershipResponse,
 )
 
 if TYPE_CHECKING:
@@ -787,6 +802,194 @@ class EntDBServicer(EntDBServiceServicer):
             record_grpc_request("GetSchema", "error", time.perf_counter() - start)
             logger.error(f"GetSchema failed: {e}", exc_info=True)
             return GetSchemaResponse(schema_json="{}", fingerprint="")
+
+    # --- ACL v2 handlers ---
+
+    def _node_to_proto(self, n: Any) -> Node:
+        """Convert an internal Node to a protobuf Node message."""
+        return Node(
+            tenant_id=n.tenant_id,
+            node_id=n.node_id,
+            type_id=n.type_id,
+            payload_json=n.payload_json,
+            created_at=n.created_at,
+            updated_at=n.updated_at,
+            owner_actor=n.owner_actor,
+            acl_json=n.acl_json,
+        )
+
+    async def GetConnectedNodes(
+        self,
+        request: GetConnectedNodesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetConnectedNodesResponse:
+        """Get connected nodes via edge type with ACL filtering."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            actor_ids = await self.canonical_store.resolve_actor_groups(
+                request.context.tenant_id, request.context.actor,
+            )
+            limit = request.limit or 100
+            nodes = await self.canonical_store.get_connected_nodes(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                edge_type_id=request.edge_type_id,
+                actor_ids=actor_ids,
+                limit=limit,
+                offset=request.offset or 0,
+            )
+            proto_nodes = [self._node_to_proto(n) for n in nodes]
+            record_grpc_request("GetConnectedNodes", "ok", time.perf_counter() - start)
+            return GetConnectedNodesResponse(
+                nodes=proto_nodes,
+                has_more=len(nodes) == limit,
+            )
+        except Exception as e:
+            record_grpc_request("GetConnectedNodes", "error", time.perf_counter() - start)
+            logger.error(f"GetConnectedNodes failed: {e}", exc_info=True)
+            return GetConnectedNodesResponse(nodes=[])
+
+    async def ShareNode(
+        self,
+        request: ShareNodeRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ShareNodeResponse:
+        """Share a node with an actor."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            expires_at = request.expires_at if request.expires_at else None
+            await self.canonical_store.share_node(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                actor_id=request.actor_id,
+                permission=request.permission or "read",
+                granted_by=request.context.actor,
+                actor_type=request.actor_type or "user",
+                expires_at=expires_at,
+            )
+            record_grpc_request("ShareNode", "ok", time.perf_counter() - start)
+            return ShareNodeResponse(success=True)
+        except Exception as e:
+            record_grpc_request("ShareNode", "error", time.perf_counter() - start)
+            logger.error(f"ShareNode failed: {e}", exc_info=True)
+            return ShareNodeResponse(success=False, error=str(e))
+
+    async def RevokeAccess(
+        self,
+        request: RevokeAccessRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> RevokeAccessResponse:
+        """Revoke access from a node for an actor."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            found = await self.canonical_store.revoke_access(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                actor_id=request.actor_id,
+            )
+            record_grpc_request("RevokeAccess", "ok", time.perf_counter() - start)
+            return RevokeAccessResponse(found=found)
+        except Exception as e:
+            record_grpc_request("RevokeAccess", "error", time.perf_counter() - start)
+            logger.error(f"RevokeAccess failed: {e}", exc_info=True)
+            return RevokeAccessResponse(found=False, error=str(e))
+
+    async def ListSharedWithMe(
+        self,
+        request: ListSharedWithMeRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ListSharedWithMeResponse:
+        """List nodes shared with the calling actor."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            actor_ids = await self.canonical_store.resolve_actor_groups(
+                request.context.tenant_id, request.context.actor,
+            )
+            limit = request.limit or 100
+            nodes = await self.canonical_store.list_shared_with_me(
+                tenant_id=request.context.tenant_id,
+                actor_ids=actor_ids,
+                limit=limit,
+                offset=request.offset or 0,
+            )
+            proto_nodes = [self._node_to_proto(n) for n in nodes]
+            record_grpc_request("ListSharedWithMe", "ok", time.perf_counter() - start)
+            return ListSharedWithMeResponse(
+                nodes=proto_nodes,
+                has_more=len(nodes) == limit,
+            )
+        except Exception as e:
+            record_grpc_request("ListSharedWithMe", "error", time.perf_counter() - start)
+            logger.error(f"ListSharedWithMe failed: {e}", exc_info=True)
+            return ListSharedWithMeResponse(nodes=[])
+
+    async def AddGroupMember(
+        self,
+        request: GroupMemberRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GroupMemberResponse:
+        """Add a member to a group."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            await self.canonical_store.add_group_member(
+                tenant_id=request.context.tenant_id,
+                group_id=request.group_id,
+                member_actor_id=request.member_actor_id,
+                role=request.role or "member",
+            )
+            record_grpc_request("AddGroupMember", "ok", time.perf_counter() - start)
+            return GroupMemberResponse(success=True)
+        except Exception as e:
+            record_grpc_request("AddGroupMember", "error", time.perf_counter() - start)
+            logger.error(f"AddGroupMember failed: {e}", exc_info=True)
+            return GroupMemberResponse(success=False, error=str(e))
+
+    async def RemoveGroupMember(
+        self,
+        request: GroupMemberRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GroupMemberResponse:
+        """Remove a member from a group."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            found = await self.canonical_store.remove_group_member(
+                tenant_id=request.context.tenant_id,
+                group_id=request.group_id,
+                member_actor_id=request.member_actor_id,
+            )
+            record_grpc_request("RemoveGroupMember", "ok", time.perf_counter() - start)
+            return GroupMemberResponse(success=found)
+        except Exception as e:
+            record_grpc_request("RemoveGroupMember", "error", time.perf_counter() - start)
+            logger.error(f"RemoveGroupMember failed: {e}", exc_info=True)
+            return GroupMemberResponse(success=False, error=str(e))
+
+    async def TransferOwnership(
+        self,
+        request: TransferOwnershipRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> TransferOwnershipResponse:
+        """Transfer ownership of a node."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            found = await self.canonical_store.transfer_ownership(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                new_owner=request.new_owner,
+            )
+            record_grpc_request("TransferOwnership", "ok", time.perf_counter() - start)
+            return TransferOwnershipResponse(found=found)
+        except Exception as e:
+            record_grpc_request("TransferOwnership", "error", time.perf_counter() - start)
+            logger.error(f"TransferOwnership failed: {e}", exc_info=True)
+            return TransferOwnershipResponse(found=False, error=str(e))
 
 
 class GrpcServer:

@@ -109,6 +109,9 @@ from .entdb_pb2 import (
     TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
+    # Wait for offset
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -165,6 +168,9 @@ __all__ = [
     "TenantInfo",
     "ListMailboxUsersRequest",
     "ListMailboxUsersResponse",
+    # Wait for offset
+    "WaitForOffsetRequest",
+    "WaitForOffsetResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",
@@ -230,6 +236,9 @@ from .entdb_pb2 import (
     TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
+    # Wait for offset
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 
@@ -274,6 +283,9 @@ __all__ = [
     "TenantInfo",
     "ListMailboxUsersRequest",
     "ListMailboxUsersResponse",
+    # Wait for offset
+    "WaitForOffsetRequest",
+    "WaitForOffsetResponse",
     "EntDBServiceStub",
 ]
 EOF

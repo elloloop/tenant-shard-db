@@ -268,6 +268,12 @@ class Applier:
             result = await self._process_record(record)
             self._log_result(result)
 
+            # Notify offset waiters
+            if result.success and not result.skipped and record.position is not None:
+                await self.canonical_store.update_applied_offset(
+                    result.event.tenant_id, str(record.position)
+                )
+
             # Commit the position
             await self.wal.commit(record)
             self._last_position = record.position
@@ -503,6 +509,12 @@ class Applier:
 
         self._processed_count += applied_count
         if applied_count > 0:
+            # Notify offset waiters with the latest stream position
+            last_record = items[-1][0]
+            if last_record.position is not None:
+                await self.canonical_store.update_applied_offset(
+                    tenant_id, str(last_record.position)
+                )
             logger.debug(
                 "Batch applied",
                 extra={

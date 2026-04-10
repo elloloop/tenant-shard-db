@@ -78,6 +78,28 @@ from ..metrics import record_sqlite_op as _record_sqlite_op
 logger = logging.getLogger(__name__)
 
 
+def _parse_stream_offset(pos: str) -> int:
+    """Extract the numeric offset from a stream position string.
+
+    Stream positions have the format "topic:partition:offset" (from StreamPos.__str__).
+    If the string is a plain integer, parse it directly.
+    """
+    parts = pos.rsplit(":", 1)
+    try:
+        return int(parts[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _compare_stream_pos(a: str, b: str) -> int:
+    """Compare two stream position strings by their numeric offset.
+
+    Returns:
+        Positive if a > b, negative if a < b, zero if equal.
+    """
+    return _parse_stream_offset(a) - _parse_stream_offset(b)
+
+
 class TenantNotFoundError(Exception):
     """Tenant database does not exist."""
 
@@ -315,6 +337,76 @@ class CanonicalStore:
         from concurrent.futures import ThreadPoolExecutor
 
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entdb-sqlite")
+
+        # Offset tracking for read-after-write consistency.
+        # Updated by the applier after each batch; read RPCs can wait on these.
+        self._applied_offsets: dict[str, str] = {}
+        self._offset_conditions: dict[str, asyncio.Condition] = {}
+
+    # ── offset tracking (read-after-write consistency) ──────────────────
+
+    def _get_offset_condition(self, tenant_id: str) -> asyncio.Condition:
+        """Get or create an asyncio.Condition for a tenant's offset notifications."""
+        cond = self._offset_conditions.get(tenant_id)
+        if cond is None:
+            cond = asyncio.Condition()
+            self._offset_conditions[tenant_id] = cond
+        return cond
+
+    async def update_applied_offset(self, tenant_id: str, stream_pos: str) -> None:
+        """Record the latest applied stream position for a tenant.
+
+        Called by the applier after successfully applying a batch.
+        Notifies all waiters via the Condition.
+
+        Args:
+            tenant_id: Tenant identifier
+            stream_pos: Stream position string (e.g. "topic:0:5")
+        """
+        cond = self._get_offset_condition(tenant_id)
+        async with cond:
+            self._applied_offsets[tenant_id] = stream_pos
+            cond.notify_all()
+
+    async def wait_for_offset(
+        self,
+        tenant_id: str,
+        target_pos: str,
+        timeout: float = 30.0,
+    ) -> bool:
+        """Wait until the applied offset for *tenant_id* reaches *target_pos*.
+
+        Uses an asyncio.Condition so the caller sleeps efficiently instead of
+        polling.
+
+        Args:
+            tenant_id: Tenant identifier
+            target_pos: Stream position to wait for
+            timeout: Maximum seconds to wait
+
+        Returns:
+            True if the target position was reached, False on timeout.
+        """
+        cond = self._get_offset_condition(tenant_id)
+
+        def _reached() -> bool:
+            current = self._applied_offsets.get(tenant_id)
+            if current is None:
+                return False
+            return _compare_stream_pos(current, target_pos) >= 0
+
+        async with cond:
+            try:
+                return await asyncio.wait_for(
+                    cond.wait_for(_reached),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return False
+
+    def get_applied_offset(self, tenant_id: str) -> str | None:
+        """Return the latest applied offset for a tenant (or None)."""
+        return self._applied_offsets.get(tenant_id)
 
     # Pre-computed op-type cache: avoids repeated string-in-name checks
     # on every _run_sync call.  Populated lazily per function object.

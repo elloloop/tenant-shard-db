@@ -60,6 +60,30 @@ service EntDBService {
 
     // List mailbox users for a tenant
     rpc ListMailboxUsers(ListMailboxUsersRequest) returns (ListMailboxUsersResponse);
+
+    // Wait for a specific stream position to be applied
+    rpc WaitForOffset(WaitForOffsetRequest) returns (WaitForOffsetResponse);
+
+    // ACL v2 - Get connected nodes with ACL filtering
+    rpc GetConnectedNodes(GetConnectedNodesRequest) returns (GetConnectedNodesResponse);
+
+    // ACL v2 - Share a node with an actor
+    rpc ShareNode(ShareNodeRequest) returns (ShareNodeResponse);
+
+    // ACL v2 - Revoke access from an actor
+    rpc RevokeAccess(RevokeAccessRequest) returns (RevokeAccessResponse);
+
+    // ACL v2 - List nodes shared with the caller
+    rpc ListSharedWithMe(ListSharedWithMeRequest) returns (ListSharedWithMeResponse);
+
+    // ACL v2 - Add a member to a group
+    rpc AddGroupMember(GroupMemberRequest) returns (GroupMemberResponse);
+
+    // ACL v2 - Remove a member from a group
+    rpc RemoveGroupMember(GroupMemberRequest) returns (GroupMemberResponse);
+
+    // ACL v2 - Transfer ownership of a node
+    rpc TransferOwnership(TransferOwnershipRequest) returns (TransferOwnershipResponse);
 }
 
 // Common message types
@@ -249,6 +273,10 @@ message GetNodeRequest {
     RequestContext context = 1;
     int32 type_id = 2;
     string node_id = 3;
+
+    // Wait for this stream position to be applied before reading
+    string after_offset = 10;
+    int32 wait_timeout_ms = 11;
 }
 
 message GetNodeResponse {
@@ -260,6 +288,10 @@ message GetNodesRequest {
     RequestContext context = 1;
     int32 type_id = 2;
     repeated string node_ids = 3;
+
+    // Wait for this stream position to be applied before reading
+    string after_offset = 10;
+    int32 wait_timeout_ms = 11;
 }
 
 message GetNodesResponse {
@@ -281,6 +313,10 @@ message QueryNodesRequest {
     // Sort order
     string order_by = 6;
     bool descending = 7;
+
+    // Wait for this stream position to be applied before reading
+    string after_offset = 10;
+    int32 wait_timeout_ms = 11;
 }
 
 message QueryNodesResponse {
@@ -433,4 +469,91 @@ message ListMailboxUsersRequest {
 
 message ListMailboxUsersResponse {
     repeated string user_ids = 1;
+}
+
+// Wait for offset - read-after-write consistency
+
+message WaitForOffsetRequest {
+    RequestContext context = 1;
+    string stream_position = 2;
+    int32 timeout_ms = 3;
+}
+
+message WaitForOffsetResponse {
+    bool reached = 1;
+    string current_position = 2;
+}
+
+// ACL v2 messages
+
+message GetConnectedNodesRequest {
+    RequestContext context = 1;
+    string node_id = 2;
+    int32 edge_type_id = 3;
+    int32 limit = 4;
+    int32 offset = 5;
+}
+
+message GetConnectedNodesResponse {
+    repeated Node nodes = 1;
+    bool has_more = 2;
+}
+
+message ShareNodeRequest {
+    RequestContext context = 1;
+    string node_id = 2;
+    string actor_id = 3;
+    string permission = 4;
+    string actor_type = 5;
+    int64 expires_at = 6;
+}
+
+message ShareNodeResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message RevokeAccessRequest {
+    RequestContext context = 1;
+    string node_id = 2;
+    string actor_id = 3;
+}
+
+message RevokeAccessResponse {
+    bool found = 1;
+    string error = 2;
+}
+
+message ListSharedWithMeRequest {
+    RequestContext context = 1;
+    int32 limit = 2;
+    int32 offset = 3;
+}
+
+message ListSharedWithMeResponse {
+    repeated Node nodes = 1;
+    bool has_more = 2;
+}
+
+message GroupMemberRequest {
+    RequestContext context = 1;
+    string group_id = 2;
+    string member_actor_id = 3;
+    string role = 4;
+}
+
+message GroupMemberResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message TransferOwnershipRequest {
+    RequestContext context = 1;
+    string node_id = 2;
+    string new_owner = 3;
+}
+
+message TransferOwnershipResponse {
+    bool found = 1;
+    string error = 2;
 }

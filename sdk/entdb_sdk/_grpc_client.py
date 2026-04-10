@@ -42,6 +42,13 @@ from ._generated import (
     SearchMailboxRequest,
     TypedNodeRef,
     UpdateNodeOp,
+    # ACL v2
+    GetConnectedNodesRequest,
+    ShareNodeRequest,
+    RevokeAccessRequest,
+    ListSharedWithMeRequest,
+    GroupMemberRequest,
+    TransferOwnershipRequest,
 )
 
 logger = logging.getLogger(__name__)
@@ -918,3 +925,338 @@ class GrpcClient:
             "schema": json.loads(response.schema_json) if response.schema_json else {},
             "fingerprint": response.fingerprint,
         }
+
+    # --- ACL v2 methods ---
+
+    async def get_connected_nodes(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        edge_type_id: int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> tuple[list[GrpcNode], bool]:
+        """Get connected nodes via edge type with ACL filtering.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            node_id: Source node ID
+            edge_type_id: Edge type to traverse
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Tuple of (nodes, has_more)
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetConnectedNodesRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            edge_type_id=edge_type_id,
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._retry(
+            stub.GetConnectedNodes,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        nodes = [
+            GrpcNode(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=json.loads(n.payload_json) if n.payload_json else {},
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=json.loads(n.acl_json) if n.acl_json else [],
+            )
+            for n in response.nodes
+        ]
+
+        return nodes, response.has_more
+
+    async def share_node(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        actor_id: str,
+        permission: str = "read",
+        *,
+        actor_type: str = "user",
+        expires_at: int | None = None,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Share a node with an actor.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the share (granted_by)
+            node_id: Node to share
+            actor_id: Actor to share with
+            permission: Permission level (read, write, admin)
+            actor_type: Type of actor (user, group)
+            expires_at: Optional expiry timestamp (Unix ms)
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if successful
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ShareNodeRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            actor_id=actor_id,
+            permission=permission,
+            actor_type=actor_type,
+            expires_at=expires_at or 0,
+        )
+
+        response = await self._retry(
+            stub.ShareNode,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.success
+
+    async def revoke_access(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        actor_id: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Revoke access from an actor on a node.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the revocation
+            node_id: Node to revoke access from
+            actor_id: Actor to revoke
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if a grant existed and was removed
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = RevokeAccessRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            actor_id=actor_id,
+        )
+
+        response = await self._retry(
+            stub.RevokeAccess,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.found
+
+    async def list_shared_with_me(
+        self,
+        tenant_id: str,
+        actor: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> tuple[list[GrpcNode], bool]:
+        """List nodes shared with the calling actor.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Tuple of (nodes, has_more)
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ListSharedWithMeRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._retry(
+            stub.ListSharedWithMe,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        nodes = [
+            GrpcNode(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=json.loads(n.payload_json) if n.payload_json else {},
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=json.loads(n.acl_json) if n.acl_json else [],
+            )
+            for n in response.nodes
+        ]
+
+        return nodes, response.has_more
+
+    async def add_group_member(
+        self,
+        tenant_id: str,
+        actor: str,
+        group_id: str,
+        member_actor_id: str,
+        role: str = "member",
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Add a member to a group.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            group_id: Group to add member to
+            member_actor_id: Actor to add
+            role: Role in the group
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if successful
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GroupMemberRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            group_id=group_id,
+            member_actor_id=member_actor_id,
+            role=role,
+        )
+
+        response = await self._retry(
+            stub.AddGroupMember,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.success
+
+    async def remove_group_member(
+        self,
+        tenant_id: str,
+        actor: str,
+        group_id: str,
+        member_actor_id: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Remove a member from a group.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            group_id: Group to remove member from
+            member_actor_id: Actor to remove
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if member existed and was removed
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GroupMemberRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            group_id=group_id,
+            member_actor_id=member_actor_id,
+        )
+
+        response = await self._retry(
+            stub.RemoveGroupMember,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.success
+
+    async def transfer_ownership(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        new_owner: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Transfer ownership of a node.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the transfer
+            node_id: Node to transfer
+            new_owner: New owner actor
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if node existed and ownership was transferred
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = TransferOwnershipRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            new_owner=new_owner,
+        )
+
+        response = await self._retry(
+            stub.TransferOwnership,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.found

@@ -53,6 +53,22 @@ from .entdb_pb2 import (
     TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
+    # Wait for offset
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
+    # ACL v2
+    GetConnectedNodesRequest,
+    GetConnectedNodesResponse,
+    ShareNodeRequest,
+    ShareNodeResponse,
+    RevokeAccessRequest,
+    RevokeAccessResponse,
+    ListSharedWithMeRequest,
+    ListSharedWithMeResponse,
+    GroupMemberRequest,
+    GroupMemberResponse,
+    TransferOwnershipRequest,
+    TransferOwnershipResponse,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -109,6 +125,22 @@ __all__ = [
     "TenantInfo",
     "ListMailboxUsersRequest",
     "ListMailboxUsersResponse",
+    # Wait for offset
+    "WaitForOffsetRequest",
+    "WaitForOffsetResponse",
+    # ACL v2
+    "GetConnectedNodesRequest",
+    "GetConnectedNodesResponse",
+    "ShareNodeRequest",
+    "ShareNodeResponse",
+    "RevokeAccessRequest",
+    "RevokeAccessResponse",
+    "ListSharedWithMeRequest",
+    "ListSharedWithMeResponse",
+    "GroupMemberRequest",
+    "GroupMemberResponse",
+    "TransferOwnershipRequest",
+    "TransferOwnershipResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",
