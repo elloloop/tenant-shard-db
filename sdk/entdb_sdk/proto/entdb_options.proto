@@ -1,0 +1,120 @@
+// EntDB Schema Options
+//
+// Import this in your schema .proto files to annotate messages
+// as EntDB node types and edge types.
+//
+// Example:
+//   import "entdb_options.proto";
+//
+//   message Task {
+//       option (entdb.node).type_id = 1;
+//       option (entdb.node).acl = { tenant_visible: true };
+//
+//       string title = 1 [(entdb.field).required = true];
+//       string status = 2 [(entdb.field).enum_values = "todo,in_progress,done"];
+//   }
+
+syntax = "proto3";
+
+package entdb;
+
+import "google/protobuf/descriptor.proto";
+
+// Node type configuration — applied to a message
+message NodeOpts {
+    // Stable numeric ID (required, immutable after first use)
+    int32 type_id = 1;
+
+    // ACL defaults for newly created nodes of this type
+    AclOpts acl = 2;
+
+    // Human-readable description
+    string description = 3;
+
+    // Whether this type is deprecated
+    bool deprecated = 4;
+}
+
+// ACL default configuration
+message AclOpts {
+    // World-readable (no auth required)
+    bool public = 1;
+
+    // Visible to all tenant members
+    bool tenant_visible = 2;
+
+    // Inherit ACL from structural parent (false = private)
+    bool inherit = 3;
+}
+
+// Field-level options — applied to individual fields
+message FieldOpts {
+    // Whether this field is required
+    bool required = 1;
+
+    // Whether this field is searchable (FTS)
+    bool searchable = 2;
+
+    // Whether this field has a secondary index
+    bool indexed = 3;
+
+    // Comma-separated enum values (for string fields used as enums)
+    string enum_values = 4;
+
+    // Override the EntDB field kind (timestamp, json, ref, list_ref)
+    string kind = 5;
+
+    // Reference target type_id (for ref/list_ref fields)
+    int32 ref_type_id = 6;
+
+    // Whether this field is deprecated
+    bool deprecated = 7;
+
+    // Human-readable description
+    string description = 8;
+
+    // Default value as string (parsed by the SDK)
+    string default_value = 9;
+}
+
+// Edge type definition — applied to a message representing an edge
+message EdgeOpts {
+    // Stable numeric ID (required, immutable after first use)
+    int32 edge_id = 1;
+
+    // Human-readable name
+    string name = 2;
+
+    // Source node type_id
+    int32 from_type = 3;
+
+    // Target node type_id
+    int32 to_type = 4;
+
+    // Whether sharing the source node shares the target
+    bool propagate_share = 5;
+
+    // At most one edge of this type per source node
+    bool unique_per_from = 6;
+
+    // Human-readable description
+    string description = 7;
+
+    // Whether this edge type is deprecated
+    bool deprecated = 8;
+}
+
+// Extensions — attach EntDB options to standard proto descriptors
+
+extend google.protobuf.MessageOptions {
+    // Mark a message as an EntDB node type
+    NodeOpts node = 50100;
+
+    // Mark a message as an EntDB edge type (fields become edge props)
+    EdgeOpts edge = 50101;
+}
+
+extend google.protobuf.FieldOptions {
+    // EntDB field-level options
+    FieldOpts field = 50102;
+}

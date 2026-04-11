@@ -1,0 +1,130 @@
+// EntDB Playground Schema
+//
+// Defines a project management data model:
+//   User, Project, Task, Comment
+//
+// Generate Python types:
+//   entdb generate schema.proto --python schema_gen.py
+//
+// Generate Go types:
+//   entdb generate schema.proto --go pkg/schema/types.go
+
+syntax = "proto3";
+
+package playground;
+
+import "entdb_options.proto";
+
+// --- Node Types ---
+
+message User {
+    option (entdb.node) = {
+        type_id: 1
+        description: "A person in the system"
+    };
+
+    string email = 1      [(entdb.field) = { required: true, indexed: true }];
+    string name = 2       [(entdb.field) = { required: true, searchable: true }];
+    string role = 3       [(entdb.field) = { enum_values: "admin,member,guest", default_value: "member" }];
+    string avatar_url = 4;
+    int64 created_at = 5  [(entdb.field) = { kind: "timestamp" }];
+}
+
+message Project {
+    option (entdb.node) = {
+        type_id: 2
+        description: "A container for tasks"
+        acl: { tenant_visible: true }
+    };
+
+    string name = 1        [(entdb.field) = { required: true, searchable: true }];
+    string description = 2 [(entdb.field) = { searchable: true }];
+    string color = 3       [(entdb.field) = { default_value: "#3B82F6" }];
+    string status = 4      [(entdb.field) = { enum_values: "active,archived", default_value: "active" }];
+    int64 created_at = 5   [(entdb.field) = { kind: "timestamp" }];
+}
+
+message Task {
+    option (entdb.node) = {
+        type_id: 3
+        description: "A work item"
+        acl: { tenant_visible: true, inherit: true }
+    };
+
+    string title = 1       [(entdb.field) = { required: true, searchable: true }];
+    string description = 2 [(entdb.field) = { searchable: true }];
+    string status = 3      [(entdb.field) = { enum_values: "todo,in_progress,review,done", default_value: "todo" }];
+    string priority = 4    [(entdb.field) = { enum_values: "low,medium,high,urgent", default_value: "medium" }];
+    int64 due_date = 5     [(entdb.field) = { kind: "timestamp" }];
+    int64 created_at = 6   [(entdb.field) = { kind: "timestamp" }];
+    int64 completed_at = 7 [(entdb.field) = { kind: "timestamp" }];
+}
+
+message Comment {
+    option (entdb.node) = {
+        type_id: 4
+        description: "A comment on a task"
+        acl: { inherit: true }
+    };
+
+    string body = 1        [(entdb.field) = { required: true, searchable: true }];
+    int64 created_at = 2   [(entdb.field) = { kind: "timestamp" }];
+    int64 edited_at = 3    [(entdb.field) = { kind: "timestamp" }];
+}
+
+// --- Edge Types ---
+
+message Owns {
+    option (entdb.edge) = {
+        edge_id: 101
+        name: "OWNS"
+        from_type: 1  // User
+        to_type: 2    // Project
+        description: "User owns a project"
+    };
+}
+
+message Contains {
+    option (entdb.edge) = {
+        edge_id: 102
+        name: "CONTAINS"
+        from_type: 2  // Project
+        to_type: 3    // Task
+        propagate_share: true
+        description: "Project contains tasks — sharing project shares tasks"
+    };
+}
+
+message AssignedTo {
+    option (entdb.edge) = {
+        edge_id: 103
+        name: "ASSIGNED_TO"
+        from_type: 3  // Task
+        to_type: 1    // User
+        description: "Task is assigned to a user"
+    };
+
+    // Edge properties
+    string role = 1 [(entdb.field) = { enum_values: "assignee,reviewer" }];
+}
+
+message CommentOn {
+    option (entdb.edge) = {
+        edge_id: 104
+        name: "ON"
+        from_type: 4  // Comment
+        to_type: 3    // Task
+        propagate_share: true
+        description: "Comment on a task — sharing task shares comments"
+    };
+}
+
+message CommentBy {
+    option (entdb.edge) = {
+        edge_id: 105
+        name: "BY"
+        from_type: 4  // Comment
+        to_type: 1    // User
+        description: "Comment authored by a user"
+    };
+}
