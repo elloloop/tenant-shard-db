@@ -1258,3 +1258,334 @@ class DbClient:
             trace_id=trace_id,
             timeout=timeout,
         )
+
+    # --- User registry methods ---
+
+    async def create_user(
+        self,
+        user_id: str,
+        email: str,
+        name: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Create a new user in the global registry.
+
+        Args:
+            user_id: Unique user identifier
+            email: User email address
+            name: Display name
+            actor: Actor performing the operation (must be admin or system)
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with 'success', 'user' (if created), and 'error' (if failed)
+        """
+        self._ensure_connected()
+        return await self._grpc.create_user(
+            user_id=user_id,
+            email=email,
+            name=name,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def get_user(
+        self,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Get a user by ID.
+
+        Args:
+            user_id: User identifier
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            User dict or None if not found
+        """
+        self._ensure_connected()
+        return await self._grpc.get_user(
+            user_id=user_id,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def update_user(
+        self,
+        user_id: str,
+        *,
+        name: str = "",
+        email: str = "",
+        status: str = "",
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Update user fields.
+
+        Args:
+            user_id: User identifier
+            name: New display name (empty = no change)
+            email: New email (empty = no change)
+            status: New status (empty = no change)
+            actor: Actor performing the update (defaults to user:user_id)
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with 'success' and optional 'error'
+        """
+        self._ensure_connected()
+        return await self._grpc.update_user(
+            user_id=user_id,
+            name=name,
+            email=email,
+            status=status,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def list_users(
+        self,
+        *,
+        status: str = "active",
+        limit: int = 100,
+        offset: int = 0,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List users filtered by status.
+
+        Args:
+            status: Status filter (e.g. 'active', 'suspended')
+            limit: Maximum results to return
+            offset: Pagination offset
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of user dicts
+        """
+        self._ensure_connected()
+        return await self._grpc.list_users(
+            status=status,
+            limit=limit,
+            offset=offset,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    # --- Tenant registry methods ---
+
+    async def create_tenant(
+        self,
+        tenant_id: str,
+        name: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Create a new tenant in the global registry.
+
+        Args:
+            tenant_id: Unique tenant identifier
+            name: Tenant display name
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, tenant, and error fields
+        """
+        self._ensure_connected()
+        return await self._grpc.create_tenant(
+            actor=actor,
+            tenant_id=tenant_id,
+            name=name,
+            timeout=timeout,
+        )
+
+    async def get_tenant(
+        self,
+        tenant_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Get a tenant by ID.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Tenant dict or None if not found
+        """
+        self._ensure_connected()
+        return await self._grpc.get_tenant(
+            actor=actor,
+            tenant_id=tenant_id,
+            timeout=timeout,
+        )
+
+    async def archive_tenant(
+        self,
+        tenant_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Archive a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        self._ensure_connected()
+        return await self._grpc.archive_tenant(
+            actor=actor,
+            tenant_id=tenant_id,
+            timeout=timeout,
+        )
+
+    async def add_tenant_member(
+        self,
+        tenant_id: str,
+        user_id: str,
+        role: str = "member",
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Add a member to a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to add
+            role: Membership role (default: 'member')
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        self._ensure_connected()
+        return await self._grpc.add_tenant_member(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            role=role,
+            timeout=timeout,
+        )
+
+    async def remove_tenant_member(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Remove a member from a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to remove
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        self._ensure_connected()
+        return await self._grpc.remove_tenant_member(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            timeout=timeout,
+        )
+
+    async def get_tenant_members(
+        self,
+        tenant_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all members of a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of member dicts
+        """
+        self._ensure_connected()
+        return await self._grpc.get_tenant_members(
+            actor=actor,
+            tenant_id=tenant_id,
+            timeout=timeout,
+        )
+
+    async def get_user_tenants(
+        self,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all tenants a user belongs to.
+
+        Args:
+            user_id: User identifier
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of membership dicts
+        """
+        self._ensure_connected()
+        return await self._grpc.get_user_tenants(
+            actor=actor,
+            user_id=user_id,
+            timeout=timeout,
+        )
+
+    async def change_member_role(
+        self,
+        tenant_id: str,
+        user_id: str,
+        new_role: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Change a member's role in a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User whose role to change
+            new_role: New role
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        self._ensure_connected()
+        return await self._grpc.change_member_role(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            new_role=new_role,
+            timeout=timeout,
+        )

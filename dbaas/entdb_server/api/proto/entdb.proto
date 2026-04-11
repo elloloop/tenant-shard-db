@@ -86,6 +86,24 @@ service EntDBService {
 
     // ACL v2 - Transfer ownership of a node
     rpc TransferOwnership(TransferOwnershipRequest) returns (TransferOwnershipResponse);
+
+    // User registry CRUD
+    rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+    rpc GetUser(GetUserRequest) returns (GetUserResponse);
+    rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+    rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+    // Tenant registry CRUD
+    rpc CreateTenant(CreateTenantRequest) returns (CreateTenantResponse);
+    rpc GetTenant(GetTenantRequest) returns (GetTenantResponse);
+    rpc ArchiveTenant(ArchiveTenantRequest) returns (ArchiveTenantResponse);
+
+    // Tenant membership management
+    rpc AddTenantMember(TenantMemberRequest) returns (TenantMemberResponse);
+    rpc RemoveTenantMember(TenantMemberRequest) returns (TenantMemberResponse);
+    rpc GetTenantMembers(GetTenantMembersRequest) returns (GetTenantMembersResponse);
+    rpc GetUserTenants(GetUserTenantsRequest) returns (GetUserTenantsResponse);
+    rpc ChangeMemberRole(ChangeMemberRoleRequest) returns (ChangeMemberRoleResponse);
 }
 
 // Common message types
@@ -628,5 +646,157 @@ message TransferOwnershipRequest {
 
 message TransferOwnershipResponse {
     bool found = 1;
+    string error = 2;
+}
+
+// User registry messages
+
+message UserInfo {
+    string user_id = 1;
+    string email = 2;
+    string name = 3;
+    string status = 4;
+    int64 created_at = 5;
+    int64 updated_at = 6;
+}
+
+message CreateUserRequest {
+    // Actor performing the operation (must be admin or system)
+    string actor = 1;
+    string user_id = 2;
+    string email = 3;
+    string name = 4;
+}
+
+message CreateUserResponse {
+    bool success = 1;
+    UserInfo user = 2;
+    string error = 3;
+}
+
+message GetUserRequest {
+    string actor = 1;
+    string user_id = 2;
+}
+
+message GetUserResponse {
+    bool found = 1;
+    UserInfo user = 2;
+}
+
+message UpdateUserRequest {
+    // Actor performing the operation (must be the user themselves or admin)
+    string actor = 1;
+    string user_id = 2;
+    string email = 3;
+    string name = 4;
+    string status = 5;
+}
+
+message UpdateUserResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message ListUsersRequest {
+    string actor = 1;
+    string status = 2;
+    int32 limit = 3;
+    int32 offset = 4;
+}
+
+message ListUsersResponse {
+    repeated UserInfo users = 1;
+}
+
+// Tenant registry messages
+
+message TenantDetail {
+    string tenant_id = 1;
+    string name = 2;
+    string status = 3;
+    int64 created_at = 4;
+}
+
+message CreateTenantRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    string name = 3;
+}
+
+message CreateTenantResponse {
+    bool success = 1;
+    TenantDetail tenant = 2;
+    string error = 3;
+}
+
+message GetTenantRequest {
+    string actor = 1;
+    string tenant_id = 2;
+}
+
+message GetTenantResponse {
+    bool found = 1;
+    TenantDetail tenant = 2;
+}
+
+message ArchiveTenantRequest {
+    string actor = 1;
+    string tenant_id = 2;
+}
+
+message ArchiveTenantResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+// Tenant membership messages
+
+message TenantMemberInfo {
+    string tenant_id = 1;
+    string user_id = 2;
+    string role = 3;
+    int64 joined_at = 4;
+}
+
+message TenantMemberRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    string user_id = 3;
+    string role = 4;
+}
+
+message TenantMemberResponse {
+    bool success = 1;
+    string error = 2;
+}
+
+message GetTenantMembersRequest {
+    string actor = 1;
+    string tenant_id = 2;
+}
+
+message GetTenantMembersResponse {
+    repeated TenantMemberInfo members = 1;
+}
+
+message GetUserTenantsRequest {
+    string actor = 1;
+    string user_id = 2;
+}
+
+message GetUserTenantsResponse {
+    repeated TenantMemberInfo memberships = 1;
+}
+
+message ChangeMemberRoleRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    string user_id = 3;
+    string new_role = 4;
+}
+
+message ChangeMemberRoleResponse {
+    bool success = 1;
     string error = 2;
 }

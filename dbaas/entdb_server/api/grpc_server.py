@@ -82,6 +82,34 @@ from .generated import (
     TransferOwnershipResponse,
     WaitForOffsetRequest,
     WaitForOffsetResponse,
+    # User registry
+    UserInfo,
+    CreateUserRequest,
+    CreateUserResponse,
+    GetUserRequest,
+    GetUserResponse,
+    UpdateUserRequest,
+    UpdateUserResponse,
+    ListUsersRequest,
+    ListUsersResponse,
+    # Tenant registry
+    TenantDetail,
+    CreateTenantRequest,
+    CreateTenantResponse,
+    GetTenantRequest,
+    GetTenantResponse,
+    ArchiveTenantRequest,
+    ArchiveTenantResponse,
+    # Tenant membership
+    TenantMemberInfo,
+    TenantMemberRequest,
+    TenantMemberResponse,
+    GetTenantMembersRequest,
+    GetTenantMembersResponse,
+    GetUserTenantsRequest,
+    GetUserTenantsResponse,
+    ChangeMemberRoleRequest,
+    ChangeMemberRoleResponse,
     add_EntDBServiceServicer_to_server,
 )
 
@@ -129,6 +157,7 @@ class EntDBServicer(EntDBServiceServicer):
         canonical_store: Tenant SQLite store for reads
         mailbox_store: Per-user mailbox store
         schema_registry: Schema registry for validation
+        global_store: GlobalStore for cross-tenant shared_index
     """
 
     def __init__(
@@ -139,6 +168,7 @@ class EntDBServicer(EntDBServiceServicer):
         schema_registry: Any,
         topic: str = "entdb-wal",
         sharding: ShardingConfig | None = None,
+        global_store: Any | None = None,
     ) -> None:
         """Initialize the gRPC servicer.
 
@@ -149,6 +179,7 @@ class EntDBServicer(EntDBServiceServicer):
             schema_registry: SchemaRegistry instance
             topic: WAL topic name
             sharding: Sharding configuration for multi-node mode
+            global_store: GlobalStore instance for user registry operations
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -156,6 +187,7 @@ class EntDBServicer(EntDBServiceServicer):
         self.schema_registry = schema_registry
         self.topic = topic
         self._sharding = sharding
+        self.global_store = global_store
 
     async def _check_tenant(self, tenant_id: str, context) -> None:
         """Reject requests for tenants not owned by this node."""
@@ -922,16 +954,36 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            tenant_id = request.context.tenant_id
+            actor_id = request.actor_id
+            permission = request.permission or "read"
             expires_at = request.expires_at if request.expires_at else None
             await self.canonical_store.share_node(
-                tenant_id=request.context.tenant_id,
+                tenant_id=tenant_id,
                 node_id=request.node_id,
-                actor_id=request.actor_id,
-                permission=request.permission or "read",
+                actor_id=actor_id,
+                permission=permission,
                 granted_by=request.context.actor,
                 actor_type=request.actor_type or "user",
                 expires_at=expires_at,
             )
+            # Update cross-tenant shared_index
+            if self.global_store:
+                try:
+                    if actor_id.startswith("group:"):
+                        members = await self.canonical_store.get_group_members(
+                            tenant_id, actor_id
+                        )
+                        for member_id in members:
+                            await self.global_store.add_shared(
+                                member_id, tenant_id, request.node_id, permission
+                            )
+                    else:
+                        await self.global_store.add_shared(
+                            actor_id, tenant_id, request.node_id, permission
+                        )
+                except Exception as gs_err:
+                    logger.warning(f"shared_index update failed on ShareNode: {gs_err}")
             record_grpc_request("ShareNode", "ok", time.perf_counter() - start)
             return ShareNodeResponse(success=True)
         except Exception as e:
@@ -948,11 +1000,30 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            tenant_id = request.context.tenant_id
+            actor_id = request.actor_id
             found = await self.canonical_store.revoke_access(
-                tenant_id=request.context.tenant_id,
+                tenant_id=tenant_id,
                 node_id=request.node_id,
-                actor_id=request.actor_id,
+                actor_id=actor_id,
             )
+            # Update cross-tenant shared_index
+            if found and self.global_store:
+                try:
+                    if actor_id.startswith("group:"):
+                        members = await self.canonical_store.get_group_members(
+                            tenant_id, actor_id
+                        )
+                        for member_id in members:
+                            await self.global_store.remove_shared(
+                                member_id, tenant_id, request.node_id
+                            )
+                    else:
+                        await self.global_store.remove_shared(
+                            actor_id, tenant_id, request.node_id
+                        )
+                except Exception as gs_err:
+                    logger.warning(f"shared_index update failed on RevokeAccess: {gs_err}")
             record_grpc_request("RevokeAccess", "ok", time.perf_counter() - start)
             return RevokeAccessResponse(found=found)
         except Exception as e:
@@ -965,26 +1036,63 @@ class EntDBServicer(EntDBServiceServicer):
         request: ListSharedWithMeRequest,
         context: grpc_aio.ServicerContext,
     ) -> ListSharedWithMeResponse:
-        """List nodes shared with the calling actor."""
+        """List nodes shared with the calling actor.
+
+        Reads from per-tenant node_access for same-tenant shares,
+        and ALSO from global shared_index for cross-tenant shares.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            tenant_id = request.context.tenant_id
+            actor = request.context.actor
             actor_ids = await self.canonical_store.resolve_actor_groups(
-                request.context.tenant_id,
-                request.context.actor,
+                tenant_id, actor,
             )
             limit = request.limit or 100
+            offset = request.offset or 0
+
+            # 1. Per-tenant shares (same tenant node_access)
             nodes = await self.canonical_store.list_shared_with_me(
-                tenant_id=request.context.tenant_id,
+                tenant_id=tenant_id,
                 actor_ids=actor_ids,
                 limit=limit,
-                offset=request.offset or 0,
+                offset=offset,
             )
+
+            # 2. Cross-tenant shares from global shared_index
+            if self.global_store:
+                try:
+                    shared_entries = await self.global_store.get_shared_with_me(
+                        user_id=actor,
+                        limit=limit,
+                        offset=offset,
+                    )
+                    # Collect node IDs already included from per-tenant results
+                    seen = {(n.tenant_id, n.node_id) for n in nodes}
+                    # Fetch actual nodes from source tenants
+                    for entry in shared_entries:
+                        key = (entry["source_tenant"], entry["node_id"])
+                        if key in seen:
+                            continue
+                        try:
+                            node = await self.canonical_store.get_node(
+                                entry["source_tenant"], entry["node_id"]
+                            )
+                            if node:
+                                nodes.append(node)
+                                seen.add(key)
+                        except Exception:
+                            # Stale entry or tenant not loaded — skip
+                            pass
+                except Exception as gs_err:
+                    logger.warning(f"shared_index read failed in ListSharedWithMe: {gs_err}")
+
             proto_nodes = [self._node_to_proto(n) for n in nodes]
             record_grpc_request("ListSharedWithMe", "ok", time.perf_counter() - start)
             return ListSharedWithMeResponse(
                 nodes=proto_nodes,
-                has_more=len(nodes) == limit,
+                has_more=len(nodes) >= limit,
             )
         except Exception as e:
             record_grpc_request("ListSharedWithMe", "error", time.perf_counter() - start)
@@ -1000,12 +1108,28 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            tenant_id = request.context.tenant_id
+            group_id = request.group_id
+            member_actor_id = request.member_actor_id
             await self.canonical_store.add_group_member(
-                tenant_id=request.context.tenant_id,
-                group_id=request.group_id,
-                member_actor_id=request.member_actor_id,
+                tenant_id=tenant_id,
+                group_id=group_id,
+                member_actor_id=member_actor_id,
                 role=request.role or "member",
             )
+            # Cascade shared_index: add entries for all nodes the group has access to
+            if self.global_store:
+                try:
+                    access_entries = await self.canonical_store.list_node_access_for_group(
+                        tenant_id, group_id
+                    )
+                    for entry in access_entries:
+                        await self.global_store.add_shared(
+                            member_actor_id, tenant_id,
+                            entry["node_id"], entry["permission"],
+                        )
+                except Exception as gs_err:
+                    logger.warning(f"shared_index update failed on AddGroupMember: {gs_err}")
             record_grpc_request("AddGroupMember", "ok", time.perf_counter() - start)
             return GroupMemberResponse(success=True)
         except Exception as e:
@@ -1022,11 +1146,32 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            tenant_id = request.context.tenant_id
+            group_id = request.group_id
+            member_actor_id = request.member_actor_id
+            # Collect group access entries BEFORE removing the member
+            group_access_entries: list[dict] = []
+            if self.global_store:
+                try:
+                    group_access_entries = await self.canonical_store.list_node_access_for_group(
+                        tenant_id, group_id
+                    )
+                except Exception as gs_err:
+                    logger.warning(f"Failed to read group access for shared_index cleanup: {gs_err}")
             found = await self.canonical_store.remove_group_member(
-                tenant_id=request.context.tenant_id,
-                group_id=request.group_id,
-                member_actor_id=request.member_actor_id,
+                tenant_id=tenant_id,
+                group_id=group_id,
+                member_actor_id=member_actor_id,
             )
+            # Cascade shared_index: remove entries for all nodes the group had access to
+            if found and self.global_store and group_access_entries:
+                try:
+                    for entry in group_access_entries:
+                        await self.global_store.remove_shared(
+                            member_actor_id, tenant_id, entry["node_id"]
+                        )
+                except Exception as gs_err:
+                    logger.warning(f"shared_index update failed on RemoveGroupMember: {gs_err}")
             record_grpc_request("RemoveGroupMember", "ok", time.perf_counter() - start)
             return GroupMemberResponse(success=found)
         except Exception as e:
@@ -1054,6 +1199,559 @@ class EntDBServicer(EntDBServiceServicer):
             record_grpc_request("TransferOwnership", "error", time.perf_counter() - start)
             logger.error(f"TransferOwnership failed: {e}", exc_info=True)
             return TransferOwnershipResponse(found=False, error=str(e))
+
+
+    # --- User registry handlers ---
+
+    def _is_admin_or_system(self, actor: str) -> bool:
+        """Check if actor is admin or system."""
+        return actor.startswith("system:") or actor.startswith("admin:") or actor == "__system__"
+
+    def _is_self_or_admin(self, actor: str, user_id: str) -> bool:
+        """Check if actor is the user themselves or an admin/system."""
+        return (
+            self._is_admin_or_system(actor)
+            or actor == f"user:{user_id}"
+            or actor == user_id
+        )
+
+    def _user_dict_to_proto(self, user: dict) -> UserInfo:
+        """Convert a user dict to a UserInfo proto message."""
+        return UserInfo(
+            user_id=user.get("user_id", ""),
+            email=user.get("email", ""),
+            name=user.get("name", ""),
+            status=user.get("status", ""),
+            created_at=user.get("created_at", 0),
+            updated_at=user.get("updated_at", 0),
+        )
+
+    async def CreateUser(
+        self,
+        request: CreateUserRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> CreateUserResponse:
+        """Create a new user. Requires admin or system actor."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "User registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not self._is_admin_or_system(request.actor):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "CreateUser requires admin or system actor",
+                )
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not request.email:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "email is required")
+            if not request.name:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "name is required")
+
+            user = await self.global_store.create_user(
+                request.user_id, request.email, request.name,
+            )
+
+            record_grpc_request("CreateUser", "ok", time.perf_counter() - start)
+            return CreateUserResponse(
+                success=True,
+                user=self._user_dict_to_proto(user),
+            )
+        except Exception as e:
+            if "UNIQUE constraint" in str(e) or "IntegrityError" in type(e).__name__:
+                record_grpc_request("CreateUser", "error", time.perf_counter() - start)
+                return CreateUserResponse(
+                    success=False,
+                    error=f"User already exists: {e}",
+                )
+            record_grpc_request("CreateUser", "error", time.perf_counter() - start)
+            logger.error(f"CreateUser failed: {e}", exc_info=True)
+            return CreateUserResponse(success=False, error=str(e))
+
+    async def GetUser(
+        self,
+        request: GetUserRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetUserResponse:
+        """Get a user by ID. Available to any authenticated actor."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "User registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+
+            user = await self.global_store.get_user(request.user_id)
+
+            if user is None:
+                record_grpc_request("GetUser", "ok", time.perf_counter() - start)
+                return GetUserResponse(found=False)
+
+            record_grpc_request("GetUser", "ok", time.perf_counter() - start)
+            return GetUserResponse(
+                found=True,
+                user=self._user_dict_to_proto(user),
+            )
+        except Exception as e:
+            record_grpc_request("GetUser", "error", time.perf_counter() - start)
+            logger.error(f"GetUser failed: {e}", exc_info=True)
+            return GetUserResponse(found=False)
+
+    async def UpdateUser(
+        self,
+        request: UpdateUserRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> UpdateUserResponse:
+        """Update a user. Requires the user themselves or admin."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "User registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not self._is_self_or_admin(request.actor, request.user_id):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "UpdateUser requires the user themselves or admin actor",
+                )
+
+            kwargs = {}
+            if request.email:
+                kwargs["email"] = request.email
+            if request.name:
+                kwargs["name"] = request.name
+            if request.status:
+                kwargs["status"] = request.status
+
+            if not kwargs:
+                record_grpc_request("UpdateUser", "ok", time.perf_counter() - start)
+                return UpdateUserResponse(success=False, error="No fields to update")
+
+            updated = await self.global_store.update_user(request.user_id, **kwargs)
+
+            record_grpc_request("UpdateUser", "ok", time.perf_counter() - start)
+            if not updated:
+                return UpdateUserResponse(success=False, error="User not found")
+            return UpdateUserResponse(success=True)
+        except Exception as e:
+            record_grpc_request("UpdateUser", "error", time.perf_counter() - start)
+            logger.error(f"UpdateUser failed: {e}", exc_info=True)
+            return UpdateUserResponse(success=False, error=str(e))
+
+    async def ListUsers(
+        self,
+        request: ListUsersRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ListUsersResponse:
+        """List users. Available to any authenticated actor."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "User registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+
+            status = request.status or "active"
+            limit = request.limit or 100
+            offset = request.offset or 0
+
+            users = await self.global_store.list_users(
+                status=status, limit=limit, offset=offset,
+            )
+
+            proto_users = [self._user_dict_to_proto(u) for u in users]
+
+            record_grpc_request("ListUsers", "ok", time.perf_counter() - start)
+            return ListUsersResponse(users=proto_users)
+        except Exception as e:
+            record_grpc_request("ListUsers", "error", time.perf_counter() - start)
+            logger.error(f"ListUsers failed: {e}", exc_info=True)
+            return ListUsersResponse(users=[])
+
+    # --- Tenant registry handlers ---
+
+    @staticmethod
+    def _tenant_dict_to_proto(t: dict) -> TenantDetail:
+        """Convert a tenant dict from GlobalStore to protobuf TenantDetail."""
+        return TenantDetail(
+            tenant_id=t.get("tenant_id", ""),
+            name=t.get("name", ""),
+            status=t.get("status", ""),
+            created_at=t.get("created_at", 0),
+        )
+
+    @staticmethod
+    def _member_dict_to_proto(m: dict) -> TenantMemberInfo:
+        """Convert a member dict from GlobalStore to protobuf TenantMemberInfo."""
+        return TenantMemberInfo(
+            tenant_id=m.get("tenant_id", ""),
+            user_id=m.get("user_id", ""),
+            role=m.get("role", ""),
+            joined_at=m.get("joined_at", 0),
+        )
+
+    async def _get_member_role(self, tenant_id: str, user_id: str) -> str | None:
+        """Get the role of a user in a tenant, or None if not a member."""
+        members = await self.global_store.get_members(tenant_id)
+        for m in members:
+            if m["user_id"] == user_id:
+                return m["role"]
+        return None
+
+    def _actor_user_id(self, actor: str) -> str:
+        """Extract user_id from actor string like 'user:ID'."""
+        if actor.startswith("user:"):
+            return actor[5:]
+        return actor
+
+    async def CreateTenant(
+        self,
+        request: CreateTenantRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> CreateTenantResponse:
+        """Create a new tenant. Also initializes the per-tenant SQLite file."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+            if not request.name:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "name is required")
+
+            tenant = await self.global_store.create_tenant(request.tenant_id, request.name)
+
+            # Initialize the per-tenant SQLite database
+            await self.canonical_store.initialize_tenant(request.tenant_id)
+
+            # Add the creator as owner
+            creator_user_id = self._actor_user_id(request.actor)
+            await self.global_store.add_member(request.tenant_id, creator_user_id, role="owner")
+
+            record_grpc_request("CreateTenant", "ok", time.perf_counter() - start)
+            return CreateTenantResponse(
+                success=True,
+                tenant=self._tenant_dict_to_proto(tenant),
+            )
+        except Exception as e:
+            if "UNIQUE constraint" in str(e) or "IntegrityError" in type(e).__name__:
+                record_grpc_request("CreateTenant", "error", time.perf_counter() - start)
+                return CreateTenantResponse(
+                    success=False,
+                    error=f"Tenant already exists: {e}",
+                )
+            record_grpc_request("CreateTenant", "error", time.perf_counter() - start)
+            logger.error(f"CreateTenant failed: {e}", exc_info=True)
+            return CreateTenantResponse(success=False, error=str(e))
+
+    async def GetTenant(
+        self,
+        request: GetTenantRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetTenantResponse:
+        """Get a tenant by ID."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+
+            tenant = await self.global_store.get_tenant(request.tenant_id)
+
+            if tenant is None:
+                record_grpc_request("GetTenant", "ok", time.perf_counter() - start)
+                return GetTenantResponse(found=False)
+
+            record_grpc_request("GetTenant", "ok", time.perf_counter() - start)
+            return GetTenantResponse(
+                found=True,
+                tenant=self._tenant_dict_to_proto(tenant),
+            )
+        except Exception as e:
+            record_grpc_request("GetTenant", "error", time.perf_counter() - start)
+            logger.error(f"GetTenant failed: {e}", exc_info=True)
+            return GetTenantResponse(found=False)
+
+    async def ArchiveTenant(
+        self,
+        request: ArchiveTenantRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ArchiveTenantResponse:
+        """Archive a tenant (set status to 'archived'). Only owner can archive."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+
+            # Only owner or system can archive
+            actor_uid = self._actor_user_id(request.actor)
+            if not self._is_admin_or_system(request.actor):
+                role = await self._get_member_role(request.tenant_id, actor_uid)
+                if role != "owner":
+                    await context.abort(
+                        grpc.StatusCode.PERMISSION_DENIED,
+                        "Only tenant owner can archive a tenant",
+                    )
+
+            updated = await self.global_store.set_tenant_status(request.tenant_id, "archived")
+
+            if not updated:
+                record_grpc_request("ArchiveTenant", "ok", time.perf_counter() - start)
+                return ArchiveTenantResponse(success=False, error="Tenant not found")
+
+            record_grpc_request("ArchiveTenant", "ok", time.perf_counter() - start)
+            return ArchiveTenantResponse(success=True)
+        except Exception as e:
+            record_grpc_request("ArchiveTenant", "error", time.perf_counter() - start)
+            logger.error(f"ArchiveTenant failed: {e}", exc_info=True)
+            return ArchiveTenantResponse(success=False, error=str(e))
+
+    async def AddTenantMember(
+        self,
+        request: TenantMemberRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> TenantMemberResponse:
+        """Add a member to a tenant. Only owner/admin can add members."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+
+            # Enforce: only owner/admin can add members
+            actor_uid = self._actor_user_id(request.actor)
+            if not self._is_admin_or_system(request.actor):
+                role = await self._get_member_role(request.tenant_id, actor_uid)
+                if role not in ("owner", "admin"):
+                    await context.abort(
+                        grpc.StatusCode.PERMISSION_DENIED,
+                        "Only owner or admin can add members",
+                    )
+
+            member_role = request.role or "member"
+            await self.global_store.add_member(request.tenant_id, request.user_id, role=member_role)
+
+            record_grpc_request("AddTenantMember", "ok", time.perf_counter() - start)
+            return TenantMemberResponse(success=True)
+        except Exception as e:
+            if "UNIQUE constraint" in str(e) or "IntegrityError" in type(e).__name__:
+                record_grpc_request("AddTenantMember", "error", time.perf_counter() - start)
+                return TenantMemberResponse(
+                    success=False,
+                    error="Member already exists in this tenant",
+                )
+            record_grpc_request("AddTenantMember", "error", time.perf_counter() - start)
+            logger.error(f"AddTenantMember failed: {e}", exc_info=True)
+            return TenantMemberResponse(success=False, error=str(e))
+
+    async def RemoveTenantMember(
+        self,
+        request: TenantMemberRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> TenantMemberResponse:
+        """Remove a member from a tenant. Last owner cannot leave."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+
+            # Enforce: last owner cannot leave
+            members = await self.global_store.get_members(request.tenant_id)
+            target_member = None
+            owner_count = 0
+            for m in members:
+                if m["role"] == "owner":
+                    owner_count += 1
+                if m["user_id"] == request.user_id:
+                    target_member = m
+
+            if target_member is None:
+                record_grpc_request("RemoveTenantMember", "ok", time.perf_counter() - start)
+                return TenantMemberResponse(success=False, error="Member not found")
+
+            if target_member["role"] == "owner" and owner_count <= 1:
+                record_grpc_request("RemoveTenantMember", "error", time.perf_counter() - start)
+                return TenantMemberResponse(
+                    success=False,
+                    error="Cannot remove the last owner of a tenant",
+                )
+
+            removed = await self.global_store.remove_member(request.tenant_id, request.user_id)
+
+            record_grpc_request("RemoveTenantMember", "ok", time.perf_counter() - start)
+            return TenantMemberResponse(success=removed)
+        except Exception as e:
+            record_grpc_request("RemoveTenantMember", "error", time.perf_counter() - start)
+            logger.error(f"RemoveTenantMember failed: {e}", exc_info=True)
+            return TenantMemberResponse(success=False, error=str(e))
+
+    async def GetTenantMembers(
+        self,
+        request: GetTenantMembersRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetTenantMembersResponse:
+        """List all members of a tenant."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+
+            members = await self.global_store.get_members(request.tenant_id)
+            proto_members = [self._member_dict_to_proto(m) for m in members]
+
+            record_grpc_request("GetTenantMembers", "ok", time.perf_counter() - start)
+            return GetTenantMembersResponse(members=proto_members)
+        except Exception as e:
+            record_grpc_request("GetTenantMembers", "error", time.perf_counter() - start)
+            logger.error(f"GetTenantMembers failed: {e}", exc_info=True)
+            return GetTenantMembersResponse(members=[])
+
+    async def GetUserTenants(
+        self,
+        request: GetUserTenantsRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetUserTenantsResponse:
+        """List all tenants a user belongs to."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+
+            memberships = await self.global_store.get_user_tenants(request.user_id)
+            proto_memberships = [self._member_dict_to_proto(m) for m in memberships]
+
+            record_grpc_request("GetUserTenants", "ok", time.perf_counter() - start)
+            return GetUserTenantsResponse(memberships=proto_memberships)
+        except Exception as e:
+            record_grpc_request("GetUserTenants", "error", time.perf_counter() - start)
+            logger.error(f"GetUserTenants failed: {e}", exc_info=True)
+            return GetUserTenantsResponse(memberships=[])
+
+    async def ChangeMemberRole(
+        self,
+        request: ChangeMemberRoleRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ChangeMemberRoleResponse:
+        """Change a member's role. Only owner can change roles."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not request.new_role:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "new_role is required")
+
+            # Enforce: only owner can change roles
+            actor_uid = self._actor_user_id(request.actor)
+            if not self._is_admin_or_system(request.actor):
+                role = await self._get_member_role(request.tenant_id, actor_uid)
+                if role != "owner":
+                    await context.abort(
+                        grpc.StatusCode.PERMISSION_DENIED,
+                        "Only owner can change member roles",
+                    )
+
+            updated = await self.global_store.change_role(
+                request.tenant_id, request.user_id, request.new_role,
+            )
+
+            if not updated:
+                record_grpc_request("ChangeMemberRole", "ok", time.perf_counter() - start)
+                return ChangeMemberRoleResponse(success=False, error="Member not found")
+
+            record_grpc_request("ChangeMemberRole", "ok", time.perf_counter() - start)
+            return ChangeMemberRoleResponse(success=True)
+        except Exception as e:
+            record_grpc_request("ChangeMemberRole", "error", time.perf_counter() - start)
+            logger.error(f"ChangeMemberRole failed: {e}", exc_info=True)
+            return ChangeMemberRoleResponse(success=False, error=str(e))
 
 
 class GrpcServer:
