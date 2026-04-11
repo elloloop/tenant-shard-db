@@ -28,6 +28,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..global_store import GlobalStore
 from ..metrics import record_applier_event
 from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
@@ -185,6 +186,7 @@ class Applier:
         batch_size: int = 1,
         poll_timeout_ms: int = 100,
         assigned_tenants: frozenset[str] | None = None,
+        global_store: GlobalStore | None = None,
     ) -> None:
         """Initialize the applier.
 
@@ -197,6 +199,7 @@ class Applier:
             schema_fingerprint: Expected schema fingerprint
             acl_manager: ACL manager instance
             fanout_config: Mailbox fanout configuration
+            global_store: GlobalStore for cross-tenant shared_index
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -208,6 +211,7 @@ class Applier:
         self.fanout_config = fanout_config or MailboxFanoutConfig()
         self.batch_size = batch_size
         self.poll_timeout_ms = poll_timeout_ms
+        self.global_store = global_store
 
         self._assigned_tenants = assigned_tenants or frozenset()
         self._skipped_count = 0
@@ -594,6 +598,7 @@ class Applier:
         try:
             created_nodes: list[str] = []
             created_edges: list[tuple] = []
+            deleted_node_ids: list[str] = []
             self._node_alias_map.clear()
             tenant_id = event.tenant_id
 
@@ -662,6 +667,7 @@ class Applier:
                             "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
                             (tenant_id, node_id),
                         )
+                        deleted_node_ids.append(node_id)
 
                     elif op_type == "create_edge":
                         edge_type_id = op["edge_id"]
@@ -752,6 +758,10 @@ class Applier:
                         node = await self.canonical_store.get_node(tenant_id, node_id)
                         if node:
                             await self._fanout_node(event, node, op)
+
+            # Shared index cleanup for deleted nodes
+            for del_nid in deleted_node_ids:
+                await self._update_shared_index_on_delete(tenant_id, del_nid)
 
             return ApplyResult(
                 success=True,
@@ -1026,6 +1036,170 @@ class Applier:
                 snippet_parts.append(value)
 
         return " ".join(snippet_parts)[:1000]  # Limit snippet length
+
+    # ── shared_index integration ────────────────────────────────────────
+
+    async def _update_shared_index_on_share(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
+        permission: str,
+    ) -> None:
+        """Write to GlobalStore.shared_index when a share_node event is applied.
+
+        If the actor_id is a group (starts with "group:"), resolves group members
+        and creates individual shared_index entries for each member.
+        """
+        if not self.global_store:
+            return
+
+        try:
+            if actor_id.startswith("group:"):
+                # Group expansion: resolve members and create entries for each
+                members = await self.canonical_store.get_group_members(
+                    tenant_id, actor_id
+                )
+                for member_id in members:
+                    await self.global_store.add_shared(
+                        user_id=member_id,
+                        source_tenant=tenant_id,
+                        node_id=node_id,
+                        permission=permission,
+                    )
+            else:
+                await self.global_store.add_shared(
+                    user_id=actor_id,
+                    source_tenant=tenant_id,
+                    node_id=node_id,
+                    permission=permission,
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to update shared_index on share: {e}",
+                extra={"tenant_id": tenant_id, "node_id": node_id, "actor_id": actor_id},
+            )
+
+    async def _update_shared_index_on_revoke(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
+    ) -> None:
+        """Remove from GlobalStore.shared_index when a revoke_access event is applied.
+
+        If the actor_id is a group, removes entries for all group members.
+        """
+        if not self.global_store:
+            return
+
+        try:
+            if actor_id.startswith("group:"):
+                members = await self.canonical_store.get_group_members(
+                    tenant_id, actor_id
+                )
+                for member_id in members:
+                    await self.global_store.remove_shared(
+                        user_id=member_id,
+                        source_tenant=tenant_id,
+                        node_id=node_id,
+                    )
+            else:
+                await self.global_store.remove_shared(
+                    user_id=actor_id,
+                    source_tenant=tenant_id,
+                    node_id=node_id,
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to update shared_index on revoke: {e}",
+                extra={"tenant_id": tenant_id, "node_id": node_id, "actor_id": actor_id},
+            )
+
+    async def _update_shared_index_on_delete(
+        self,
+        tenant_id: str,
+        node_id: str,
+    ) -> None:
+        """Clean up shared_index entries when a node is deleted."""
+        if not self.global_store:
+            return
+
+        try:
+            await self.global_store.cleanup_stale_shared(
+                source_tenant=tenant_id,
+                node_id=node_id,
+            )
+        except Exception as e:
+            logger.warning(
+                f"Failed to cleanup shared_index on delete: {e}",
+                extra={"tenant_id": tenant_id, "node_id": node_id},
+            )
+
+    async def _update_shared_index_on_group_member_add(
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
+    ) -> None:
+        """When a member is added to a group, add shared_index entries for all nodes
+        that the group has access to.
+        """
+        if not self.global_store:
+            return
+
+        try:
+            access_entries = await self.canonical_store.list_node_access_for_group(
+                tenant_id, group_id
+            )
+            for entry in access_entries:
+                await self.global_store.add_shared(
+                    user_id=member_actor_id,
+                    source_tenant=tenant_id,
+                    node_id=entry["node_id"],
+                    permission=entry["permission"],
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to update shared_index on group member add: {e}",
+                extra={
+                    "tenant_id": tenant_id,
+                    "group_id": group_id,
+                    "member": member_actor_id,
+                },
+            )
+
+    async def _update_shared_index_on_group_member_remove(
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
+    ) -> None:
+        """When a member is removed from a group, remove shared_index entries
+        for all nodes that the group has access to.
+        """
+        if not self.global_store:
+            return
+
+        try:
+            access_entries = await self.canonical_store.list_node_access_for_group(
+                tenant_id, group_id
+            )
+            for entry in access_entries:
+                await self.global_store.remove_shared(
+                    user_id=member_actor_id,
+                    source_tenant=tenant_id,
+                    node_id=entry["node_id"],
+                )
+        except Exception as e:
+            logger.warning(
+                f"Failed to update shared_index on group member remove: {e}",
+                extra={
+                    "tenant_id": tenant_id,
+                    "group_id": group_id,
+                    "member": member_actor_id,
+                },
+            )
 
     @property
     def stats(self) -> dict[str, Any]:

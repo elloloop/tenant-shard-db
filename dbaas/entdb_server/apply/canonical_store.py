@@ -2108,6 +2108,77 @@ class CanonicalStore:
             member_actor_id,
         )
 
+    def _sync_get_group_members(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[str]:
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                "SELECT member_actor_id FROM group_users WHERE group_id = ?",
+                (group_id,),
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    async def get_group_members(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[str]:
+        """Get all members of a group.
+
+        Args:
+            tenant_id: Tenant identifier
+            group_id: Group identifier
+
+        Returns:
+            List of member actor IDs
+        """
+        return await self._run_sync(
+            self._sync_get_group_members,
+            tenant_id,
+            group_id,
+        )
+
+    def _sync_list_node_access_for_group(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[dict]:
+        """List all node_access entries where the actor_id is a given group."""
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                """
+                SELECT node_id, actor_id, permission, granted_by, granted_at, expires_at
+                FROM node_access
+                WHERE actor_id = ?
+                """,
+                (group_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    async def list_node_access_for_group(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[dict]:
+        """List all node_access entries granted to a group.
+
+        Used when group membership changes to cascade shared_index updates.
+
+        Args:
+            tenant_id: Tenant identifier
+            group_id: Group identifier (e.g. "group:friends")
+
+        Returns:
+            List of node_access dicts with node_id, permission, etc.
+        """
+        return await self._run_sync(
+            self._sync_list_node_access_for_group,
+            tenant_id,
+            group_id,
+        )
+
     def _sync_transfer_ownership(
         self,
         tenant_id: str,
