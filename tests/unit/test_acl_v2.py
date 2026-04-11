@@ -63,10 +63,17 @@ def _setup_tenant():
 # Helper to create a node and return its ID
 def _create_node(store, owner=ALICE, type_id=1, tenant_id=TENANT, acl=None):
     import uuid
+
     nid = str(uuid.uuid4())
     now = int(time.time() * 1000)
     node = store._sync_create_node(
-        tenant_id, type_id, {"title": "test"}, owner, nid, acl or [], now,
+        tenant_id,
+        type_id,
+        {"title": "test"},
+        owner,
+        nid,
+        acl or [],
+        now,
     )
     return node.node_id
 
@@ -106,7 +113,14 @@ def _create_edge(store, from_id, to_id, edge_type_id=1, propagates_acl=False):
 def _share(store, node_id, actor_id, permission="read", granted_by=ALICE):
     now = int(time.time() * 1000)
     store._sync_share_node(
-        TENANT, node_id, actor_id, "user", permission, granted_by, now, None,
+        TENANT,
+        node_id,
+        actor_id,
+        "user",
+        permission,
+        granted_by,
+        now,
+        None,
     )
 
 
@@ -175,7 +189,10 @@ class TestEdgeTypeDefPropagateShare:
 
     def test_propagation_enabled(self):
         HasComment = EdgeTypeDef(
-            edge_id=2, name="HasComment", from_type=1, to_type=2,
+            edge_id=2,
+            name="HasComment",
+            from_type=1,
+            to_type=2,
             propagate_share=True,
         )
         assert HasComment.propagate_share is True
@@ -282,16 +299,27 @@ class TestCanAccess:
         assert store._sync_can_access(TENANT, node_id, [BOB])
 
     def test_tenant_wildcard_grants_access(self, store, _setup_tenant):
-        node_id = _create_node(store, owner=ALICE, acl=[
-            {"principal": "tenant:*", "permission": "read"},
-        ])
+        node_id = _create_node(
+            store,
+            owner=ALICE,
+            acl=[
+                {"principal": "tenant:*", "permission": "read"},
+            ],
+        )
         assert store._sync_can_access(TENANT, node_id, [BOB])
 
     def test_expired_share_no_access(self, store, _setup_tenant):
         node_id = _create_node(store, owner=ALICE)
         past = int(time.time() * 1000) - 60000  # 1 minute ago
         store._sync_share_node(
-            TENANT, node_id, BOB, "user", "read", ALICE, past - 120000, past,
+            TENANT,
+            node_id,
+            BOB,
+            "user",
+            "read",
+            ALICE,
+            past - 120000,
+            past,
         )
         assert not store._sync_can_access(TENANT, node_id, [BOB])
 
@@ -568,9 +596,9 @@ class TestGroupMembership:
 class TestSchemaCompat:
     def _make_registry(self, node_types=None, edge_types=None):
         reg = SchemaRegistry()
-        for nt in (node_types or []):
+        for nt in node_types or []:
             reg.register_node_type(nt)
-        for et in (edge_types or []):
+        for et in edge_types or []:
             reg.register_edge_type(et)
         return reg
 
@@ -578,11 +606,15 @@ class TestSchemaCompat:
         Task = NodeTypeDef(type_id=1, name="Task")
         old = self._make_registry(
             node_types=[Task],
-            edge_types=[EdgeTypeDef(edge_id=1, name="Has", from_type=1, to_type=1, propagate_share=False)],
+            edge_types=[
+                EdgeTypeDef(edge_id=1, name="Has", from_type=1, to_type=1, propagate_share=False)
+            ],
         )
         new = self._make_registry(
             node_types=[Task],
-            edge_types=[EdgeTypeDef(edge_id=1, name="Has", from_type=1, to_type=1, propagate_share=True)],
+            edge_types=[
+                EdgeTypeDef(edge_id=1, name="Has", from_type=1, to_type=1, propagate_share=True)
+            ],
         )
         changes = check_compatibility(old, new)
         kinds = [c.kind for c in changes]
@@ -595,10 +627,13 @@ class TestSchemaCompat:
             node_types=[NodeTypeDef(type_id=1, name="Task")],
         )
         new = self._make_registry(
-            node_types=[NodeTypeDef(
-                type_id=1, name="Task",
-                acl_defaults=AclDefaults(public=True, tenant_visible=False),
-            )],
+            node_types=[
+                NodeTypeDef(
+                    type_id=1,
+                    name="Task",
+                    acl_defaults=AclDefaults(public=True, tenant_visible=False),
+                )
+            ],
         )
         changes = check_compatibility(old, new)
         kinds = [c.kind for c in changes]

@@ -492,8 +492,7 @@ class Applier:
                             (tenant_id, edge_type_id, from_ref, to_ref),
                         )
                         conn.execute(
-                            "DELETE FROM acl_inherit "
-                            "WHERE node_id = ? AND inherit_from = ?",
+                            "DELETE FROM acl_inherit WHERE node_id = ? AND inherit_from = ?",
                             (to_ref, from_ref),
                         )
 
@@ -723,8 +722,7 @@ class Applier:
                         )
                         # Clean up ACL inheritance pointer
                         conn.execute(
-                            "DELETE FROM acl_inherit "
-                            "WHERE node_id = ? AND inherit_from = ?",
+                            "DELETE FROM acl_inherit WHERE node_id = ? AND inherit_from = ?",
                             (to_ref, from_ref),
                         )
 

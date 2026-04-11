@@ -106,7 +106,10 @@ def _dict_to_struct(d):
 
 def _acl_list_to_proto(acl_list):
     """Convert list of dicts to repeated AclEntry."""
-    return [AclEntry(principal=e.get("principal", ""), permission=e.get("permission", "")) for e in acl_list]
+    return [
+        AclEntry(principal=e.get("principal", ""), permission=e.get("permission", ""))
+        for e in acl_list
+    ]
 
 
 def _acl_proto_to_list(acl_entries):
@@ -236,9 +239,7 @@ class EntDBServicer(EntDBServiceServicer):
                 applied_status = ReceiptStatus.RECEIPT_STATUS_PENDING
                 if request.wait_applied and stream_pos is not None:
                     timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
-                    applied = await self._wait_for_offset(
-                        ctx.tenant_id, str(stream_pos), timeout
-                    )
+                    applied = await self._wait_for_offset(ctx.tenant_id, str(stream_pos), timeout)
                     if applied:
                         applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
 
@@ -351,9 +352,7 @@ class EntDBServicer(EntDBServiceServicer):
         timeout: float,
     ) -> bool:
         """Wait for a stream position to be applied (event-driven, no polling)."""
-        return await self.canonical_store.wait_for_offset(
-            tenant_id, stream_position, timeout
-        )
+        return await self.canonical_store.wait_for_offset(tenant_id, stream_position, timeout)
 
     async def GetReceiptStatus(
         self,
@@ -514,10 +513,7 @@ class EntDBServicer(EntDBServiceServicer):
 
             filter_dict = None
             if request.filters:
-                filter_dict = {
-                    f.field: json_format.MessageToDict(f.value)
-                    for f in request.filters
-                }
+                filter_dict = {f.field: json_format.MessageToDict(f.value) for f in request.filters}
 
             nodes = await self.canonical_store.query_nodes(
                 tenant_id=request.context.tenant_id,
@@ -894,7 +890,8 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             actor_ids = await self.canonical_store.resolve_actor_groups(
-                request.context.tenant_id, request.context.actor,
+                request.context.tenant_id,
+                request.context.actor,
             )
             limit = request.limit or 100
             nodes = await self.canonical_store.get_connected_nodes(
@@ -973,7 +970,8 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             actor_ids = await self.canonical_store.resolve_actor_groups(
-                request.context.tenant_id, request.context.actor,
+                request.context.tenant_id,
+                request.context.actor,
             )
             limit = request.limit or 100
             nodes = await self.canonical_store.list_shared_with_me(

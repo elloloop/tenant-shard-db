@@ -175,11 +175,17 @@ class FieldDef:
 
         elif self.kind == FieldKind.JSON:
             if not isinstance(value, dict | list):
-                return False, f"Field '{self.name}' must be a dict or list, got {type(value).__name__}"
+                return (
+                    False,
+                    f"Field '{self.name}' must be a dict or list, got {type(value).__name__}",
+                )
 
         elif self.kind == FieldKind.BYTES:
             if not isinstance(value, bytes | str):
-                return False, f"Field '{self.name}' must be bytes or string, got {type(value).__name__}"
+                return (
+                    False,
+                    f"Field '{self.name}' must be bytes or string, got {type(value).__name__}",
+                )
 
         elif self.kind == FieldKind.REFERENCE:
             if not isinstance(value, dict):

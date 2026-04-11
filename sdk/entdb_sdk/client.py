@@ -159,8 +159,7 @@ class Plan:
         """Raise if this Plan has already been committed."""
         if self._committed:
             raise RuntimeError(
-                "Plan has already been committed. Create a new Plan for "
-                "additional operations."
+                "Plan has already been committed. Create a new Plan for additional operations."
             )
 
     def create(
@@ -383,8 +382,7 @@ class Plan:
         """
         if self._committed:
             raise RuntimeError(
-                "Plan has already been committed. Create a new Plan for "
-                "additional operations."
+                "Plan has already been committed. Create a new Plan for additional operations."
             )
 
         if not self._operations:

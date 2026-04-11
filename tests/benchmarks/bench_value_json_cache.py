@@ -172,7 +172,9 @@ class TestValueJsonCacheBenchmark:
         print(f"  3x uncached total:  {uncached_3x_s * 1e3:.1f} ms")
         print(f"  3x cached total:    {cached_s * 1e3:.1f} ms  (1 parse + 2 cache hits)")
         print(f"  Speedup (3 calls):  {speedup:.1f}x")
-        print(f"  Estimated saving:   {(uncached_3x_s - cached_s) * 1e3:.1f} ms over {iterations} records")
+        print(
+            f"  Estimated saving:   {(uncached_3x_s - cached_s) * 1e3:.1f} ms over {iterations} records"
+        )
 
         # Sanity: caching 3 calls should be faster than 3 uncached calls
         assert cached_s < uncached_3x_s, "Caching should be faster than 3x uncached"

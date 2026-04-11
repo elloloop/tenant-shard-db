@@ -396,9 +396,7 @@ class PubSubWalStream:
 
         records: list[StreamRecord] = []
         try:
-            subscription_path = self._subscriber.subscription_path(
-                self.config.project_id, group_id
-            )
+            subscription_path = self._subscriber.subscription_path(self.config.project_id, group_id)
             timeout_seconds = max(1, timeout_ms // 1000)
 
             pull_request = PullRequest(

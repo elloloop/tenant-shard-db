@@ -191,8 +191,20 @@ class AclManager:
         Permission.COMMENT: {Permission.READ, Permission.COMMENT},
         Permission.WRITE: {Permission.READ, Permission.COMMENT, Permission.WRITE},
         Permission.SHARE: {Permission.READ, Permission.COMMENT, Permission.WRITE, Permission.SHARE},
-        Permission.DELETE: {Permission.READ, Permission.COMMENT, Permission.WRITE, Permission.DELETE},
-        Permission.ADMIN: {Permission.READ, Permission.COMMENT, Permission.WRITE, Permission.SHARE, Permission.DELETE, Permission.ADMIN},
+        Permission.DELETE: {
+            Permission.READ,
+            Permission.COMMENT,
+            Permission.WRITE,
+            Permission.DELETE,
+        },
+        Permission.ADMIN: {
+            Permission.READ,
+            Permission.COMMENT,
+            Permission.WRITE,
+            Permission.SHARE,
+            Permission.DELETE,
+            Permission.ADMIN,
+        },
         Permission.DENY: set(),  # DENY grants nothing — it blocks access
     }
 

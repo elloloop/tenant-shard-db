@@ -1609,7 +1609,9 @@ class CanonicalStore:
     _ACL_MAX_DEPTH = 10
 
     def _sync_resolve_actor_groups(
-        self, tenant_id: str, actor_id: str,
+        self,
+        tenant_id: str,
+        actor_id: str,
     ) -> list[str]:
         """Resolve all group memberships for an actor, recursively.
 
@@ -1634,11 +1636,15 @@ class CanonicalStore:
         return [actor_id] + [r[0] for r in rows]
 
     async def resolve_actor_groups(
-        self, tenant_id: str, actor_id: str,
+        self,
+        tenant_id: str,
+        actor_id: str,
     ) -> list[str]:
         """Resolve actor + all group memberships. Call once per request."""
         return await self._run_sync(
-            self._sync_resolve_actor_groups, tenant_id, actor_id,
+            self._sync_resolve_actor_groups,
+            tenant_id,
+            actor_id,
         )
 
     def _sync_can_access(
@@ -1723,11 +1729,17 @@ class CanonicalStore:
             return row is not None
 
     async def can_access(
-        self, tenant_id: str, node_id: str, actor_ids: list[str],
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
     ) -> bool:
         """Check if actor can access a node (via inheritance chain)."""
         return await self._run_sync(
-            self._sync_can_access, tenant_id, node_id, actor_ids,
+            self._sync_can_access,
+            tenant_id,
+            node_id,
+            actor_ids,
         )
 
     def _sync_share_node(
@@ -1766,12 +1778,21 @@ class CanonicalStore:
         now = int(time.time() * 1000)
         await self._run_sync(
             self._sync_share_node,
-            tenant_id, node_id, actor_id, actor_type,
-            permission, granted_by, now, expires_at,
+            tenant_id,
+            node_id,
+            actor_id,
+            actor_type,
+            permission,
+            granted_by,
+            now,
+            expires_at,
         )
 
     def _sync_revoke_access(
-        self, tenant_id: str, node_id: str, actor_id: str,
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
     ) -> bool:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
@@ -1781,11 +1802,17 @@ class CanonicalStore:
             return cursor.rowcount > 0
 
     async def revoke_access(
-        self, tenant_id: str, node_id: str, actor_id: str,
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
     ) -> bool:
         """Remove direct access from a node. Returns True if a grant existed."""
         return await self._run_sync(
-            self._sync_revoke_access, tenant_id, node_id, actor_id,
+            self._sync_revoke_access,
+            tenant_id,
+            node_id,
+            actor_id,
         )
 
     def _sync_get_connected_nodes(
@@ -1805,7 +1832,11 @@ class CanonicalStore:
         if self.SYSTEM_ACTOR in actor_ids:
             # System actor: no ACL filtering
             return self._sync_get_edges_and_nodes(
-                tenant_id, node_id, edge_type_id, limit, offset,
+                tenant_id,
+                node_id,
+                edge_type_id,
+                limit,
+                offset,
             )
 
         # First: can the actor access the source node?
@@ -1879,11 +1910,14 @@ class CanonicalStore:
                     LIMIT ? OFFSET ?
                     """,
                     (
-                        tenant_id, edge_type_id, node_id,
+                        tenant_id,
+                        edge_type_id,
+                        node_id,
                         *actor_ids,
                         *actor_ids,
                         *actor_ids,
-                        limit, offset,
+                        limit,
+                        offset,
                     ),
                 ).fetchall()
 
@@ -1950,7 +1984,12 @@ class CanonicalStore:
         """Fetch nodes connected via edge type, with ACL filtering."""
         return await self._run_sync(
             self._sync_get_connected_nodes,
-            tenant_id, node_id, edge_type_id, actor_ids, limit, offset,
+            tenant_id,
+            node_id,
+            edge_type_id,
+            actor_ids,
+            limit,
+            offset,
         )
 
     def _sync_list_shared_with_me(
@@ -2000,7 +2039,10 @@ class CanonicalStore:
         """List nodes explicitly shared with actor (direct + via groups)."""
         return await self._run_sync(
             self._sync_list_shared_with_me,
-            tenant_id, actor_ids, limit, offset,
+            tenant_id,
+            actor_ids,
+            limit,
+            offset,
         )
 
     def _sync_add_group_member(
@@ -2032,11 +2074,18 @@ class CanonicalStore:
         now = int(time.time() * 1000)
         await self._run_sync(
             self._sync_add_group_member,
-            tenant_id, group_id, member_actor_id, role, now,
+            tenant_id,
+            group_id,
+            member_actor_id,
+            role,
+            now,
         )
 
     def _sync_remove_group_member(
-        self, tenant_id: str, group_id: str, member_actor_id: str,
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
     ) -> bool:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
@@ -2046,16 +2095,24 @@ class CanonicalStore:
             return cursor.rowcount > 0
 
     async def remove_group_member(
-        self, tenant_id: str, group_id: str, member_actor_id: str,
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
     ) -> bool:
         """Remove a member from a group. Returns True if member existed."""
         return await self._run_sync(
             self._sync_remove_group_member,
-            tenant_id, group_id, member_actor_id,
+            tenant_id,
+            group_id,
+            member_actor_id,
         )
 
     def _sync_transfer_ownership(
-        self, tenant_id: str, node_id: str, new_owner: str,
+        self,
+        tenant_id: str,
+        node_id: str,
+        new_owner: str,
     ) -> bool:
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
@@ -2064,13 +2121,19 @@ class CanonicalStore:
             )
             if cursor.rowcount > 0:
                 self._update_visibility(
-                    conn, tenant_id, node_id, new_owner,
+                    conn,
+                    tenant_id,
+                    node_id,
+                    new_owner,
                     self._get_node_acl(conn, tenant_id, node_id),
                 )
             return cursor.rowcount > 0
 
     def _get_node_acl(
-        self, conn: sqlite3.Connection, tenant_id: str, node_id: str,
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        node_id: str,
     ) -> list[dict[str, str]]:
         row = conn.execute(
             "SELECT acl_blob FROM nodes WHERE tenant_id = ? AND node_id = ?",
@@ -2081,11 +2144,17 @@ class CanonicalStore:
         return json.loads(row[0]) if row[0] else []
 
     async def transfer_ownership(
-        self, tenant_id: str, node_id: str, new_owner: str,
+        self,
+        tenant_id: str,
+        node_id: str,
+        new_owner: str,
     ) -> bool:
         """Transfer ownership of a node. Returns True if node exists."""
         return await self._run_sync(
-            self._sync_transfer_ownership, tenant_id, node_id, new_owner,
+            self._sync_transfer_ownership,
+            tenant_id,
+            node_id,
+            new_owner,
         )
 
     def list_tenants(self) -> list[str]:

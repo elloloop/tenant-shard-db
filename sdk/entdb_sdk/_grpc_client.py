@@ -74,6 +74,7 @@ def _acl_proto_to_list(acl_entries):
     """Convert repeated AclEntry to list of dicts."""
     return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
 
+
 logger = logging.getLogger(__name__)
 
 _RETRYABLE_STATUS_CODES = frozenset(
@@ -360,10 +361,14 @@ class GrpcClient:
                     create_op.data.update(data)
                 acl = create.get("acl")
                 if acl:
-                    create_op.acl.extend([
-                        AclEntry(principal=e.get("principal", ""), permission=e.get("permission", ""))
-                        for e in acl
-                    ])
+                    create_op.acl.extend(
+                        [
+                            AclEntry(
+                                principal=e.get("principal", ""), permission=e.get("permission", "")
+                            )
+                            for e in acl
+                        ]
+                    )
                 if create.get("as"):
                     setattr(create_op, "as", create["as"])
                 if create.get("fanout_to"):
@@ -677,6 +682,7 @@ class GrpcClient:
         filters = []
         if filter:
             from google.protobuf.struct_pb2 import Value
+
             for field_name, field_value in filter.items():
                 v = Value()
                 json_format.Parse(json.dumps(field_value), v)
@@ -1077,7 +1083,9 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json_format.MessageToDict(n.payload) if n.payload and n.payload.fields else {},
+                payload=json_format.MessageToDict(n.payload)
+                if n.payload and n.payload.fields
+                else {},
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
@@ -1223,7 +1231,9 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json_format.MessageToDict(n.payload) if n.payload and n.payload.fields else {},
+                payload=json_format.MessageToDict(n.payload)
+                if n.payload and n.payload.fields
+                else {},
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
