@@ -1,17 +1,19 @@
-// EntDB Schema Options
+// EntDB Schema Options — v2
 //
 // Import this in your schema .proto files to annotate messages
-// as EntDB node types and edge types.
+// as EntDB node types and edge types, with full support for
+// data classification, GDPR compliance, ACL defaults, and edge policies.
 //
 // Example:
 //   import "entdb_options.proto";
 //
-//   message Task {
+//   message User {
 //       option (entdb.node).type_id = 1;
-//       option (entdb.node).acl = { tenant_visible: true };
+//       option (entdb.node).data_policy = DATA_POLICY_PERSONAL;
+//       option (entdb.node).subject_field = "id";
 //
-//       string title = 1 [(entdb.field).required = true];
-//       string status = 2 [(entdb.field).enum_values = "todo,in_progress,done"];
+//       string email = 1 [(entdb.field) = { required: true, pii: true }];
+//       string name  = 2 [(entdb.field) = { required: true, pii: true, searchable: true }];
 //   }
 
 syntax = "proto3";
@@ -20,88 +22,86 @@ package entdb;
 
 import "google/protobuf/descriptor.proto";
 
-// Node type configuration — applied to a message
-message NodeOpts {
-    // Stable numeric ID (required, immutable after first use)
-    int32 type_id = 1;
-
-    // ACL defaults for newly created nodes of this type
-    AclOpts acl = 2;
-
-    // Human-readable description
-    string description = 3;
-
-    // Whether this type is deprecated
-    bool deprecated = 4;
+// Data classification for GDPR compliance
+enum DataPolicy {
+    DATA_POLICY_PERSONAL = 0;    // user's own data, fully exportable, DELETE on exit
+    DATA_POLICY_BUSINESS = 1;    // business data, contributions exportable, ANONYMIZE on exit
+    DATA_POLICY_FINANCIAL = 2;   // legal retention required, RETAIN + ANONYMIZE PII
+    DATA_POLICY_AUDIT = 3;       // security logs, not user-exportable, RETAIN + ANONYMIZE PII
+    DATA_POLICY_EPHEMERAL = 4;   // temporary, not exportable, DELETE on exit
+    DATA_POLICY_HEALTHCARE = 5;  // PHI, field-level encryption, 6yr retention
 }
 
-// ACL default configuration
-message AclOpts {
-    // World-readable (no auth required)
-    bool public = 1;
+// What happens to edges when referenced user exits
+enum SubjectExitPolicy {
+    SUBJECT_EXIT_BOTH = 0;   // act on edges in both directions
+    SUBJECT_EXIT_FROM = 1;   // only when user is the source (from)
+    SUBJECT_EXIT_TO = 2;     // only when user is the target (to)
+}
 
-    // Visible to all tenant members
-    bool tenant_visible = 2;
+// Node type configuration — applied to a message
+message NodeOpts {
+    int32 type_id = 1;                    // stable numeric ID (required)
 
-    // Inherit ACL from structural parent (false = private)
-    bool inherit = 3;
+    // ACL defaults
+    bool public = 2;                      // world-readable
+    bool tenant_visible = 3;             // visible to all tenant members
+    bool inherit = 4;                     // inherit ACL from structural parent
+    bool private = 5;                     // owner-only (mutually exclusive with inherit)
+
+    // GDPR
+    DataPolicy data_policy = 6;           // data classification
+    string subject_field = 7;             // field that identifies who data is ABOUT
+    int32 retention_days = 8;             // legal retention period (0 = none)
+    string legal_basis = 9;              // documented justification for retention
+
+    // Metadata
+    string description = 10;
+    bool deprecated = 11;
+}
+
+// Edge type configuration — applied to a message representing an edge
+message EdgeOpts {
+    int32 edge_id = 1;                    // stable numeric ID
+    string name = 2;                      // human-readable name
+
+    // Behavior
+    bool propagate_share = 3;             // sharing source shares target
+    bool unique_per_from = 4;             // at most one edge per source
+
+    // GDPR
+    DataPolicy data_policy = 5;
+    SubjectExitPolicy on_subject_exit = 6; // what happens when ref'd user exits
+    int32 retention_days = 7;
+    string legal_basis = 8;
+
+    // Metadata
+    string description = 9;
+    bool deprecated = 10;
 }
 
 // Field-level options — applied to individual fields
 message FieldOpts {
-    // Whether this field is required
     bool required = 1;
-
-    // Whether this field is searchable (FTS)
     bool searchable = 2;
-
-    // Whether this field has a secondary index
     bool indexed = 3;
 
-    // Comma-separated enum values (for string fields used as enums)
-    string enum_values = 4;
+    // PII/PHI tracking
+    bool pii = 4;                         // personally identifiable (scrubbed on anonymize)
+    bool phi = 5;                         // protected health info (field-level encryption)
 
-    // Override the EntDB field kind (timestamp, json, ref, list_ref)
-    string kind = 5;
+    // Type hints
+    string enum_values = 6;               // comma-separated for string enums
+    string kind = 7;                      // override: "timestamp", "json", "ref", etc.
+    int32 ref_type_id = 8;               // reference target type_id
 
-    // Reference target type_id (for ref/list_ref fields)
-    int32 ref_type_id = 6;
-
-    // Whether this field is deprecated
-    bool deprecated = 7;
-
-    // Human-readable description
-    string description = 8;
-
-    // Default value as string (parsed by the SDK)
+    // Metadata
     string default_value = 9;
-}
+    string description = 10;
+    bool deprecated = 11;
 
-// Edge type definition — applied to a message representing an edge
-message EdgeOpts {
-    // Stable numeric ID (required, immutable after first use)
-    int32 edge_id = 1;
-
-    // Human-readable name
-    string name = 2;
-
-    // Source node type_id
-    int32 from_type = 3;
-
-    // Target node type_id
-    int32 to_type = 4;
-
-    // Whether sharing the source node shares the target
-    bool propagate_share = 5;
-
-    // At most one edge of this type per source node
-    bool unique_per_from = 6;
-
-    // Human-readable description
-    string description = 7;
-
-    // Whether this edge type is deprecated
-    bool deprecated = 8;
+    // Explicit non-PII declaration (silences lint warning)
+    bool pii_false = 12;                  // explicitly declared as NOT PII
 }
 
 // Extensions — attach EntDB options to standard proto descriptors
