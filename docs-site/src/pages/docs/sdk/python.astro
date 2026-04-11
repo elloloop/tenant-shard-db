@@ -1,0 +1,118 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Python SDK">
+  <h1>Python SDK Reference</h1>
+  <p>The Python SDK (<code>entdb-sdk</code>) provides a type-safe async client for EntDB.</p>
+
+  <h2>Installation</h2>
+  <pre><code>pip install entdb-sdk</code></pre>
+
+  <h2>DbClient</h2>
+  <pre><code>from entdb_sdk import DbClient
+
+async with DbClient("localhost:50051", api_key="your-key") as db:
+    # All operations here</code></pre>
+
+  <h3>Constructor Options</h3>
+  <table>
+    <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
+    <tr><td><code>address</code></td><td>str</td><td>&mdash;</td><td>Server address (host:port)</td></tr>
+    <tr><td><code>secure</code></td><td>bool</td><td>False</td><td>Use TLS</td></tr>
+    <tr><td><code>api_key</code></td><td>str | None</td><td>None</td><td>API key for auth</td></tr>
+    <tr><td><code>max_retries</code></td><td>int</td><td>3</td><td>Max retries on transient failures</td></tr>
+    <tr><td><code>registry</code></td><td>SchemaRegistry | None</td><td>None</td><td>Schema registry</td></tr>
+  </table>
+
+  <h2>Write Operations</h2>
+
+  <h3>atomic() &rarr; Plan</h3>
+  <pre><code>plan = db.atomic(tenant_id="acme", actor="user:alice")
+plan.create(Task, {"title": "New"}, as_="t")
+plan.update(Task, node_id, {"status": "done"})
+plan.delete(Task, node_id)
+plan.edge_create(HasComment, from_="$t.id", to=comment_id)
+plan.edge_delete(HasComment, from_=task_id, to=comment_id)
+result = await plan.commit(wait_applied=True)</code></pre>
+
+  <h3>CommitResult</h3>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>success</code></td><td>bool</td><td>Whether commit succeeded</td></tr>
+    <tr><td><code>receipt</code></td><td>Receipt</td><td>Transaction receipt with stream_position</td></tr>
+    <tr><td><code>created_node_ids</code></td><td>list[str]</td><td>IDs of created nodes (in order)</td></tr>
+    <tr><td><code>applied</code></td><td>bool</td><td>Whether event was applied (if wait_applied)</td></tr>
+    <tr><td><code>error</code></td><td>str | None</td><td>Error message on failure</td></tr>
+  </table>
+
+  <h2>Read Operations</h2>
+
+  <h3>get()</h3>
+  <pre><code>task = await db.get(Task, node_id, "acme", "user:alice")
+# Returns Node | None
+# task.payload["title"], task.created_at, task.owner_actor</code></pre>
+
+  <h3>get_many()</h3>
+  <pre><code>nodes, missing = await db.get_many(Task, [id1, id2, id3], "acme", "user:alice")
+# Returns (list[Node], list[str]) — found nodes + missing IDs</code></pre>
+
+  <h3>query()</h3>
+  <pre><code>tasks = await db.query(Task, "acme", "user:alice",
+    filter={"status": "todo"},
+    limit=20, offset=0,
+    order_by="created_at", descending=True)
+# Returns list[Node]</code></pre>
+
+  <h3>edges_out() / edges_in()</h3>
+  <pre><code>edges = await db.edges_out(task_id, "acme", "user:alice", edge_type=HasComment)
+# Returns list[Edge] — edge.to_node_id, edge.props, edge.created_at</code></pre>
+
+  <h3>connected()</h3>
+  <pre><code>comments = await db.connected(task_id, HasComment, "acme", "user:alice")
+# Returns list[Node] — actual node objects, not just edges
+# ACL is checked via the parent node (task), not per-comment</code></pre>
+
+  <h2>ACL Operations</h2>
+
+  <h3>share()</h3>
+  <pre><code>await db.share(node_id, actor_id="user:bob", permission="write",
+               tenant_id="acme", granted_by="user:alice")</code></pre>
+
+  <h3>revoke()</h3>
+  <pre><code>await db.revoke(node_id, actor_id="user:bob", tenant_id="acme")</code></pre>
+
+  <h3>shared_with_me()</h3>
+  <pre><code>nodes = await db.shared_with_me("user:alice", "acme", limit=50)</code></pre>
+
+  <h3>group_add() / group_remove()</h3>
+  <pre><code>await db.group_add("group:eng", "user:alice", "acme")
+await db.group_remove("group:eng", "user:alice", "acme")</code></pre>
+
+  <h3>transfer_ownership()</h3>
+  <pre><code>await db.transfer_ownership(node_id, "user:bob", "acme")</code></pre>
+
+  <h2>Consistency</h2>
+
+  <h3>after_offset</h3>
+  <pre><code># Read with offset guarantee
+result = await plan.commit()
+task = await db.get(Task, node_id, "acme", "user:alice",
+                    after_offset=result.receipt.stream_position)</code></pre>
+
+  <h3>wait_for_offset()</h3>
+  <pre><code>await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)</code></pre>
+
+  <h2>Error Handling</h2>
+  <pre><code>from entdb_sdk import ConnectionError, ValidationError, SchemaError, UnknownFieldError
+
+try:
+    plan.create(Task, {"unknown_field": "value"})
+except UnknownFieldError as e:
+    print(e)  # "Unknown field 'unknown_field' on Task. Did you mean: title?"
+
+try:
+    await plan.commit()
+except ConnectionError as e:
+    print(e.address)  # "localhost:50051"</code></pre>
+</DocsLayout>

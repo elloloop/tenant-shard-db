@@ -1,0 +1,110 @@
+---
+import DocsLayout from "../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Introduction">
+  <h1>EntDB</h1>
+  <p>A multi-tenant graph database with event sourcing, per-tenant SQLite storage, and inheritance-based access control.</p>
+
+  <h2>Why EntDB?</h2>
+  <p>EntDB is designed for SaaS applications that need:</p>
+  <ul>
+    <li><strong>Tenant isolation</strong> &mdash; each tenant gets a separate SQLite database file</li>
+    <li><strong>Graph relationships</strong> &mdash; nodes and edges with typed schemas</li>
+    <li><strong>Event sourcing</strong> &mdash; writes go to a WAL (Kafka, Kinesis, Pub/Sub, etc.), applied to SQLite</li>
+    <li><strong>Built-in ACL</strong> &mdash; inheritance-based access control as a database feature</li>
+    <li><strong>Schema evolution</strong> &mdash; add fields and types safely with compatibility checks</li>
+    <li><strong>Low cost</strong> &mdash; runs on 0.25 vCPU / 256MB instances</li>
+  </ul>
+
+  <h2>The Lifecycle</h2>
+
+  <h3>1. Define Your Schema</h3>
+  <pre><code>from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
+
+Task = NodeTypeDef(
+    type_id=1, name="Task",
+    fields=(
+        field(1, "title", "str", required=True),
+        field(2, "status", "enum", enum_values=("todo", "in_progress", "done")),
+    ),
+    acl_defaults=AclDefaults(tenant_visible=True),
+)
+
+Comment = NodeTypeDef(
+    type_id=2, name="Comment",
+    fields=(field(1, "body", "str", required=True),),
+    acl_defaults=AclDefaults(inherit=True),  # inherits from parent
+)
+
+HasComment = EdgeTypeDef(
+    edge_id=1, name="HasComment",
+    from_type=Task, to_type=Comment,
+    propagate_share=True,  # sharing a task shares its comments
+)</code></pre>
+
+  <h3>2. Initialize & Connect</h3>
+  <pre><code>from entdb_sdk import DbClient
+
+async with DbClient("localhost:50051", api_key="your-key") as db:
+    # All operations go through the client
+    pass</code></pre>
+
+  <h3>3. Create Data</h3>
+  <pre><code>plan = db.atomic("acme", "user:alice")
+plan.create(Task, {"{"}title": "Ship v2", "status": "todo"{"}"}, as_="t")
+plan.create(Comment, {"{"}body": "Let's go!"{"}"}, as_="c")
+plan.edge_create(HasComment, from_="$t.id", to="$c.id")
+result = await plan.commit(wait_applied=True)</code></pre>
+
+  <h3>4. Share & Control Access</h3>
+  <pre><code># Share task with bob — comments are automatically shared (propagate_share)
+await db.share(task_id, actor_id="user:bob", permission="write",
+               tenant_id="acme", granted_by="user:alice")
+
+# Bob can now see the task AND all its comments
+comments = await db.connected(task_id, HasComment, tenant_id="acme", actor="user:bob")</code></pre>
+
+  <h3>5. Read with Consistency</h3>
+  <pre><code># After a write, read with offset guarantee
+result = await plan.commit()
+task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
+                    after_offset=result.receipt.stream_position)</code></pre>
+
+  <h3>6. Evolve Your Schema</h3>
+  <pre><code># Add a new field (non-breaking)
+Task = NodeTypeDef(
+    type_id=1, name="Task",
+    fields=(
+        field(1, "title", "str", required=True),
+        field(2, "status", "enum", enum_values=("todo", "in_progress", "done")),
+        field(3, "priority", "int", default=0),  # NEW — safe to add
+    ),
+)
+
+# CI check: entdb check validates compatibility
+$ entdb check
+Schema compatible: 1 non-breaking change (field added)</code></pre>
+
+  <h2>Architecture</h2>
+  <pre><code>Clients (gRPC / Python SDK / Go SDK)
+        |
+   EntDB Server
+   |          |
+  WAL       Reads
+  (Kafka)   (SQLite per tenant)
+   |
+  Applier (idempotent event apply)
+   |
+  Canonical Store     Mailbox Store
+  (nodes, edges,      (per-user inbox,
+   ACL, groups)        FTS5 search)</code></pre>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/installation">Installation Guide</a></li>
+    <li><a href="/tenant-shard-db/docs/quickstart">Quick Start (5 minutes)</a></li>
+    <li><a href="/tenant-shard-db/docs/concepts">Core Concepts</a></li>
+    <li><a href="/tenant-shard-db/docs/acl/overview">Access Control</a></li>
+  </ul>
+</DocsLayout>

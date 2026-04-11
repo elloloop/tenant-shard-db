@@ -18,7 +18,6 @@ How to change safely:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -26,16 +25,22 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 import grpc
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
 from grpc import aio as grpc_aio
 
 from ..metrics import record_grpc_request
 from ..sharding import ShardingConfig
 from .generated import (
+    AclEntry,
     Edge,
     EntDBServiceServicer,
     # Request/Response types
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    # ACL v2
+    GetConnectedNodesRequest,
+    GetConnectedNodesResponse,
     GetEdgesRequest,
     GetEdgesResponse,
     GetMailboxRequest,
@@ -48,10 +53,14 @@ from .generated import (
     GetReceiptStatusResponse,
     GetSchemaRequest,
     GetSchemaResponse,
+    GroupMemberRequest,
+    GroupMemberResponse,
     HealthRequest,
     HealthResponse,
     ListMailboxUsersRequest,
     ListMailboxUsersResponse,
+    ListSharedWithMeRequest,
+    ListSharedWithMeResponse,
     ListTenantsRequest,
     ListTenantsResponse,
     MailboxItem,
@@ -62,9 +71,17 @@ from .generated import (
     # Data types
     Receipt,
     ReceiptStatus,
+    RevokeAccessRequest,
+    RevokeAccessResponse,
     SearchMailboxRequest,
     SearchMailboxResponse,
+    ShareNodeRequest,
+    ShareNodeResponse,
     TenantInfo,
+    TransferOwnershipRequest,
+    TransferOwnershipResponse,
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
     add_EntDBServiceServicer_to_server,
 )
 
@@ -72,6 +89,32 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+def _struct_to_dict(s):
+    """Convert protobuf Struct to Python dict."""
+    return json_format.MessageToDict(s) if s and s.fields else {}
+
+
+def _dict_to_struct(d):
+    """Convert Python dict to protobuf Struct."""
+    s = Struct()
+    if d:
+        s.update(d)
+    return s
+
+
+def _acl_list_to_proto(acl_list):
+    """Convert list of dicts to repeated AclEntry."""
+    return [
+        AclEntry(principal=e.get("principal", ""), permission=e.get("permission", ""))
+        for e in acl_list
+    ]
+
+
+def _acl_proto_to_list(acl_entries):
+    """Convert repeated AclEntry to list of dicts."""
+    return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
 
 
 class EntDBServicer(EntDBServiceServicer):
@@ -192,11 +235,11 @@ class EntDBServicer(EntDBServiceServicer):
                     stream_position=str(stream_pos) if stream_pos else "",
                 )
 
-                # Wait for application if requested
+                # Wait for application if requested (event-driven via offset)
                 applied_status = ReceiptStatus.RECEIPT_STATUS_PENDING
-                if request.wait_applied:
+                if request.wait_applied and stream_pos is not None:
                     timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
-                    applied = await self._wait_for_applied(ctx.tenant_id, idempotency_key, timeout)
+                    applied = await self._wait_for_offset(ctx.tenant_id, str(stream_pos), timeout)
                     if applied:
                         applied_status = ReceiptStatus.RECEIPT_STATUS_APPLIED
 
@@ -232,12 +275,12 @@ class EntDBServicer(EntDBServiceServicer):
                 internal_op: dict[str, Any] = {
                     "op": "create_node",
                     "type_id": create.type_id,
-                    "data": json.loads(create.data_json) if create.data_json else {},
+                    "data": _struct_to_dict(create.data),
                 }
                 if create.id:
                     internal_op["id"] = create.id
-                if create.acl_json:
-                    internal_op["acl"] = json.loads(create.acl_json)
+                if create.acl:
+                    internal_op["acl"] = _acl_proto_to_list(create.acl)
                 as_val = getattr(create, "as", "")
                 if as_val:
                     internal_op["as"] = as_val
@@ -252,7 +295,7 @@ class EntDBServicer(EntDBServiceServicer):
                         "op": "update_node",
                         "type_id": update.type_id,
                         "id": update.id,
-                        "patch": json.loads(update.patch_json) if update.patch_json else {},
+                        "patch": _struct_to_dict(update.patch),
                     }
                 )
 
@@ -274,7 +317,7 @@ class EntDBServicer(EntDBServiceServicer):
                         "edge_id": create.edge_id,
                         "from": self._convert_node_ref(getattr(create, "from")),
                         "to": self._convert_node_ref(create.to),
-                        "props": json.loads(create.props_json) if create.props_json else {},
+                        "props": _struct_to_dict(create.props),
                     }
                 )
 
@@ -302,22 +345,14 @@ class EntDBServicer(EntDBServiceServicer):
             return {"type_id": ref.typed.type_id, "id": ref.typed.id}
         return None
 
-    async def _wait_for_applied(
+    async def _wait_for_offset(
         self,
         tenant_id: str,
-        idempotency_key: str,
+        stream_position: str,
         timeout: float,
     ) -> bool:
-        """Wait for an event to be applied."""
-        start = time.time()
-        while time.time() - start < timeout:
-            try:
-                if await self.canonical_store.check_idempotency(tenant_id, idempotency_key):
-                    return True
-            except Exception:
-                pass
-            await asyncio.sleep(0.1)
-        return False
+        """Wait for a stream position to be applied (event-driven, no polling)."""
+        return await self.canonical_store.wait_for_offset(tenant_id, stream_position, timeout)
 
     async def GetReceiptStatus(
         self,
@@ -346,6 +381,27 @@ class EntDBServicer(EntDBServiceServicer):
                 error=str(e),
             )
 
+    async def WaitForOffset(
+        self,
+        request: WaitForOffsetRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> WaitForOffsetResponse:
+        """Wait for a stream position to be applied."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            timeout = request.timeout_ms / 1000.0 if request.timeout_ms else 30.0
+            reached = await self._wait_for_offset(
+                request.context.tenant_id, request.stream_position, timeout
+            )
+            current = self.canonical_store.get_applied_offset(request.context.tenant_id) or ""
+            record_grpc_request("WaitForOffset", "ok", time.perf_counter() - start)
+            return WaitForOffsetResponse(reached=reached, current_position=current)
+        except Exception as e:
+            record_grpc_request("WaitForOffset", "error", time.perf_counter() - start)
+            logger.error(f"WaitForOffset failed: {e}", exc_info=True)
+            return WaitForOffsetResponse(reached=False, current_position="")
+
     async def GetNode(
         self,
         request: GetNodeRequest,
@@ -355,6 +411,14 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+
+            # Wait for offset if requested (read-after-write consistency)
+            if request.after_offset:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                await self._wait_for_offset(
+                    request.context.tenant_id, request.after_offset, timeout
+                )
+
             node = await self.canonical_store.get_node(
                 request.context.tenant_id,
                 request.node_id,
@@ -370,11 +434,11 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=node.tenant_id,
                     node_id=node.node_id,
                     type_id=node.type_id,
-                    payload_json=node.payload_json,
+                    payload=_dict_to_struct(node.payload),
                     created_at=node.created_at,
                     updated_at=node.updated_at,
                     owner_actor=node.owner_actor,
-                    acl_json=node.acl_json,
+                    acl=_acl_list_to_proto(node.acl),
                 ),
             )
         except Exception as e:
@@ -391,6 +455,14 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+
+            # Wait for offset if requested (read-after-write consistency)
+            if request.after_offset:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                await self._wait_for_offset(
+                    request.context.tenant_id, request.after_offset, timeout
+                )
+
             nodes = []
             missing_ids = []
 
@@ -405,11 +477,11 @@ class EntDBServicer(EntDBServiceServicer):
                             tenant_id=node.tenant_id,
                             node_id=node.node_id,
                             type_id=node.type_id,
-                            payload_json=node.payload_json,
+                            payload=_dict_to_struct(node.payload),
                             created_at=node.created_at,
                             updated_at=node.updated_at,
                             owner_actor=node.owner_actor,
-                            acl_json=node.acl_json,
+                            acl=_acl_list_to_proto(node.acl),
                         )
                     )
                 else:
@@ -431,12 +503,17 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+
+            # Wait for offset if requested (read-after-write consistency)
+            if request.after_offset:
+                timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
+                await self._wait_for_offset(
+                    request.context.tenant_id, request.after_offset, timeout
+                )
+
             filter_dict = None
-            if request.filter_json:
-                try:
-                    filter_dict = json.loads(request.filter_json)
-                except json.JSONDecodeError:
-                    filter_dict = None
+            if request.filters:
+                filter_dict = {f.field: json_format.MessageToDict(f.value) for f in request.filters}
 
             nodes = await self.canonical_store.query_nodes(
                 tenant_id=request.context.tenant_id,
@@ -453,11 +530,11 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=n.tenant_id,
                     node_id=n.node_id,
                     type_id=n.type_id,
-                    payload_json=n.payload_json,
+                    payload=_dict_to_struct(n.payload),
                     created_at=n.created_at,
                     updated_at=n.updated_at,
                     owner_actor=n.owner_actor,
-                    acl_json=n.acl_json,
+                    acl=_acl_list_to_proto(n.acl),
                 )
                 for n in nodes
             ]
@@ -495,7 +572,7 @@ class EntDBServicer(EntDBServiceServicer):
                     edge_type_id=e.edge_type_id,
                     from_node_id=e.from_node_id,
                     to_node_id=e.to_node_id,
-                    props_json=json.dumps(e.props),
+                    props=_dict_to_struct(e.props),
                     created_at=e.created_at,
                 )
                 for e in edges[:limit]
@@ -531,7 +608,7 @@ class EntDBServicer(EntDBServiceServicer):
                     edge_type_id=e.edge_type_id,
                     from_node_id=e.from_node_id,
                     to_node_id=e.to_node_id,
-                    props_json=json.dumps(e.props),
+                    props=_dict_to_struct(e.props),
                     created_at=e.created_at,
                 )
                 for e in edges[:limit]
@@ -572,9 +649,9 @@ class EntDBServicer(EntDBServiceServicer):
                         source_node_id=r.item.source_node_id,
                         thread_id=r.item.thread_id or "",
                         ts=r.item.ts,
-                        state_json=json.dumps(r.item.state),
+                        state=_dict_to_struct(r.item.state),
                         snippet=r.item.snippet or "",
-                        metadata_json=json.dumps(r.item.metadata),
+                        metadata=_dict_to_struct(r.item.metadata),
                     ),
                     rank=r.rank,
                     highlights=r.highlights or "",
@@ -627,9 +704,9 @@ class EntDBServicer(EntDBServiceServicer):
                     source_node_id=item.source_node_id,
                     thread_id=item.thread_id or "",
                     ts=item.ts,
-                    state_json=json.dumps(item.state),
+                    state=_dict_to_struct(item.state),
                     snippet=item.snippet or "",
-                    metadata_json=json.dumps(item.metadata),
+                    metadata=_dict_to_struct(item.metadata),
                 )
                 for item in items
             ]
@@ -780,13 +857,203 @@ class EntDBServicer(EntDBServiceServicer):
 
             record_grpc_request("GetSchema", "ok", time.perf_counter() - start)
             return GetSchemaResponse(
-                schema_json=json.dumps(schema_dict),
+                schema=_dict_to_struct(schema_dict),
                 fingerprint=self.schema_registry.fingerprint or "",
             )
         except Exception as e:
             record_grpc_request("GetSchema", "error", time.perf_counter() - start)
             logger.error(f"GetSchema failed: {e}", exc_info=True)
-            return GetSchemaResponse(schema_json="{}", fingerprint="")
+            return GetSchemaResponse(fingerprint="")
+
+    # --- ACL v2 handlers ---
+
+    def _node_to_proto(self, n: Any) -> Node:
+        """Convert an internal Node to a protobuf Node message."""
+        return Node(
+            tenant_id=n.tenant_id,
+            node_id=n.node_id,
+            type_id=n.type_id,
+            payload_json=n.payload_json,
+            created_at=n.created_at,
+            updated_at=n.updated_at,
+            owner_actor=n.owner_actor,
+            acl_json=n.acl_json,
+        )
+
+    async def GetConnectedNodes(
+        self,
+        request: GetConnectedNodesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetConnectedNodesResponse:
+        """Get connected nodes via edge type with ACL filtering."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            actor_ids = await self.canonical_store.resolve_actor_groups(
+                request.context.tenant_id,
+                request.context.actor,
+            )
+            limit = request.limit or 100
+            nodes = await self.canonical_store.get_connected_nodes(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                edge_type_id=request.edge_type_id,
+                actor_ids=actor_ids,
+                limit=limit,
+                offset=request.offset or 0,
+            )
+            proto_nodes = [self._node_to_proto(n) for n in nodes]
+            record_grpc_request("GetConnectedNodes", "ok", time.perf_counter() - start)
+            return GetConnectedNodesResponse(
+                nodes=proto_nodes,
+                has_more=len(nodes) == limit,
+            )
+        except Exception as e:
+            record_grpc_request("GetConnectedNodes", "error", time.perf_counter() - start)
+            logger.error(f"GetConnectedNodes failed: {e}", exc_info=True)
+            return GetConnectedNodesResponse(nodes=[])
+
+    async def ShareNode(
+        self,
+        request: ShareNodeRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ShareNodeResponse:
+        """Share a node with an actor."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            expires_at = request.expires_at if request.expires_at else None
+            await self.canonical_store.share_node(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                actor_id=request.actor_id,
+                permission=request.permission or "read",
+                granted_by=request.context.actor,
+                actor_type=request.actor_type or "user",
+                expires_at=expires_at,
+            )
+            record_grpc_request("ShareNode", "ok", time.perf_counter() - start)
+            return ShareNodeResponse(success=True)
+        except Exception as e:
+            record_grpc_request("ShareNode", "error", time.perf_counter() - start)
+            logger.error(f"ShareNode failed: {e}", exc_info=True)
+            return ShareNodeResponse(success=False, error=str(e))
+
+    async def RevokeAccess(
+        self,
+        request: RevokeAccessRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> RevokeAccessResponse:
+        """Revoke access from a node for an actor."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            found = await self.canonical_store.revoke_access(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                actor_id=request.actor_id,
+            )
+            record_grpc_request("RevokeAccess", "ok", time.perf_counter() - start)
+            return RevokeAccessResponse(found=found)
+        except Exception as e:
+            record_grpc_request("RevokeAccess", "error", time.perf_counter() - start)
+            logger.error(f"RevokeAccess failed: {e}", exc_info=True)
+            return RevokeAccessResponse(found=False, error=str(e))
+
+    async def ListSharedWithMe(
+        self,
+        request: ListSharedWithMeRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ListSharedWithMeResponse:
+        """List nodes shared with the calling actor."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            actor_ids = await self.canonical_store.resolve_actor_groups(
+                request.context.tenant_id,
+                request.context.actor,
+            )
+            limit = request.limit or 100
+            nodes = await self.canonical_store.list_shared_with_me(
+                tenant_id=request.context.tenant_id,
+                actor_ids=actor_ids,
+                limit=limit,
+                offset=request.offset or 0,
+            )
+            proto_nodes = [self._node_to_proto(n) for n in nodes]
+            record_grpc_request("ListSharedWithMe", "ok", time.perf_counter() - start)
+            return ListSharedWithMeResponse(
+                nodes=proto_nodes,
+                has_more=len(nodes) == limit,
+            )
+        except Exception as e:
+            record_grpc_request("ListSharedWithMe", "error", time.perf_counter() - start)
+            logger.error(f"ListSharedWithMe failed: {e}", exc_info=True)
+            return ListSharedWithMeResponse(nodes=[])
+
+    async def AddGroupMember(
+        self,
+        request: GroupMemberRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GroupMemberResponse:
+        """Add a member to a group."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            await self.canonical_store.add_group_member(
+                tenant_id=request.context.tenant_id,
+                group_id=request.group_id,
+                member_actor_id=request.member_actor_id,
+                role=request.role or "member",
+            )
+            record_grpc_request("AddGroupMember", "ok", time.perf_counter() - start)
+            return GroupMemberResponse(success=True)
+        except Exception as e:
+            record_grpc_request("AddGroupMember", "error", time.perf_counter() - start)
+            logger.error(f"AddGroupMember failed: {e}", exc_info=True)
+            return GroupMemberResponse(success=False, error=str(e))
+
+    async def RemoveGroupMember(
+        self,
+        request: GroupMemberRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GroupMemberResponse:
+        """Remove a member from a group."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            found = await self.canonical_store.remove_group_member(
+                tenant_id=request.context.tenant_id,
+                group_id=request.group_id,
+                member_actor_id=request.member_actor_id,
+            )
+            record_grpc_request("RemoveGroupMember", "ok", time.perf_counter() - start)
+            return GroupMemberResponse(success=found)
+        except Exception as e:
+            record_grpc_request("RemoveGroupMember", "error", time.perf_counter() - start)
+            logger.error(f"RemoveGroupMember failed: {e}", exc_info=True)
+            return GroupMemberResponse(success=False, error=str(e))
+
+    async def TransferOwnership(
+        self,
+        request: TransferOwnershipRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> TransferOwnershipResponse:
+        """Transfer ownership of a node."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.context.tenant_id, context)
+            found = await self.canonical_store.transfer_ownership(
+                tenant_id=request.context.tenant_id,
+                node_id=request.node_id,
+                new_owner=request.new_owner,
+            )
+            record_grpc_request("TransferOwnership", "ok", time.perf_counter() - start)
+            return TransferOwnershipResponse(found=found)
+        except Exception as e:
+            record_grpc_request("TransferOwnership", "error", time.perf_counter() - start)
+            logger.error(f"TransferOwnership failed: {e}", exc_info=True)
+            return TransferOwnershipResponse(found=False, error=str(e))
 
 
 class GrpcServer:

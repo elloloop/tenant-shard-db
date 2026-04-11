@@ -1,0 +1,52 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="WAL Backends">
+  <h1>WAL Backends</h1>
+  <p>EntDB supports 7 WAL backends. The WAL is the write-ahead log where all events are durably stored before being applied to SQLite.</p>
+
+  <h2>Backend Options</h2>
+  <table>
+    <tr><th>Backend</th><th>Environment</th><th>Config</th></tr>
+    <tr><td>Kafka / Redpanda</td><td>Production</td><td><code>WAL_BACKEND=kafka</code></td></tr>
+    <tr><td>AWS Kinesis</td><td>Production (AWS)</td><td><code>WAL_BACKEND=kinesis</code></td></tr>
+    <tr><td>Google Pub/Sub</td><td>Production (GCP)</td><td><code>WAL_BACKEND=pubsub</code></td></tr>
+    <tr><td>AWS SQS</td><td>Production (AWS)</td><td><code>WAL_BACKEND=sqs</code></td></tr>
+    <tr><td>Azure Service Bus</td><td>Production (Azure)</td><td><code>WAL_BACKEND=servicebus</code></td></tr>
+    <tr><td>Azure Event Hubs</td><td>Production (Azure)</td><td><code>WAL_BACKEND=eventhubs</code></td></tr>
+    <tr><td>Local (in-memory)</td><td>Development</td><td><code>WAL_BACKEND=local</code></td></tr>
+  </table>
+
+  <h2>Kafka (Recommended)</h2>
+  <pre><code># Environment variables
+WAL_BACKEND=kafka
+KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+KAFKA_TOPIC=entdb-events
+KAFKA_CONSUMER_GROUP=entdb-applier
+KAFKA_REPLICATION_FACTOR=3
+KAFKA_NUM_PARTITIONS=6</code></pre>
+
+  <h2>Local (Development)</h2>
+  <pre><code># No external dependencies — events stay in memory
+WAL_BACKEND=local
+
+# Data is lost on restart. Use only for development.</code></pre>
+
+  <h2>Disabling WAL</h2>
+  <p>Set <code>WAL_BACKEND=local</code> to use the in-memory WAL. By extension, this also disables durable storage (S3/R2/etc.) since there's nothing to archive.</p>
+
+  <h2>Multi-Tenant Partitioning</h2>
+  <p>All tenants share a single WAL topic, partitioned by <code>tenant_id</code>. This ensures events for the same tenant are ordered and processed sequentially:</p>
+  <pre><code># Kafka topic: entdb-events
+# Partition key: tenant_id
+# Result: events for tenant "acme" always go to the same partition</code></pre>
+
+  <h2>Swapping Backends</h2>
+  <p>All backends implement the same <code>WalStream</code> protocol. Swapping is a config change:</p>
+  <pre><code># Switch from Kafka to Kinesis
+WAL_BACKEND=kinesis
+KINESIS_STREAM_NAME=entdb-events
+AWS_REGION=us-east-1</code></pre>
+  <p>No code changes needed. The applier consumes from whatever backend is configured.</p>
+</DocsLayout>

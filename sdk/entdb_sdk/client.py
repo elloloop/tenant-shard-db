@@ -20,7 +20,6 @@ Invariants:
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -160,8 +159,7 @@ class Plan:
         """Raise if this Plan has already been committed."""
         if self._committed:
             raise RuntimeError(
-                "Plan has already been committed. Create a new Plan for "
-                "additional operations."
+                "Plan has already been committed. Create a new Plan for additional operations."
             )
 
     def create(
@@ -213,12 +211,12 @@ class Plan:
         op: dict[str, Any] = {
             "create_node": {
                 "type_id": node_type.type_id,
-                "data_json": json.dumps(payload),
+                "data": payload,
             }
         }
 
         if acl:
-            op["create_node"]["acl_json"] = json.dumps(acl)
+            op["create_node"]["acl"] = acl
         if as_:
             op["create_node"]["as"] = as_
         if fanout_to:
@@ -252,7 +250,7 @@ class Plan:
             "update_node": {
                 "type_id": node_type.type_id,
                 "id": node_id,
-                "patch_json": json.dumps(patch),
+                "patch": patch,
             }
         }
 
@@ -323,7 +321,7 @@ class Plan:
         }
 
         if props:
-            op["create_edge"]["props_json"] = json.dumps(props)
+            op["create_edge"]["props"] = props
 
         self._operations.append(op)
         return self
@@ -384,8 +382,7 @@ class Plan:
         """
         if self._committed:
             raise RuntimeError(
-                "Plan has already been committed. Create a new Plan for "
-                "additional operations."
+                "Plan has already been committed. Create a new Plan for additional operations."
             )
 
         if not self._operations:
@@ -520,6 +517,38 @@ class DbClient:
         self._ensure_connected()
         return Plan(self, tenant_id, actor, idempotency_key, trace_id=trace_id)
 
+    async def wait_for_offset(
+        self,
+        tenant_id: str,
+        stream_position: str,
+        timeout_ms: int = 30000,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[bool, str]:
+        """Wait for a stream position to be applied.
+
+        Args:
+            tenant_id: Tenant identifier
+            stream_position: Target stream position string
+            timeout_ms: Server-side wait timeout in milliseconds
+            trace_id: Optional trace ID
+            timeout: Per-call gRPC timeout in seconds
+
+        Returns:
+            Tuple of (reached, current_position)
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.wait_for_offset(
+            tenant_id=tenant_id,
+            stream_position=stream_position,
+            timeout_ms=timeout_ms,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
     async def get(
         self,
         node_type: NodeTypeDef,
@@ -527,6 +556,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
+        after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
@@ -537,6 +567,7 @@ class DbClient:
             node_id: Node identifier
             tenant_id: Tenant identifier
             actor: Actor making request
+            after_offset: Wait for this stream position before reading
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -551,6 +582,8 @@ class DbClient:
             actor=actor,
             type_id=node_type.type_id,
             node_id=node_id,
+            after_offset=after_offset,
+            wait_timeout_ms=30000 if after_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -576,6 +609,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
+        after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> tuple[list[Node], list[str]]:
@@ -586,6 +620,7 @@ class DbClient:
             node_ids: Node identifiers
             tenant_id: Tenant identifier
             actor: Actor making request
+            after_offset: Wait for this stream position before reading
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -600,6 +635,8 @@ class DbClient:
             actor=actor,
             type_id=node_type.type_id,
             node_ids=node_ids,
+            after_offset=after_offset,
+            wait_timeout_ms=30000 if after_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -631,6 +668,7 @@ class DbClient:
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
+        after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -645,6 +683,7 @@ class DbClient:
             offset: Pagination offset
             order_by: Field to order results by
             descending: Whether to sort in descending order
+            after_offset: Wait for this stream position before reading
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -660,9 +699,11 @@ class DbClient:
             type_id=node_type.type_id,
             limit=limit,
             offset=offset,
-            filter_json=json.dumps(filter) if filter else "",
+            filter=filter or {},
             order_by=order_by,
             descending=descending,
+            after_offset=after_offset,
+            wait_timeout_ms=30000 if after_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -894,6 +935,299 @@ class DbClient:
             receipt=receipt,
             created_node_ids=result.created_node_ids,
             applied=result.applied,
+        )
+
+    # --- ACL v2 methods ---
+
+    async def connected(
+        self,
+        node_id: str,
+        edge_type: EdgeTypeDef,
+        tenant_id: str,
+        actor: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """Get connected nodes via edge type with ACL filtering.
+
+        Args:
+            node_id: Source node ID
+            edge_type: Edge type to traverse
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of connected nodes the actor can see
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        grpc_nodes, _ = await self._grpc.get_connected_nodes(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=node_id,
+            edge_type_id=edge_type.edge_id,
+            limit=limit,
+            offset=offset,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+        return [
+            Node(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=n.payload,
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=n.acl,
+            )
+            for n in grpc_nodes
+        ]
+
+    async def share(
+        self,
+        node_id: str,
+        actor_id: str,
+        tenant_id: str,
+        actor: str,
+        permission: str = "read",
+        *,
+        actor_type: str = "user",
+        expires_at: int | None = None,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> bool:
+        """Share a node with an actor.
+
+        Args:
+            node_id: Node to share
+            actor_id: Actor to share with
+            tenant_id: Tenant identifier
+            actor: Actor performing the share (granted_by)
+            permission: Permission level (read, write, admin)
+            actor_type: Type of the target actor (user, group)
+            expires_at: Optional expiry timestamp (Unix ms)
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if successful
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.share_node(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=node_id,
+            actor_id=actor_id,
+            permission=permission,
+            actor_type=actor_type,
+            expires_at=expires_at,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+    async def revoke(
+        self,
+        node_id: str,
+        actor_id: str,
+        tenant_id: str,
+        actor: str,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> bool:
+        """Revoke access from an actor on a node.
+
+        Args:
+            node_id: Node to revoke access from
+            actor_id: Actor to revoke
+            tenant_id: Tenant identifier
+            actor: Actor performing the revocation
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if a grant existed and was removed
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.revoke_access(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=node_id,
+            actor_id=actor_id,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+    async def shared_with_me(
+        self,
+        tenant_id: str,
+        actor: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """List nodes shared with the calling actor.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of shared nodes
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        grpc_nodes, _ = await self._grpc.list_shared_with_me(
+            tenant_id=tenant_id,
+            actor=actor,
+            limit=limit,
+            offset=offset,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+        return [
+            Node(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=n.payload,
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=n.acl,
+            )
+            for n in grpc_nodes
+        ]
+
+    async def group_add(
+        self,
+        group_id: str,
+        member_actor_id: str,
+        tenant_id: str,
+        actor: str,
+        role: str = "member",
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> bool:
+        """Add a member to a group.
+
+        Args:
+            group_id: Group to add member to
+            member_actor_id: Actor to add
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            role: Role in the group
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if successful
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.add_group_member(
+            tenant_id=tenant_id,
+            actor=actor,
+            group_id=group_id,
+            member_actor_id=member_actor_id,
+            role=role,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+    async def group_remove(
+        self,
+        group_id: str,
+        member_actor_id: str,
+        tenant_id: str,
+        actor: str,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> bool:
+        """Remove a member from a group.
+
+        Args:
+            group_id: Group to remove member from
+            member_actor_id: Actor to remove
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if member existed and was removed
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.remove_group_member(
+            tenant_id=tenant_id,
+            actor=actor,
+            group_id=group_id,
+            member_actor_id=member_actor_id,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+    async def transfer_ownership(
+        self,
+        node_id: str,
+        new_owner: str,
+        tenant_id: str,
+        actor: str,
+        *,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> bool:
+        """Transfer ownership of a node.
+
+        Args:
+            node_id: Node to transfer
+            new_owner: New owner actor
+            tenant_id: Tenant identifier
+            actor: Actor performing the transfer
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if node existed and ownership was transferred
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.transfer_ownership(
+            tenant_id=tenant_id,
+            actor=actor,
+            node_id=node_id,
+            new_owner=new_owner,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
     async def get_receipt_status(
