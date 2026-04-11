@@ -275,7 +275,7 @@ def _check_node_type_diff(old_node: dict, new_node: dict) -> list[SchemaChange]:
                 path=path_prefix,
                 old_value=old_acl,
                 new_value=new_acl,
-                message=f"acl_defaults changed — only affects newly created nodes",
+                message="acl_defaults changed — only affects newly created nodes",
             )
         )
 

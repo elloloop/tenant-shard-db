@@ -13,7 +13,6 @@ Fix: Record the metric with status="error" so monitoring alerts fire.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 from google.protobuf.struct_pb2 import Struct
 
 from dbaas.entdb_server.api.generated import (

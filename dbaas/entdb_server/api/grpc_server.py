@@ -18,7 +18,6 @@ How to change safely:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -39,6 +38,9 @@ from .generated import (
     # Request/Response types
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    # ACL v2
+    GetConnectedNodesRequest,
+    GetConnectedNodesResponse,
     GetEdgesRequest,
     GetEdgesResponse,
     GetMailboxRequest,
@@ -51,10 +53,14 @@ from .generated import (
     GetReceiptStatusResponse,
     GetSchemaRequest,
     GetSchemaResponse,
+    GroupMemberRequest,
+    GroupMemberResponse,
     HealthRequest,
     HealthResponse,
     ListMailboxUsersRequest,
     ListMailboxUsersResponse,
+    ListSharedWithMeRequest,
+    ListSharedWithMeResponse,
     ListTenantsRequest,
     ListTenantsResponse,
     MailboxItem,
@@ -65,25 +71,18 @@ from .generated import (
     # Data types
     Receipt,
     ReceiptStatus,
+    RevokeAccessRequest,
+    RevokeAccessResponse,
     SearchMailboxRequest,
     SearchMailboxResponse,
+    ShareNodeRequest,
+    ShareNodeResponse,
     TenantInfo,
+    TransferOwnershipRequest,
+    TransferOwnershipResponse,
     WaitForOffsetRequest,
     WaitForOffsetResponse,
     add_EntDBServiceServicer_to_server,
-    # ACL v2
-    GetConnectedNodesRequest,
-    GetConnectedNodesResponse,
-    ShareNodeRequest,
-    ShareNodeResponse,
-    RevokeAccessRequest,
-    RevokeAccessResponse,
-    ListSharedWithMeRequest,
-    ListSharedWithMeResponse,
-    GroupMemberRequest,
-    GroupMemberResponse,
-    TransferOwnershipRequest,
-    TransferOwnershipResponse,
 )
 
 if TYPE_CHECKING:

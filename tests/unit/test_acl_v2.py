@@ -18,7 +18,6 @@ Covers:
 - Compat checker: propagate_share + acl_defaults changes
 """
 
-import json
 import time
 
 import pytest
@@ -33,9 +32,7 @@ from dbaas.entdb_server.schema.registry import SchemaRegistry
 from sdk.entdb_sdk.schema import (
     AclDefaults,
     EdgeTypeDef,
-    FieldKind,
     NodeTypeDef,
-    field,
 )
 
 TENANT = "test_tenant"

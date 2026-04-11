@@ -9,7 +9,6 @@ Tests cover:
 """
 
 import asyncio
-import tempfile
 
 import pytest
 
@@ -18,7 +17,6 @@ from dbaas.entdb_server.apply.canonical_store import (
     _compare_stream_pos,
     _parse_stream_offset,
 )
-
 
 # ── Stream position parsing / comparison ──────────────────────────────
 

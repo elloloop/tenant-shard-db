@@ -13,14 +13,12 @@ Run:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 
 import pytest
 
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore, Node
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -21,10 +21,11 @@ from __future__ import annotations
 import json
 import time
 
-import pytest
-
-from dbaas.entdb_server.wal.base import StreamPos, StreamRecord
-from dbaas.entdb_server.wal.base import _SENTINEL  # noqa: F401  -- cache reset marker
+from dbaas.entdb_server.wal.base import (
+    _SENTINEL,  # noqa: F401  -- cache reset marker
+    StreamPos,
+    StreamRecord,
+)
 
 
 def _make_record(payload_size: int = 10) -> StreamRecord:
