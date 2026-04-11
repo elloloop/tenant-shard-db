@@ -52,7 +52,12 @@ for dir in "$SERVER_OUT" "$SDK_OUT"; do
     fi
 done
 
-# Create __init__.py files
+# Note: __init__.py files are maintained manually to track proto message exports.
+# The generate script only regenerates the _pb2 and _pb2_grpc files.
+# If you add new messages to the proto, update __init__.py files manually.
+
+# Create __init__.py files (only if they don't exist)
+if [ ! -f "$SERVER_OUT/__init__.py" ]; then
 cat > "$SERVER_OUT/__init__.py" << 'EOF'
 # mypy: ignore-errors
 """Generated protobuf code for EntDB server.
@@ -184,7 +189,9 @@ __all__ = [
     "add_EntDBServiceServicer_to_server",
 ]
 EOF
+fi
 
+if [ ! -f "$SDK_OUT/__init__.py" ]; then
 cat > "$SDK_OUT/__init__.py" << 'EOF'
 # mypy: ignore-errors
 """Generated protobuf code for EntDB SDK.
@@ -302,6 +309,7 @@ __all__ = [
     "EntDBServiceStub",
 ]
 EOF
+fi
 
 echo "Done! Generated files:"
 ls -la "$SERVER_OUT"
