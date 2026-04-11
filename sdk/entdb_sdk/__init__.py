@@ -50,6 +50,7 @@ from .registry import (
     register_node_type,
 )
 from .schema import (
+    AclDefaults,
     EdgeTypeDef,
     FieldDef,
     FieldKind,
@@ -61,6 +62,7 @@ __all__ = [
     # Version
     "__version__",
     # Schema types
+    "AclDefaults",
     "NodeTypeDef",
     "EdgeTypeDef",
     "FieldDef",

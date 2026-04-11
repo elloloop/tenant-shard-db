@@ -268,6 +268,12 @@ class Applier:
             result = await self._process_record(record)
             self._log_result(result)
 
+            # Notify offset waiters
+            if result.success and not result.skipped and record.position is not None:
+                await self.canonical_store.update_applied_offset(
+                    result.event.tenant_id, str(record.position)
+                )
+
             # Commit the position
             await self.wal.commit(record)
             self._last_position = record.position
@@ -439,19 +445,43 @@ class Applier:
                         from_ref = self._resolve_node_ref(op["from"])
                         to_ref = self._resolve_node_ref(op["to"])
                         props = op.get("props", {})
+                        propagates_acl = 1 if op.get("propagates_acl", False) else 0
                         conn.execute(
                             "INSERT OR REPLACE INTO edges "
-                            "(tenant_id, edge_type_id, from_node_id, to_node_id, props_json, created_at) "
-                            "VALUES (?, ?, ?, ?, ?, ?)",
+                            "(tenant_id, edge_type_id, from_node_id, to_node_id, "
+                            "props_json, propagates_acl, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (
                                 tenant_id,
                                 edge_type_id,
                                 from_ref,
                                 to_ref,
                                 json.dumps(props),
+                                propagates_acl,
                                 event.ts_ms,
                             ),
                         )
+                        if propagates_acl:
+                            cycle = conn.execute(
+                                """
+                                WITH RECURSIVE chain(nid, depth) AS (
+                                    SELECT ?, 0
+                                    UNION ALL
+                                    SELECT ai.inherit_from, c.depth + 1
+                                    FROM acl_inherit ai
+                                    JOIN chain c ON ai.node_id = c.nid
+                                    WHERE c.depth < 10
+                                )
+                                SELECT 1 FROM chain WHERE nid = ? LIMIT 1
+                                """,
+                                (from_ref, to_ref),
+                            ).fetchone()
+                            if not cycle:
+                                conn.execute(
+                                    "INSERT OR IGNORE INTO acl_inherit "
+                                    "(node_id, inherit_from) VALUES (?, ?)",
+                                    (to_ref, from_ref),
+                                )
                     elif op_type == "delete_edge":
                         edge_type_id = op["edge_id"]
                         from_ref = self._resolve_node_ref(op["from"])
@@ -460,6 +490,10 @@ class Applier:
                             "DELETE FROM edges WHERE tenant_id = ? AND edge_type_id = ? "
                             "AND from_node_id = ? AND to_node_id = ?",
                             (tenant_id, edge_type_id, from_ref, to_ref),
+                        )
+                        conn.execute(
+                            "DELETE FROM acl_inherit WHERE node_id = ? AND inherit_from = ?",
+                            (to_ref, from_ref),
                         )
 
                 # Record applied event within the same transaction
@@ -474,6 +508,12 @@ class Applier:
 
         self._processed_count += applied_count
         if applied_count > 0:
+            # Notify offset waiters with the latest stream position
+            last_record = items[-1][0]
+            if last_record.position is not None:
+                await self.canonical_store.update_applied_offset(
+                    tenant_id, str(last_record.position)
+                )
             logger.debug(
                 "Batch applied",
                 extra={
@@ -628,19 +668,46 @@ class Applier:
                         from_ref = self._resolve_node_ref(op["from"])
                         to_ref = self._resolve_node_ref(op["to"])
                         props = op.get("props", {})
+                        propagates_acl = 1 if op.get("propagates_acl", False) else 0
                         conn.execute(
                             "INSERT OR REPLACE INTO edges "
                             "(tenant_id, edge_type_id, from_node_id, to_node_id, "
-                            "props_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                            "props_json, propagates_acl, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
                             (
                                 tenant_id,
                                 edge_type_id,
                                 from_ref,
                                 to_ref,
                                 json.dumps(props),
+                                propagates_acl,
                                 event.ts_ms,
                             ),
                         )
+                        # Create ACL inheritance pointer if edge propagates
+                        if propagates_acl:
+                            # Cycle detection: check if from_ref already
+                            # inherits from to_ref
+                            cycle = conn.execute(
+                                """
+                                WITH RECURSIVE chain(nid, depth) AS (
+                                    SELECT ?, 0
+                                    UNION ALL
+                                    SELECT ai.inherit_from, c.depth + 1
+                                    FROM acl_inherit ai
+                                    JOIN chain c ON ai.node_id = c.nid
+                                    WHERE c.depth < 10
+                                )
+                                SELECT 1 FROM chain WHERE nid = ? LIMIT 1
+                                """,
+                                (from_ref, to_ref),
+                            ).fetchone()
+                            if not cycle:
+                                conn.execute(
+                                    "INSERT OR IGNORE INTO acl_inherit "
+                                    "(node_id, inherit_from) VALUES (?, ?)",
+                                    (to_ref, from_ref),
+                                )
                         created_edges.append((edge_type_id, from_ref, to_ref))
 
                     elif op_type == "delete_edge":
@@ -652,6 +719,11 @@ class Applier:
                             "AND edge_type_id = ? AND from_node_id = ? "
                             "AND to_node_id = ?",
                             (tenant_id, edge_type_id, from_ref, to_ref),
+                        )
+                        # Clean up ACL inheritance pointer
+                        conn.execute(
+                            "DELETE FROM acl_inherit WHERE node_id = ? AND inherit_from = ?",
+                            (to_ref, from_ref),
                         )
 
                     else:

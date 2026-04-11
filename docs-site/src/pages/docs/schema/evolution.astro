@@ -1,0 +1,114 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Schema Evolution">
+  <h1>Schema Evolution</h1>
+  <p>EntDB schemas evolve safely over time. The SDK enforces protobuf-like compatibility rules &mdash; you can always add, never remove.</p>
+
+  <h2>The Lifecycle</h2>
+
+  <h3>Day 1: Initial Schema</h3>
+  <pre><code># schema.py — your first release
+Task = NodeTypeDef(type_id=1, name="Task", fields=(
+    field(1, "title", "str", required=True),
+    field(2, "status", "enum", enum_values=("todo", "done")),
+))
+
+# Generate baseline snapshot
+$ entdb init
+# Commit .entdb/snapshot.json to git</code></pre>
+
+  <h3>Week 2: Add a Field</h3>
+  <p><span class="badge badge-new">non-breaking</span> Adding a new field with a new <code>field_id</code> is always safe:</p>
+  <pre><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(
+    field(1, "title", "str", required=True),
+    field(2, "status", "enum", enum_values=("todo", "done")),
+    field(3, "priority", "int", default=0),  # NEW
+))
+
+$ entdb check
+Schema compatible: 1 non-breaking change
+  [OK] FIELD_ADDED: NodeType:Task.field:priority — added</code></pre>
+
+  <h3>Month 2: Add Enum Values</h3>
+  <p><span class="badge badge-new">non-breaking</span> Appending new enum values is safe:</p>
+  <pre><code>field(2, "status", "enum", enum_values=("todo", "in_progress", "done", "archived"))</code></pre>
+
+  <h3>Month 3: Add a New Type</h3>
+  <p><span class="badge badge-new">non-breaking</span> New node types and edge types are always safe:</p>
+  <pre><code>Subtask = NodeTypeDef(type_id=3, name="Subtask", fields=(
+    field(1, "title", "str", required=True),
+))
+
+HasSubtask = EdgeTypeDef(edge_id=3, name="HasSubtask",
+    from_type=Task, to_type=Subtask,
+    propagate_share=True)</code></pre>
+
+  <h3>Month 6: Deprecate a Field</h3>
+  <p><span class="badge badge-new">non-breaking</span> Deprecation is allowed. The field stays in the schema but is flagged:</p>
+  <pre><code>field(3, "priority", "int", default=0, deprecated=True)</code></pre>
+
+  <h3>Month 12: Add ACL Defaults</h3>
+  <p><span class="badge badge-new">non-breaking</span> Changing <code>acl_defaults</code> only affects newly created nodes:</p>
+  <pre><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(...),
+    acl_defaults=AclDefaults(tenant_visible=False))  # changed from True</code></pre>
+
+  <h2>Breaking Changes</h2>
+  <p>These changes are <strong>rejected by <code>entdb check</code></strong> and will fail CI:</p>
+
+  <table>
+    <tr><th>Change</th><th>Why it breaks</th></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Remove a type</td><td>Existing data has this type_id</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Remove a field</td><td>Existing payloads may have this field</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Change a field's kind</td><td>Existing data has the old type</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Reuse a type_id or field_id</td><td>Collides with deprecated data</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Remove enum values</td><td>Existing data may have removed value</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Make optional field required</td><td>Existing nodes don't have it</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Change propagate_share</td><td>Affects ACL inheritance chain</td></tr>
+    <tr><td><span class="badge badge-breaking">breaking</span> Change from_type / to_type</td><td>Existing edges reference old types</td></tr>
+  </table>
+
+  <h2>CI Integration</h2>
+
+  <h3>Setup</h3>
+  <pre><code># pyproject.toml
+[tool.entdb]
+schema = "myapp.schema"
+snapshot = ".entdb/snapshot.json"</code></pre>
+
+  <h3>CI Pipeline</h3>
+  <pre><code># .github/workflows/ci.yml
+- name: Schema compatibility check
+  run: entdb check</code></pre>
+
+  <h3>Local Development</h3>
+  <pre><code># Check before commit
+$ entdb check
+
+# See what changed
+$ entdb diff
+
+# After intentional breaking change (rare, requires migration)
+$ entdb snapshot --update</code></pre>
+
+  <h3>Automatic Test Validation</h3>
+  <p>If <code>entdb-sdk</code> is installed, the pytest plugin automatically validates schema compatibility on every test run. No configuration needed.</p>
+
+  <h2>Fingerprinting</h2>
+  <p>The schema registry generates a SHA-256 fingerprint from the canonical schema. The server compares this fingerprint on every write:</p>
+  <pre><code># If fingerprint doesn't match, the server rejects the write
+ExecuteAtomicResponse(
+    success=False,
+    error="Schema fingerprint mismatch: client=sha256:abc..., server=sha256:def..."
+)</code></pre>
+  <p>This prevents deploying code with an incompatible schema.</p>
+
+  <h2>Migration Strategies</h2>
+  <p>For the rare case where you need a breaking change:</p>
+  <ol>
+    <li><strong>Parallel types</strong>: Create a new type (TaskV2) alongside the old one, migrate data</li>
+    <li><strong>Soft migration</strong>: Add new fields, populate them, deprecate old fields</li>
+    <li><strong>Schema version bump</strong>: Update <code>entdb snapshot --update</code>, deploy new server first, then clients</li>
+  </ol>
+</DocsLayout>

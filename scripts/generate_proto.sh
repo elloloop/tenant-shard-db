@@ -61,6 +61,7 @@ Do not edit manually - regenerate with scripts/generate_proto.sh
 """
 
 from .entdb_pb2 import (
+    AclEntry,
     CreateEdgeOp,
     CreateNodeOp,
     DeleteEdgeOp,
@@ -69,6 +70,8 @@ from .entdb_pb2 import (
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    FieldFilter,
+    FilterOp,
     # Edges
     GetEdgesRequest,
     GetEdgesResponse,
@@ -109,6 +112,9 @@ from .entdb_pb2 import (
     TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
+    # Wait for offset
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -131,6 +137,10 @@ __all__ = [
     "DeleteEdgeOp",
     "NodeRef",
     "TypedNodeRef",
+    # ACL and filter types
+    "AclEntry",
+    "FieldFilter",
+    "FilterOp",
     # Receipt
     "GetReceiptStatusRequest",
     "GetReceiptStatusResponse",
@@ -165,6 +175,9 @@ __all__ = [
     "TenantInfo",
     "ListMailboxUsersRequest",
     "ListMailboxUsersResponse",
+    # Wait for offset
+    "WaitForOffsetRequest",
+    "WaitForOffsetResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",
@@ -182,6 +195,7 @@ This module is internal to the SDK. Users should not import from here.
 """
 
 from .entdb_pb2 import (
+    AclEntry,
     CreateEdgeOp,
     CreateNodeOp,
     DeleteEdgeOp,
@@ -190,6 +204,8 @@ from .entdb_pb2 import (
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    FieldFilter,
+    FilterOp,
     # Edges
     GetEdgesRequest,
     GetEdgesResponse,
@@ -230,6 +246,9 @@ from .entdb_pb2 import (
     TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
+    # Wait for offset
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 
@@ -246,6 +265,9 @@ __all__ = [
     "DeleteEdgeOp",
     "NodeRef",
     "TypedNodeRef",
+    "AclEntry",
+    "FieldFilter",
+    "FilterOp",
     "GetReceiptStatusRequest",
     "GetReceiptStatusResponse",
     "ReceiptStatus",
@@ -274,6 +296,9 @@ __all__ = [
     "TenantInfo",
     "ListMailboxUsersRequest",
     "ListMailboxUsersResponse",
+    # Wait for offset
+    "WaitForOffsetRequest",
+    "WaitForOffsetResponse",
     "EntDBServiceStub",
 ]
 EOF

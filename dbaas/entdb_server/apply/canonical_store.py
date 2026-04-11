@@ -78,6 +78,28 @@ from ..metrics import record_sqlite_op as _record_sqlite_op
 logger = logging.getLogger(__name__)
 
 
+def _parse_stream_offset(pos: str) -> int:
+    """Extract the numeric offset from a stream position string.
+
+    Stream positions have the format "topic:partition:offset" (from StreamPos.__str__).
+    If the string is a plain integer, parse it directly.
+    """
+    parts = pos.rsplit(":", 1)
+    try:
+        return int(parts[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+def _compare_stream_pos(a: str, b: str) -> int:
+    """Compare two stream position strings by their numeric offset.
+
+    Returns:
+        Positive if a > b, negative if a < b, zero if equal.
+    """
+    return _parse_stream_offset(a) - _parse_stream_offset(b)
+
+
 class TenantNotFoundError(Exception):
     """Tenant database does not exist."""
 
@@ -316,6 +338,76 @@ class CanonicalStore:
 
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entdb-sqlite")
 
+        # Offset tracking for read-after-write consistency.
+        # Updated by the applier after each batch; read RPCs can wait on these.
+        self._applied_offsets: dict[str, str] = {}
+        self._offset_conditions: dict[str, asyncio.Condition] = {}
+
+    # ── offset tracking (read-after-write consistency) ──────────────────
+
+    def _get_offset_condition(self, tenant_id: str) -> asyncio.Condition:
+        """Get or create an asyncio.Condition for a tenant's offset notifications."""
+        cond = self._offset_conditions.get(tenant_id)
+        if cond is None:
+            cond = asyncio.Condition()
+            self._offset_conditions[tenant_id] = cond
+        return cond
+
+    async def update_applied_offset(self, tenant_id: str, stream_pos: str) -> None:
+        """Record the latest applied stream position for a tenant.
+
+        Called by the applier after successfully applying a batch.
+        Notifies all waiters via the Condition.
+
+        Args:
+            tenant_id: Tenant identifier
+            stream_pos: Stream position string (e.g. "topic:0:5")
+        """
+        cond = self._get_offset_condition(tenant_id)
+        async with cond:
+            self._applied_offsets[tenant_id] = stream_pos
+            cond.notify_all()
+
+    async def wait_for_offset(
+        self,
+        tenant_id: str,
+        target_pos: str,
+        timeout: float = 30.0,
+    ) -> bool:
+        """Wait until the applied offset for *tenant_id* reaches *target_pos*.
+
+        Uses an asyncio.Condition so the caller sleeps efficiently instead of
+        polling.
+
+        Args:
+            tenant_id: Tenant identifier
+            target_pos: Stream position to wait for
+            timeout: Maximum seconds to wait
+
+        Returns:
+            True if the target position was reached, False on timeout.
+        """
+        cond = self._get_offset_condition(tenant_id)
+
+        def _reached() -> bool:
+            current = self._applied_offsets.get(tenant_id)
+            if current is None:
+                return False
+            return _compare_stream_pos(current, target_pos) >= 0
+
+        async with cond:
+            try:
+                return await asyncio.wait_for(
+                    cond.wait_for(_reached),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return False
+
+    def get_applied_offset(self, tenant_id: str) -> str | None:
+        """Return the latest applied offset for a tenant (or None)."""
+        return self._applied_offsets.get(tenant_id)
+
     # Pre-computed op-type cache: avoids repeated string-in-name checks
     # on every _run_sync call.  Populated lazily per function object.
     _op_type_cache: dict[Callable, str] = {}
@@ -439,6 +531,7 @@ class CanonicalStore:
                 from_node_id TEXT NOT NULL,
                 to_node_id TEXT NOT NULL,
                 props_json TEXT NOT NULL DEFAULT '{}',
+                propagates_acl INTEGER NOT NULL DEFAULT 0,
                 created_at INTEGER NOT NULL,
                 PRIMARY KEY (tenant_id, edge_type_id, from_node_id, to_node_id)
             );
@@ -469,6 +562,43 @@ class CanonicalStore:
 
             CREATE INDEX IF NOT EXISTS idx_applied_events_key
                 ON applied_events(tenant_id, idempotency_key);
+
+            -- ACL: direct grants (who has explicit access to a node)
+            CREATE TABLE IF NOT EXISTS node_access (
+                node_id     TEXT NOT NULL,
+                actor_id    TEXT NOT NULL,
+                actor_type  TEXT NOT NULL DEFAULT 'user',
+                permission  TEXT NOT NULL,
+                granted_by  TEXT NOT NULL,
+                granted_at  INTEGER NOT NULL,
+                expires_at  INTEGER DEFAULT NULL,
+                PRIMARY KEY (node_id, actor_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_access_actor
+                ON node_access(actor_id, node_id);
+
+            -- ACL: group membership (supports nested groups)
+            CREATE TABLE IF NOT EXISTS group_users (
+                group_id         TEXT NOT NULL,
+                member_actor_id  TEXT NOT NULL,
+                role             TEXT NOT NULL DEFAULT 'member',
+                joined_at        INTEGER NOT NULL,
+                PRIMARY KEY (group_id, member_actor_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_group_users_member
+                ON group_users(member_actor_id);
+
+            -- ACL: inheritance pointers (structural parent for permission)
+            CREATE TABLE IF NOT EXISTS acl_inherit (
+                node_id      TEXT NOT NULL,
+                inherit_from TEXT NOT NULL,
+                PRIMARY KEY (node_id, inherit_from)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_inherit_from
+                ON acl_inherit(inherit_from);
 
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
@@ -1134,13 +1264,15 @@ class CanonicalStore:
         to_node_id: str,
         props: dict[str, Any],
         now: int,
+        propagates_acl: bool = False,
     ) -> Edge:
         with self._get_connection(tenant_id) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO edges
-                (tenant_id, edge_type_id, from_node_id, to_node_id, props_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (tenant_id, edge_type_id, from_node_id, to_node_id, props_json,
+                 propagates_acl, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     tenant_id,
@@ -1148,6 +1280,7 @@ class CanonicalStore:
                     from_node_id,
                     to_node_id,
                     json.dumps(props),
+                    1 if propagates_acl else 0,
                     now,
                 ),
             )
@@ -1179,6 +1312,7 @@ class CanonicalStore:
         to_node_id: str,
         props: dict[str, Any] | None = None,
         created_at: int | None = None,
+        propagates_acl: bool = False,
     ) -> Edge:
         """Create an edge between nodes.
 
@@ -1189,6 +1323,7 @@ class CanonicalStore:
             to_node_id: Target node ID
             props: Edge properties
             created_at: Optional creation timestamp
+            propagates_acl: Whether this edge propagates ACL inheritance
 
         Returns:
             Created Edge object
@@ -1204,6 +1339,7 @@ class CanonicalStore:
             to_node_id,
             props,
             now,
+            propagates_acl,
         )
 
     # ── delete_edge ────────────────────────────────────────────────────
@@ -1466,6 +1602,560 @@ class CanonicalStore:
                     "INSERT OR IGNORE INTO node_visibility (tenant_id, node_id, principal) VALUES (?, ?, ?)",
                     (tenant_id, node_id, principal),
                 )
+
+    # ── ACL Engine ─────────────────────────────────────────────────────
+
+    SYSTEM_ACTOR = "__system__"
+    _ACL_MAX_DEPTH = 10
+
+    def _sync_resolve_actor_groups(
+        self,
+        tenant_id: str,
+        actor_id: str,
+    ) -> list[str]:
+        """Resolve all group memberships for an actor, recursively.
+
+        Returns a flat list: [actor_id, group_1, group_2, ...]
+        """
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                """
+                WITH RECURSIVE membership(gid, depth) AS (
+                    SELECT group_id, 0 FROM group_users
+                    WHERE member_actor_id = ?
+                    UNION ALL
+                    SELECT gu.group_id, m.depth + 1
+                    FROM group_users gu
+                    JOIN membership m ON gu.member_actor_id = m.gid
+                    WHERE m.depth < 10
+                )
+                SELECT DISTINCT gid FROM membership
+                """,
+                (actor_id,),
+            ).fetchall()
+        return [actor_id] + [r[0] for r in rows]
+
+    async def resolve_actor_groups(
+        self,
+        tenant_id: str,
+        actor_id: str,
+    ) -> list[str]:
+        """Resolve actor + all group memberships. Call once per request."""
+        return await self._run_sync(
+            self._sync_resolve_actor_groups,
+            tenant_id,
+            actor_id,
+        )
+
+    def _sync_can_access(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if any of the actor_ids can access node_id.
+
+        Walks the acl_inherit chain upward. Checks at each ancestor:
+        - owner match
+        - visibility index (includes tenant:* wildcard)
+        - node_access table
+        - DENY overrides
+
+        actor_ids is the pre-resolved list from resolve_actor_groups.
+        """
+        if self.SYSTEM_ACTOR in actor_ids:
+            return True
+
+        # Include tenant:* in visibility check (wildcard principal)
+        visibility_ids = list(actor_ids) + ["tenant:*"]
+
+        with self._get_connection(tenant_id) as conn:
+            placeholders_actor = ",".join("?" for _ in actor_ids)
+            placeholders_vis = ",".join("?" for _ in visibility_ids)
+
+            # Check for explicit DENY on the target node first
+            deny_row = conn.execute(
+                f"""
+                SELECT 1 FROM node_access
+                WHERE node_id = ? AND actor_id IN ({placeholders_actor})
+                  AND permission = 'deny'
+                LIMIT 1
+                """,
+                (node_id, *actor_ids),
+            ).fetchone()
+            if deny_row:
+                return False
+
+            # Walk ancestors via acl_inherit, check access at each level
+            row = conn.execute(
+                f"""
+                WITH RECURSIVE ancestry(nid, depth) AS (
+                    SELECT ?, 0
+                    UNION ALL
+                    SELECT ai.inherit_from, a.depth + 1
+                    FROM acl_inherit ai
+                    JOIN ancestry a ON ai.node_id = a.nid
+                    WHERE a.depth < {self._ACL_MAX_DEPTH}
+                )
+                SELECT 1 FROM ancestry anc
+                JOIN nodes n ON n.node_id = anc.nid AND n.tenant_id = ?
+                WHERE (
+                    n.owner_actor IN ({placeholders_actor})
+                    OR EXISTS (
+                        SELECT 1 FROM node_visibility nv
+                        WHERE nv.tenant_id = ? AND nv.node_id = anc.nid
+                          AND nv.principal IN ({placeholders_vis})
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM node_access na
+                        WHERE na.node_id = anc.nid
+                          AND na.actor_id IN ({placeholders_actor})
+                          AND na.permission != 'deny'
+                          AND (na.expires_at IS NULL OR na.expires_at > ?)
+                    )
+                )
+                LIMIT 1
+                """,
+                (
+                    node_id,
+                    tenant_id,
+                    *actor_ids,
+                    tenant_id,
+                    *visibility_ids,
+                    *actor_ids,
+                    int(time.time() * 1000),
+                ),
+            ).fetchone()
+            return row is not None
+
+    async def can_access(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if actor can access a node (via inheritance chain)."""
+        return await self._run_sync(
+            self._sync_can_access,
+            tenant_id,
+            node_id,
+            actor_ids,
+        )
+
+    def _sync_share_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
+        actor_type: str,
+        permission: str,
+        granted_by: str,
+        now: int,
+        expires_at: int | None,
+    ) -> None:
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO node_access
+                (node_id, actor_id, actor_type, permission, granted_by, granted_at, expires_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (node_id, actor_id, actor_type, permission, granted_by, now, expires_at),
+            )
+
+    async def share_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
+        permission: str,
+        granted_by: str,
+        *,
+        actor_type: str = "user",
+        expires_at: int | None = None,
+    ) -> None:
+        """Grant direct access to a node."""
+        now = int(time.time() * 1000)
+        await self._run_sync(
+            self._sync_share_node,
+            tenant_id,
+            node_id,
+            actor_id,
+            actor_type,
+            permission,
+            granted_by,
+            now,
+            expires_at,
+        )
+
+    def _sync_revoke_access(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "DELETE FROM node_access WHERE node_id = ? AND actor_id = ?",
+                (node_id, actor_id),
+            )
+            return cursor.rowcount > 0
+
+    async def revoke_access(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_id: str,
+    ) -> bool:
+        """Remove direct access from a node. Returns True if a grant existed."""
+        return await self._run_sync(
+            self._sync_revoke_access,
+            tenant_id,
+            node_id,
+            actor_id,
+        )
+
+    def _sync_get_connected_nodes(
+        self,
+        tenant_id: str,
+        node_id: str,
+        edge_type_id: int,
+        actor_ids: list[str],
+        limit: int,
+        offset: int,
+    ) -> list:
+        """Get connected nodes via edge type, with ACL filtering.
+
+        If the edge type propagates ACL and the actor can access the source node,
+        all connected nodes are returned (minus explicit denies).
+        """
+        if self.SYSTEM_ACTOR in actor_ids:
+            # System actor: no ACL filtering
+            return self._sync_get_edges_and_nodes(
+                tenant_id,
+                node_id,
+                edge_type_id,
+                limit,
+                offset,
+            )
+
+        # First: can the actor access the source node?
+        if not self._sync_can_access(tenant_id, node_id, actor_ids):
+            return []
+
+        placeholders = ",".join("?" for _ in actor_ids)
+
+        with self._get_connection(tenant_id) as conn:
+            # Check if this edge type propagates ACL
+            edge_row = conn.execute(
+                """
+                SELECT propagates_acl FROM edges
+                WHERE tenant_id = ? AND edge_type_id = ?
+                  AND from_node_id = ?
+                LIMIT 1
+                """,
+                (tenant_id, edge_type_id, node_id),
+            ).fetchone()
+
+            propagates = edge_row and edge_row[0] == 1 if edge_row else False
+
+            if propagates:
+                # Fast path: actor has access to source, edge propagates —
+                # return all connected nodes, just filter explicit denies
+                rows = conn.execute(
+                    f"""
+                    SELECT n.* FROM nodes n
+                    JOIN edges e ON e.to_node_id = n.node_id
+                      AND e.tenant_id = n.tenant_id
+                    WHERE e.tenant_id = ?
+                      AND e.edge_type_id = ?
+                      AND e.from_node_id = ?
+                      AND NOT EXISTS (
+                          SELECT 1 FROM node_access na
+                          WHERE na.node_id = n.node_id
+                            AND na.actor_id IN ({placeholders})
+                            AND na.permission = 'deny'
+                      )
+                    ORDER BY n.created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (tenant_id, edge_type_id, node_id, *actor_ids, limit, offset),
+                ).fetchall()
+            else:
+                # Slow path: per-node ACL check via visibility index
+                rows = conn.execute(
+                    f"""
+                    SELECT n.* FROM nodes n
+                    JOIN edges e ON e.to_node_id = n.node_id
+                      AND e.tenant_id = n.tenant_id
+                    WHERE e.tenant_id = ?
+                      AND e.edge_type_id = ?
+                      AND e.from_node_id = ?
+                      AND (
+                          n.owner_actor IN ({placeholders})
+                          OR EXISTS (
+                              SELECT 1 FROM node_visibility nv
+                              WHERE nv.tenant_id = n.tenant_id
+                                AND nv.node_id = n.node_id
+                                AND nv.principal IN ({placeholders})
+                          )
+                          OR EXISTS (
+                              SELECT 1 FROM node_access na
+                              WHERE na.node_id = n.node_id
+                                AND na.actor_id IN ({placeholders})
+                                AND na.permission != 'deny'
+                          )
+                      )
+                    ORDER BY n.created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (
+                        tenant_id,
+                        edge_type_id,
+                        node_id,
+                        *actor_ids,
+                        *actor_ids,
+                        *actor_ids,
+                        limit,
+                        offset,
+                    ),
+                ).fetchall()
+
+            return [
+                Node.from_row(
+                    tenant_id=r["tenant_id"],
+                    node_id=r["node_id"],
+                    type_id=r["type_id"],
+                    payload_json=r["payload_json"],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                    owner_actor=r["owner_actor"],
+                    acl_json=r["acl_blob"],
+                )
+                for r in rows
+            ]
+
+    def _sync_get_edges_and_nodes(
+        self,
+        tenant_id: str,
+        node_id: str,
+        edge_type_id: int,
+        limit: int,
+        offset: int,
+    ) -> list:
+        """Get connected nodes without ACL filtering (for system actor)."""
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                """
+                SELECT n.* FROM nodes n
+                JOIN edges e ON e.to_node_id = n.node_id
+                  AND e.tenant_id = n.tenant_id
+                WHERE e.tenant_id = ?
+                  AND e.edge_type_id = ?
+                  AND e.from_node_id = ?
+                ORDER BY n.created_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (tenant_id, edge_type_id, node_id, limit, offset),
+            ).fetchall()
+            return [
+                Node.from_row(
+                    tenant_id=r["tenant_id"],
+                    node_id=r["node_id"],
+                    type_id=r["type_id"],
+                    payload_json=r["payload_json"],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                    owner_actor=r["owner_actor"],
+                    acl_json=r["acl_blob"],
+                )
+                for r in rows
+            ]
+
+    async def get_connected_nodes(
+        self,
+        tenant_id: str,
+        node_id: str,
+        edge_type_id: int,
+        actor_ids: list[str],
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list:
+        """Fetch nodes connected via edge type, with ACL filtering."""
+        return await self._run_sync(
+            self._sync_get_connected_nodes,
+            tenant_id,
+            node_id,
+            edge_type_id,
+            actor_ids,
+            limit,
+            offset,
+        )
+
+    def _sync_list_shared_with_me(
+        self,
+        tenant_id: str,
+        actor_ids: list[str],
+        limit: int,
+        offset: int,
+    ) -> list:
+        """List nodes explicitly shared with the actor."""
+        placeholders = ",".join("?" for _ in actor_ids)
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT DISTINCT n.* FROM nodes n
+                JOIN node_access na ON na.node_id = n.node_id
+                WHERE n.tenant_id = ?
+                  AND na.actor_id IN ({placeholders})
+                  AND na.permission != 'deny'
+                  AND (na.expires_at IS NULL OR na.expires_at > ?)
+                ORDER BY na.granted_at DESC
+                LIMIT ? OFFSET ?
+                """,
+                (tenant_id, *actor_ids, int(time.time() * 1000), limit, offset),
+            ).fetchall()
+            return [
+                Node.from_row(
+                    tenant_id=r["tenant_id"],
+                    node_id=r["node_id"],
+                    type_id=r["type_id"],
+                    payload_json=r["payload_json"],
+                    created_at=r["created_at"],
+                    updated_at=r["updated_at"],
+                    owner_actor=r["owner_actor"],
+                    acl_json=r["acl_blob"],
+                )
+                for r in rows
+            ]
+
+    async def list_shared_with_me(
+        self,
+        tenant_id: str,
+        actor_ids: list[str],
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list:
+        """List nodes explicitly shared with actor (direct + via groups)."""
+        return await self._run_sync(
+            self._sync_list_shared_with_me,
+            tenant_id,
+            actor_ids,
+            limit,
+            offset,
+        )
+
+    def _sync_add_group_member(
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
+        role: str,
+        now: int,
+    ) -> None:
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO group_users
+                (group_id, member_actor_id, role, joined_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (group_id, member_actor_id, role, now),
+            )
+
+    async def add_group_member(
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
+        role: str = "member",
+    ) -> None:
+        """Add a member to a group."""
+        now = int(time.time() * 1000)
+        await self._run_sync(
+            self._sync_add_group_member,
+            tenant_id,
+            group_id,
+            member_actor_id,
+            role,
+            now,
+        )
+
+    def _sync_remove_group_member(
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "DELETE FROM group_users WHERE group_id = ? AND member_actor_id = ?",
+                (group_id, member_actor_id),
+            )
+            return cursor.rowcount > 0
+
+    async def remove_group_member(
+        self,
+        tenant_id: str,
+        group_id: str,
+        member_actor_id: str,
+    ) -> bool:
+        """Remove a member from a group. Returns True if member existed."""
+        return await self._run_sync(
+            self._sync_remove_group_member,
+            tenant_id,
+            group_id,
+            member_actor_id,
+        )
+
+    def _sync_transfer_ownership(
+        self,
+        tenant_id: str,
+        node_id: str,
+        new_owner: str,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "UPDATE nodes SET owner_actor = ? WHERE tenant_id = ? AND node_id = ?",
+                (new_owner, tenant_id, node_id),
+            )
+            if cursor.rowcount > 0:
+                self._update_visibility(
+                    conn,
+                    tenant_id,
+                    node_id,
+                    new_owner,
+                    self._get_node_acl(conn, tenant_id, node_id),
+                )
+            return cursor.rowcount > 0
+
+    def _get_node_acl(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        node_id: str,
+    ) -> list[dict[str, str]]:
+        row = conn.execute(
+            "SELECT acl_blob FROM nodes WHERE tenant_id = ? AND node_id = ?",
+            (tenant_id, node_id),
+        ).fetchone()
+        if not row:
+            return []
+        return json.loads(row[0]) if row[0] else []
+
+    async def transfer_ownership(
+        self,
+        tenant_id: str,
+        node_id: str,
+        new_owner: str,
+    ) -> bool:
+        """Transfer ownership of a node. Returns True if node exists."""
+        return await self._run_sync(
+            self._sync_transfer_ownership,
+            tenant_id,
+            node_id,
+            new_owner,
+        )
 
     def list_tenants(self) -> list[str]:
         """Scan data_dir for tenant database files and return tenant IDs.

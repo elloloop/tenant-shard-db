@@ -1,0 +1,19 @@
+{
+  "name": "entdb-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^5.0.0",
+    "@astrojs/react": "^4.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "comments": {
+    "refraction-ui": "Add @refraction-ui/react and @refraction-ui/tailwind-config once published to npm"
+  }
+}

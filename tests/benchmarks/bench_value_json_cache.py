@@ -21,10 +21,11 @@ from __future__ import annotations
 import json
 import time
 
-import pytest
-
-from dbaas.entdb_server.wal.base import StreamPos, StreamRecord
-from dbaas.entdb_server.wal.base import _SENTINEL  # noqa: F401  -- cache reset marker
+from dbaas.entdb_server.wal.base import (
+    _SENTINEL,  # noqa: F401  -- cache reset marker
+    StreamPos,
+    StreamRecord,
+)
 
 
 def _make_record(payload_size: int = 10) -> StreamRecord:
@@ -171,7 +172,9 @@ class TestValueJsonCacheBenchmark:
         print(f"  3x uncached total:  {uncached_3x_s * 1e3:.1f} ms")
         print(f"  3x cached total:    {cached_s * 1e3:.1f} ms  (1 parse + 2 cache hits)")
         print(f"  Speedup (3 calls):  {speedup:.1f}x")
-        print(f"  Estimated saving:   {(uncached_3x_s - cached_s) * 1e3:.1f} ms over {iterations} records")
+        print(
+            f"  Estimated saving:   {(uncached_3x_s - cached_s) * 1e3:.1f} ms over {iterations} records"
+        )
 
         # Sanity: caching 3 calls should be faster than 3 uncached calls
         assert cached_s < uncached_3x_s, "Caching should be faster than 3x uncached"

@@ -13,6 +13,7 @@ Fix: Record the metric with status="error" so monitoring alerts fire.
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from google.protobuf.struct_pb2 import Struct
 
 from dbaas.entdb_server.api.generated import (
     CreateNodeOp,
@@ -42,7 +43,7 @@ def _build_request(client_fingerprint: str) -> ExecuteAtomicRequest:
         idempotency_key="key-1",
         schema_fingerprint=client_fingerprint,
         operations=[
-            Operation(create_node=CreateNodeOp(type_id=1, data_json="{}")),
+            Operation(create_node=CreateNodeOp(type_id=1, data=Struct())),
         ],
     )
 

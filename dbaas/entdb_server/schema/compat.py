@@ -71,6 +71,8 @@ class ChangeKind(Enum):
     FROM_TYPE_CHANGED = auto()
     TO_TYPE_CHANGED = auto()
     REQUIRED_ADDED = auto()  # Making optional field required
+    PROPAGATE_SHARE_CHANGED = auto()  # Changing propagate_share affects ACL inheritance
+    ACL_DEFAULTS_CHANGED = auto()  # Non-breaking: changing default ACL config
 
     @property
     def is_breaking(self) -> bool:
@@ -89,6 +91,7 @@ class ChangeKind(Enum):
             ChangeKind.FROM_TYPE_CHANGED,
             ChangeKind.TO_TYPE_CHANGED,
             ChangeKind.REQUIRED_ADDED,
+            ChangeKind.PROPAGATE_SHARE_CHANGED,
         }
         return self in breaking_kinds
 
@@ -262,6 +265,20 @@ def _check_node_type_diff(old_node: dict, new_node: dict) -> list[SchemaChange]:
             )
         )
 
+    # Check acl_defaults change (non-breaking — only affects new nodes)
+    old_acl = old_node.get("acl_defaults", {})
+    new_acl = new_node.get("acl_defaults", {})
+    if old_acl != new_acl:
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.ACL_DEFAULTS_CHANGED,
+                path=path_prefix,
+                old_value=old_acl,
+                new_value=new_acl,
+                message="acl_defaults changed — only affects newly created nodes",
+            )
+        )
+
     # Check fields
     old_fields = {f["field_id"]: f for f in old_node.get("fields", [])}
     new_fields = {f["field_id"]: f for f in new_node.get("fields", [])}
@@ -360,6 +377,20 @@ def _check_edge_type_diff(old_edge: dict, new_edge: dict) -> list[SchemaChange]:
                 kind=ChangeKind.TYPE_DEPRECATED,
                 path=path_prefix,
                 message=f"Edge type '{old_edge['name']}' deprecated",
+            )
+        )
+
+    # Check propagate_share change (breaking — affects ACL inheritance)
+    old_propagate = old_edge.get("propagate_share", False)
+    new_propagate = new_edge.get("propagate_share", False)
+    if old_propagate != new_propagate:
+        changes.append(
+            SchemaChange(
+                kind=ChangeKind.PROPAGATE_SHARE_CHANGED,
+                path=path_prefix,
+                old_value=old_propagate,
+                new_value=new_propagate,
+                message=f"propagate_share changed from {old_propagate} to {new_propagate} — affects ACL inheritance",
             )
         )
 

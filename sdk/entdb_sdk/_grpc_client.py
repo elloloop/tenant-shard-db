@@ -16,22 +16,30 @@ from dataclasses import dataclass
 from typing import Any
 
 import grpc
+from google.protobuf import json_format
+from google.protobuf.struct_pb2 import Struct
 from grpc import aio as grpc_aio
 
 from ._generated import (
+    AclEntry,
     CreateEdgeOp,
     CreateNodeOp,
     DeleteEdgeOp,
     DeleteNodeOp,
     EntDBServiceStub,
     ExecuteAtomicRequest,
+    FieldFilter,
+    # ACL v2
+    GetConnectedNodesRequest,
     GetEdgesRequest,
     GetMailboxRequest,
     GetNodeRequest,
     GetNodesRequest,
     GetReceiptStatusRequest,
     GetSchemaRequest,
+    GroupMemberRequest,
     HealthRequest,
+    ListSharedWithMeRequest,
     NodeRef,
     Operation,
     QueryNodesRequest,
@@ -39,10 +47,33 @@ from ._generated import (
     ReceiptStatus,
     # Request types
     RequestContext,
+    RevokeAccessRequest,
     SearchMailboxRequest,
+    ShareNodeRequest,
+    TransferOwnershipRequest,
     TypedNodeRef,
     UpdateNodeOp,
+    WaitForOffsetRequest,
 )
+
+
+def _dict_to_struct(d):
+    """Convert Python dict to protobuf Struct."""
+    s = Struct()
+    if d:
+        s.update(d)
+    return s
+
+
+def _struct_to_dict(s):
+    """Convert protobuf Struct to Python dict."""
+    return json_format.MessageToDict(s) if s and s.fields else {}
+
+
+def _acl_proto_to_list(acl_entries):
+    """Convert repeated AclEntry to list of dicts."""
+    return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
+
 
 logger = logging.getLogger(__name__)
 
@@ -324,11 +355,21 @@ class GrpcClient:
                 create_op = CreateNodeOp(
                     type_id=create.get("type_id", 0),
                     id=create.get("id", ""),
-                    data_json=create.get("data_json", "{}"),
-                    acl_json=create.get("acl_json", ""),
                 )
+                data = create.get("data")
+                if data:
+                    create_op.data.update(data)
+                acl = create.get("acl")
+                if acl:
+                    create_op.acl.extend(
+                        [
+                            AclEntry(
+                                principal=e.get("principal", ""), permission=e.get("permission", "")
+                            )
+                            for e in acl
+                        ]
+                    )
                 if create.get("as"):
-                    # protobuf field is named 'as' but Python keyword conflict
                     setattr(create_op, "as", create["as"])
                 if create.get("fanout_to"):
                     create_op.fanout_to.extend(create["fanout_to"])
@@ -339,8 +380,10 @@ class GrpcClient:
                 update_op = UpdateNodeOp(
                     type_id=update.get("type_id", 0),
                     id=update.get("id", ""),
-                    patch_json=update.get("patch_json", "{}"),
                 )
+                patch = update.get("patch")
+                if patch:
+                    update_op.patch.update(patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
                 proto_op.update_node.CopyFrom(update_op)
@@ -358,8 +401,10 @@ class GrpcClient:
                 create = op["create_edge"]
                 create_op = CreateEdgeOp(
                     edge_id=create.get("edge_id", 0),
-                    props_json=create.get("props_json", "{}"),
                 )
+                props = create.get("props")
+                if props:
+                    create_op.props.update(props)
                 getattr(create_op, "from").CopyFrom(self._convert_node_ref(create.get("from", {})))
                 create_op.to.CopyFrom(self._convert_node_ref(create.get("to", {})))
                 proto_op.create_edge.CopyFrom(create_op)
@@ -435,6 +480,45 @@ class GrpcClient:
         }
         return status_map.get(response.status, "UNKNOWN")
 
+    async def wait_for_offset(
+        self,
+        tenant_id: str,
+        stream_position: str,
+        *,
+        timeout_ms: int = 30000,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> tuple[bool, str]:
+        """Wait for a stream position to be applied.
+
+        Args:
+            tenant_id: Tenant identifier
+            stream_position: Target stream position
+            timeout_ms: Server-side wait timeout in milliseconds
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call gRPC timeout in seconds
+
+        Returns:
+            Tuple of (reached, current_position)
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = WaitForOffsetRequest(
+            context=self._make_context(tenant_id, "system", trace_id),
+            stream_position=stream_position,
+            timeout_ms=timeout_ms,
+        )
+
+        response = await self._retry(
+            stub.WaitForOffset,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.reached, response.current_position
+
     async def get_node(
         self,
         tenant_id: str,
@@ -442,6 +526,8 @@ class GrpcClient:
         type_id: int,
         node_id: str,
         *,
+        after_offset: str | None = None,
+        wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> GrpcNode | None:
@@ -452,6 +538,8 @@ class GrpcClient:
             actor: Actor making request
             type_id: Node type ID
             node_id: Node identifier
+            after_offset: Wait for this offset before reading
+            wait_timeout_ms: Timeout for offset wait
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -465,6 +553,8 @@ class GrpcClient:
             context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             node_id=node_id,
+            after_offset=after_offset or "",
+            wait_timeout_ms=wait_timeout_ms,
         )
 
         response = await self._retry(
@@ -482,11 +572,11 @@ class GrpcClient:
             tenant_id=node.tenant_id,
             node_id=node.node_id,
             type_id=node.type_id,
-            payload=json.loads(node.payload_json) if node.payload_json else {},
+            payload=_struct_to_dict(node.payload),
             created_at=node.created_at,
             updated_at=node.updated_at,
             owner_actor=node.owner_actor,
-            acl=json.loads(node.acl_json) if node.acl_json else [],
+            acl=_acl_proto_to_list(node.acl),
         )
 
     async def get_nodes(
@@ -496,6 +586,8 @@ class GrpcClient:
         type_id: int,
         node_ids: list[str],
         *,
+        after_offset: str | None = None,
+        wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[GrpcNode], list[str]]:
@@ -506,6 +598,8 @@ class GrpcClient:
             actor: Actor making request
             type_id: Node type ID
             node_ids: Node identifiers
+            after_offset: Wait for this offset before reading
+            wait_timeout_ms: Timeout for offset wait
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -519,6 +613,8 @@ class GrpcClient:
             context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             node_ids=node_ids,
+            after_offset=after_offset or "",
+            wait_timeout_ms=wait_timeout_ms,
         )
 
         response = await self._retry(
@@ -533,11 +629,11 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
+                payload=_struct_to_dict(n.payload),
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
-                acl=json.loads(n.acl_json) if n.acl_json else [],
+                acl=_acl_proto_to_list(n.acl),
             )
             for n in response.nodes
         ]
@@ -552,9 +648,11 @@ class GrpcClient:
         *,
         limit: int = 100,
         offset: int = 0,
-        filter_json: str | None = None,
+        filter: dict[str, Any] | None = None,
         order_by: str | None = None,
         descending: bool = False,
+        after_offset: str | None = None,
+        wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[GrpcNode], bool]:
@@ -566,9 +664,11 @@ class GrpcClient:
             type_id: Node type ID
             limit: Maximum nodes to return
             offset: Pagination offset
-            filter_json: JSON-encoded filter expression
+            filter: Filter dict (field_name → value for equality)
             order_by: Field to order results by
             descending: Whether to sort in descending order
+            after_offset: Wait for this offset before reading
+            wait_timeout_ms: Timeout for offset wait
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -578,14 +678,26 @@ class GrpcClient:
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
+        # Convert filter dict to repeated FieldFilter
+        filters = []
+        if filter:
+            from google.protobuf.struct_pb2 import Value
+
+            for field_name, field_value in filter.items():
+                v = Value()
+                json_format.Parse(json.dumps(field_value), v)
+                filters.append(FieldFilter(field=field_name, value=v))
+
         request = QueryNodesRequest(
             context=self._make_context(tenant_id, actor, trace_id),
             type_id=type_id,
             limit=limit,
             offset=offset,
-            filter_json=filter_json or "",
+            filters=filters,
             order_by=order_by or "",
             descending=descending,
+            after_offset=after_offset or "",
+            wait_timeout_ms=wait_timeout_ms,
         )
 
         response = await self._retry(
@@ -600,11 +712,11 @@ class GrpcClient:
                 tenant_id=n.tenant_id,
                 node_id=n.node_id,
                 type_id=n.type_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
+                payload=_struct_to_dict(n.payload),
                 created_at=n.created_at,
                 updated_at=n.updated_at,
                 owner_actor=n.owner_actor,
-                acl=json.loads(n.acl_json) if n.acl_json else [],
+                acl=_acl_proto_to_list(n.acl),
             )
             for n in response.nodes
         ]
@@ -659,7 +771,7 @@ class GrpcClient:
                 edge_type_id=e.edge_type_id,
                 from_node_id=e.from_node_id,
                 to_node_id=e.to_node_id,
-                props=json.loads(e.props_json) if e.props_json else {},
+                props=_struct_to_dict(e.props),
                 created_at=e.created_at,
             )
             for e in response.edges
@@ -715,7 +827,7 @@ class GrpcClient:
                 edge_type_id=e.edge_type_id,
                 from_node_id=e.from_node_id,
                 to_node_id=e.to_node_id,
-                props=json.loads(e.props_json) if e.props_json else {},
+                props=_struct_to_dict(e.props),
                 created_at=e.created_at,
             )
             for e in response.edges
@@ -781,9 +893,9 @@ class GrpcClient:
                     "source_node_id": r.item.source_node_id,
                     "thread_id": r.item.thread_id,
                     "ts": r.item.ts,
-                    "state": json.loads(r.item.state_json) if r.item.state_json else {},
+                    "state": _struct_to_dict(r.item.state),
                     "snippet": r.item.snippet,
-                    "metadata": json.loads(r.item.metadata_json) if r.item.metadata_json else {},
+                    "metadata": _struct_to_dict(r.item.metadata),
                 },
                 "rank": r.rank,
                 "highlights": r.highlights,
@@ -850,9 +962,9 @@ class GrpcClient:
                 "source_node_id": item.source_node_id,
                 "thread_id": item.thread_id,
                 "ts": item.ts,
-                "state": json.loads(item.state_json) if item.state_json else {},
+                "state": _struct_to_dict(item.state),
                 "snippet": item.snippet,
-                "metadata": json.loads(item.metadata_json) if item.metadata_json else {},
+                "metadata": _struct_to_dict(item.metadata),
             }
             for item in response.items
         ]
@@ -915,6 +1027,345 @@ class GrpcClient:
         )
 
         return {
-            "schema": json.loads(response.schema_json) if response.schema_json else {},
+            "schema": _struct_to_dict(response.schema),
             "fingerprint": response.fingerprint,
         }
+
+    # --- ACL v2 methods ---
+
+    async def get_connected_nodes(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        edge_type_id: int,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> tuple[list[GrpcNode], bool]:
+        """Get connected nodes via edge type with ACL filtering.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            node_id: Source node ID
+            edge_type_id: Edge type to traverse
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Tuple of (nodes, has_more)
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetConnectedNodesRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            edge_type_id=edge_type_id,
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._retry(
+            stub.GetConnectedNodes,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        nodes = [
+            GrpcNode(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=json_format.MessageToDict(n.payload)
+                if n.payload and n.payload.fields
+                else {},
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=[{"principal": e.principal, "permission": e.permission} for e in n.acl],
+            )
+            for n in response.nodes
+        ]
+
+        return nodes, response.has_more
+
+    async def share_node(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        actor_id: str,
+        permission: str = "read",
+        *,
+        actor_type: str = "user",
+        expires_at: int | None = None,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Share a node with an actor.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the share (granted_by)
+            node_id: Node to share
+            actor_id: Actor to share with
+            permission: Permission level (read, write, admin)
+            actor_type: Type of actor (user, group)
+            expires_at: Optional expiry timestamp (Unix ms)
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if successful
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ShareNodeRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            actor_id=actor_id,
+            permission=permission,
+            actor_type=actor_type,
+            expires_at=expires_at or 0,
+        )
+
+        response = await self._retry(
+            stub.ShareNode,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.success
+
+    async def revoke_access(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        actor_id: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Revoke access from an actor on a node.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the revocation
+            node_id: Node to revoke access from
+            actor_id: Actor to revoke
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if a grant existed and was removed
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = RevokeAccessRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            actor_id=actor_id,
+        )
+
+        response = await self._retry(
+            stub.RevokeAccess,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.found
+
+    async def list_shared_with_me(
+        self,
+        tenant_id: str,
+        actor: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> tuple[list[GrpcNode], bool]:
+        """List nodes shared with the calling actor.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            limit: Maximum nodes to return
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Tuple of (nodes, has_more)
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ListSharedWithMeRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._retry(
+            stub.ListSharedWithMe,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        nodes = [
+            GrpcNode(
+                tenant_id=n.tenant_id,
+                node_id=n.node_id,
+                type_id=n.type_id,
+                payload=json_format.MessageToDict(n.payload)
+                if n.payload and n.payload.fields
+                else {},
+                created_at=n.created_at,
+                updated_at=n.updated_at,
+                owner_actor=n.owner_actor,
+                acl=[{"principal": e.principal, "permission": e.permission} for e in n.acl],
+            )
+            for n in response.nodes
+        ]
+
+        return nodes, response.has_more
+
+    async def add_group_member(
+        self,
+        tenant_id: str,
+        actor: str,
+        group_id: str,
+        member_actor_id: str,
+        role: str = "member",
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Add a member to a group.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            group_id: Group to add member to
+            member_actor_id: Actor to add
+            role: Role in the group
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if successful
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GroupMemberRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            group_id=group_id,
+            member_actor_id=member_actor_id,
+            role=role,
+        )
+
+        response = await self._retry(
+            stub.AddGroupMember,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.success
+
+    async def remove_group_member(
+        self,
+        tenant_id: str,
+        actor: str,
+        group_id: str,
+        member_actor_id: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Remove a member from a group.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the operation
+            group_id: Group to remove member from
+            member_actor_id: Actor to remove
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if member existed and was removed
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GroupMemberRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            group_id=group_id,
+            member_actor_id=member_actor_id,
+        )
+
+        response = await self._retry(
+            stub.RemoveGroupMember,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.success
+
+    async def transfer_ownership(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        new_owner: str,
+        *,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> bool:
+        """Transfer ownership of a node.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor performing the transfer
+            node_id: Node to transfer
+            new_owner: New owner actor
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            True if node existed and ownership was transferred
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = TransferOwnershipRequest(
+            context=self._make_context(tenant_id, actor, trace_id),
+            node_id=node_id,
+            new_owner=new_owner,
+        )
+
+        response = await self._retry(
+            stub.TransferOwnership,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return response.found

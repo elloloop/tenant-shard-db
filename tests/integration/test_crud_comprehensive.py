@@ -36,17 +36,27 @@ from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 
+def _get_or_create_loop():
+    """Get the running event loop or create a new one (xdist worker safety)."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
 @pytest.fixture
 def store(tmp_path):
     s = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-    asyncio.get_event_loop().run_until_complete(s.initialize_tenant("test"))
+    _get_or_create_loop().run_until_complete(s.initialize_tenant("test"))
     return s
 
 
 @pytest.fixture
 def multi_store(tmp_path):
     s = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-    loop = asyncio.get_event_loop()
+    loop = _get_or_create_loop()
     for t in ["tenant-a", "tenant-b", "tenant-c"]:
         loop.run_until_complete(s.initialize_tenant(t))
     return s

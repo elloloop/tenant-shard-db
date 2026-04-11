@@ -1,0 +1,117 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Access Control Overview">
+  <h1>Access Control (ACL)</h1>
+  <p>EntDB includes inheritance-based access control as a built-in database feature. Every read is automatically filtered by the requesting actor's permissions. Your application never needs to implement permission checking &mdash; the database does it transparently.</p>
+
+  <h2>How It Works</h2>
+  <p>Every node has an access control entry. Access is determined by four paths, checked in order:</p>
+
+  <table>
+    <tr><th>Path</th><th>Description</th><th>Example</th></tr>
+    <tr><td><strong>Owner</strong></td><td>Node creator always has ADMIN</td><td><code>owner_actor = "user:alice"</code></td></tr>
+    <tr><td><strong>Direct grant</strong></td><td>Explicit share via <code>node_access</code></td><td><code>db.share(node_id, "user:bob", "write")</code></td></tr>
+    <tr><td><strong>Group</strong></td><td>Access via group membership</td><td>Bob is in <code>group:eng</code>, group has READ</td></tr>
+    <tr><td><strong>Inheritance</strong></td><td>Access via structural parent</td><td>Comment inherits from Task via <code>propagate_share</code></td></tr>
+  </table>
+
+  <p>If any path grants access, the actor can see the node. An explicit <strong>DENY</strong> on the specific node overrides all inherited access.</p>
+
+  <h2>Inheritance: The Key Feature</h2>
+  <p>When you share a task with Bob, he can automatically see all comments on that task. You don't need to share each comment individually.</p>
+
+  <pre><code># Define structural edge
+HasComment = EdgeTypeDef(
+    edge_id=1, name="HasComment",
+    from_type=Task, to_type=Comment,
+    propagate_share=True,  # THIS is what enables inheritance
+)
+
+# Share the task
+await db.share(task_id, "user:bob", "read", tenant_id, granted_by="user:alice")
+
+# Bob can now see ALL comments on the task
+comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
+# Returns all comments - no per-comment permission check needed</code></pre>
+
+  <h3>How inheritance works internally</h3>
+  <p>When a structural edge is created (<code>propagate_share=True</code>), an <code>acl_inherit</code> row is inserted:</p>
+  <pre><code># Creating an edge: task_1 → comment_42 (HasComment, propagate_share=True)
+# Internally inserts: acl_inherit(node_id="comment_42", inherit_from="task_1")
+
+# Access check for comment_42:
+# 1. Check comment_42 directly → not found
+# 2. Walk acl_inherit chain: comment_42 → task_1
+# 3. Check task_1: Bob has READ via node_access → ALLOWED</code></pre>
+
+  <h3>Deep inheritance</h3>
+  <p>Inheritance chains can be multiple levels deep:</p>
+  <pre><code># project → task → comment (3 levels)
+# Share project with Bob → Bob can see all tasks AND all comments</code></pre>
+
+  <h3>New nodes inherit automatically</h3>
+  <p>If you add a comment to a task AFTER sharing the task, the new comment is immediately accessible. No backfill needed.</p>
+
+  <h3>Revoke cascades automatically</h3>
+  <p>Revoking Bob's access to the task automatically blocks access to all comments. No cascade delete of permissions needed.</p>
+
+  <h2>Private Nodes</h2>
+  <p>Some node types should never inherit from parents &mdash; grades, drafts, moderator notes:</p>
+  <pre><code>Grade = NodeTypeDef(
+    type_id=10, name="Grade",
+    fields=(field(1, "score", "int", required=True),),
+    acl_defaults=AclDefaults(
+        inherit=False,         # PRIVATE: no acl_inherit row created
+        tenant_visible=False,  # not visible to all tenant members
+    ),
+)
+# Grade is only visible to its owner and explicit direct grants</code></pre>
+
+  <h2>Permissions</h2>
+  <table>
+    <tr><th>Permission</th><th>Grants</th><th>Use Case</th></tr>
+    <tr><td><code>read</code></td><td>Read node payload</td><td>Viewer</td></tr>
+    <tr><td><code>comment</code></td><td>Read + add comment children</td><td>Commenter</td></tr>
+    <tr><td><code>write</code></td><td>Read + Comment + update payload</td><td>Editor</td></tr>
+    <tr><td><code>share</code></td><td>Read + Comment + Write + reshare</td><td>Collaborator</td></tr>
+    <tr><td><code>delete</code></td><td>Read + Comment + Write + delete</td><td>Manager</td></tr>
+    <tr><td><code>admin</code></td><td>All permissions</td><td>Owner</td></tr>
+    <tr><td><code>deny</code></td><td>Blocks all access</td><td>Explicit block</td></tr>
+  </table>
+  <p>Higher permissions include lower ones. <code>admin</code> includes everything. <code>deny</code> overrides everything (except owner).</p>
+
+  <h2>Groups</h2>
+  <p>Groups are a way to share with multiple users at once. Groups can contain users and other groups (nested):</p>
+  <pre><code># Add users to groups
+await db.group_add("group:eng", "user:alice", tenant_id)
+await db.group_add("group:eng", "user:bob", tenant_id)
+
+# Nested groups
+await db.group_add("group:all-staff", "group:eng", tenant_id)
+
+# Share with group — all members get access
+await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")</code></pre>
+
+  <h2>Deny Rules</h2>
+  <p>Explicit deny overrides all inherited access:</p>
+  <pre><code># Bob has write on task (and all comments via inheritance)
+await db.share(task_id, "user:bob", "write", tenant_id, granted_by="user:alice")
+
+# But this specific comment is confidential
+await db.share(confidential_comment_id, "user:bob", "deny", tenant_id, granted_by="user:alice")
+# Bob can see the task and all other comments, but NOT this one</code></pre>
+
+  <h2>Cycle Prevention</h2>
+  <p>The applier detects and rejects cycles in the <code>acl_inherit</code> chain at data insertion time. For example, if Folder A contains Folder B, and you try to make B contain A, the cycle is detected and the edge creation is rejected. A depth limit of 10 in the recursive CTE provides a backstop at query time.</p>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/acl/permissions">Permissions in depth</a></li>
+    <li><a href="/tenant-shard-db/docs/acl/inheritance">Inheritance patterns</a></li>
+    <li><a href="/tenant-shard-db/docs/acl/groups">Group management</a></li>
+    <li><a href="/tenant-shard-db/docs/acl/sharing">Sharing & revoking</a></li>
+    <li><a href="/tenant-shard-db/docs/acl/connected-nodes">Fetching connected nodes</a></li>
+  </ul>
+</DocsLayout>
