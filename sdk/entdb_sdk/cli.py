@@ -1,9 +1,10 @@
-"""EntDB CLI — schema generation and validation.
+"""EntDB CLI — schema generation, validation, and linting.
 
 Commands:
     entdb generate <schema.proto> [--python out.py] [--go out.go]
     entdb check [--baseline .entdb/snapshot.json]
     entdb init
+    entdb lint <schema.proto>
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import sys
 from pathlib import Path
 
 from .codegen import generate_from_proto, parse_proto
+from .lint import lint_schema
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
@@ -126,6 +128,44 @@ def cmd_init(args: argparse.Namespace) -> int:
     print(f"Snapshot written to {snapshot_path}")
     print(f"Schema: {len(nodes)} node types, {len(edges)} edge types ({propagating} propagate ACL)")
     print("Add .entdb/snapshot.json to version control.")
+    return 0
+
+
+def cmd_lint(args: argparse.Namespace) -> int:
+    """Lint a proto schema for semantic errors and warnings."""
+    proto_path = args.proto
+
+    if not Path(proto_path).exists():
+        print(f"Error: proto file not found: {proto_path}", file=sys.stderr)
+        return 1
+
+    include_dirs = args.include or []
+
+    try:
+        result = lint_schema(proto_path, include_dirs=include_dirs)
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+    if result.errors:
+        print(f"ERRORS ({len(result.errors)}):")
+        for err in result.errors:
+            print(f"  [ERROR] {err}")
+
+    if result.warnings:
+        print(f"WARNINGS ({len(result.warnings)}):")
+        for warn in result.warnings:
+            print(f"  [WARN]  {warn}")
+
+    if not result.errors and not result.warnings:
+        print("Lint passed: no errors, no warnings.")
+
+    if result.errors:
+        return 1
+
+    if result.warnings:
+        print(f"\nLint passed with {len(result.warnings)} warning(s).")
+
     return 0
 
 
@@ -301,6 +341,11 @@ def main() -> None:
     chk.add_argument("--baseline", help="Baseline snapshot path", default=".entdb/snapshot.json")
     chk.add_argument("-I", "--include", action="append", help="Proto include directories")
 
+    # lint
+    lnt = sub.add_parser("lint", help="Lint schema for semantic errors and warnings")
+    lnt.add_argument("proto", help="Path to schema .proto file")
+    lnt.add_argument("-I", "--include", action="append", help="Proto include directories")
+
     args = parser.parse_args()
 
     if args.command == "generate":
@@ -309,6 +354,8 @@ def main() -> None:
         sys.exit(cmd_init(args))
     elif args.command == "check":
         sys.exit(cmd_check(args))
+    elif args.command == "lint":
+        sys.exit(cmd_lint(args))
     else:
         parser.print_help()
         sys.exit(1)
