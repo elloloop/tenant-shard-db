@@ -23,7 +23,17 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
+
+
+class _Unset(Enum):
+    """Sentinel for distinguishing 'not provided' from explicit None."""
+
+    TOKEN = 0
+
+
+_UNSET = _Unset.TOKEN
 
 from ._grpc_client import GrpcClient
 from .errors import (
@@ -449,6 +459,7 @@ class DbClient:
         )
         self.registry = registry or get_registry()
         self._connected = False
+        self._last_offsets: dict[str, str] = {}  # tenant_id -> stream_position
 
     def _ensure_connected(self) -> None:
         """Raise if not connected.
@@ -489,6 +500,23 @@ class DbClient:
 
     async def __aexit__(self, *args: Any) -> None:
         await self.close()
+
+    def clear_offsets(self) -> None:
+        """Clear tracked offsets. Useful for testing."""
+        self._last_offsets.clear()
+
+    def _resolve_offset(
+        self, tenant_id: str, after_offset: str | None | _Unset
+    ) -> str | None:
+        """Resolve the after_offset for a read operation.
+
+        If after_offset is _UNSET (not provided by caller), use the tracked
+        offset for this tenant. If explicitly None, return None (opt-out).
+        If a specific string, use that value.
+        """
+        if isinstance(after_offset, _Unset):
+            return self._last_offsets.get(tenant_id)
+        return after_offset
 
     def atomic(
         self,
@@ -556,7 +584,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
-        after_offset: str | None = None,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
@@ -567,7 +595,9 @@ class DbClient:
             node_id: Node identifier
             tenant_id: Tenant identifier
             actor: Actor making request
-            after_offset: Wait for this stream position before reading
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -576,14 +606,15 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
         grpc_node = await self._grpc.get_node(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
             node_id=node_id,
-            after_offset=after_offset,
-            wait_timeout_ms=30000 if after_offset else 0,
+            after_offset=resolved_offset,
+            wait_timeout_ms=30000 if resolved_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -609,7 +640,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
-        after_offset: str | None = None,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> tuple[list[Node], list[str]]:
@@ -620,7 +651,9 @@ class DbClient:
             node_ids: Node identifiers
             tenant_id: Tenant identifier
             actor: Actor making request
-            after_offset: Wait for this stream position before reading
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -629,14 +662,15 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
         grpc_nodes, missing = await self._grpc.get_nodes(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
             node_ids=node_ids,
-            after_offset=after_offset,
-            wait_timeout_ms=30000 if after_offset else 0,
+            after_offset=resolved_offset,
+            wait_timeout_ms=30000 if resolved_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -668,7 +702,7 @@ class DbClient:
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
-        after_offset: str | None = None,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -683,7 +717,9 @@ class DbClient:
             offset: Pagination offset
             order_by: Field to order results by
             descending: Whether to sort in descending order
-            after_offset: Wait for this stream position before reading
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -692,6 +728,7 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
         grpc_nodes, _ = await self._grpc.query_nodes(
             tenant_id=tenant_id,
@@ -702,8 +739,8 @@ class DbClient:
             filter=filter or {},
             order_by=order_by,
             descending=descending,
-            after_offset=after_offset,
-            wait_timeout_ms=30000 if after_offset else 0,
+            after_offset=resolved_offset,
+            wait_timeout_ms=30000 if resolved_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -729,6 +766,7 @@ class DbClient:
         actor: str,
         edge_type: EdgeTypeDef | None = None,
         *,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Edge]:
@@ -739,6 +777,9 @@ class DbClient:
             tenant_id: Tenant identifier
             actor: Actor making request
             edge_type: Optional edge type filter
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -747,6 +788,8 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
+        _ = resolved_offset  # reserved for gRPC support
 
         edge_type_id = edge_type.edge_id if edge_type else None
         grpc_edges, _ = await self._grpc.get_edges_from(
@@ -777,6 +820,7 @@ class DbClient:
         actor: str,
         edge_type: EdgeTypeDef | None = None,
         *,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Edge]:
@@ -787,6 +831,9 @@ class DbClient:
             tenant_id: Tenant identifier
             actor: Actor making request
             edge_type: Optional edge type filter
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -795,6 +842,8 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
+        _ = resolved_offset  # reserved for gRPC support
 
         edge_type_id = edge_type.edge_id if edge_type else None
         grpc_edges, _ = await self._grpc.get_edges_to(
@@ -929,6 +978,9 @@ class DbClient:
                 idempotency_key=result.receipt.idempotency_key,
                 stream_position=result.receipt.stream_position,
             )
+            # Track last write offset per tenant for read-after-write consistency
+            if result.receipt.stream_position:
+                self._last_offsets[tenant_id] = result.receipt.stream_position
 
         return CommitResult(
             success=True,
@@ -948,6 +1000,7 @@ class DbClient:
         *,
         limit: int = 100,
         offset: int = 0,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -960,6 +1013,9 @@ class DbClient:
             actor: Actor making request
             limit: Maximum nodes to return
             offset: Pagination offset
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -968,6 +1024,8 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
+        _ = resolved_offset  # reserved for gRPC support
 
         grpc_nodes, _ = await self._grpc.get_connected_nodes(
             tenant_id=tenant_id,
@@ -1080,6 +1138,7 @@ class DbClient:
         *,
         limit: int = 100,
         offset: int = 0,
+        after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -1090,6 +1149,9 @@ class DbClient:
             actor: Actor making request
             limit: Maximum nodes to return
             offset: Pagination offset
+            after_offset: Wait for this stream position before reading.
+                Omit to use automatic offset tracking.
+                Pass None to opt out of offset tracking.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1098,6 +1160,8 @@ class DbClient:
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
+        resolved_offset = self._resolve_offset(tenant_id, after_offset)
+        _ = resolved_offset  # reserved for gRPC support
 
         grpc_nodes, _ = await self._grpc.list_shared_with_me(
             tenant_id=tenant_id,
