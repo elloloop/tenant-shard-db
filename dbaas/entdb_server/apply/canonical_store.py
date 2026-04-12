@@ -322,6 +322,7 @@ class CanonicalStore:
         wal_mode: bool = True,
         busy_timeout_ms: int = 5000,
         cache_size_pages: int = -64000,
+        encryption_config: EncryptionConfig | None = None,
     ) -> None:
         """Initialize the canonical store.
 
@@ -330,11 +331,15 @@ class CanonicalStore:
             wal_mode: Enable SQLite WAL mode
             busy_timeout_ms: SQLite busy timeout
             cache_size_pages: SQLite cache size (negative = KB)
+            encryption_config: Optional encryption configuration. When
+                enabled, tenant databases are encrypted with per-tenant
+                keys derived from the master key.
         """
         self.data_dir = Path(data_dir)
         self.wal_mode = wal_mode
         self.busy_timeout_ms = busy_timeout_ms
         self.cache_size_pages = cache_size_pages
+        self.encryption_config = encryption_config or EncryptionConfig()
         self._connections: dict[str, sqlite3.Connection] = {}
         # Single-thread executor — SQLite connections are not thread-safe,
         # so all DB ops must run on the same thread when using connection pooling.
@@ -474,12 +479,23 @@ class CanonicalStore:
         # Reuse cached connection
         cache_key = str(db_path)
         if cache_key not in self._connections:
-            conn = sqlite3.connect(
-                str(db_path),
-                timeout=self.busy_timeout_ms / 1000.0,
-                isolation_level=None,  # Autocommit by default, explicit transactions
-                check_same_thread=False,
-            )
+            # Open with encryption if configured
+            if self.encryption_config.enabled:
+                tenant_key = derive_tenant_key(
+                    self.encryption_config.master_key, tenant_id
+                )
+                conn = open_encrypted_connection(
+                    str(db_path),
+                    tenant_key,
+                    timeout=self.busy_timeout_ms / 1000.0,
+                )
+            else:
+                conn = sqlite3.connect(
+                    str(db_path),
+                    timeout=self.busy_timeout_ms / 1000.0,
+                    isolation_level=None,  # Autocommit by default, explicit transactions
+                    check_same_thread=False,
+                )
             conn.row_factory = sqlite3.Row
 
             # Configure connection — only once per cached connection
@@ -637,6 +653,44 @@ class CanonicalStore:
             INSERT OR IGNORE INTO schema_version (version, applied_at)
             VALUES (1, strftime('%s', 'now') * 1000);
         """)
+
+    def sync_type_metadata(
+        self,
+        tenant_id: str,
+        registry: object,
+    ) -> None:
+        """Populate the type_metadata table from a SchemaRegistry.
+
+        Inserts or replaces rows for every node type in the registry,
+        caching data_policy, pii_fields, and subject_field so that
+        runtime queries can look them up without touching the registry.
+
+        Args:
+            tenant_id: Tenant identifier
+            registry: SchemaRegistry instance (typed as object to avoid
+                circular imports; must have node_types() iterator and
+                get_data_policy / get_pii_fields / get_subject_field)
+        """
+        from ..schema.registry import SchemaRegistry
+
+        reg: SchemaRegistry = registry  # type: ignore[assignment]
+        with self._get_connection(tenant_id) as conn:
+            for node_type in reg.node_types():
+                policy = reg.get_data_policy(node_type.type_id)
+                pii = reg.get_pii_fields(node_type.type_id)
+                subject = reg.get_subject_field(node_type.type_id)
+                conn.execute(
+                    "INSERT OR REPLACE INTO type_metadata "
+                    "(type_id, data_policy, pii_fields, subject_field) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        node_type.type_id,
+                        policy.value,
+                        json.dumps(pii),
+                        subject,
+                    ),
+                )
+            conn.commit()
 
     @contextmanager
     def batch_transaction(self, tenant_id: str) -> Iterator[sqlite3.Connection]:

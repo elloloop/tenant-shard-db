@@ -74,6 +74,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
 
+from .config import EncryptionConfig
+from .encryption import derive_global_key, open_encrypted_connection
+
 logger = logging.getLogger(__name__)
 
 
@@ -101,6 +104,7 @@ class GlobalStore:
         data_dir: str | Path,
         wal_mode: bool = True,
         busy_timeout_ms: int = 5000,
+        encryption_config: EncryptionConfig | None = None,
     ) -> None:
         """Initialize the global store.
 
@@ -108,10 +112,12 @@ class GlobalStore:
             data_dir: Directory for the global.db file
             wal_mode: Enable SQLite WAL mode
             busy_timeout_ms: SQLite busy timeout in milliseconds
+            encryption_config: Optional encryption configuration.
         """
         self.data_dir = Path(data_dir)
         self.wal_mode = wal_mode
         self.busy_timeout_ms = busy_timeout_ms
+        self.encryption_config = encryption_config or EncryptionConfig()
         self._conn: sqlite3.Connection | None = None
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="entdb-global"
@@ -137,12 +143,20 @@ class GlobalStore:
         if self._conn is not None:
             return self._conn
 
-        conn = sqlite3.connect(
-            str(self._db_path()),
-            timeout=self.busy_timeout_ms / 1000.0,
-            isolation_level=None,  # autocommit; we manage transactions manually
-            check_same_thread=False,
-        )
+        if self.encryption_config.enabled:
+            global_key = derive_global_key(self.encryption_config.master_key)
+            conn = open_encrypted_connection(
+                str(self._db_path()),
+                global_key,
+                timeout=self.busy_timeout_ms / 1000.0,
+            )
+        else:
+            conn = sqlite3.connect(
+                str(self._db_path()),
+                timeout=self.busy_timeout_ms / 1000.0,
+                isolation_level=None,  # autocommit; we manage transactions manually
+                check_same_thread=False,
+            )
         conn.row_factory = sqlite3.Row
 
         conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
@@ -529,6 +543,28 @@ class GlobalStore:
                 (role, tenant_id, user_id),
             )
             return cursor.rowcount > 0
+
+    # ── Membership helpers ────────────────────────────────────────────
+
+    async def is_member(self, tenant_id: str, user_id: str) -> bool:
+        """Check if a user is a member of a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier (without 'user:' prefix)
+
+        Returns:
+            True if the user is a member of the tenant
+        """
+        return await self._run_sync(self._sync_is_member, tenant_id, user_id)
+
+    def _sync_is_member(self, tenant_id: str, user_id: str) -> bool:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM tenant_members WHERE tenant_id = ? AND user_id = ?",
+                (tenant_id, user_id),
+            ).fetchone()
+            return row is not None
 
     # ── Shared index ──────────────────────────────────────────────────
 

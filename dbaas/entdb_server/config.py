@@ -27,6 +27,47 @@ from .sharding import ShardingConfig
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class EncryptionConfig:
+    """Encryption at rest configuration for tenant SQLite files.
+
+    When enabled, tenant databases are encrypted using SQLCipher with
+    per-tenant keys derived from a master key via HMAC-SHA256.
+
+    If sqlcipher is not available at runtime, a warning is logged and
+    databases fall back to standard unencrypted SQLite.
+
+    Attributes:
+        enabled: Whether encryption at rest is enabled
+        master_key: Master encryption key (from ENTDB_MASTER_KEY env var or KMS)
+        key_derivation: How tenant keys are derived from master ('hkdf')
+    """
+
+    enabled: bool = False
+    master_key: str = ""
+    key_derivation: str = "hkdf"
+
+    @classmethod
+    def from_env(cls) -> EncryptionConfig:
+        """Load configuration from environment variables."""
+        return cls(
+            enabled=os.getenv("ENTDB_ENCRYPTION_ENABLED", "false").lower() == "true",
+            master_key=os.getenv("ENTDB_MASTER_KEY", ""),
+            key_derivation=os.getenv("ENTDB_KEY_DERIVATION", "hkdf"),
+        )
+
+    def validate(self) -> None:
+        """Validate encryption configuration.
+
+        Raises:
+            ValueError: If encryption is enabled but master key is missing.
+        """
+        if self.enabled and not self.master_key:
+            raise ValueError(
+                "ENTDB_MASTER_KEY is required when ENTDB_ENCRYPTION_ENABLED=true"
+            )
+
+
 class WalBackend(Enum):
     """Supported WAL stream backends."""
 
@@ -653,6 +694,7 @@ class ServerConfig:
     recovery: RecoveryConfig = field(default_factory=RecoveryConfig)
     sharding: ShardingConfig = field(default_factory=ShardingConfig)
     snapshot: SnapshotConfig = field(default_factory=SnapshotConfig)
+    encryption: EncryptionConfig = field(default_factory=EncryptionConfig)
     observability: ObservabilityConfig = field(default_factory=ObservabilityConfig)
 
     @classmethod
@@ -704,6 +746,7 @@ class ServerConfig:
             recovery=RecoveryConfig.from_env(),
             sharding=ShardingConfig.from_env(),
             snapshot=SnapshotConfig.from_env(),
+            encryption=EncryptionConfig.from_env(),
             observability=ObservabilityConfig.from_env(),
         )
 
@@ -767,6 +810,9 @@ class ServerConfig:
                 "Both Kafka and archive replay are disabled for recovery. "
                 "Recovery can only restore from snapshots."
             )
+
+        # Validate encryption configuration
+        self.encryption.validate()
 
         # Validate storage directory exists or can be created
         import os
