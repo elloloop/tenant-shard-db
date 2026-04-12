@@ -1,15 +1,20 @@
 """
 Payload validation for EntDB SDK.
 
-This module provides validation utilities:
-- Field-level validation
-- Payload validation against types
-- Helpful error messages with suggestions
+This module provides thin wrappers around ``FieldDef.validate_value`` so
+that callers can validate payloads against a ``NodeTypeDef`` without
+needing to call into the schema dataclasses directly.
+
+All per-field type checking logic lives in ``FieldDef.validate_value``
+in ``schema.py``. This module is intentionally the only place that adds
+friendly error decoration on top — unknown-field suggestions, raising
+exceptions, etc.
 
 Invariants:
     - Validation errors are deterministic
     - Error messages include context for fixing
     - Unknown fields suggest similar valid fields
+    - Per-kind type checking is delegated to FieldDef (single source of truth)
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from difflib import get_close_matches
 from typing import Any
 
 from .errors import UnknownFieldError, ValidationError
-from .schema import FieldKind, NodeTypeDef
+from .schema import NodeTypeDef
 
 
 def validate_payload(
@@ -26,6 +31,10 @@ def validate_payload(
     payload: dict[str, Any],
 ) -> tuple[bool, list[str]]:
     """Validate payload against node type.
+
+    Delegates per-field type checking to ``FieldDef.validate_value`` so
+    that ``validate_payload`` and ``NodeTypeDef.validate_payload`` cannot
+    drift apart.
 
     Args:
         node_type: Node type to validate against
@@ -36,7 +45,7 @@ def validate_payload(
     """
     errors: list[str] = []
 
-    # Check for unknown fields
+    # Check for unknown fields (with friendly suggestions)
     known_fields = {f.name for f in node_type.fields}
     unknown = set(payload.keys()) - known_fields
     if unknown:
@@ -47,98 +56,14 @@ def validate_payload(
             else:
                 errors.append(f"Unknown field '{field_name}'")
 
-    # Validate each field
+    # Validate each field using FieldDef.validate_value (single source of truth)
     for field_def in node_type.fields:
         value = payload.get(field_def.name, field_def.default)
-
-        # Check required
-        if value is None and field_def.required:
-            errors.append(f"Field '{field_def.name}' is required")
-            continue
-
-        if value is None:
-            continue
-
-        # Type-specific validation
-        error = _validate_field_value(field_def.name, field_def.kind, value, field_def.enum_values)
-        if error:
+        is_valid, error = field_def.validate_value(value)
+        if not is_valid and error:
             errors.append(error)
 
     return len(errors) == 0, errors
-
-
-def _validate_field_value(
-    name: str,
-    kind: FieldKind,
-    value: Any,
-    enum_values: tuple[str, ...] | None = None,
-) -> str | None:
-    """Validate a single field value.
-
-    Returns error message if invalid, None if valid.
-    """
-    if kind == FieldKind.STRING:
-        if not isinstance(value, str):
-            return f"Field '{name}' must be a string, got {type(value).__name__}"
-
-    elif kind == FieldKind.INTEGER:
-        if not isinstance(value, int) or isinstance(value, bool):
-            return f"Field '{name}' must be an integer, got {type(value).__name__}"
-
-    elif kind == FieldKind.FLOAT:
-        if not isinstance(value, int | float) or isinstance(value, bool):
-            return f"Field '{name}' must be a number, got {type(value).__name__}"
-
-    elif kind == FieldKind.BOOLEAN:
-        if not isinstance(value, bool):
-            return f"Field '{name}' must be a boolean, got {type(value).__name__}"
-
-    elif kind == FieldKind.TIMESTAMP:
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            return f"Field '{name}' must be a positive integer timestamp"
-
-    elif kind == FieldKind.ENUM:
-        if not isinstance(value, str):
-            return f"Field '{name}' must be a string, got {type(value).__name__}"
-        if enum_values and value not in enum_values:
-            return f"Field '{name}' must be one of {enum_values}, got '{value}'"
-
-    elif kind == FieldKind.JSON:
-        if not isinstance(value, dict | list):
-            return f"Field '{name}' must be a dict or list, got {type(value).__name__}"
-
-    elif kind == FieldKind.BYTES:
-        if not isinstance(value, bytes | str):
-            return f"Field '{name}' must be bytes or string, got {type(value).__name__}"
-
-    elif kind == FieldKind.LIST_STRING:
-        if not isinstance(value, list):
-            return f"Field '{name}' must be a list, got {type(value).__name__}"
-        for i, item in enumerate(value):
-            if not isinstance(item, str):
-                return f"Field '{name}[{i}]' must be a string"
-
-    elif kind == FieldKind.LIST_INT:
-        if not isinstance(value, list):
-            return f"Field '{name}' must be a list, got {type(value).__name__}"
-        for i, item in enumerate(value):
-            if not isinstance(item, int) or isinstance(item, bool):
-                return f"Field '{name}[{i}]' must be an integer"
-
-    elif kind == FieldKind.REFERENCE:
-        if not isinstance(value, dict):
-            return f"Field '{name}' must be a reference object"
-        if "type_id" not in value or "id" not in value:
-            return f"Field '{name}' must have 'type_id' and 'id'"
-
-    elif kind == FieldKind.LIST_REF:
-        if not isinstance(value, list):
-            return f"Field '{name}' must be a list, got {type(value).__name__}"
-        for i, item in enumerate(value):
-            if not isinstance(item, dict):
-                return f"Field '{name}[{i}]' must be a reference object"
-
-    return None
 
 
 def validate_or_raise(

@@ -9,7 +9,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <h2>The Lifecycle</h2>
 
   <h3>Day 1: Initial Schema</h3>
-  <pre><code># schema.py — your first release
+  <pre is:raw><code># schema.py — your first release
 Task = NodeTypeDef(type_id=1, name="Task", fields=(
     field(1, "title", "str", required=True),
     field(2, "status", "enum", enum_values=("todo", "done")),
@@ -21,7 +21,7 @@ $ entdb init
 
   <h3>Week 2: Add a Field</h3>
   <p><span class="badge badge-new">non-breaking</span> Adding a new field with a new <code>field_id</code> is always safe:</p>
-  <pre><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(
+  <pre is:raw><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(
     field(1, "title", "str", required=True),
     field(2, "status", "enum", enum_values=("todo", "done")),
     field(3, "priority", "int", default=0),  # NEW
@@ -33,11 +33,11 @@ Schema compatible: 1 non-breaking change
 
   <h3>Month 2: Add Enum Values</h3>
   <p><span class="badge badge-new">non-breaking</span> Appending new enum values is safe:</p>
-  <pre><code>field(2, "status", "enum", enum_values=("todo", "in_progress", "done", "archived"))</code></pre>
+  <pre is:raw><code>field(2, "status", "enum", enum_values=("todo", "in_progress", "done", "archived"))</code></pre>
 
   <h3>Month 3: Add a New Type</h3>
   <p><span class="badge badge-new">non-breaking</span> New node types and edge types are always safe:</p>
-  <pre><code>Subtask = NodeTypeDef(type_id=3, name="Subtask", fields=(
+  <pre is:raw><code>Subtask = NodeTypeDef(type_id=3, name="Subtask", fields=(
     field(1, "title", "str", required=True),
 ))
 
@@ -47,11 +47,11 @@ HasSubtask = EdgeTypeDef(edge_id=3, name="HasSubtask",
 
   <h3>Month 6: Deprecate a Field</h3>
   <p><span class="badge badge-new">non-breaking</span> Deprecation is allowed. The field stays in the schema but is flagged:</p>
-  <pre><code>field(3, "priority", "int", default=0, deprecated=True)</code></pre>
+  <pre is:raw><code>field(3, "priority", "int", default=0, deprecated=True)</code></pre>
 
   <h3>Month 12: Add ACL Defaults</h3>
   <p><span class="badge badge-new">non-breaking</span> Changing <code>acl_defaults</code> only affects newly created nodes:</p>
-  <pre><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(...),
+  <pre is:raw><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(...),
     acl_defaults=AclDefaults(tenant_visible=False))  # changed from True</code></pre>
 
   <h2>Breaking Changes</h2>
@@ -72,18 +72,18 @@ HasSubtask = EdgeTypeDef(edge_id=3, name="HasSubtask",
   <h2>CI Integration</h2>
 
   <h3>Setup</h3>
-  <pre><code># pyproject.toml
+  <pre is:raw><code># pyproject.toml
 [tool.entdb]
 schema = "myapp.schema"
 snapshot = ".entdb/snapshot.json"</code></pre>
 
   <h3>CI Pipeline</h3>
-  <pre><code># .github/workflows/ci.yml
+  <pre is:raw><code># .github/workflows/ci.yml
 - name: Schema compatibility check
   run: entdb check</code></pre>
 
   <h3>Local Development</h3>
-  <pre><code># Check before commit
+  <pre is:raw><code># Check before commit
 $ entdb check
 
 # See what changed
@@ -97,7 +97,7 @@ $ entdb snapshot --update</code></pre>
 
   <h2>Fingerprinting</h2>
   <p>The schema registry generates a SHA-256 fingerprint from the canonical schema. The server compares this fingerprint on every write:</p>
-  <pre><code># If fingerprint doesn't match, the server rejects the write
+  <pre is:raw><code># If fingerprint doesn't match, the server rejects the write
 ExecuteAtomicResponse(
     success=False,
     error="Schema fingerprint mismatch: client=sha256:abc..., server=sha256:def..."

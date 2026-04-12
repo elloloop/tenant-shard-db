@@ -1,0 +1,109 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="CI Integration">
+  <h1>CI Integration</h1>
+  <p>EntDB ships three CLI commands that run in your CI pipeline. Together they guarantee schema safety, GDPR compliance, and backward compatibility.</p>
+
+  <h2>The Three Commands</h2>
+  <pre is:raw><code># 1. LINT — catch schema mistakes (missing data_policy, unmarked PII, etc.)
+entdb lint schema.proto
+
+# 2. CHECK — block breaking changes (removed fields, changed types, etc.)
+entdb check schema.proto --baseline .entdb/snapshot.json
+
+# 3. GENERATE — produce typed code for Python and Go
+entdb generate schema.proto --python myapp/schema.py --go pkg/schema/types.go</code></pre>
+
+  <h2>GitHub Actions Setup</h2>
+  <pre is:raw><code># .github/workflows/ci.yml
+name: CI
+on: [push, pull_request]
+
+jobs:
+  schema:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install entdb-sdk
+
+      # Step 1: Lint — catches GDPR/ACL mistakes
+      - name: Schema lint
+        run: entdb lint schema.proto
+        # Fails if: missing data_policy, unmarked PII fields,
+        # FINANCIAL without legal_basis, etc.
+
+      # Step 2: Check — blocks breaking changes
+      - name: Schema compatibility
+        run: entdb check schema.proto --baseline .entdb/snapshot.json
+        # Fails if: removed field, changed type, removed enum value,
+        # changed propagate_share, etc.
+
+      # Step 3: Generate — verify codegen works
+      - name: Generate types
+        run: entdb generate schema.proto --python myapp/schema_gen.py
+        # Fails if: proto compilation error, codegen bug</code></pre>
+
+  <h2>What Each Command Catches</h2>
+
+  <h3><code>entdb lint</code> — Schema Quality Gate</h3>
+  <table>
+    <tr><th>Rule</th><th>Severity</th><th>What it catches</th></tr>
+    <tr><td>type_id_unique</td><td>Error</td><td>Two nodes with same type_id</td></tr>
+    <tr><td>edge_id_unique</td><td>Error</td><td>Two edges with same edge_id</td></tr>
+    <tr><td>type_id_nonzero</td><td>Error</td><td>type_id = 0 (proto3 default = unset)</td></tr>
+    <tr><td>private_inherit_exclusive</td><td>Error</td><td>Node has both private and inherit</td></tr>
+    <tr><td>financial_needs_legal_basis</td><td>Error</td><td>FINANCIAL/AUDIT without legal_basis</td></tr>
+    <tr><td>data_policy_unset</td><td>Warning</td><td>No data_policy (defaults to PERSONAL)</td></tr>
+    <tr><td>string_pii_unmarked</td><td>Warning</td><td>String field without pii/pii_false</td></tr>
+    <tr><td>propagate_target_inherits</td><td>Error</td><td>propagate_share target is private</td></tr>
+  </table>
+
+  <h3><code>entdb check</code> — Backward Compatibility Gate</h3>
+  <table>
+    <tr><th>Change</th><th>Verdict</th></tr>
+    <tr><td>Add new node type</td><td>Non-breaking</td></tr>
+    <tr><td>Add new field</td><td>Non-breaking</td></tr>
+    <tr><td>Add new enum value</td><td>Non-breaking</td></tr>
+    <tr><td>Remove field</td><td><strong>BREAKING</strong></td></tr>
+    <tr><td>Change field type</td><td><strong>BREAKING</strong></td></tr>
+    <tr><td>Remove enum value</td><td><strong>BREAKING</strong></td></tr>
+    <tr><td>Change propagate_share</td><td><strong>BREAKING</strong></td></tr>
+    <tr><td>Change from/to on edge</td><td><strong>BREAKING</strong></td></tr>
+  </table>
+
+  <h2>First-Time Setup</h2>
+  <pre is:raw><code># 1. Install the SDK
+pip install entdb-sdk
+
+# 2. Initialize the baseline snapshot
+entdb init schema.proto
+# Creates .entdb/snapshot.json
+
+# 3. Commit the snapshot to git
+git add .entdb/snapshot.json
+git commit -m "Initialize schema baseline"
+
+# 4. Add CI workflow (above)
+
+# From now on, every PR is checked automatically.</code></pre>
+
+  <h2>After Making Schema Changes</h2>
+  <pre is:raw><code># Non-breaking change (add field, add type):
+# CI passes automatically. Snapshot auto-updates on next init.
+
+# Breaking change (rare, requires migration):
+# CI blocks. To proceed:
+entdb snapshot --update
+git add .entdb/snapshot.json
+git commit -m "Accept breaking schema change: removed legacy field"</code></pre>
+
+  <h2>pyproject.toml Configuration</h2>
+  <pre is:raw><code>[tool.entdb]
+schema = "schema.proto"
+snapshot = ".entdb/snapshot.json"</code></pre>
+</DocsLayout>

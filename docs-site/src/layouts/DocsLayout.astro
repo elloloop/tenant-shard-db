@@ -1,239 +1,42 @@
 ---
+import "../styles/global.css";
+import DocsShell from "../components/DocsShell.tsx";
+
 interface Props {
   title: string;
-  section?: string;
 }
 
-const { title, section } = Astro.props;
-
-const sections = [
-  {
-    title: "Getting Started",
-    items: [
-      { label: "Introduction", href: "/tenant-shard-db/" },
-      { label: "Installation", href: "/tenant-shard-db/docs/installation" },
-      { label: "Quick Start", href: "/tenant-shard-db/docs/quickstart" },
-      { label: "Core Concepts", href: "/tenant-shard-db/docs/concepts" },
-    ],
-  },
-  {
-    title: "Schema",
-    items: [
-      { label: "Defining Types", href: "/tenant-shard-db/docs/schema/defining-types" },
-      { label: "Fields & Validation", href: "/tenant-shard-db/docs/schema/fields" },
-      { label: "Edges", href: "/tenant-shard-db/docs/schema/edges" },
-      { label: "Schema Evolution", href: "/tenant-shard-db/docs/schema/evolution" },
-      { label: "Schema CLI", href: "/tenant-shard-db/docs/schema/cli" },
-    ],
-  },
-  {
-    title: "CRUD Operations",
-    items: [
-      { label: "Creating Nodes", href: "/tenant-shard-db/docs/crud/create" },
-      { label: "Reading Nodes", href: "/tenant-shard-db/docs/crud/read" },
-      { label: "Updating Nodes", href: "/tenant-shard-db/docs/crud/update" },
-      { label: "Deleting Nodes", href: "/tenant-shard-db/docs/crud/delete" },
-      { label: "Atomic Transactions", href: "/tenant-shard-db/docs/crud/transactions" },
-      { label: "Read-after-Write", href: "/tenant-shard-db/docs/crud/consistency" },
-    ],
-  },
-  {
-    title: "Access Control (ACL)",
-    items: [
-      { label: "Overview", href: "/tenant-shard-db/docs/acl/overview" },
-      { label: "Permissions", href: "/tenant-shard-db/docs/acl/permissions" },
-      { label: "Inheritance", href: "/tenant-shard-db/docs/acl/inheritance" },
-      { label: "Groups", href: "/tenant-shard-db/docs/acl/groups" },
-      { label: "Sharing & Revoking", href: "/tenant-shard-db/docs/acl/sharing" },
-      { label: "Connected Nodes", href: "/tenant-shard-db/docs/acl/connected-nodes" },
-      { label: "Deny Rules", href: "/tenant-shard-db/docs/acl/deny" },
-    ],
-  },
-  {
-    title: "SDK Reference",
-    items: [
-      { label: "Python SDK", href: "/tenant-shard-db/docs/sdk/python" },
-      { label: "Go SDK", href: "/tenant-shard-db/docs/sdk/go" },
-      { label: "DbClient", href: "/tenant-shard-db/docs/sdk/client" },
-      { label: "Plan (Transactions)", href: "/tenant-shard-db/docs/sdk/plan" },
-      { label: "Schema Registry", href: "/tenant-shard-db/docs/sdk/registry" },
-    ],
-  },
-  {
-    title: "Deployment",
-    items: [
-      { label: "Docker", href: "/tenant-shard-db/docs/deploy/docker" },
-      { label: "WAL Backends", href: "/tenant-shard-db/docs/deploy/wal" },
-      { label: "Storage Backends", href: "/tenant-shard-db/docs/deploy/storage" },
-      { label: "Multi-Node Sharding", href: "/tenant-shard-db/docs/deploy/sharding" },
-      { label: "Recovery", href: "/tenant-shard-db/docs/deploy/recovery" },
-    ],
-  },
-  {
-    title: "API Reference",
-    items: [
-      { label: "gRPC API", href: "/tenant-shard-db/docs/api/grpc" },
-      { label: "Proto Schema", href: "/tenant-shard-db/docs/api/proto" },
-    ],
-  },
-];
-
+const { title } = Astro.props;
 const currentPath = Astro.url.pathname;
+
+// Inline theme script to prevent flash of wrong theme
+const themeScript = `
+(function(){
+  try {
+    var m = localStorage.getItem('rfr-theme');
+    var s = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    var t = m === 'dark' || (m !== 'light' && s) ? 'dark' : 'light';
+    var d = document.documentElement;
+    d.classList.remove('light','dark');
+    d.classList.add(t);
+    d.style.colorScheme = t;
+  } catch(e){}
+})()
+`;
 ---
 
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{title} - EntDB Documentation</title>
-    <meta name="description" content="EntDB - Multi-tenant graph database with event sourcing, ACL inheritance, and per-tenant SQLite storage." />
-    <link rel="icon" type="image/svg+xml" href="/tenant-shard-db/favicon.svg" />
-    <style>
-      :root {
-        --color-bg: #0a0a0a;
-        --color-bg-surface: #141414;
-        --color-bg-hover: #1a1a1a;
-        --color-border: #262626;
-        --color-text: #fafafa;
-        --color-text-muted: #a1a1aa;
-        --color-primary: #6366f1;
-        --color-primary-hover: #818cf8;
-        --font-mono: 'SF Mono', 'Fira Code', monospace;
-        --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-      }
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body {
-        font-family: var(--font-sans);
-        background: var(--color-bg);
-        color: var(--color-text);
-        line-height: 1.7;
-      }
-      a { color: var(--color-primary); text-decoration: none; }
-      a:hover { color: var(--color-primary-hover); }
-
-      .layout { display: flex; min-height: 100vh; }
-
-      /* Navbar */
-      .navbar {
-        position: fixed; top: 0; left: 0; right: 0; z-index: 50;
-        height: 56px; background: var(--color-bg-surface);
-        border-bottom: 1px solid var(--color-border);
-        display: flex; align-items: center; padding: 0 24px;
-      }
-      .navbar-brand {
-        font-weight: 700; font-size: 18px; color: var(--color-text);
-        display: flex; align-items: center; gap: 8px;
-      }
-      .navbar-brand span { color: var(--color-primary); }
-      .navbar-links { display: flex; gap: 24px; margin-left: auto; }
-      .navbar-links a { color: var(--color-text-muted); font-size: 14px; }
-      .navbar-links a:hover { color: var(--color-text); }
-
-      /* Sidebar */
-      .sidebar {
-        position: fixed; top: 56px; left: 0; bottom: 0;
-        width: 260px; overflow-y: auto;
-        background: var(--color-bg-surface);
-        border-right: 1px solid var(--color-border);
-        padding: 16px 0;
-      }
-      .sidebar-section { margin-bottom: 8px; }
-      .sidebar-section-title {
-        font-size: 11px; font-weight: 600; text-transform: uppercase;
-        letter-spacing: 0.05em; color: var(--color-text-muted);
-        padding: 8px 20px 4px;
-      }
-      .sidebar-link {
-        display: block; padding: 6px 20px; font-size: 14px;
-        color: var(--color-text-muted); transition: all 0.15s;
-      }
-      .sidebar-link:hover { color: var(--color-text); background: var(--color-bg-hover); }
-      .sidebar-link.active {
-        color: var(--color-primary); background: rgba(99, 102, 241, 0.08);
-        border-right: 2px solid var(--color-primary);
-      }
-
-      /* Content */
-      .content {
-        margin-left: 260px; margin-top: 56px;
-        padding: 40px 48px; max-width: 860px; flex: 1;
-      }
-      .content h1 { font-size: 32px; font-weight: 700; margin-bottom: 16px; }
-      .content h2 { font-size: 24px; font-weight: 600; margin: 32px 0 12px; border-bottom: 1px solid var(--color-border); padding-bottom: 8px; }
-      .content h3 { font-size: 18px; font-weight: 600; margin: 24px 0 8px; }
-      .content p { margin-bottom: 16px; color: var(--color-text-muted); }
-      .content ul, .content ol { margin-bottom: 16px; padding-left: 24px; color: var(--color-text-muted); }
-      .content li { margin-bottom: 4px; }
-      .content code {
-        font-family: var(--font-mono); font-size: 13px;
-        background: var(--color-bg-hover); padding: 2px 6px;
-        border-radius: 4px;
-      }
-      .content pre {
-        background: var(--color-bg-surface); border: 1px solid var(--color-border);
-        border-radius: 8px; padding: 16px; overflow-x: auto;
-        margin-bottom: 20px;
-      }
-      .content pre code { background: none; padding: 0; font-size: 13px; line-height: 1.6; }
-      .content table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-      .content th, .content td {
-        text-align: left; padding: 10px 16px;
-        border-bottom: 1px solid var(--color-border);
-      }
-      .content th { font-weight: 600; font-size: 13px; color: var(--color-text-muted); }
-      .content td { font-size: 14px; }
-      .content blockquote {
-        border-left: 3px solid var(--color-primary);
-        padding: 12px 16px; margin: 16px 0;
-        background: rgba(99, 102, 241, 0.05);
-        border-radius: 0 8px 8px 0;
-      }
-      .content blockquote p { margin: 0; }
-      .badge {
-        display: inline-block; padding: 2px 8px;
-        font-size: 11px; font-weight: 600;
-        border-radius: 4px; text-transform: uppercase;
-      }
-      .badge-new { background: rgba(34, 197, 94, 0.15); color: #22c55e; }
-      .badge-breaking { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
-    </style>
+    <title>{title} — EntDB Documentation</title>
+    <meta name="description" content="EntDB — Multi-tenant graph database with event sourcing, ACL inheritance, and built-in GDPR compliance." />
+    <script is:inline set:html={themeScript} />
   </head>
-  <body>
-    <!-- Navbar -->
-    <nav class="navbar">
-      <div class="navbar-brand">
-        <span>EntDB</span> Docs
-      </div>
-      <div class="navbar-links">
-        <a href="https://github.com/elloloop/tenant-shard-db">GitHub</a>
-        <a href="https://pypi.org/project/entdb-sdk/">PyPI</a>
-        <a href="/tenant-shard-db/docs/api/grpc">API</a>
-      </div>
-    </nav>
-
-    <div class="layout">
-      <!-- Sidebar -->
-      <aside class="sidebar">
-        {sections.map((section) => (
-          <div class="sidebar-section">
-            <div class="sidebar-section-title">{section.title}</div>
-            {section.items.map((item) => (
-              <a
-                href={item.href}
-                class:list={["sidebar-link", { active: currentPath === item.href || currentPath === item.href + "/" }]}
-              >
-                {item.label}
-              </a>
-            ))}
-          </div>
-        ))}
-      </aside>
-
-      <!-- Main content -->
-      <main class="content">
-        <slot />
-      </main>
-    </div>
+  <body class="bg-background text-foreground antialiased">
+    <DocsShell client:load currentPath={currentPath}>
+      <slot />
+    </DocsShell>
   </body>
 </html>

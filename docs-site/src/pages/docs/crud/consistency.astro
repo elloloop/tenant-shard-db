@@ -7,7 +7,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <p>EntDB uses event sourcing: writes go to the WAL first, then the applier processes them into SQLite. By default, reads are <strong>eventually consistent</strong>. For immediate consistency, use the <code>after_offset</code> mechanism.</p>
 
   <h2>The Problem</h2>
-  <pre><code># Without consistency guarantee:
+  <pre is:raw><code># Without consistency guarantee:
 result = await plan.commit()
 
 # This might return None — applier hasn't processed the event yet
@@ -16,7 +16,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
 
   <h2>Solution 1: Wait During Commit</h2>
   <p>The simplest approach &mdash; block until the write is applied:</p>
-  <pre><code>result = await plan.commit(wait_applied=True, timeout=5.0)
+  <pre is:raw><code>result = await plan.commit(wait_applied=True, timeout=5.0)
 # Returns only after the applier has processed the event
 
 # Now reads are guaranteed to see the data
@@ -26,7 +26,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
 
   <h2>Solution 2: Offset-Based Reads</h2>
   <p>More flexible &mdash; commit fast, wait only when you need to read:</p>
-  <pre><code>result = await plan.commit()  # returns immediately after WAL append
+  <pre is:raw><code>result = await plan.commit()  # returns immediately after WAL append
 
 # Do other work...
 
@@ -37,7 +37,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
   <p>This is useful when the write and read happen in different parts of your code.</p>
 
   <h2>Solution 3: Explicit Wait</h2>
-  <pre><code>result = await plan.commit()
+  <pre is:raw><code>result = await plan.commit()
 
 # Wait for the offset explicitly
 await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)

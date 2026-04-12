@@ -6,6 +6,8 @@ This module manages the per-tenant SQLite database that stores:
 - Edges connecting nodes
 - Applied events for idempotency checking
 - Node visibility index for ACL filtering
+- Notifications (per-user mailbox within the tenant)
+- Read cursors (per-user, per-channel last-read timestamps)
 
 The canonical store is the materialized view of the WAL stream.
 It can be rebuilt by replaying events from the stream or archive.
@@ -61,6 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import sqlite3
@@ -72,6 +75,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..config import EncryptionConfig
+from ..encryption import derive_tenant_key, open_encrypted_connection
 from ..metrics import metrics_enabled as _metrics_enabled
 from ..metrics import record_sqlite_op as _record_sqlite_op
 
@@ -98,6 +103,24 @@ def _compare_stream_pos(a: str, b: str) -> int:
         Positive if a > b, negative if a < b, zero if equal.
     """
     return _parse_stream_offset(a) - _parse_stream_offset(b)
+
+
+def _compute_entry_hash(
+    event_id: str,
+    prev_hash: str,
+    actor_id: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    created_at: int,
+) -> str:
+    """Compute the SHA-256 hash for an audit log entry.
+
+    The hash covers the core immutable fields so that any modification
+    to a row (or its predecessor) breaks the chain.
+    """
+    content = f"{event_id}:{prev_hash}:{actor_id}:{action}:{target_type}:{target_id}:{created_at}"
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 class TenantNotFoundError(Exception):
@@ -318,6 +341,7 @@ class CanonicalStore:
         wal_mode: bool = True,
         busy_timeout_ms: int = 5000,
         cache_size_pages: int = -64000,
+        encryption_config: EncryptionConfig | None = None,
     ) -> None:
         """Initialize the canonical store.
 
@@ -326,11 +350,15 @@ class CanonicalStore:
             wal_mode: Enable SQLite WAL mode
             busy_timeout_ms: SQLite busy timeout
             cache_size_pages: SQLite cache size (negative = KB)
+            encryption_config: Optional encryption configuration. When
+                enabled, tenant databases are encrypted with per-tenant
+                keys derived from the master key.
         """
         self.data_dir = Path(data_dir)
         self.wal_mode = wal_mode
         self.busy_timeout_ms = busy_timeout_ms
         self.cache_size_pages = cache_size_pages
+        self.encryption_config = encryption_config or EncryptionConfig()
         self._connections: dict[str, sqlite3.Connection] = {}
         # Single-thread executor — SQLite connections are not thread-safe,
         # so all DB ops must run on the same thread when using connection pooling.
@@ -416,7 +444,13 @@ class CanonicalStore:
     def _classify_op(fn: Callable) -> str:
         """Classify a sync helper as 'read' or 'write' by its name."""
         name = fn.__name__
-        if "create" in name or "update" in name or "delete" in name:
+        if (
+            "create" in name
+            or "update" in name
+            or "delete" in name
+            or "mark" in name
+            or "batch" in name
+        ):
             return "write"
         return "read"
 
@@ -470,12 +504,21 @@ class CanonicalStore:
         # Reuse cached connection
         cache_key = str(db_path)
         if cache_key not in self._connections:
-            conn = sqlite3.connect(
-                str(db_path),
-                timeout=self.busy_timeout_ms / 1000.0,
-                isolation_level=None,  # Autocommit by default, explicit transactions
-                check_same_thread=False,
-            )
+            # Open with encryption if configured
+            if self.encryption_config.enabled:
+                tenant_key = derive_tenant_key(self.encryption_config.master_key, tenant_id)
+                conn = open_encrypted_connection(
+                    str(db_path),
+                    tenant_key,
+                    timeout=self.busy_timeout_ms / 1000.0,
+                )
+            else:
+                conn = sqlite3.connect(
+                    str(db_path),
+                    timeout=self.busy_timeout_ms / 1000.0,
+                    isolation_level=None,  # Autocommit by default, explicit transactions
+                    check_same_thread=False,
+                )
             conn.row_factory = sqlite3.Row
 
             # Configure connection — only once per cached connection
@@ -600,10 +643,96 @@ class CanonicalStore:
             CREATE INDEX IF NOT EXISTS idx_inherit_from
                 ON acl_inherit(inherit_from);
 
+            -- Notifications (per-user mailbox within tenant)
+            CREATE TABLE IF NOT EXISTS notifications (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                type        TEXT NOT NULL,
+                node_id     TEXT NOT NULL,
+                snippet     TEXT,
+                read        INTEGER DEFAULT 0,
+                created_at  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_user
+                ON notifications(user_id, read, created_at DESC);
+
+            -- Read cursors (per-user, per-channel last-read timestamp)
+            CREATE TABLE IF NOT EXISTS read_cursors (
+                user_id      TEXT NOT NULL,
+                channel_id   TEXT NOT NULL,
+                last_read_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, channel_id)
+            );
+
+            -- Type metadata (data policy, PII fields, subject field)
+            CREATE TABLE IF NOT EXISTS type_metadata (
+                type_id       INTEGER PRIMARY KEY,
+                data_policy   TEXT NOT NULL DEFAULT 'personal',
+                pii_fields    TEXT NOT NULL DEFAULT '[]',
+                subject_field TEXT DEFAULT NULL
+            );
+
+            -- Audit log with hash chain for tamper evidence
+            CREATE TABLE IF NOT EXISTS audit_log (
+                event_id    TEXT PRIMARY KEY,
+                prev_hash   TEXT NOT NULL,
+                actor_id    TEXT NOT NULL,
+                action      TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id   TEXT NOT NULL,
+                ip_address  TEXT,
+                user_agent  TEXT,
+                metadata    TEXT,
+                created_at  INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_time
+                ON audit_log(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_actor
+                ON audit_log(actor_id, created_at DESC);
+
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
             VALUES (1, strftime('%s', 'now') * 1000);
         """)
+
+    def sync_type_metadata(
+        self,
+        tenant_id: str,
+        registry: object,
+    ) -> None:
+        """Populate the type_metadata table from a SchemaRegistry.
+
+        Inserts or replaces rows for every node type in the registry,
+        caching data_policy, pii_fields, and subject_field so that
+        runtime queries can look them up without touching the registry.
+
+        Args:
+            tenant_id: Tenant identifier
+            registry: SchemaRegistry instance (typed as object to avoid
+                circular imports; must have node_types() iterator and
+                get_data_policy / get_pii_fields / get_subject_field)
+        """
+        from ..schema.registry import SchemaRegistry
+
+        reg: SchemaRegistry = registry  # type: ignore[assignment]
+        with self._get_connection(tenant_id) as conn:
+            for node_type in reg.node_types():
+                policy = reg.get_data_policy(node_type.type_id)
+                pii = reg.get_pii_fields(node_type.type_id)
+                subject = reg.get_subject_field(node_type.type_id)
+                conn.execute(
+                    "INSERT OR REPLACE INTO type_metadata "
+                    "(type_id, data_policy, pii_fields, subject_field) "
+                    "VALUES (?, ?, ?, ?)",
+                    (
+                        node_type.type_id,
+                        policy.value,
+                        json.dumps(pii),
+                        subject,
+                    ),
+                )
+            conn.commit()
 
     @contextmanager
     def batch_transaction(self, tenant_id: str) -> Iterator[sqlite3.Connection]:
@@ -2108,6 +2237,77 @@ class CanonicalStore:
             member_actor_id,
         )
 
+    def _sync_get_group_members(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[str]:
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                "SELECT member_actor_id FROM group_users WHERE group_id = ?",
+                (group_id,),
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    async def get_group_members(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[str]:
+        """Get all members of a group.
+
+        Args:
+            tenant_id: Tenant identifier
+            group_id: Group identifier
+
+        Returns:
+            List of member actor IDs
+        """
+        return await self._run_sync(
+            self._sync_get_group_members,
+            tenant_id,
+            group_id,
+        )
+
+    def _sync_list_node_access_for_group(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[dict]:
+        """List all node_access entries where the actor_id is a given group."""
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                """
+                SELECT node_id, actor_id, permission, granted_by, granted_at, expires_at
+                FROM node_access
+                WHERE actor_id = ?
+                """,
+                (group_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    async def list_node_access_for_group(
+        self,
+        tenant_id: str,
+        group_id: str,
+    ) -> list[dict]:
+        """List all node_access entries granted to a group.
+
+        Used when group membership changes to cascade shared_index updates.
+
+        Args:
+            tenant_id: Tenant identifier
+            group_id: Group identifier (e.g. "group:friends")
+
+        Returns:
+            List of node_access dicts with node_id, permission, etc.
+        """
+        return await self._run_sync(
+            self._sync_list_node_access_for_group,
+            tenant_id,
+            group_id,
+        )
+
     def _sync_transfer_ownership(
         self,
         tenant_id: str,
@@ -2155,6 +2355,373 @@ class CanonicalStore:
             tenant_id,
             node_id,
             new_owner,
+        )
+
+    # ── Admin operations (Issue #90) ────────────────────────────────────
+
+    def _sync_transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+    ) -> int:
+        """Reassign all nodes owned by from_user to to_user.
+
+        Returns the number of nodes updated. Also refreshes the visibility
+        index for each affected node so that the new owner appears as a
+        principal and the old owner is removed (unless they had explicit
+        access via ACL).
+        """
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = conn.execute(
+                    "SELECT node_id, acl_blob FROM nodes WHERE tenant_id = ? AND owner_actor = ?",
+                    (tenant_id, from_user),
+                ).fetchall()
+                cursor = conn.execute(
+                    "UPDATE nodes SET owner_actor = ? WHERE tenant_id = ? AND owner_actor = ?",
+                    (to_user, tenant_id, from_user),
+                )
+                count = cursor.rowcount
+                for row in rows:
+                    acl = json.loads(row["acl_blob"]) if row["acl_blob"] else []
+                    self._update_visibility(
+                        conn,
+                        tenant_id,
+                        row["node_id"],
+                        to_user,
+                        acl,
+                    )
+                conn.execute("COMMIT")
+                return count
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    async def transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        actor: str,
+    ) -> dict:
+        """Reassign all nodes where owner_actor=from_user to to_user.
+
+        Use case: employee offboarding, where their manager takes
+        ownership of all their work. Logs the operation to the audit
+        log with action ``transfer_content``.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Current owner actor (e.g. ``user:alice``)
+            to_user: New owner actor (e.g. ``user:bob``)
+            actor: Admin actor performing the operation
+
+        Returns:
+            dict with keys ``transferred`` (count), ``tenant_id``,
+            ``from``, ``to``.
+        """
+        count = await self._run_sync(
+            self._sync_transfer_user_content,
+            tenant_id,
+            from_user,
+            to_user,
+        )
+        import json as _json
+
+        await self.append_audit(
+            tenant_id=tenant_id,
+            actor_id=actor,
+            action="transfer_content",
+            target_type="user",
+            target_id=from_user,
+            metadata=_json.dumps(
+                {
+                    "from_user": from_user,
+                    "to_user": to_user,
+                    "transferred": count,
+                }
+            ),
+        )
+        return {
+            "transferred": count,
+            "tenant_id": tenant_id,
+            "from": from_user,
+            "to": to_user,
+        }
+
+    def _sync_delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str,
+        expires_at: int | None,
+        granted_by: str,
+        now: int,
+    ) -> int:
+        """Grant to_user the given permission on every node owned by from_user."""
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                "SELECT node_id FROM nodes WHERE tenant_id = ? AND owner_actor = ?",
+                (tenant_id, from_user),
+            ).fetchall()
+            count = 0
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO node_access
+                    (node_id, actor_id, actor_type, permission,
+                     granted_by, granted_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["node_id"],
+                        to_user,
+                        "user",
+                        permission,
+                        granted_by,
+                        now,
+                        expires_at,
+                    ),
+                )
+                count += 1
+            return count
+
+    async def delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str,
+        expires_at: int | None,
+        actor: str,
+    ) -> dict:
+        """Grant to_user temporary access to all nodes owned by from_user.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Content owner whose nodes are being delegated
+            to_user: Recipient of the delegation
+            permission: Permission level (``read``, ``write``, ...)
+            expires_at: Expiry timestamp in Unix ms, or None for permanent
+            actor: Admin actor performing the operation
+
+        Returns:
+            dict with keys ``delegated`` (count), ``expires_at``.
+        """
+        now = int(time.time() * 1000)
+        count = await self._run_sync(
+            self._sync_delegate_access,
+            tenant_id,
+            from_user,
+            to_user,
+            permission,
+            expires_at,
+            actor,
+            now,
+        )
+        import json as _json
+
+        await self.append_audit(
+            tenant_id=tenant_id,
+            actor_id=actor,
+            action="delegate_access",
+            target_type="user",
+            target_id=from_user,
+            metadata=_json.dumps(
+                {
+                    "from_user": from_user,
+                    "to_user": to_user,
+                    "permission": permission,
+                    "expires_at": expires_at,
+                    "delegated": count,
+                }
+            ),
+        )
+        return {
+            "delegated": count,
+            "expires_at": expires_at,
+            "tenant_id": tenant_id,
+            "from": from_user,
+            "to": to_user,
+        }
+
+    def _sync_revoke_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> tuple[int, int]:
+        """Remove all node_access grants and group memberships for user.
+
+        Returns (revoked_grants, revoked_groups).
+        """
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                grants = conn.execute(
+                    "DELETE FROM node_access WHERE actor_id = ?",
+                    (user_id,),
+                ).rowcount
+                groups = conn.execute(
+                    "DELETE FROM group_users WHERE member_actor_id = ?",
+                    (user_id,),
+                ).rowcount
+                # Also remove any visibility rows that were granted via
+                # direct access (owner visibility rows are re-generated
+                # lazily on next write, so we don't touch those).
+                conn.execute(
+                    "DELETE FROM node_visibility WHERE tenant_id = ? AND principal = ?",
+                    (tenant_id, user_id),
+                )
+                conn.execute("COMMIT")
+                return (grants, groups)
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    async def revoke_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+        actor: str,
+    ) -> dict:
+        """Remove ALL access for a user in a tenant. Instant termination.
+
+        Removes:
+            - All ``node_access`` grants (direct + via group-id entries
+              whose actor_id equals ``user_id``)
+            - All ``group_users`` rows where the user is a member
+            - All ``node_visibility`` rows naming the user as principal
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to revoke (e.g. ``user:alice``)
+            actor: Admin actor performing the operation
+
+        Returns:
+            dict with keys ``revoked_grants``, ``revoked_groups``.
+        """
+        grants, groups = await self._run_sync(
+            self._sync_revoke_user_access,
+            tenant_id,
+            user_id,
+        )
+        import json as _json
+
+        await self.append_audit(
+            tenant_id=tenant_id,
+            actor_id=actor,
+            action="revoke_user_access",
+            target_type="user",
+            target_id=user_id,
+            metadata=_json.dumps(
+                {
+                    "user_id": user_id,
+                    "revoked_grants": grants,
+                    "revoked_groups": groups,
+                }
+            ),
+        )
+        return {
+            "revoked_grants": grants,
+            "revoked_groups": groups,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+        }
+
+    # ── Cross-tenant access helpers ─────────────────────────────────────
+
+    def _sync_has_node_access(
+        self,
+        tenant_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if any of actor_ids has at least one node_access entry in tenant."""
+        placeholders = ",".join("?" for _ in actor_ids)
+        with self._get_connection(tenant_id) as conn:
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM node_access
+                WHERE actor_id IN ({placeholders})
+                  AND permission != 'deny'
+                  AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
+                """,
+                (*actor_ids, int(time.time() * 1000)),
+            ).fetchone()
+            return row is not None
+
+    async def has_node_access(
+        self,
+        tenant_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if actor has at least one node_access entry in the tenant.
+
+        Used for cross-tenant QueryNodes authorization: the actor is not
+        a tenant member but may have explicit node_access grants.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor_ids: Pre-resolved list from resolve_actor_groups
+
+        Returns:
+            True if at least one non-deny, non-expired entry exists
+        """
+        return await self._run_sync(
+            self._sync_has_node_access,
+            tenant_id,
+            actor_ids,
+        )
+
+    def _sync_has_node_access_for_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if any of actor_ids has node_access for a specific node."""
+        placeholders = ",".join("?" for _ in actor_ids)
+        with self._get_connection(tenant_id) as conn:
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM node_access
+                WHERE node_id = ?
+                  AND actor_id IN ({placeholders})
+                  AND permission != 'deny'
+                  AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
+                """,
+                (node_id, *actor_ids, int(time.time() * 1000)),
+            ).fetchone()
+            return row is not None
+
+    async def has_node_access_for_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if actor has explicit node_access for a specific node.
+
+        Used for cross-tenant GetNode authorization: the actor is not
+        a tenant member but may have a direct node_access grant.
+
+        Args:
+            tenant_id: Tenant identifier
+            node_id: Node identifier
+            actor_ids: Pre-resolved list from resolve_actor_groups
+
+        Returns:
+            True if a non-deny, non-expired entry exists for the node
+        """
+        return await self._run_sync(
+            self._sync_has_node_access_for_node,
+            tenant_id,
+            node_id,
+            actor_ids,
         )
 
     def list_tenants(self) -> list[str]:
@@ -2278,6 +2845,311 @@ class CanonicalStore:
         """
         return await self._run_sync(self._sync_get_last_applied_position, tenant_id)
 
+    # ── audit log (hash-chained) ─────────────────────────────────────────
+
+    def _sync_append_audit(
+        self,
+        tenant_id: str,
+        actor_id: str,
+        action: str,
+        target_type: str,
+        target_id: str,
+        ip_address: str | None,
+        user_agent: str | None,
+        metadata: str | None,
+    ) -> str:
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # 1. Get the last entry's hash (or "genesis" for the first)
+                cursor = conn.execute(
+                    """
+                    SELECT event_id, prev_hash, actor_id, action,
+                           target_type, target_id, created_at
+                    FROM audit_log ORDER BY created_at ASC, rowid ASC
+                    """,
+                )
+                rows = cursor.fetchall()
+
+                if rows:
+                    last = rows[-1]
+                    prev_hash = _compute_entry_hash(
+                        last["event_id"],
+                        last["prev_hash"],
+                        last["actor_id"],
+                        last["action"],
+                        last["target_type"],
+                        last["target_id"],
+                        last["created_at"],
+                    )
+                else:
+                    prev_hash = "genesis"
+
+                # 2. Create new entry
+                event_id = str(uuid.uuid4())
+                now = int(time.time() * 1000)
+
+                conn.execute(
+                    """
+                    INSERT INTO audit_log
+                        (event_id, prev_hash, actor_id, action, target_type,
+                         target_id, ip_address, user_agent, metadata, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        prev_hash,
+                        actor_id,
+                        action,
+                        target_type,
+                        target_id,
+                        ip_address,
+                        user_agent,
+                        metadata,
+                        now,
+                    ),
+                )
+
+                conn.execute("COMMIT")
+                return event_id
+
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    async def append_audit(
+        self,
+        tenant_id: str,
+        actor_id: str,
+        action: str,
+        target_type: str,
+        target_id: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+        metadata: str | None = None,
+    ) -> str:
+        """Append a tamper-evident audit entry.
+
+        Each entry stores the SHA-256 hash of the previous entry's content,
+        forming a hash chain.  Any modification or deletion of a prior entry
+        will break the chain (detectable via ``verify_audit_chain``).
+
+        Args:
+            tenant_id: Tenant identifier
+            actor_id: Who performed the action
+            action: Action performed (e.g. "create_node")
+            target_type: Type of target (e.g. "node")
+            target_id: ID of target
+            ip_address: Optional client IP
+            user_agent: Optional client user-agent
+            metadata: Optional JSON metadata string
+
+        Returns:
+            The new event_id.
+        """
+        return await self._run_sync(
+            self._sync_append_audit,
+            tenant_id,
+            actor_id,
+            action,
+            target_type,
+            target_id,
+            ip_address,
+            user_agent,
+            metadata,
+        )
+
+    def _sync_get_audit_log(
+        self,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        actor_id: str | None,
+        action: str | None,
+        after: int | None,
+        before: int | None,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            clauses: list[str] = []
+            params: list[Any] = []
+
+            if actor_id is not None:
+                clauses.append("actor_id = ?")
+                params.append(actor_id)
+            if action is not None:
+                clauses.append("action = ?")
+                params.append(action)
+            if after is not None:
+                clauses.append("created_at > ?")
+                params.append(after)
+            if before is not None:
+                clauses.append("created_at < ?")
+                params.append(before)
+
+            where = ""
+            if clauses:
+                where = "WHERE " + " AND ".join(clauses)
+
+            query = f"""
+                SELECT event_id, prev_hash, actor_id, action, target_type,
+                       target_id, ip_address, user_agent, metadata, created_at
+                FROM audit_log
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """
+            params.extend([limit, offset])
+
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_audit_log(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        actor_id: str | None = None,
+        action: str | None = None,
+        after: int | None = None,
+        before: int | None = None,
+    ) -> list[dict]:
+        """Query audit log with optional filters.
+
+        Args:
+            tenant_id: Tenant identifier
+            limit: Max entries to return
+            offset: Pagination offset
+            actor_id: Filter by actor
+            action: Filter by action type
+            after: Only entries after this timestamp (Unix ms)
+            before: Only entries before this timestamp (Unix ms)
+
+        Returns:
+            List of audit entries (newest first).
+        """
+        return await self._run_sync(
+            self._sync_get_audit_log,
+            tenant_id,
+            limit,
+            offset,
+            actor_id,
+            action,
+            after,
+            before,
+        )
+
+    def _sync_verify_audit_chain(self, tenant_id: str) -> tuple[bool, str]:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                """
+                SELECT event_id, prev_hash, actor_id, action,
+                       target_type, target_id, created_at
+                FROM audit_log
+                ORDER BY created_at ASC, rowid ASC
+                """,
+            )
+            rows = cursor.fetchall()
+
+            if not rows:
+                return (True, "ok")
+
+            # First entry must have prev_hash == "genesis"
+            first = rows[0]
+            if first["prev_hash"] != "genesis":
+                return (False, f"Break at event_id {first['event_id']}: genesis expected")
+
+            for i in range(1, len(rows)):
+                prev = rows[i - 1]
+                curr = rows[i]
+
+                expected_prev_hash = _compute_entry_hash(
+                    prev["event_id"],
+                    prev["prev_hash"],
+                    prev["actor_id"],
+                    prev["action"],
+                    prev["target_type"],
+                    prev["target_id"],
+                    prev["created_at"],
+                )
+
+                if curr["prev_hash"] != expected_prev_hash:
+                    return (False, f"Break at event_id {curr['event_id']}")
+
+            return (True, "ok")
+
+    async def verify_audit_chain(self, tenant_id: str) -> tuple[bool, str]:
+        """Verify the entire audit chain is intact.
+
+        Walks through all entries in chronological order and recomputes
+        each entry's expected ``prev_hash``.  If any mismatch is found
+        the chain has been tampered with.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            Tuple of (valid, message).  ``valid`` is True when the chain
+            is intact; ``message`` is "ok" or describes the break.
+        """
+        return await self._run_sync(self._sync_verify_audit_chain, tenant_id)
+
+    def _sync_export_audit_log(
+        self,
+        tenant_id: str,
+        after: int | None,
+        before: int | None,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            clauses: list[str] = []
+            params: list[Any] = []
+
+            if after is not None:
+                clauses.append("created_at > ?")
+                params.append(after)
+            if before is not None:
+                clauses.append("created_at < ?")
+                params.append(before)
+
+            where = ""
+            if clauses:
+                where = "WHERE " + " AND ".join(clauses)
+
+            query = f"""
+                SELECT event_id, prev_hash, actor_id, action, target_type,
+                       target_id, ip_address, user_agent, metadata, created_at
+                FROM audit_log
+                {where}
+                ORDER BY created_at ASC, rowid ASC
+            """
+
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def export_audit_log(
+        self,
+        tenant_id: str,
+        after: int | None = None,
+        before: int | None = None,
+    ) -> list[dict]:
+        """Export audit entries for compliance.
+
+        Returns entries in chronological order (oldest first).
+
+        Args:
+            tenant_id: Tenant identifier
+            after: Only entries after this timestamp (Unix ms)
+            before: Only entries before this timestamp (Unix ms)
+
+        Returns:
+            List of audit entries (oldest first).
+        """
+        return await self._run_sync(
+            self._sync_export_audit_log,
+            tenant_id,
+            after,
+            before,
+        )
+
     def get_db_path(self, tenant_id: str) -> Path:
         """Get the database file path for a tenant.
 
@@ -2288,3 +3160,758 @@ class CanonicalStore:
             Path to database file
         """
         return self._get_db_path(tenant_id)
+
+    def delete_tenant_database(self, tenant_id: str) -> bool:
+        """Remove a tenant's SQLite database file from disk.
+
+        Also closes and evicts any pooled connection for the tenant and
+        best-effort removes the WAL/SHM sidecar files. Used by the GDPR
+        deletion worker when a personal tenant is being erased.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            True if the database file existed and was removed.
+        """
+        db_path = self._get_db_path(tenant_id)
+        cache_key = str(db_path)
+        conn = self._connections.pop(cache_key, None)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        removed = False
+        if db_path.exists():
+            with contextlib.suppress(FileNotFoundError):
+                db_path.unlink()
+                removed = True
+        # WAL / SHM sidecars
+        for suffix in ("-wal", "-shm"):
+            sidecar = db_path.with_name(db_path.name + suffix)
+            if sidecar.exists():
+                with contextlib.suppress(FileNotFoundError):
+                    sidecar.unlink()
+        return removed
+
+    # ── Notifications ─────────────────────────────────────────────────
+
+    def _sync_create_notification(
+        self,
+        tenant_id: str,
+        user_id: str,
+        type_: str,
+        node_id: str,
+        snippet: str | None,
+    ) -> str:
+        notif_id = str(uuid.uuid4())
+        now = int(time.time() * 1000)
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT INTO notifications (id, user_id, type, node_id, snippet, read, created_at)
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+                """,
+                (notif_id, user_id, type_, node_id, snippet, now),
+            )
+        return notif_id
+
+    async def create_notification(
+        self,
+        tenant_id: str,
+        user_id: str,
+        type: str,
+        node_id: str,
+        snippet: str | None = None,
+    ) -> str:
+        """Create a notification for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to notify
+            type: Notification type (e.g. 'mention', 'reply')
+            node_id: Related node ID
+            snippet: Optional preview text
+
+        Returns:
+            Notification ID
+        """
+        return await self._run_sync(
+            self._sync_create_notification, tenant_id, user_id, type, node_id, snippet
+        )
+
+    def _sync_get_notifications(
+        self,
+        tenant_id: str,
+        user_id: str,
+        unread_only: bool,
+        limit: int,
+        offset: int,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            if unread_only:
+                cursor = conn.execute(
+                    """
+                    SELECT id, user_id, type, node_id, snippet, read, created_at
+                    FROM notifications
+                    WHERE user_id = ? AND read = 0
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (user_id, limit, offset),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, user_id, type, node_id, snippet, read, created_at
+                    FROM notifications
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (user_id, limit, offset),
+                )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_notifications(
+        self,
+        tenant_id: str,
+        user_id: str,
+        unread_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Get notifications for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to get notifications for
+            unread_only: If True, only return unread notifications
+            limit: Maximum number of results
+            offset: Pagination offset
+
+        Returns:
+            List of notification dicts
+        """
+        return await self._run_sync(
+            self._sync_get_notifications, tenant_id, user_id, unread_only, limit, offset
+        )
+
+    def _sync_mark_notification_read(
+        self,
+        tenant_id: str,
+        notification_id: str,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "UPDATE notifications SET read = 1 WHERE id = ?",
+                (notification_id,),
+            )
+            return cursor.rowcount > 0
+
+    async def mark_notification_read(
+        self,
+        tenant_id: str,
+        notification_id: str,
+    ) -> bool:
+        """Mark a single notification as read.
+
+        Args:
+            tenant_id: Tenant identifier
+            notification_id: Notification to mark read
+
+        Returns:
+            True if notification was found and updated
+        """
+        return await self._run_sync(self._sync_mark_notification_read, tenant_id, notification_id)
+
+    def _sync_mark_all_read(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0",
+                (user_id,),
+            )
+            return cursor.rowcount
+
+    async def mark_all_read(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        """Mark all notifications as read for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User whose notifications to mark read
+
+        Returns:
+            Number of notifications marked read
+        """
+        return await self._run_sync(self._sync_mark_all_read, tenant_id, user_id)
+
+    def _sync_get_unread_count(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+                (user_id,),
+            )
+            return cursor.fetchone()[0]
+
+    async def get_unread_count(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        """Get unread notification count for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to count unread for
+
+        Returns:
+            Number of unread notifications
+        """
+        return await self._run_sync(self._sync_get_unread_count, tenant_id, user_id)
+
+    def _sync_batch_create_notifications(
+        self,
+        tenant_id: str,
+        entries: list[dict],
+    ) -> int:
+        now = int(time.time() * 1000)
+        rows = []
+        for entry in entries:
+            rows.append(
+                (
+                    str(uuid.uuid4()),
+                    entry["user_id"],
+                    entry["type"],
+                    entry["node_id"],
+                    entry.get("snippet"),
+                    0,
+                    now,
+                )
+            )
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.executemany(
+                    """
+                    INSERT INTO notifications (id, user_id, type, node_id, snippet, read, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return len(rows)
+
+    async def batch_create_notifications(
+        self,
+        tenant_id: str,
+        entries: list[dict],
+    ) -> int:
+        """Batch create notifications (e.g. for @everyone).
+
+        Uses a single transaction with executemany for efficiency.
+        Should handle 1000 inserts in ~5-10ms.
+
+        Args:
+            tenant_id: Tenant identifier
+            entries: List of dicts with keys: user_id, type, node_id, snippet (optional)
+
+        Returns:
+            Number of notifications created
+        """
+        return await self._run_sync(self._sync_batch_create_notifications, tenant_id, entries)
+
+    # ── Read Cursors ──────────────────────────────────────────────────
+
+    def _sync_update_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> None:
+        now = int(time.time() * 1000)
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT INTO read_cursors (user_id, channel_id, last_read_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT (user_id, channel_id)
+                DO UPDATE SET last_read_at = excluded.last_read_at
+                """,
+                (user_id, channel_id, now),
+            )
+
+    async def update_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> None:
+        """Update the read cursor for a user in a channel.
+
+        Sets last_read_at to current time. Uses UPSERT for idempotency.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier
+            channel_id: Channel identifier
+        """
+        await self._run_sync(self._sync_update_read_cursor, tenant_id, user_id, channel_id)
+
+    def _sync_get_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> int | None:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "SELECT last_read_at FROM read_cursors WHERE user_id = ? AND channel_id = ?",
+                (user_id, channel_id),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    async def get_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> int | None:
+        """Get the read cursor for a user in a channel.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier
+            channel_id: Channel identifier
+
+        Returns:
+            Last read timestamp (Unix ms) or None if no cursor exists
+        """
+        return await self._run_sync(self._sync_get_read_cursor, tenant_id, user_id, channel_id)
+
+    def _sync_get_unread_channels(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            # Find channels where notifications exist after the user's read cursor.
+            # Notifications act as the source of channel activity; the read_cursor
+            # records when the user last viewed a channel.
+            cursor = conn.execute(
+                """
+                SELECT n.node_id AS channel_id,
+                       COUNT(*)  AS unread_count
+                FROM notifications n
+                LEFT JOIN read_cursors rc
+                    ON rc.user_id = ? AND rc.channel_id = n.node_id
+                WHERE n.user_id = ?
+                  AND n.read = 0
+                  AND (rc.last_read_at IS NULL OR n.created_at > rc.last_read_at)
+                GROUP BY n.node_id
+                """,
+                (user_id, user_id),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_unread_channels(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[dict]:
+        """Get channels with unread notification counts for a user.
+
+        Returns channels where the user has unread notifications that were
+        created after their last read cursor for that channel.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier
+
+        Returns:
+            List of dicts with 'channel_id' and 'unread_count'
+        """
+        return await self._run_sync(self._sync_get_unread_channels, tenant_id, user_id)
+
+    # ── GDPR: anonymization and export ──────────────────────────────────
+
+    @staticmethod
+    def anon_id(user_id: str, salt: str = "entdb-gdpr-v1") -> str:
+        """Derive a deterministic anonymous identifier for a user.
+
+        The same (user_id, salt) pair always produces the same anonymous
+        ID so that anonymized conversations and relationships still make
+        sense after deletion. The salt is a per-process constant.
+
+        Args:
+            user_id: Original user identifier (e.g. ``user:alice``)
+            salt: Deterministic salt applied before hashing
+
+        Returns:
+            String of the form ``user:anon-<12 hex chars>``
+        """
+        digest = hashlib.sha256((salt + user_id).encode()).hexdigest()[:12]
+        return f"user:anon-{digest}"
+
+    def _sync_anonymize_user_in_tenant(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+        salt: str,
+    ) -> dict:
+        """Apply per-type data_policy rules for GDPR user deletion.
+
+        Runs in a single transaction. See
+        :meth:`anonymize_user_in_tenant` for the behavioural contract.
+        """
+        from ..data_policy import DataPolicy
+        from ..schema.registry import SchemaRegistry
+
+        reg: SchemaRegistry = registry  # type: ignore[assignment]
+        anon = self.anon_id(user_id, salt)
+        deleted_nodes = 0
+        anonymized_nodes = 0
+        deleted_edges = 0
+        anonymized_edges = 0
+
+        def _scrub_payload(payload: dict, pii_fields: list[str], subject_field: str | None) -> dict:
+            """Return a new payload with pii=true fields scrubbed and
+            subject_field (if any) remapped to the anonymous id when it
+            matches the user being deleted."""
+            out = dict(payload)
+            for fname in pii_fields:
+                if fname in out:
+                    value = out[fname]
+                    if isinstance(value, str):
+                        out[fname] = ""
+                    elif isinstance(value, (int, float)):
+                        out[fname] = 0
+                    elif isinstance(value, list):
+                        out[fname] = []
+                    elif isinstance(value, dict):
+                        out[fname] = {}
+                    else:
+                        out[fname] = None
+            if subject_field and out.get(subject_field) == user_id:
+                out[subject_field] = anon
+            return out
+
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Collect all candidate nodes (owner_actor = user OR subject_field matches)
+                # We scan the full table once and filter in Python so that subject_field
+                # matches work for JSON-stored payloads. For larger tenants a per-type
+                # path would be faster, but this is straightforward and consistent.
+                rows = conn.execute(
+                    "SELECT node_id, type_id, payload_json, owner_actor "
+                    "FROM nodes WHERE tenant_id = ?",
+                    (tenant_id,),
+                ).fetchall()
+
+                for row in rows:
+                    type_id = row["type_id"]
+                    node_id = row["node_id"]
+                    owner = row["owner_actor"]
+                    try:
+                        policy = reg.get_data_policy(type_id)
+                        pii_fields = reg.get_pii_fields(type_id)
+                        subject_field = reg.get_subject_field(type_id)
+                    except KeyError:
+                        # Unknown type: treat as PERSONAL (strictest)
+                        policy = DataPolicy.PERSONAL
+                        pii_fields = []
+                        subject_field = None
+
+                    try:
+                        payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+                    except json.JSONDecodeError:
+                        payload = {}
+
+                    is_owner = owner == user_id
+                    is_subject = subject_field is not None and payload.get(subject_field) == user_id
+                    if not (is_owner or is_subject):
+                        continue
+
+                    if policy in (DataPolicy.PERSONAL, DataPolicy.EPHEMERAL):
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND (from_node_id = ? OR to_node_id = ?)",
+                            (tenant_id, node_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM node_access WHERE node_id = ?",
+                            (node_id,),
+                        )
+                        conn.execute(
+                            "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        deleted_nodes += 1
+                    else:
+                        # BUSINESS, FINANCIAL, AUDIT, HEALTHCARE → anonymize
+                        new_payload = _scrub_payload(payload, pii_fields, subject_field)
+                        new_owner = anon if is_owner else owner
+                        conn.execute(
+                            "UPDATE nodes SET payload_json = ?, owner_actor = ?, updated_at = ? "
+                            "WHERE tenant_id = ? AND node_id = ?",
+                            (
+                                json.dumps(new_payload),
+                                new_owner,
+                                int(time.time() * 1000),
+                                tenant_id,
+                                node_id,
+                            ),
+                        )
+                        if is_owner:
+                            # Owner visibility row: rewrite from user_id to anon
+                            conn.execute(
+                                "UPDATE node_visibility SET principal = ? "
+                                "WHERE tenant_id = ? AND node_id = ? AND principal = ?",
+                                (anon, tenant_id, node_id, user_id),
+                            )
+                        anonymized_nodes += 1
+
+                # Edges — consult registry on_subject_exit
+                edge_rows = conn.execute(
+                    "SELECT edge_type_id, from_node_id, to_node_id, props_json "
+                    "FROM edges WHERE tenant_id = ? "
+                    "AND (from_node_id = ? OR to_node_id = ?)",
+                    (tenant_id, user_id, user_id),
+                ).fetchall()
+
+                for er in edge_rows:
+                    edge_type_id = er["edge_type_id"]
+                    from_id = er["from_node_id"]
+                    to_id = er["to_node_id"]
+                    try:
+                        direction = reg.get_edge_on_subject_exit(edge_type_id)
+                        edge_policy = reg.get_edge_data_policy(edge_type_id)
+                    except KeyError:
+                        direction = "both"
+                        edge_policy = DataPolicy.PERSONAL
+
+                    hit_from = from_id == user_id
+                    hit_to = to_id == user_id
+                    if direction == "from" and not hit_from:
+                        continue
+                    if direction == "to" and not hit_to:
+                        continue
+
+                    if edge_policy in (DataPolicy.PERSONAL, DataPolicy.EPHEMERAL):
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND edge_type_id = ? AND from_node_id = ? AND to_node_id = ?",
+                            (tenant_id, edge_type_id, from_id, to_id),
+                        )
+                        deleted_edges += 1
+                    else:
+                        # Anonymize edge: scrub pii props + replace user endpoints with anon
+                        try:
+                            edge_pii = []
+                            edge_type = reg.get_edge_type(edge_type_id)
+                            if edge_type is not None:
+                                edge_pii = [
+                                    p.name
+                                    for p in edge_type.props
+                                    if getattr(p, "pii", False) and not p.deprecated
+                                ]
+                        except Exception:
+                            edge_pii = []
+                        try:
+                            props = json.loads(er["props_json"]) if er["props_json"] else {}
+                        except json.JSONDecodeError:
+                            props = {}
+                        for fname in edge_pii:
+                            if fname in props:
+                                props[fname] = "" if isinstance(props[fname], str) else None
+                        new_from = anon if hit_from else from_id
+                        new_to = anon if hit_to else to_id
+                        # Delete old row then insert new (primary key includes endpoints)
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND edge_type_id = ? AND from_node_id = ? AND to_node_id = ?",
+                            (tenant_id, edge_type_id, from_id, to_id),
+                        )
+                        conn.execute(
+                            "INSERT OR REPLACE INTO edges "
+                            "(tenant_id, edge_type_id, from_node_id, to_node_id, props_json, "
+                            " propagates_acl, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                            (
+                                tenant_id,
+                                edge_type_id,
+                                new_from,
+                                new_to,
+                                json.dumps(props),
+                                int(time.time() * 1000),
+                            ),
+                        )
+                        anonymized_edges += 1
+
+                # Global cleanup within this tenant: remove user from
+                # groups, direct grants, and visibility index.
+                conn.execute(
+                    "DELETE FROM node_access WHERE actor_id = ?",
+                    (user_id,),
+                )
+                conn.execute(
+                    "DELETE FROM group_users WHERE member_actor_id = ?",
+                    (user_id,),
+                )
+                conn.execute(
+                    "DELETE FROM node_visibility WHERE tenant_id = ? AND principal = ?",
+                    (tenant_id, user_id),
+                )
+
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+        return {
+            "deleted_nodes": deleted_nodes,
+            "anonymized_nodes": anonymized_nodes,
+            "deleted_edges": deleted_edges,
+            "anonymized_edges": anonymized_edges,
+            "anon_id": anon,
+        }
+
+    async def anonymize_user_in_tenant(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+        salt: str = "entdb-gdpr-v1",
+    ) -> dict:
+        """Apply per-type data_policy rules for GDPR user deletion.
+
+        For each node in the tenant where owner_actor == user_id or
+        subject_field matches user_id:
+
+            - PERSONAL    → delete the node
+            - EPHEMERAL   → delete the node
+            - BUSINESS    → anonymize: scrub pii=true fields, replace owner
+            - FINANCIAL   → anonymize PII but retain the record
+            - AUDIT       → anonymize PII but retain the record
+            - HEALTHCARE  → anonymize PII but retain the record
+
+        For each edge where the user is ``from`` or ``to`` endpoint,
+        the edge's ``on_subject_exit`` policy decides which direction is
+        affected (``from``, ``to``, or ``both``). Deletable policies
+        delete the edge; retained policies rewrite the endpoint to the
+        anonymous id and scrub pii=true props.
+
+        Args:
+            tenant_id: Tenant whose canonical store to anonymize
+            user_id: User to delete (format: ``user:<id>``)
+            registry: :class:`SchemaRegistry` with node/edge types
+            salt: Deterministic salt for the anonymous id derivation
+
+        Returns:
+            Dict with counts: ``deleted_nodes``, ``anonymized_nodes``,
+            ``deleted_edges``, ``anonymized_edges``, ``anon_id``.
+        """
+        return await self._run_sync(
+            self._sync_anonymize_user_in_tenant,
+            tenant_id,
+            user_id,
+            registry,
+            salt,
+        )
+
+    def _sync_export_user_data(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+    ) -> dict:
+        """Collect exportable nodes for a user in a single tenant.
+
+        Returns a dict containing a list of node records that belong to
+        the user either by ownership or by ``subject_field`` match. Nodes
+        whose type has ``data_policy = AUDIT`` are excluded from export
+        (audit records are not subject access requestable).
+        """
+        from ..data_policy import DataPolicy
+        from ..schema.registry import SchemaRegistry
+
+        reg: SchemaRegistry = registry  # type: ignore[assignment]
+        nodes_out: list[dict] = []
+
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                "SELECT node_id, type_id, payload_json, created_at, updated_at, owner_actor "
+                "FROM nodes WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchall()
+
+            for row in rows:
+                type_id = row["type_id"]
+                owner = row["owner_actor"]
+                try:
+                    policy = reg.get_data_policy(type_id)
+                    subject_field = reg.get_subject_field(type_id)
+                except KeyError:
+                    policy = DataPolicy.PERSONAL
+                    subject_field = None
+
+                try:
+                    payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+                except json.JSONDecodeError:
+                    payload = {}
+
+                is_owner = owner == user_id
+                is_subject = subject_field is not None and payload.get(subject_field) == user_id
+                if not (is_owner or is_subject):
+                    continue
+                # AUDIT policy → not exportable
+                if policy == DataPolicy.AUDIT:
+                    continue
+
+                nodes_out.append(
+                    {
+                        "tenant_id": tenant_id,
+                        "node_id": row["node_id"],
+                        "type_id": type_id,
+                        "payload": payload,
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                        "owner_actor": owner,
+                        "data_policy": policy.value,
+                    }
+                )
+
+        return {"tenant_id": tenant_id, "nodes": nodes_out}
+
+    async def export_user_data_for_tenant(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+    ) -> dict:
+        """Export a user's content from a single tenant.
+
+        Returns only nodes the user owns or is the subject of, excluding
+        AUDIT records (per the export policy table in ADR-004).
+        """
+        return await self._run_sync(self._sync_export_user_data, tenant_id, user_id, registry)

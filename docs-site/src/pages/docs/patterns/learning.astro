@@ -1,0 +1,136 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Pattern: Learning Platform">
+  <h1>Build a Learning Platform with EntDB</h1>
+  <p>Courses owned by the platform, progress tracked per student, organizations can enroll teams, cross-tenant access for reading courses.</p>
+
+  <h2>How it maps</h2>
+  <table>
+    <tr><th>Concept</th><th>EntDB primitive</th></tr>
+    <tr><td>Platform content</td><td>Tenant "platform" (courses, lessons)</td></tr>
+    <tr><td>Student</td><td>Personal tenant + member of platform tenant</td></tr>
+    <tr><td>Organization</td><td>Org tenant (bulk enrollment)</td></tr>
+    <tr><td>Course catalog</td><td>Public nodes (public=true)</td></tr>
+    <tr><td>Lesson content</td><td>Subscriber-only (node_access for enrolled users)</td></tr>
+    <tr><td>Student progress</td><td>Nodes in student's personal tenant</td></tr>
+    <tr><td>Subscription</td><td>Group membership in platform tenant</td></tr>
+  </table>
+
+  <h2>1. Platform setup</h2>
+  <pre is:raw><code># Platform admin creates the content tenant
+await db.create_tenant("easyloops", "EasyLoops Learning")
+
+# Create subscription groups
+await db.group_add("free-tier", "user:placeholder", "easyloops")   # will add real users
+await db.group_add("pro-tier", "user:placeholder", "easyloops")
+
+# Create courses (public catalog)
+plan = db.atomic("easyloops", "system:admin")
+plan.create(Course, {title": "Python 101", "price": 0}, as_="c1")
+plan.create(Course, {title": "System Design", "price": 49}, as_="c2")
+plan.create(Lesson, {title": "Variables", "content": "..."}, as_="l1")
+plan.edge_create(CourseHasLesson, from_="$c1.id", to="$l1.id")
+result = await plan.commit()
+
+# Free course → share with free-tier group
+await db.share(result.created_node_ids[0], "group:free-tier", "read",
+               "easyloops", granted_by="system:admin")
+
+# Pro course → share with pro-tier group
+await db.share(result.created_node_ids[1], "group:pro-tier", "read",
+               "easyloops", granted_by="system:admin")</code></pre>
+
+  <h2>2. Student enrollment</h2>
+  <pre is:raw><code># Alice subscribes to pro tier
+await db.add_tenant_member("easyloops", "user:alice", role="viewer")
+await db.group_add("pro-tier", "user:alice", "easyloops")
+
+# Alice can now see ALL pro courses + their lessons (propagate_share)
+courses = await db.query(Course, "easyloops", "user:alice")
+lessons = await db.connected(course_id, CourseHasLesson, "easyloops", "user:alice")</code></pre>
+
+  <h2>3. Student progress (cross-tenant)</h2>
+  <pre is:raw><code># Alice's progress lives in HER personal tenant
+plan = db.atomic("alice", "user:alice")
+plan.create(Progress, {
+    course_ref": "easyloops:course-python101",
+    "completed_lessons": 3,
+    "quiz_score": 85
+})
+await plan.commit()
+
+# Platform reads alice's progress (for analytics)
+# Alice explicitly grants the platform read access
+await db.share(progress_id, "user:platform-analytics", "read",
+               "alice", granted_by="user:alice")</code></pre>
+
+  <h2>4. Organization bulk enrollment</h2>
+  <pre is:raw><code># Acme Corp creates their tenant
+await db.create_tenant("acme-corp", "Acme Corp")
+
+# Create an engineering group
+await db.group_add("engineering", "user:bob", "acme-corp")
+await db.group_add("engineering", "user:carol", "acme-corp")
+
+# Acme admin enrolls the engineering team
+# Each member needs to be added to the platform tenant + pro group
+for member in ["user:bob", "user:carol"]:
+    await db.add_tenant_member("easyloops", member, role="viewer")
+    await db.group_add("pro-tier", member, "easyloops")
+
+# All engineering members now have pro course access</code></pre>
+
+  <h2>5. Schema</h2>
+  <pre is:raw><code>message Course {
+    option (entdb.node) = {
+        type_id: 1
+        public: true                   // catalog is public
+        data_policy: DATA_POLICY_BUSINESS
+    };
+    string title = 1 [(entdb.field) = {required: true, pii_false: true}];
+    int32 price = 2;
+}
+
+message Lesson {
+    option (entdb.node) = {
+        type_id: 2
+        inherit: true                  // inherits from course
+        data_policy: DATA_POLICY_BUSINESS
+    };
+    string title = 1   [(entdb.field) = {required: true, pii_false: true}];
+    string content = 2 [(entdb.field) = {pii_false: true}];
+}
+
+message Progress {
+    option (entdb.node) = {
+        type_id: 3
+        data_policy: DATA_POLICY_PERSONAL  // student's data
+        subject_field: "student_id"
+    };
+    string course_ref = 1       [(entdb.field) = {pii_false: true}];
+    int32 completed_lessons = 2;
+    int32 quiz_score = 3;
+    string student_id = 4       [(entdb.field) = {pii: true}];
+}
+
+message CourseHasLesson {
+    option (entdb.edge) = {
+        edge_id: 1
+        name: "HAS_LESSON"
+        propagate_share: true          // enroll in course = access lessons
+    };
+    Course from = 15;
+    Lesson to = 16;
+}</code></pre>
+
+  <h2>What the database handles</h2>
+  <ul>
+    <li><strong>Subscription = group membership</strong>: add to group = access all group-shared courses</li>
+    <li><strong>Course + lessons</strong>: propagate_share means enrolling in a course gives access to all its lessons</li>
+    <li><strong>Student progress isolation</strong>: each student's progress is in their own tenant, platform can't see it without explicit grant</li>
+    <li><strong>GDPR</strong>: student deletes account → progress deleted (PERSONAL), course contributions anonymized (BUSINESS)</li>
+    <li><strong>Public catalog</strong>: courses are public=true, anyone can browse without auth</li>
+  </ul>
+</DocsLayout>

@@ -9,13 +9,13 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <h2>Setup</h2>
 
   <h3>1. Configure your project</h3>
-  <pre><code># pyproject.toml
+  <pre is:raw><code># pyproject.toml
 [tool.entdb]
 schema = "myapp.schema"            # importable module with your types
 snapshot = ".entdb/snapshot.json"   # baseline for compat checks</code></pre>
 
   <h3>2. Initialize</h3>
-  <pre><code>$ entdb init
+  <pre is:raw><code>$ entdb init
 Discovered 5 node types, 3 edge types, 2 ACL-enabled edges
 Snapshot written to .entdb/snapshot.json
 Add .entdb/snapshot.json to version control</code></pre>
@@ -24,7 +24,7 @@ Add .entdb/snapshot.json to version control</code></pre>
 
   <h3><code>entdb init</code></h3>
   <p>Creates <code>.entdb/</code> directory and generates the initial snapshot. If a snapshot already exists, runs a compatibility check first:</p>
-  <pre><code>$ entdb init
+  <pre is:raw><code>$ entdb init
 .entdb/snapshot.json already exists, running compatibility check...
 Schema compatible. 1 non-breaking change: new field 'priority' on Task
 Snapshot auto-updated (non-breaking changes only)</code></pre>
@@ -32,7 +32,7 @@ Snapshot auto-updated (non-breaking changes only)</code></pre>
 
   <h3><code>entdb check</code></h3>
   <p>Validates schema compatibility against the committed baseline. Use this in CI:</p>
-  <pre><code>$ entdb check
+  <pre is:raw><code>$ entdb check
 Schema compatible: 2 non-breaking changes
   [OK] FIELD_ADDED: NodeType:Task.field:priority — added
   [OK] ENUM_VALUE_ADDED: NodeType:Task.field:status — 'archived' added
@@ -40,7 +40,7 @@ Schema compatible: 2 non-breaking changes
 $ echo $?
 0  # exit code 0 = compatible</code></pre>
   <p>If breaking changes are found:</p>
-  <pre><code>$ entdb check
+  <pre is:raw><code>$ entdb check
 BREAKING: 1 breaking change detected
   [BREAKING] FIELD_REMOVED: NodeType:Task.field:title — removed
 
@@ -49,7 +49,7 @@ $ echo $?
 
   <h3><code>entdb diff</code></h3>
   <p>Shows all changes without failing:</p>
-  <pre><code>$ entdb diff
+  <pre is:raw><code>$ entdb diff
 Changes from baseline:
   + NodeType:Subtask (type_id=3) — added
   + EdgeType:HasSubtask (edge_id=3) — added
@@ -58,12 +58,12 @@ Changes from baseline:
 
   <h3><code>entdb snapshot --update</code></h3>
   <p>Explicitly updates the baseline after intentional changes:</p>
-  <pre><code>$ entdb snapshot --update
+  <pre is:raw><code>$ entdb snapshot --update
 Snapshot updated: 2 breaking changes accepted
 Previous snapshot backed up to .entdb/snapshot.json.bak</code></pre>
 
   <h2>CI Integration</h2>
-  <pre><code># .github/workflows/ci.yml
+  <pre is:raw><code># .github/workflows/ci.yml
 jobs:
   schema-check:
     runs-on: ubuntu-latest
@@ -76,7 +76,7 @@ jobs:
 
   <h2>Pytest Plugin</h2>
   <p>The SDK includes a pytest plugin that validates schema automatically on every test run. No configuration needed &mdash; just install <code>entdb-sdk</code>:</p>
-  <pre><code>$ pytest
+  <pre is:raw><code>$ pytest
 Schema check: 0 breaking changes, 1 non-breaking change
 ========================= test session starts =========================
 ...</code></pre>

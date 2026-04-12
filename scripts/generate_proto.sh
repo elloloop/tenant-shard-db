@@ -43,6 +43,14 @@ python -m grpc_tools.protoc \
     --grpc_python_out="$SDK_OUT" \
     "$PROTO_DIR/entdb.proto"
 
+# Generate entdb_options for the SDK (used by codegen to parse
+# entdb extension options from user .proto files)
+SDK_OPTIONS_PROTO_DIR="$ROOT_DIR/sdk/entdb_sdk/proto"
+python -m grpc_tools.protoc \
+    -I"$SDK_OPTIONS_PROTO_DIR" \
+    --python_out="$SDK_OUT" \
+    "$SDK_OPTIONS_PROTO_DIR/entdb_options.proto"
+
 # Fix imports in generated files (grpc_tools generates absolute imports)
 # Change "import entdb_pb2" to "from . import entdb_pb2"
 # Use sed compatible with both macOS and Linux
@@ -52,7 +60,12 @@ for dir in "$SERVER_OUT" "$SDK_OUT"; do
     fi
 done
 
-# Create __init__.py files
+# Note: __init__.py files are maintained manually to track proto message exports.
+# The generate script only regenerates the _pb2 and _pb2_grpc files.
+# If you add new messages to the proto, update __init__.py files manually.
+
+# Create __init__.py files (only if they don't exist)
+if [ ! -f "$SERVER_OUT/__init__.py" ]; then
 cat > "$SERVER_OUT/__init__.py" << 'EOF'
 # mypy: ignore-errors
 """Generated protobuf code for EntDB server.
@@ -184,7 +197,9 @@ __all__ = [
     "add_EntDBServiceServicer_to_server",
 ]
 EOF
+fi
 
+if [ ! -f "$SDK_OUT/__init__.py" ]; then
 cat > "$SDK_OUT/__init__.py" << 'EOF'
 # mypy: ignore-errors
 """Generated protobuf code for EntDB SDK.
@@ -302,6 +317,7 @@ __all__ = [
     "EntDBServiceStub",
 ]
 EOF
+fi
 
 echo "Done! Generated files:"
 ls -la "$SERVER_OUT"

@@ -6,15 +6,15 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
   <h1>Installation</h1>
 
   <h2>Python SDK</h2>
-  <pre><code>pip install entdb-sdk</code></pre>
+  <pre is:raw><code>pip install entdb-sdk</code></pre>
   <p>Or with <code>uv</code>:</p>
-  <pre><code>uv add entdb-sdk</code></pre>
+  <pre is:raw><code>uv add entdb-sdk</code></pre>
 
   <h2>Go SDK</h2>
-  <pre><code>go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest</code></pre>
+  <pre is:raw><code>go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest</code></pre>
 
   <h2>Server (Docker)</h2>
-  <pre><code># Pull the latest image
+  <pre is:raw><code># Pull the latest image
 docker pull ghcr.io/elloloop/entdb:latest
 
 # Run with default settings (in-memory WAL, local storage)
@@ -22,13 +22,13 @@ docker run -p 50051:50051 ghcr.io/elloloop/entdb:latest</code></pre>
 
   <h2>Server (Docker Compose)</h2>
   <p>For production with Kafka WAL and S3 storage:</p>
-  <pre><code>git clone https://github.com/elloloop/tenant-shard-db.git
+  <pre is:raw><code>git clone https://github.com/elloloop/tenant-shard-db.git
 cd tenant-shard-db
 docker compose up -d</code></pre>
   <p>This starts EntDB + Redpanda (Kafka) + MinIO (S3) + Redpanda Console.</p>
 
   <h2>From Source</h2>
-  <pre><code>git clone https://github.com/elloloop/tenant-shard-db.git
+  <pre is:raw><code>git clone https://github.com/elloloop/tenant-shard-db.git
 cd tenant-shard-db
 
 # Install server
@@ -41,7 +41,7 @@ pip install -e ./sdk
 entdb</code></pre>
 
   <h2>Verify Installation</h2>
-  <pre><code>python -c "
+  <pre is:raw><code>python -c "
 import asyncio
 from entdb_sdk import DbClient
 
