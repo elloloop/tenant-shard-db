@@ -427,270 +427,53 @@ _FIELD_KIND_TO_PYTHON_TYPE: dict[str, str] = {
 }
 
 
-def generate_python(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
-    """Generate Python EntDB schema module from parsed proto."""
-    fingerprint = compute_schema_fingerprint(nodes, edges)
-    lines = [
-        '"""EntDB schema — generated from .proto. Do not edit."""',
-        "",
-        "from __future__ import annotations",
-        "",
-        "from dataclasses import dataclass",
-        "from typing import ClassVar",
-        "",
-        "from entdb_sdk import AclDefaults, DataPolicy, EdgeTypeDef, NodeTypeDef, SubjectExitPolicy, field",
-        "from entdb_sdk.typed import TypedNode",
-        "",
-        "# Deterministic fingerprint of the generated schema. Sent to the",
-        "# server on every write so stale clients can be rejected cleanly.",
-        f"SCHEMA_FINGERPRINT = {fingerprint!r}",
-        "",
-    ]
+def register_proto_schema(module: Any) -> tuple[int, int]:
+    """Auto-register all proto messages with entdb options from a generated module.
 
-    for n in nodes:
-        lines.append(f"{n.name} = NodeTypeDef(")
-        lines.append(f"    type_id={n.type_id},")
-        lines.append(f"    name={n.name!r},")
-        if n.description:
-            lines.append(f"    description={n.description!r},")
-        if n.deprecated:
-            lines.append("    deprecated=True,")
-
-        acl_parts = []
-        if n.acl_public:
-            acl_parts.append("public=True")
-        if n.acl_tenant_visible:
-            acl_parts.append("tenant_visible=True")
-        if n.acl_inherit:
-            acl_parts.append("inherit=True")
-        if n.is_private:
-            acl_parts.append("private=True")
-        if acl_parts:
-            lines.append(f"    acl_defaults=AclDefaults({', '.join(acl_parts)}),")
-
-        lines.append(f"    data_policy=DataPolicy.{n.data_policy},")
-        if n.subject_field:
-            lines.append(f"    subject_field={n.subject_field!r},")
-        if n.retention_days:
-            lines.append(f"    retention_days={n.retention_days},")
-        if n.legal_basis:
-            lines.append(f"    legal_basis={n.legal_basis!r},")
-
-        if n.fields:
-            lines.append("    fields=(")
-            for f in n.fields:
-                parts = [str(f.field_id), repr(f.name), repr(f.kind)]
-                if f.required:
-                    parts.append("required=True")
-                if f.enum_values:
-                    parts.append(f"enum_values={f.enum_values!r}")
-                if f.searchable:
-                    parts.append("searchable=True")
-                if f.indexed:
-                    parts.append("indexed=True")
-                if f.pii:
-                    parts.append("pii=True")
-                if f.phi:
-                    parts.append("phi=True")
-                if f.pii_false:
-                    parts.append("pii_false=True")
-                if f.ref_type_id:
-                    parts.append(f"ref_type_id={f.ref_type_id}")
-                if f.deprecated:
-                    parts.append("deprecated=True")
-                if f.default_value:
-                    parts.append(f"default={f.default_value!r}")
-                if f.description:
-                    parts.append(f"description={f.description!r}")
-                lines.append(f"        field({', '.join(parts)}),")
-            lines.append("    ),")
-
-        lines.append(")")
-        lines.append("")
-
-    for e in edges:
-        lines.append(f"{e.name} = EdgeTypeDef(")
-        lines.append(f"    edge_id={e.edge_id},")
-        lines.append(f"    name={e.name!r},")
-        lines.append(f"    from_type={e.from_type},")
-        lines.append(f"    to_type={e.to_type},")
-        if e.propagate_share:
-            lines.append("    propagate_share=True,")
-        if e.unique_per_from:
-            lines.append("    unique_per_from=True,")
-        lines.append(f"    data_policy=DataPolicy.{e.data_policy},")
-        if e.on_subject_exit != "BOTH":
-            lines.append(f"    on_subject_exit=SubjectExitPolicy.{e.on_subject_exit},")
-        if e.retention_days:
-            lines.append(f"    retention_days={e.retention_days},")
-        if e.legal_basis:
-            lines.append(f"    legal_basis={e.legal_basis!r},")
-        if e.deprecated:
-            lines.append("    deprecated=True,")
-        if e.description:
-            lines.append(f"    description={e.description!r},")
-
-        if e.props:
-            lines.append("    props=(")
-            for f in e.props:
-                parts = [str(f.field_id), repr(f.name), repr(f.kind)]
-                if f.required:
-                    parts.append("required=True")
-                if f.enum_values:
-                    parts.append(f"enum_values={f.enum_values!r}")
-                if f.pii:
-                    parts.append("pii=True")
-                if f.phi:
-                    parts.append("phi=True")
-                if f.pii_false:
-                    parts.append("pii_false=True")
-                lines.append(f"        field({', '.join(parts)}),")
-            lines.append("    ),")
-
-        lines.append(")")
-        lines.append("")
-
-    # --- Typed node classes ---
-    if nodes:
-        lines.append("")
-        lines.append("# ── Typed Node Classes ────────────────────────────────────────────")
-        lines.append("")
-
-        for n in nodes:
-            lines.append("")
-            lines.append("@dataclass")
-            lines.append(f"class {n.name}Node(TypedNode):")
-            if n.description:
-                lines.append(f'    """{n.description}."""')
-                lines.append("")
-
-            # Required fields first (no default), then optional
-            required_fields = [f for f in n.fields if f.required and not f.deprecated]
-            optional_fields = [f for f in n.fields if not f.required and not f.deprecated]
-
-            for f in required_fields:
-                py_type = _FIELD_KIND_TO_PYTHON_TYPE.get(f.kind, "str")
-                lines.append(f"    {f.name}: {py_type}")
-
-            for f in optional_fields:
-                py_type = _FIELD_KIND_TO_PYTHON_TYPE.get(f.kind, "str")
-                default = "None"
-                if f.default_value is not None:
-                    default = repr(f.default_value)
-                lines.append(f"    {f.name}: {py_type} | None = {default}")
-
-            lines.append("")
-            lines.append(f"    _type_id: ClassVar[int] = {n.type_id}")
-            lines.append(f"    _type_name: ClassVar[str] = {n.name!r}")
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-def generate_go(nodes: list[NodeInfo], edges: list[EdgeInfo], package: str = "schema") -> str:
-    """Generate Go EntDB schema module from parsed proto."""
-    fingerprint = compute_schema_fingerprint(nodes, edges)
-    lines = [
-        "// EntDB schema — generated from .proto. Do not edit.",
-        f"package {package}",
-        "",
-        'import "github.com/elloloop/entdb/sdk/go/entdb"',
-        "",
-        "// SchemaFingerprint is a deterministic sha256 digest of the generated schema.",
-        f'const SchemaFingerprint = "{fingerprint}"',
-        "",
-    ]
-
-    kind_map = {
-        "str": "entdb.STRING",
-        "int": "entdb.INTEGER",
-        "float": "entdb.FLOAT",
-        "bool": "entdb.BOOLEAN",
-        "timestamp": "entdb.TIMESTAMP",
-        "json": "entdb.JSON",
-        "bytes": "entdb.BYTES",
-        "enum": "entdb.ENUM",
-        "ref": "entdb.REFERENCE",
-        "list_str": "entdb.LIST_STRING",
-        "list_int": "entdb.LIST_INT",
-        "list_ref": "entdb.LIST_REF",
-    }
-
-    for n in nodes:
-        lines.append(f"var {n.name} = entdb.NodeTypeDef{{")
-        lines.append(f"\tTypeID:     {n.type_id},")
-        lines.append(f'\tName:       "{n.name}",')
-        lines.append(f"\tDataPolicy: entdb.DataPolicy{n.data_policy.title()},")
-        if n.subject_field:
-            lines.append(f'\tSubjectField: "{n.subject_field}",')
-        if n.retention_days:
-            lines.append(f"\tRetentionDays: {n.retention_days},")
-        if n.legal_basis:
-            lines.append(f'\tLegalBasis: "{n.legal_basis}",')
-        if n.fields:
-            lines.append("\tFields: []entdb.FieldDef{")
-            for f in n.fields:
-                go_kind = kind_map.get(f.kind, "entdb.STRING")
-                parts = [f"FieldID: {f.field_id}", f'Name: "{f.name}"', f"Kind: {go_kind}"]
-                if f.required:
-                    parts.append("Required: true")
-                if f.enum_values:
-                    vals = ", ".join(f'"{v}"' for v in f.enum_values)
-                    parts.append(f"EnumValues: []string{{{vals}}}")
-                if f.pii:
-                    parts.append("PII: true")
-                if f.phi:
-                    parts.append("PHI: true")
-                if f.pii_false:
-                    parts.append("PIIFalse: true")
-                lines.append(f"\t\t{{{', '.join(parts)}}},")
-            lines.append("\t},")
-        lines.append("}")
-        lines.append("")
-
-    for e in edges:
-        lines.append(f"var {e.name} = entdb.EdgeTypeDef{{")
-        lines.append(f"\tEdgeID:         {e.edge_id},")
-        lines.append(f'\tName:           "{e.name}",')
-        lines.append(f"\tFromType:       {e.from_type},")
-        lines.append(f"\tToType:         {e.to_type},")
-        if e.propagate_share:
-            lines.append("\tPropagateShare: true,")
-        lines.append(f"\tDataPolicy:     entdb.DataPolicy{e.data_policy.title()},")
-        if e.on_subject_exit != "BOTH":
-            lines.append(f"\tOnSubjectExit:  entdb.SubjectExit{e.on_subject_exit.title()},")
-        if e.retention_days:
-            lines.append(f"\tRetentionDays:  {e.retention_days},")
-        if e.legal_basis:
-            lines.append(f'\tLegalBasis:     "{e.legal_basis}",')
-        lines.append("}")
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def generate_from_proto(
-    proto_path: str,
-    lang: str = "python",
-    include_dirs: list[str] | None = None,
-    go_package: str = "schema",
-) -> str:
-    """Parse a .proto file and generate EntDB schema code.
+    Walks the module's proto message types and registers any that carry
+    ``entdb.node`` or ``entdb.edge`` options with the global schema registry.
+    This replaces the old ``generate_python`` codegen step — standard
+    ``protoc --python_out`` is now sufficient.
 
     Args:
-        proto_path: Path to the schema .proto file
-        lang: Output language ("python" or "go")
-        include_dirs: Additional proto include paths
-        go_package: Go package name (for lang="go")
+        module: A generated ``_pb2`` module (e.g. ``my_schema_pb2``).
 
     Returns:
-        Generated source code as string
-    """
-    nodes, edges = parse_proto(proto_path, include_dirs)
+        Tuple of (node_types_registered, edge_types_registered).
 
-    if lang == "python":
-        return generate_python(nodes, edges)
-    elif lang == "go":
-        return generate_go(nodes, edges, package=go_package)
-    else:
-        raise ValueError(f"Unsupported language: {lang}")
+    Example::
+
+        import my_schema_pb2
+        from entdb_sdk.codegen import register_proto_schema
+
+        register_proto_schema(my_schema_pb2)
+        # Now Task, User, etc. are registered and can be used with Plan/DbClient.
+    """
+    from .registry import get_registry
+    from .schema import EdgeTypeDef, NodeTypeDef
+
+    registry = get_registry()
+    nodes_registered = 0
+    edges_registered = 0
+
+    file_descriptor = getattr(module, "DESCRIPTOR", None)
+    if file_descriptor is None:
+        return (0, 0)
+
+    for msg_desc in file_descriptor.message_types_by_name.values():
+        opts = _reparse_message_options(msg_desc.GetOptions())
+        if opts is None:
+            continue
+
+        from ._generated import entdb_options_pb2
+
+        if opts.HasExtension(entdb_options_pb2.node):
+            node_type = NodeTypeDef.from_descriptor(msg_desc)
+            registry.register_node_type(node_type)
+            nodes_registered += 1
+        elif opts.HasExtension(entdb_options_pb2.edge):
+            edge_type = EdgeTypeDef.from_descriptor(msg_desc)
+            registry.register_edge_type(edge_type)
+            edges_registered += 1
+
+    return (nodes_registered, edges_registered)
