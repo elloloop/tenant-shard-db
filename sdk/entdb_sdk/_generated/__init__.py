@@ -111,6 +111,15 @@ from .entdb_pb2 import (
     LegalHoldResponse,
     RevokeAllUserAccessRequest,
     RevokeAllUserAccessResponse,
+    # GDPR operations (Issue #103)
+    DeleteUserRequest,
+    DeleteUserResponse,
+    ExportUserDataRequest,
+    ExportUserDataResponse,
+    FreezeUserRequest,
+    FreezeUserResponse,
+    CancelUserDeletionRequest,
+    CancelUserDeletionResponse,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 
@@ -211,5 +220,14 @@ __all__ = [
     "LegalHoldResponse",
     "RevokeAllUserAccessRequest",
     "RevokeAllUserAccessResponse",
+    # GDPR operations (Issue #103)
+    "DeleteUserRequest",
+    "DeleteUserResponse",
+    "ExportUserDataRequest",
+    "ExportUserDataResponse",
+    "FreezeUserRequest",
+    "FreezeUserResponse",
+    "CancelUserDeletionRequest",
+    "CancelUserDeletionResponse",
     "EntDBServiceStub",
 ]

@@ -3590,14 +3590,28 @@ class CanonicalStore:
         anonymized_edges = 0
 
         def _scrub_payload(payload: dict, pii_fields: list[str], subject_field: str | None) -> dict:
-            """Return a new payload with pii=true fields scrubbed and
+            """Return a new payload with pii=true fields scrubbed and the
             subject_field (if any) remapped to the anonymous id when it
-            matches the user being deleted."""
+            matches the user being deleted.
+
+            The subject_field is remapped FIRST so that when it is also
+            marked ``pii=true`` the anonymous id is preserved rather than
+            blanked out — this keeps "this record is about the anonymous
+            user" traceable after deletion.
+            """
             out = dict(payload)
+            subject_remapped = False
+            if subject_field and out.get(subject_field) == user_id:
+                out[subject_field] = anon
+                subject_remapped = True
             for fname in pii_fields:
+                if fname == subject_field and subject_remapped:
+                    continue
                 if fname in out:
                     value = out[fname]
-                    if isinstance(value, str):
+                    if isinstance(value, bool):
+                        out[fname] = False
+                    elif isinstance(value, str):
                         out[fname] = ""
                     elif isinstance(value, (int, float)):
                         out[fname] = 0
@@ -3607,8 +3621,6 @@ class CanonicalStore:
                         out[fname] = {}
                     else:
                         out[fname] = None
-            if subject_field and out.get(subject_field) == user_id:
-                out[subject_field] = anon
             return out
 
         with self._get_connection(tenant_id) as conn:
