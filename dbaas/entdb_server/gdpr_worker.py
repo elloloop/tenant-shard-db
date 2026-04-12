@@ -82,18 +82,14 @@ class GdprDeletionWorker:
         The loop sleeps for :attr:`poll_interval` seconds between
         iterations. Exceptions are logged and the loop continues.
         """
-        logger.info(
-            "GDPR deletion worker starting (poll_interval=%s)", self.poll_interval
-        )
+        logger.info("GDPR deletion worker starting (poll_interval=%s)", self.poll_interval)
         while not self._stopped.is_set():
             try:
                 await self.run_once()
             except Exception:  # pragma: no cover - defensive
                 logger.exception("GDPR deletion worker iteration failed")
             try:
-                await asyncio.wait_for(
-                    self._stopped.wait(), timeout=self.poll_interval
-                )
+                await asyncio.wait_for(self._stopped.wait(), timeout=self.poll_interval)
             except asyncio.TimeoutError:
                 pass
 
@@ -157,9 +153,7 @@ class GdprDeletionWorker:
                     self.schema_registry,
                     salt=self.salt,
                 )
-                per_tenant.append(
-                    {"tenant_id": tenant_id, "mode": "anonymized", **counts}
-                )
+                per_tenant.append({"tenant_id": tenant_id, "mode": "anonymized", **counts})
 
         # Global cleanup
         await self.global_store.remove_all_memberships_for_user(user_id)

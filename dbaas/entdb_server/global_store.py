@@ -830,7 +830,5 @@ class GlobalStore:
 
     def _sync_remove_all_memberships_for_user(self, user_id: str) -> int:
         with self._get_connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM tenant_members WHERE user_id = ?", (user_id,)
-            )
+            cursor = conn.execute("DELETE FROM tenant_members WHERE user_id = ?", (user_id,))
             return cursor.rowcount
