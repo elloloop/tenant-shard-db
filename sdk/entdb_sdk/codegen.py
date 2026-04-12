@@ -411,13 +411,35 @@ def compute_schema_fingerprint(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> 
 # ── Code Generators ───────────────────────────────────────────────────
 
 
+_FIELD_KIND_TO_PYTHON_TYPE: dict[str, str] = {
+    "str": "str",
+    "int": "int",
+    "float": "float",
+    "bool": "bool",
+    "timestamp": "int",
+    "json": "dict",
+    "bytes": "bytes",
+    "enum": "str",
+    "ref": "dict",
+    "list_str": "list[str]",
+    "list_int": "list[int]",
+    "list_ref": "list[dict]",
+}
+
+
 def generate_python(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
     """Generate Python EntDB schema module from parsed proto."""
     fingerprint = compute_schema_fingerprint(nodes, edges)
     lines = [
         '"""EntDB schema — generated from .proto. Do not edit."""',
         "",
+        "from __future__ import annotations",
+        "",
+        "from dataclasses import dataclass",
+        "from typing import ClassVar",
+        "",
         "from entdb_sdk import AclDefaults, DataPolicy, EdgeTypeDef, NodeTypeDef, SubjectExitPolicy, field",
+        "from entdb_sdk.typed import TypedNode",
         "",
         "# Deterministic fingerprint of the generated schema. Sent to the",
         "# server on every write so stale clients can be rejected cleanly.",
@@ -527,6 +549,40 @@ def generate_python(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
 
         lines.append(")")
         lines.append("")
+
+    # --- Typed node classes ---
+    if nodes:
+        lines.append("")
+        lines.append("# ── Typed Node Classes ────────────────────────────────────────────")
+        lines.append("")
+
+        for n in nodes:
+            lines.append("")
+            lines.append("@dataclass")
+            lines.append(f"class {n.name}Node(TypedNode):")
+            if n.description:
+                lines.append(f'    """{n.description}."""')
+                lines.append("")
+
+            # Required fields first (no default), then optional
+            required_fields = [f for f in n.fields if f.required and not f.deprecated]
+            optional_fields = [f for f in n.fields if not f.required and not f.deprecated]
+
+            for f in required_fields:
+                py_type = _FIELD_KIND_TO_PYTHON_TYPE.get(f.kind, "str")
+                lines.append(f"    {f.name}: {py_type}")
+
+            for f in optional_fields:
+                py_type = _FIELD_KIND_TO_PYTHON_TYPE.get(f.kind, "str")
+                default = "None"
+                if f.default_value is not None:
+                    default = repr(f.default_value)
+                lines.append(f"    {f.name}: {py_type} | None = {default}")
+
+            lines.append("")
+            lines.append(f"    _type_id: ClassVar[int] = {n.type_id}")
+            lines.append(f"    _type_name: ClassVar[str] = {n.name!r}")
+            lines.append("")
 
     return "\n".join(lines)
 

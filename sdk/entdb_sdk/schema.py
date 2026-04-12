@@ -31,7 +31,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from google.protobuf import descriptor_pb2
 
 
 class DataPolicy(Enum):
@@ -269,6 +272,81 @@ class FieldDef:
             result["description"] = self.description
         return result
 
+    @classmethod
+    def from_descriptor(
+        cls,
+        fd: descriptor_pb2.FieldDescriptorProto,
+        field_opts: Any | None = None,
+    ) -> FieldDef:
+        """Build a FieldDef from a proto FieldDescriptorProto + FieldOpts.
+
+        This factory lets codegen construct FieldDefs directly from parsed
+        proto descriptors without going through an intermediate FieldInfo.
+
+        Args:
+            fd: A ``FieldDescriptorProto`` from a compiled .proto.
+            field_opts: Resolved ``FieldOpts`` extension message (or ``None``).
+
+        Returns:
+            A fully populated ``FieldDef``.
+        """
+        # Proto type number -> EntDB FieldKind value string
+        _proto_type_map = {
+            1: "float",  # TYPE_DOUBLE
+            2: "float",  # TYPE_FLOAT
+            3: "int",  # TYPE_INT64
+            4: "int",  # TYPE_UINT64
+            5: "int",  # TYPE_INT32
+            8: "bool",  # TYPE_BOOL
+            9: "str",  # TYPE_STRING
+            12: "bytes",  # TYPE_BYTES
+            13: "int",  # TYPE_UINT32
+            17: "int",  # TYPE_SINT32
+            18: "int",  # TYPE_SINT64
+        }
+
+        kind_override = field_opts.kind if field_opts is not None else ""
+        enum_str = field_opts.enum_values if field_opts is not None else ""
+        enum_values = (
+            tuple(v.strip() for v in enum_str.split(",") if v.strip()) if enum_str else None
+        )
+
+        # Resolve kind from proto type + optional override
+        if kind_override:
+            kind_str = kind_override
+        elif fd.label == 3:  # LABEL_REPEATED
+            base = _proto_type_map.get(fd.type, "str")
+            if base == "str":
+                kind_str = "list_str"
+            elif base == "int":
+                kind_str = "list_int"
+            else:
+                kind_str = "json"
+        else:
+            kind_str = _proto_type_map.get(fd.type, "str")
+
+        if enum_values and kind_str == "str":
+            kind_str = "enum"
+
+        default_value = (field_opts.default_value or None) if field_opts is not None else None
+
+        return cls(
+            field_id=fd.number,
+            name=fd.name,
+            kind=FieldKind.from_str(kind_str),
+            required=bool(field_opts.required) if field_opts is not None else False,
+            default=default_value,
+            enum_values=enum_values,
+            ref_type_id=(field_opts.ref_type_id or None) if field_opts is not None else None,
+            indexed=bool(field_opts.indexed) if field_opts is not None else False,
+            searchable=bool(field_opts.searchable) if field_opts is not None else False,
+            pii=bool(field_opts.pii) if field_opts is not None else False,
+            phi=bool(field_opts.phi) if field_opts is not None else False,
+            pii_false=bool(field_opts.pii_false) if field_opts is not None else False,
+            deprecated=bool(field_opts.deprecated) if field_opts is not None else False,
+            description=field_opts.description if field_opts is not None else "",
+        )
+
 
 def field(
     field_id: int,
@@ -474,6 +552,66 @@ class NodeTypeDef:
 
         return payload
 
+    @classmethod
+    def from_descriptor(
+        cls,
+        msg: descriptor_pb2.DescriptorProto,
+        node_opts: Any,
+        *,
+        _reparse_field_options: Any = None,
+    ) -> NodeTypeDef:
+        """Build a NodeTypeDef from a proto DescriptorProto + NodeOpts.
+
+        This factory lets codegen construct NodeTypeDefs directly from
+        parsed proto descriptors rather than going through NodeInfo.
+
+        Args:
+            msg: A ``DescriptorProto`` for the message.
+            node_opts: Resolved ``NodeOpts`` extension message.
+            _reparse_field_options: Optional callable to re-parse
+                ``FieldOptions`` for extension access. When ``None``, field
+                options on ``msg.field`` entries are used as-is.
+
+        Returns:
+            A fully populated ``NodeTypeDef``.
+        """
+        _data_policy_map = {
+            0: DataPolicy.PERSONAL,
+            1: DataPolicy.BUSINESS,
+            2: DataPolicy.FINANCIAL,
+            3: DataPolicy.AUDIT,
+            4: DataPolicy.EPHEMERAL,
+            5: DataPolicy.HEALTHCARE,
+        }
+
+        fields: list[FieldDef] = []
+        for fd in msg.field:
+            fext = None
+            if _reparse_field_options is not None:
+                from ._generated import entdb_options_pb2
+
+                opts = _reparse_field_options(fd.options) if fd.options else None
+                if opts is not None and opts.HasExtension(entdb_options_pb2.field):
+                    fext = opts.Extensions[entdb_options_pb2.field]
+            fields.append(FieldDef.from_descriptor(fd, fext))
+
+        return cls(
+            type_id=node_opts.type_id,
+            name=msg.name,
+            fields=tuple(fields),
+            acl_defaults=AclDefaults(
+                public=node_opts.public,
+                tenant_visible=node_opts.tenant_visible,
+                inherit=node_opts.inherit,
+            ),
+            data_policy=_data_policy_map.get(int(node_opts.data_policy), DataPolicy.PERSONAL),
+            subject_field=node_opts.subject_field,
+            retention_days=node_opts.retention_days,
+            legal_basis=node_opts.legal_basis,
+            deprecated=node_opts.deprecated,
+            description=node_opts.description,
+        )
+
     def __hash__(self) -> int:
         return hash(self.type_id)
 
@@ -577,6 +715,68 @@ class EdgeTypeDef:
         if self.legal_basis:
             result["legal_basis"] = self.legal_basis
         return result
+
+    @classmethod
+    def from_descriptor(
+        cls,
+        msg: descriptor_pb2.DescriptorProto,
+        edge_opts: Any,
+        *,
+        _reparse_field_options: Any = None,
+    ) -> EdgeTypeDef:
+        """Build an EdgeTypeDef from a proto DescriptorProto + EdgeOpts.
+
+        Args:
+            msg: A ``DescriptorProto`` for the message.
+            edge_opts: Resolved ``EdgeOpts`` extension message.
+            _reparse_field_options: Optional callable to re-parse
+                ``FieldOptions`` for extension access.
+
+        Returns:
+            A fully populated ``EdgeTypeDef``.
+        """
+        _data_policy_map = {
+            0: DataPolicy.PERSONAL,
+            1: DataPolicy.BUSINESS,
+            2: DataPolicy.FINANCIAL,
+            3: DataPolicy.AUDIT,
+            4: DataPolicy.EPHEMERAL,
+            5: DataPolicy.HEALTHCARE,
+        }
+        _subject_exit_map = {
+            0: SubjectExitPolicy.BOTH,
+            1: SubjectExitPolicy.FROM,
+            2: SubjectExitPolicy.TO,
+        }
+
+        props: list[FieldDef] = []
+        for fd in msg.field:
+            fext = None
+            if _reparse_field_options is not None:
+                from ._generated import entdb_options_pb2
+
+                opts = _reparse_field_options(fd.options) if fd.options else None
+                if opts is not None and opts.HasExtension(entdb_options_pb2.field):
+                    fext = opts.Extensions[entdb_options_pb2.field]
+            props.append(FieldDef.from_descriptor(fd, fext))
+
+        return cls(
+            edge_id=edge_opts.edge_id,
+            name=edge_opts.name or msg.name,
+            from_type=0,
+            to_type=0,
+            props=tuple(props),
+            propagate_share=edge_opts.propagate_share,
+            unique_per_from=edge_opts.unique_per_from,
+            data_policy=_data_policy_map.get(int(edge_opts.data_policy), DataPolicy.PERSONAL),
+            on_subject_exit=_subject_exit_map.get(
+                int(edge_opts.on_subject_exit), SubjectExitPolicy.BOTH
+            ),
+            retention_days=edge_opts.retention_days,
+            legal_basis=edge_opts.legal_basis,
+            deprecated=edge_opts.deprecated,
+            description=edge_opts.description,
+        )
 
     def __hash__(self) -> int:
         return hash(self.edge_id)

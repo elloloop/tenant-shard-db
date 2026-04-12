@@ -66,7 +66,9 @@ import contextlib
 import hashlib
 import json
 import logging
+import os
 import sqlite3
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -335,6 +337,11 @@ class CanonicalStore:
     # SQLite schema version for migrations
     SCHEMA_VERSION = 1
 
+    # Default thread-pool size for I/O-bound SQLite work (stdlib recommended formula).
+    # Each tenant has its own SQLite file, so concurrent writes to different tenants
+    # are safe.  Same-tenant writes are serialized by WAL BEGIN IMMEDIATE.
+    DEFAULT_MAX_WORKERS: int = min(32, (os.cpu_count() or 4) + 4)
+
     def __init__(
         self,
         data_dir: str,
@@ -342,6 +349,7 @@ class CanonicalStore:
         busy_timeout_ms: int = 5000,
         cache_size_pages: int = -64000,
         encryption_config: EncryptionConfig | None = None,
+        max_workers: int | None = None,
     ) -> None:
         """Initialize the canonical store.
 
@@ -353,6 +361,8 @@ class CanonicalStore:
             encryption_config: Optional encryption configuration. When
                 enabled, tenant databases are encrypted with per-tenant
                 keys derived from the master key.
+            max_workers: Thread-pool size for SQLite operations. Defaults to
+                ``DEFAULT_MAX_WORKERS``.
         """
         self.data_dir = Path(data_dir)
         self.wal_mode = wal_mode
@@ -360,11 +370,18 @@ class CanonicalStore:
         self.cache_size_pages = cache_size_pages
         self.encryption_config = encryption_config or EncryptionConfig()
         self._connections: dict[str, sqlite3.Connection] = {}
-        # Single-thread executor — SQLite connections are not thread-safe,
-        # so all DB ops must run on the same thread when using connection pooling.
+        # Per-tenant locks to serialise same-tenant operations across threads.
+        self._tenant_locks: dict[str, threading.Lock] = {}
+        self._tenant_locks_guard = threading.Lock()
+        # Thread pool for SQLite I/O.  Each tenant has its own DB file so
+        # concurrent writes to *different* tenants are safe; same-tenant
+        # writes are serialised by the per-tenant lock above.
         from concurrent.futures import ThreadPoolExecutor
 
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entdb-sqlite")
+        self._max_workers = max_workers if max_workers is not None else self.DEFAULT_MAX_WORKERS
+        self._executor = ThreadPoolExecutor(
+            max_workers=self._max_workers, thread_name_prefix="entdb-sqlite"
+        )
 
         # Offset tracking for read-after-write consistency.
         # Updated by the applier after each batch; read RPCs can wait on these.
@@ -476,12 +493,28 @@ class CanonicalStore:
         safe_id = "".join(c for c in tenant_id if c.isalnum() or c in "-_")
         return self.data_dir / f"tenant_{safe_id}.db"
 
+    def _get_tenant_lock(self, tenant_id: str) -> threading.Lock:
+        """Return (creating if needed) a per-tenant threading lock."""
+        lock = self._tenant_locks.get(tenant_id)
+        if lock is None:
+            with self._tenant_locks_guard:
+                # Double-check under the guard
+                lock = self._tenant_locks.get(tenant_id)
+                if lock is None:
+                    lock = threading.Lock()
+                    self._tenant_locks[tenant_id] = lock
+        return lock
+
     @contextmanager
     def _get_connection(self, tenant_id: str, create: bool = False) -> Iterator[sqlite3.Connection]:
         """Get a database connection for a tenant.
 
         Returns a pooled connection (one per tenant db path). Connections are
         reused across operations and PRAGMAs are configured only once.
+
+        The yielded connection is protected by a per-tenant lock so that
+        same-tenant operations are serialised even when the thread pool has
+        multiple workers.
 
         Args:
             tenant_id: Tenant identifier
@@ -531,8 +564,13 @@ class CanonicalStore:
 
             self._connections[cache_key] = conn
 
-        yield self._connections[cache_key]
-        # Don't close — connection is pooled
+        # Acquire per-tenant lock to serialise same-tenant operations
+        lock = self._get_tenant_lock(tenant_id)
+        lock.acquire()
+        try:
+            yield self._connections[cache_key]
+        finally:
+            lock.release()
 
     def close_all(self) -> None:
         """Close all pooled connections."""
@@ -1308,38 +1346,45 @@ class CanonicalStore:
                 order_by = "created_at"
 
             if filter_json:
-                # Fetch all matching rows for this type, filter in Python, then paginate.
-                # Note: payload must be parsed here for filtering, but ACL can stay raw.
+                # Push equality filters into SQL via json_extract so SQLite
+                # does the heavy lifting instead of fetching all rows.
+                where_clauses = [
+                    "tenant_id = ?",
+                    "type_id = ?",
+                ]
+                params: list[Any] = [tenant_id, type_id]
+
+                for key, value in filter_json.items():
+                    json_path = f'$."{key}"'
+                    if value is None:
+                        where_clauses.append("json_extract(payload_json, ?) IS NULL")
+                        params.append(json_path)
+                    else:
+                        where_clauses.append("json_extract(payload_json, ?) = ?")
+                        params.append(json_path)
+                        params.append(value)
+
+                where_sql = " AND ".join(where_clauses)
+                params.extend([limit, offset])
+
                 cursor = conn.execute(
-                    f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
-                    f"ORDER BY {order_by} {order}",
-                    (tenant_id, type_id),
+                    f"SELECT * FROM nodes WHERE {where_sql} "
+                    f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
+                    params,
                 )
-                nodes = []
-                skipped = 0
-                for row in cursor:
-                    payload = json.loads(row["payload_json"])
-                    if not all(payload.get(k) == v for k, v in filter_json.items()):
-                        continue
-                    if skipped < offset:
-                        skipped += 1
-                        continue
-                    if len(nodes) >= limit:
-                        break
-                    # payload already parsed for filtering; pass both raw + parsed
-                    nodes.append(
-                        Node(
-                            tenant_id=row["tenant_id"],
-                            node_id=row["node_id"],
-                            type_id=row["type_id"],
-                            payload=payload,
-                            created_at=row["created_at"],
-                            updated_at=row["updated_at"],
-                            owner_actor=row["owner_actor"],
-                            acl_json=row["acl_blob"],
-                        )
+                return [
+                    Node.from_row(
+                        tenant_id=row["tenant_id"],
+                        node_id=row["node_id"],
+                        type_id=row["type_id"],
+                        payload_json=row["payload_json"],
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        owner_actor=row["owner_actor"],
+                        acl_json=row["acl_blob"],
                     )
-                return nodes
+                    for row in cursor.fetchall()
+                ]
             else:
                 # No filter -- use SQL LIMIT/OFFSET (efficient)
                 cursor = conn.execute(
