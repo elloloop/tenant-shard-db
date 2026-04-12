@@ -131,9 +131,7 @@ class AuthInterceptor(grpc.ServerInterceptor):
                 "Missing Authorization header.",
             )
 
-        bearer_value = (
-            auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
-        )
+        bearer_value = auth_header[7:] if auth_header.startswith("Bearer ") else auth_header
 
         if not bearer_value:
             return _create_abort_handler(
@@ -174,9 +172,7 @@ class AuthInterceptor(grpc.ServerInterceptor):
                 import concurrent.futures
 
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    claims = pool.submit(
-                        asyncio.run, self._jwt.validate_token(token)
-                    ).result()
+                    claims = pool.submit(asyncio.run, self._jwt.validate_token(token)).result()
             else:
                 claims = asyncio.run(self._jwt.validate_token(token))
 

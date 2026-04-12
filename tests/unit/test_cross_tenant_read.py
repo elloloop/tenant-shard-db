@@ -262,7 +262,9 @@ async def test_cross_tenant_query_only_accessible(store):
 
     # Query all type_id=10 nodes
     all_nodes = await store.query_nodes(
-        tenant_id=TENANT_ALICE, type_id=10, limit=100,
+        tenant_id=TENANT_ALICE,
+        type_id=10,
+        limit=100,
     )
     assert len(all_nodes) == 3
 
@@ -287,14 +289,15 @@ async def test_cross_tenant_query_no_access_empty(store):
     _create_node(store, owner=ALICE, type_id=10)
 
     all_nodes = await store.query_nodes(
-        tenant_id=TENANT_ALICE, type_id=10, limit=100,
+        tenant_id=TENANT_ALICE,
+        type_id=10,
+        limit=100,
     )
     assert len(all_nodes) == 2
 
     actor_ids = await store.resolve_actor_groups(TENANT_ALICE, BOB)
     accessible = [
-        n for n in all_nodes
-        if await store.can_access(TENANT_ALICE, n.node_id, actor_ids)
+        n for n in all_nodes if await store.can_access(TENANT_ALICE, n.node_id, actor_ids)
     ]
     assert len(accessible) == 0
 
@@ -318,7 +321,9 @@ async def test_shared_with_me_cross_tenant_via_global_store(global_store, store)
     # Bob's per-tenant shares in his own tenant
     actor_ids_bob = await store.resolve_actor_groups(TENANT_BOB, BOB)
     per_tenant = await store.list_shared_with_me(
-        tenant_id=TENANT_BOB, actor_ids=actor_ids_bob, limit=100,
+        tenant_id=TENANT_BOB,
+        actor_ids=actor_ids_bob,
+        limit=100,
     )
     per_tenant_ids = {n.node_id for n in per_tenant}
     assert node_bob in per_tenant_ids
@@ -488,10 +493,7 @@ async def test_cross_tenant_multiple_nodes_mixed_access(store):
     assert await store.has_node_access(TENANT_ALICE, actor_ids) is True
 
     # But Bob can only access the shared ones
-    access_results = {
-        nid: await store.can_access(TENANT_ALICE, nid, actor_ids)
-        for nid in nodes
-    }
+    access_results = {nid: await store.can_access(TENANT_ALICE, nid, actor_ids) for nid in nodes}
     assert access_results[nodes[0]] is True
     assert access_results[nodes[1]] is True
     assert access_results[nodes[2]] is False

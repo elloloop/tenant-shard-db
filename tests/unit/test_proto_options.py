@@ -94,6 +94,7 @@ def _find_enum(fd, name: str):
 
 # ── Test 1: Options proto compiles ───────────────────────────────────
 
+
 class TestOptionsProtoCompiles:
     def test_compiles_successfully(self, options_descriptor):
         """entdb_options.proto compiles without errors."""
@@ -107,6 +108,7 @@ class TestOptionsProtoCompiles:
 
 
 # ── Test 2: Playground schema compiles ───────────────────────────────
+
 
 class TestPlaygroundCompiles:
     def test_compiles_successfully(self, playground_descriptor):
@@ -125,6 +127,7 @@ class TestPlaygroundCompiles:
 
 
 # ── Test 3: DataPolicy enum ─────────────────────────────────────────
+
 
 class TestDataPolicyEnum:
     def test_data_policy_values(self, options_descriptor):
@@ -153,6 +156,7 @@ class TestDataPolicyEnum:
 
 # ── Test 4: SubjectExitPolicy enum ──────────────────────────────────
 
+
 class TestSubjectExitPolicyEnum:
     def test_subject_exit_values(self, options_descriptor):
         """SubjectExitPolicy enum has all 3 expected values."""
@@ -169,6 +173,7 @@ class TestSubjectExitPolicyEnum:
 
 # ── Test 5: NodeOpts message fields ─────────────────────────────────
 
+
 class TestNodeOptsMessage:
     def test_all_fields_present(self, options_descriptor):
         """NodeOpts has the full set of v2 fields."""
@@ -176,9 +181,17 @@ class TestNodeOptsMessage:
         mt = _find_message(fd, "NodeOpts")
         field_names = {f.name for f in mt.field}
         expected = {
-            "type_id", "public", "tenant_visible", "inherit", "private",
-            "data_policy", "subject_field", "retention_days", "legal_basis",
-            "description", "deprecated",
+            "type_id",
+            "public",
+            "tenant_visible",
+            "inherit",
+            "private",
+            "data_policy",
+            "subject_field",
+            "retention_days",
+            "legal_basis",
+            "description",
+            "deprecated",
         }
         assert expected == field_names
 
@@ -194,6 +207,7 @@ class TestNodeOptsMessage:
 
 # ── Test 6: EdgeOpts message fields ─────────────────────────────────
 
+
 class TestEdgeOptsMessage:
     def test_all_fields_present(self, options_descriptor):
         """EdgeOpts has the full set of v2 fields (no from_type/to_type)."""
@@ -201,9 +215,16 @@ class TestEdgeOptsMessage:
         mt = _find_message(fd, "EdgeOpts")
         field_names = {f.name for f in mt.field}
         expected = {
-            "edge_id", "name", "propagate_share", "unique_per_from",
-            "data_policy", "on_subject_exit", "retention_days", "legal_basis",
-            "description", "deprecated",
+            "edge_id",
+            "name",
+            "propagate_share",
+            "unique_per_from",
+            "data_policy",
+            "on_subject_exit",
+            "retention_days",
+            "legal_basis",
+            "description",
+            "deprecated",
         }
         assert expected == field_names
         # Verify old fields are gone
@@ -220,6 +241,7 @@ class TestEdgeOptsMessage:
 
 # ── Test 7: FieldOpts message fields ────────────────────────────────
 
+
 class TestFieldOptsMessage:
     def test_all_fields_present(self, options_descriptor):
         """FieldOpts has the full set of v2 fields including pii/phi."""
@@ -227,10 +249,17 @@ class TestFieldOptsMessage:
         mt = _find_message(fd, "FieldOpts")
         field_names = {f.name for f in mt.field}
         expected = {
-            "required", "searchable", "indexed",
-            "pii", "phi",
-            "enum_values", "kind", "ref_type_id",
-            "default_value", "description", "deprecated",
+            "required",
+            "searchable",
+            "indexed",
+            "pii",
+            "phi",
+            "enum_values",
+            "kind",
+            "ref_type_id",
+            "default_value",
+            "description",
+            "deprecated",
             "pii_false",
         }
         assert expected == field_names
@@ -246,6 +275,7 @@ class TestFieldOptsMessage:
 
 
 # ── Test 8: Extensions registered ───────────────────────────────────
+
 
 class TestExtensions:
     def test_node_extension_number(self, options_descriptor):
@@ -271,6 +301,7 @@ class TestExtensions:
 
 
 # ── Test 9: Playground node messages have custom options ─────────────
+
 
 class TestPlaygroundNodeOptions:
     def test_user_has_options(self, playground_descriptor):
@@ -300,6 +331,7 @@ class TestPlaygroundNodeOptions:
 
 # ── Test 10: Playground edge messages have custom options ────────────
 
+
 class TestPlaygroundEdgeOptions:
     def test_owns_has_options(self, playground_descriptor):
         """Owns edge message has non-empty options."""
@@ -324,6 +356,7 @@ class TestPlaygroundEdgeOptions:
 
 
 # ── Test 11: Field-level options on playground fields ────────────────
+
 
 class TestPlaygroundFieldOptions:
     def test_user_email_has_pii(self, playground_descriptor):
@@ -350,6 +383,7 @@ class TestPlaygroundFieldOptions:
 
 
 # ── Test 12: No AclOpts sub-message in v2 ───────────────────────────
+
 
 class TestNoLegacyAclOpts:
     def test_no_acl_opts_message(self, options_descriptor):

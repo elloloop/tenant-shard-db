@@ -26,6 +26,7 @@ from dbaas.entdb_server.apply.canonical_store import (
 
 # ── fixtures ──────────────────────────────────────────────────────────
 
+
 @pytest.fixture()
 def store(tmp_path):
     """Create a CanonicalStore in a temp directory."""
@@ -46,6 +47,7 @@ TENANT = "t1"
 
 # ── helpers ───────────────────────────────────────────────────────────
 
+
 async def _append(store, **kwargs):
     """Shorthand for append_audit with defaults."""
     defaults = {
@@ -60,6 +62,7 @@ async def _append(store, **kwargs):
 
 
 # ── _compute_entry_hash unit tests ────────────────────────────────────
+
 
 class TestComputeEntryHash:
     def test_deterministic(self):
@@ -87,6 +90,7 @@ class TestComputeEntryHash:
 
 
 # ── append tests ──────────────────────────────────────────────────────
+
 
 class TestAppendAudit:
     @pytest.mark.asyncio
@@ -161,6 +165,7 @@ class TestAppendAudit:
 
 
 # ── verify chain tests ────────────────────────────────────────────────
+
 
 class TestVerifyAuditChain:
     @pytest.mark.asyncio
@@ -289,6 +294,7 @@ class TestVerifyAuditChain:
 
 # ── query / filter tests ─────────────────────────────────────────────
 
+
 class TestGetAuditLog:
     @pytest.mark.asyncio
     async def test_default_order_newest_first(self, tenant_store):
@@ -357,6 +363,7 @@ class TestGetAuditLog:
 
 # ── export tests ──────────────────────────────────────────────────────
 
+
 class TestExportAuditLog:
     @pytest.mark.asyncio
     async def test_export_chronological_order(self, tenant_store):
@@ -399,14 +406,22 @@ class TestExportAuditLog:
         exported = await tenant_store.export_audit_log(TENANT)
         entry = exported[0]
         expected_keys = {
-            "event_id", "prev_hash", "actor_id", "action",
-            "target_type", "target_id", "ip_address", "user_agent",
-            "metadata", "created_at",
+            "event_id",
+            "prev_hash",
+            "actor_id",
+            "action",
+            "target_type",
+            "target_id",
+            "ip_address",
+            "user_agent",
+            "metadata",
+            "created_at",
         }
         assert set(entry.keys()) == expected_keys
 
 
 # ── concurrent appends ────────────────────────────────────────────────
+
 
 class TestConcurrentAppends:
     @pytest.mark.asyncio
@@ -416,10 +431,7 @@ class TestConcurrentAppends:
         Because the store uses BEGIN IMMEDIATE, concurrent appends are
         serialized at the SQLite level, ensuring the chain remains intact.
         """
-        tasks = [
-            _append(tenant_store, target_id=f"n{i}", actor_id=f"user:{i}")
-            for i in range(10)
-        ]
+        tasks = [_append(tenant_store, target_id=f"n{i}", actor_id=f"user:{i}") for i in range(10)]
         event_ids = await asyncio.gather(*tasks)
 
         # All appends succeeded

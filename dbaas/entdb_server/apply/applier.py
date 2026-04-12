@@ -958,13 +958,9 @@ class Applier:
                 type_id,
                 policy.value,
             )
-            if (
-                policy.value in REQUIRES_LEGAL_BASIS
-                and node_type.legal_basis is None
-            ):
+            if policy.value in REQUIRES_LEGAL_BASIS and node_type.legal_basis is None:
                 logger.warning(
-                    "Node type '%s' (type_id=%d) has data_policy=%s "
-                    "but no legal_basis defined",
+                    "Node type '%s' (type_id=%d) has data_policy=%s but no legal_basis defined",
                     node_type.name,
                     type_id,
                     policy.value,
@@ -1093,9 +1089,7 @@ class Applier:
         try:
             if actor_id.startswith("group:"):
                 # Group expansion: resolve members and create entries for each
-                members = await self.canonical_store.get_group_members(
-                    tenant_id, actor_id
-                )
+                members = await self.canonical_store.get_group_members(tenant_id, actor_id)
                 for member_id in members:
                     await self.global_store.add_shared(
                         user_id=member_id,
@@ -1131,9 +1125,7 @@ class Applier:
 
         try:
             if actor_id.startswith("group:"):
-                members = await self.canonical_store.get_group_members(
-                    tenant_id, actor_id
-                )
+                members = await self.canonical_store.get_group_members(tenant_id, actor_id)
                 for member_id in members:
                     await self.global_store.remove_shared(
                         user_id=member_id,

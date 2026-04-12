@@ -119,9 +119,7 @@ class GlobalStore:
         self.busy_timeout_ms = busy_timeout_ms
         self.encryption_config = encryption_config or EncryptionConfig()
         self._conn: sqlite3.Connection | None = None
-        self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="entdb-global"
-        )
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="entdb-global")
 
         # Eagerly initialise the database and schema so that callers
         # do not need to await an explicit ``initialise()`` step.
@@ -444,9 +442,7 @@ class GlobalStore:
         """
         return await self._run_sync(self._sync_set_tenant_status, tenant_id, status)
 
-    async def set_legal_hold(
-        self, tenant_id: str, enabled: bool, actor: str
-    ) -> bool:
+    async def set_legal_hold(self, tenant_id: str, enabled: bool, actor: str) -> bool:
         """Toggle legal_hold status on a tenant.
 
         When ``enabled`` is True, the tenant is put on legal hold
@@ -464,9 +460,7 @@ class GlobalStore:
             True if the tenant existed and its status was updated.
         """
         new_status = "legal_hold" if enabled else "active"
-        return await self._run_sync(
-            self._sync_set_tenant_status, tenant_id, new_status
-        )
+        return await self._run_sync(self._sync_set_tenant_status, tenant_id, new_status)
 
     def _sync_set_tenant_status(self, tenant_id: str, status: str) -> bool:
         with self._get_connection() as conn:
@@ -478,9 +472,7 @@ class GlobalStore:
 
     # ── Membership ────────────────────────────────────────────────────
 
-    async def add_member(
-        self, tenant_id: str, user_id: str, role: str = "member"
-    ) -> None:
+    async def add_member(self, tenant_id: str, user_id: str, role: str = "member") -> None:
         """Add a user as a member of a tenant.
 
         Args:
@@ -603,9 +595,7 @@ class GlobalStore:
             node_id: Shared node identifier
             permission: Permission level (e.g. 'read', 'write')
         """
-        await self._run_sync(
-            self._sync_add_shared, user_id, source_tenant, node_id, permission
-        )
+        await self._run_sync(self._sync_add_shared, user_id, source_tenant, node_id, permission)
 
     def _sync_add_shared(
         self, user_id: str, source_tenant: str, node_id: str, permission: str
@@ -621,21 +611,15 @@ class GlobalStore:
                 (user_id, source_tenant, node_id, permission, now),
             )
 
-    async def remove_shared(
-        self, user_id: str, source_tenant: str, node_id: str
-    ) -> bool:
+    async def remove_shared(self, user_id: str, source_tenant: str, node_id: str) -> bool:
         """Remove a specific shared entry.
 
         Returns:
             True if the entry existed and was removed, False otherwise
         """
-        return await self._run_sync(
-            self._sync_remove_shared, user_id, source_tenant, node_id
-        )
+        return await self._run_sync(self._sync_remove_shared, user_id, source_tenant, node_id)
 
-    def _sync_remove_shared(
-        self, user_id: str, source_tenant: str, node_id: str
-    ) -> bool:
+    def _sync_remove_shared(self, user_id: str, source_tenant: str, node_id: str) -> bool:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM shared_index WHERE user_id = ? AND source_tenant = ? AND node_id = ?",
@@ -656,13 +640,9 @@ class GlobalStore:
         Returns:
             List of shared entry dicts
         """
-        return await self._run_sync(
-            self._sync_get_shared_with_me, user_id, limit, offset
-        )
+        return await self._run_sync(self._sync_get_shared_with_me, user_id, limit, offset)
 
-    def _sync_get_shared_with_me(
-        self, user_id: str, limit: int, offset: int
-    ) -> list[dict]:
+    def _sync_get_shared_with_me(self, user_id: str, limit: int, offset: int) -> list[dict]:
         with self._get_connection() as conn:
             rows = conn.execute(
                 "SELECT * FROM shared_index WHERE user_id = ? ORDER BY shared_at DESC LIMIT ? OFFSET ?",
@@ -680,16 +660,12 @@ class GlobalStore:
 
     def _sync_remove_all_shared_for_user(self, user_id: str) -> int:
         with self._get_connection() as conn:
-            cursor = conn.execute(
-                "DELETE FROM shared_index WHERE user_id = ?", (user_id,)
-            )
+            cursor = conn.execute("DELETE FROM shared_index WHERE user_id = ?", (user_id,))
             return cursor.rowcount
 
     # ── Shared index (extended) ──────────────────────────────────────
 
-    async def cleanup_stale_shared(
-        self, source_tenant: str, node_id: str
-    ) -> int:
+    async def cleanup_stale_shared(self, source_tenant: str, node_id: str) -> int:
         """Remove all shared_index entries for a deleted node.
 
         Called when a node is deleted to clean up stale entries.
@@ -702,13 +678,9 @@ class GlobalStore:
         Returns:
             Number of entries removed
         """
-        return await self._run_sync(
-            self._sync_cleanup_stale_shared, source_tenant, node_id
-        )
+        return await self._run_sync(self._sync_cleanup_stale_shared, source_tenant, node_id)
 
-    def _sync_cleanup_stale_shared(
-        self, source_tenant: str, node_id: str
-    ) -> int:
+    def _sync_cleanup_stale_shared(self, source_tenant: str, node_id: str) -> int:
         with self._get_connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM shared_index WHERE source_tenant = ? AND node_id = ?",
@@ -716,9 +688,7 @@ class GlobalStore:
             )
             return cursor.rowcount
 
-    async def get_shared_entries_for_node(
-        self, source_tenant: str, node_id: str
-    ) -> list[dict]:
+    async def get_shared_entries_for_node(self, source_tenant: str, node_id: str) -> list[dict]:
         """Get all shared_index entries for a specific node.
 
         Args:
@@ -728,13 +698,9 @@ class GlobalStore:
         Returns:
             List of shared entry dicts
         """
-        return await self._run_sync(
-            self._sync_get_shared_entries_for_node, source_tenant, node_id
-        )
+        return await self._run_sync(self._sync_get_shared_entries_for_node, source_tenant, node_id)
 
-    def _sync_get_shared_entries_for_node(
-        self, source_tenant: str, node_id: str
-    ) -> list[dict]:
+    def _sync_get_shared_entries_for_node(self, source_tenant: str, node_id: str) -> list[dict]:
         with self._get_connection() as conn:
             rows = conn.execute(
                 """
@@ -812,3 +778,59 @@ class GlobalStore:
                 "SELECT * FROM deletion_queue WHERE status = 'pending' ORDER BY execute_at",
             ).fetchall()
             return [dict(r) for r in rows]
+
+    async def get_executable_deletions(self, now: int | None = None) -> list[dict]:
+        """Return pending deletion queue entries whose grace period has passed.
+
+        Args:
+            now: Reference Unix timestamp (seconds). Defaults to current time.
+
+        Returns:
+            List of queue entry dicts ready for execution, oldest first.
+        """
+        return await self._run_sync(self._sync_get_executable_deletions, now)
+
+    def _sync_get_executable_deletions(self, now: int | None) -> list[dict]:
+        now_ts = now if now is not None else self._now()
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM deletion_queue "
+                "WHERE status = 'pending' AND execute_at <= ? "
+                "ORDER BY execute_at",
+                (now_ts,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    async def get_deletion_entry(self, user_id: str) -> dict | None:
+        """Return the deletion queue entry for a user, or None."""
+        return await self._run_sync(self._sync_get_deletion_entry, user_id)
+
+    def _sync_get_deletion_entry(self, user_id: str) -> dict | None:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM deletion_queue WHERE user_id = ?", (user_id,)
+            ).fetchone()
+            return self._row_to_dict(row)
+
+    async def mark_deletion_completed(self, user_id: str) -> bool:
+        """Mark a deletion queue entry as 'completed' after erasure has run."""
+        return await self._run_sync(self._sync_mark_deletion_completed, user_id)
+
+    def _sync_mark_deletion_completed(self, user_id: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE deletion_queue SET status = 'completed' WHERE user_id = ?",
+                (user_id,),
+            )
+            return cursor.rowcount > 0
+
+    async def remove_all_memberships_for_user(self, user_id: str) -> int:
+        """Remove all tenant_members rows for a user."""
+        return await self._run_sync(self._sync_remove_all_memberships_for_user, user_id)
+
+    def _sync_remove_all_memberships_for_user(self, user_id: str) -> int:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM tenant_members WHERE user_id = ?", (user_id,)
+            )
+            return cursor.rowcount

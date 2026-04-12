@@ -148,7 +148,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:alice", ctx, require_write=True, op_kind="write",
+            "t1",
+            "user:alice",
+            ctx,
+            require_write=True,
+            op_kind="write",
         )
         assert role == "owner"
         assert ctx.aborted is False
@@ -159,7 +163,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:alice", ctx, require_write=True, op_kind="write",
+            "t1",
+            "user:alice",
+            ctx,
+            require_write=True,
+            op_kind="write",
         )
         assert role == "admin"
 
@@ -169,7 +177,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:bob", ctx, require_write=True, op_kind="write",
+            "t1",
+            "user:bob",
+            ctx,
+            require_write=True,
+            op_kind="write",
         )
         assert role == "member"
 
@@ -180,7 +192,11 @@ class TestRoleEnforcement:
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:viv", ctx, require_write=True, op_kind="write",
+                "t1",
+                "user:viv",
+                ctx,
+                require_write=True,
+                op_kind="write",
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -190,7 +206,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:viv", ctx, require_write=False, op_kind="read",
+            "t1",
+            "user:viv",
+            ctx,
+            require_write=False,
+            op_kind="read",
         )
         assert role == "viewer"
 
@@ -201,7 +221,11 @@ class TestRoleEnforcement:
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:gus", ctx, require_write=True, op_kind="write",
+                "t1",
+                "user:gus",
+                ctx,
+                require_write=True,
+                op_kind="write",
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -211,7 +235,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:gus", ctx, require_write=False, op_kind="read",
+            "t1",
+            "user:gus",
+            ctx,
+            require_write=False,
+            op_kind="read",
         )
         assert role == "guest"
 
@@ -222,7 +250,11 @@ class TestRoleEnforcement:
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:eve", ctx, require_write=False, op_kind="read",
+                "t1",
+                "user:eve",
+                ctx,
+                require_write=False,
+                op_kind="read",
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -233,7 +265,11 @@ class TestRoleEnforcement:
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:eve", ctx, require_write=True, op_kind="write",
+                "t1",
+                "user:eve",
+                ctx,
+                require_write=True,
+                op_kind="write",
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -243,7 +279,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "system:applier", ctx, require_write=True, op_kind="delete",
+            "t1",
+            "system:applier",
+            ctx,
+            require_write=True,
+            op_kind="delete",
         )
         assert role == "system"
         assert ctx.aborted is False
@@ -254,7 +294,11 @@ class TestRoleEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "__system__", ctx, require_write=True, op_kind="delete",
+            "t1",
+            "__system__",
+            ctx,
+            require_write=True,
+            op_kind="delete",
         )
         assert role == "system"
 
@@ -271,108 +315,160 @@ class TestStatusEnforcement:
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:alice", ctx, require_write=True, op_kind="write",
+            "t1",
+            "user:alice",
+            ctx,
+            require_write=True,
+            op_kind="write",
         )
         assert role == "owner"
 
     async def test_archived_allows_reads(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="archived", members={"alice": "owner"},
+            global_store,
+            status="archived",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:alice", ctx, require_write=False, op_kind="read",
+            "t1",
+            "user:alice",
+            ctx,
+            require_write=False,
+            op_kind="read",
         )
         assert role == "owner"
 
     async def test_archived_rejects_writes(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="archived", members={"alice": "owner"},
+            global_store,
+            status="archived",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:alice", ctx, require_write=True, op_kind="write",
+                "t1",
+                "user:alice",
+                ctx,
+                require_write=True,
+                op_kind="write",
             )
         assert ctx.abort_code == grpc.StatusCode.FAILED_PRECONDITION
 
     async def test_archived_rejects_deletes(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="archived", members={"alice": "owner"},
+            global_store,
+            status="archived",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:alice", ctx, require_write=True, op_kind="delete",
+                "t1",
+                "user:alice",
+                ctx,
+                require_write=True,
+                op_kind="delete",
             )
         assert ctx.abort_code == grpc.StatusCode.FAILED_PRECONDITION
 
     async def test_legal_hold_allows_reads(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="legal_hold", members={"alice": "owner"},
+            global_store,
+            status="legal_hold",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:alice", ctx, require_write=False, op_kind="read",
+            "t1",
+            "user:alice",
+            ctx,
+            require_write=False,
+            op_kind="read",
         )
         assert role == "owner"
 
     async def test_legal_hold_allows_creates(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="legal_hold", members={"alice": "owner"},
+            global_store,
+            status="legal_hold",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         role = await servicer._check_tenant_access(
-            "t1", "user:alice", ctx, require_write=True, op_kind="write",
+            "t1",
+            "user:alice",
+            ctx,
+            require_write=True,
+            op_kind="write",
         )
         assert role == "owner"
 
     async def test_legal_hold_rejects_deletes(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="legal_hold", members={"alice": "owner"},
+            global_store,
+            status="legal_hold",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:alice", ctx, require_write=True, op_kind="delete",
+                "t1",
+                "user:alice",
+                ctx,
+                require_write=True,
+                op_kind="delete",
             )
         assert ctx.abort_code == grpc.StatusCode.FAILED_PRECONDITION
 
     async def test_deleted_rejects_reads(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="deleted", members={"alice": "owner"},
+            global_store,
+            status="deleted",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:alice", ctx, require_write=False, op_kind="read",
+                "t1",
+                "user:alice",
+                ctx,
+                require_write=False,
+                op_kind="read",
             )
         assert ctx.abort_code == grpc.StatusCode.NOT_FOUND
 
     async def test_deleted_rejects_writes(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="deleted", members={"alice": "owner"},
+            global_store,
+            status="deleted",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "t1", "user:alice", ctx, require_write=True, op_kind="write",
+                "t1",
+                "user:alice",
+                ctx,
+                require_write=True,
+                op_kind="write",
             )
         assert ctx.abort_code == grpc.StatusCode.NOT_FOUND
 
@@ -382,7 +478,11 @@ class TestStatusEnforcement:
 
         with pytest.raises(_AbortError):
             await servicer._check_tenant_access(
-                "ghost", "user:alice", ctx, require_write=False, op_kind="read",
+                "ghost",
+                "user:alice",
+                ctx,
+                require_write=False,
+                op_kind="read",
             )
         assert ctx.abort_code == grpc.StatusCode.NOT_FOUND
 
@@ -429,7 +529,8 @@ class TestExecuteAtomicAccessControl:
         ctx = _FakeContext()
 
         response = await servicer.ExecuteAtomic(
-            _create_request("t1", "user:alice", "create"), ctx,
+            _create_request("t1", "user:alice", "create"),
+            ctx,
         )
         assert response.success is True
 
@@ -439,7 +540,8 @@ class TestExecuteAtomicAccessControl:
         ctx = _FakeContext()
 
         response = await servicer.ExecuteAtomic(
-            _create_request("t1", "user:bob", "create"), ctx,
+            _create_request("t1", "user:bob", "create"),
+            ctx,
         )
         assert response.success is True
 
@@ -450,7 +552,8 @@ class TestExecuteAtomicAccessControl:
 
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(
-                _create_request("t1", "user:viv", "create"), ctx,
+                _create_request("t1", "user:viv", "create"),
+                ctx,
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -461,7 +564,8 @@ class TestExecuteAtomicAccessControl:
 
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(
-                _create_request("t1", "user:gus", "create"), ctx,
+                _create_request("t1", "user:gus", "create"),
+                ctx,
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -472,7 +576,8 @@ class TestExecuteAtomicAccessControl:
 
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(
-                _create_request("t1", "user:eve", "create"), ctx,
+                _create_request("t1", "user:eve", "create"),
+                ctx,
             )
         assert ctx.abort_code == grpc.StatusCode.PERMISSION_DENIED
 
@@ -483,57 +588,70 @@ class TestExecuteAtomicAccessControl:
         ctx = _FakeContext()
 
         response = await servicer.ExecuteAtomic(
-            _create_request("t1", "system:applier", "create"), ctx,
+            _create_request("t1", "system:applier", "create"),
+            ctx,
         )
         assert response.success is True
 
     async def test_execute_atomic_archived_rejects_create(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="archived", members={"alice": "owner"},
+            global_store,
+            status="archived",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(
-                _create_request("t1", "user:alice", "create"), ctx,
+                _create_request("t1", "user:alice", "create"),
+                ctx,
             )
         assert ctx.abort_code == grpc.StatusCode.FAILED_PRECONDITION
 
     async def test_execute_atomic_legal_hold_allows_create(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="legal_hold", members={"alice": "owner"},
+            global_store,
+            status="legal_hold",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         response = await servicer.ExecuteAtomic(
-            _create_request("t1", "user:alice", "create"), ctx,
+            _create_request("t1", "user:alice", "create"),
+            ctx,
         )
         assert response.success is True
 
     async def test_execute_atomic_legal_hold_rejects_delete(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="legal_hold", members={"alice": "owner"},
+            global_store,
+            status="legal_hold",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(
-                _create_request("t1", "user:alice", "delete"), ctx,
+                _create_request("t1", "user:alice", "delete"),
+                ctx,
             )
         assert ctx.abort_code == grpc.StatusCode.FAILED_PRECONDITION
 
     async def test_execute_atomic_deleted_tenant_rejected(self, global_store):
         await _bootstrap_tenant(
-            global_store, status="deleted", members={"alice": "owner"},
+            global_store,
+            status="deleted",
+            members={"alice": "owner"},
         )
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
 
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(
-                _create_request("t1", "user:alice", "create"), ctx,
+                _create_request("t1", "user:alice", "create"),
+                ctx,
             )
         assert ctx.abort_code == grpc.StatusCode.NOT_FOUND

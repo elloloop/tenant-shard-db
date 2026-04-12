@@ -167,13 +167,9 @@ class JwtAuthenticator:
         except jwt.ExpiredSignatureError:
             raise AuthError("Token has expired")
         except jwt.InvalidIssuerError:
-            raise AuthError(
-                f"Invalid issuer. Expected '{self._config.issuer}'"
-            )
+            raise AuthError(f"Invalid issuer. Expected '{self._config.issuer}'")
         except jwt.InvalidAudienceError:
-            raise AuthError(
-                f"Invalid audience. Expected '{self._config.audience}'"
-            )
+            raise AuthError(f"Invalid audience. Expected '{self._config.audience}'")
         except jwt.InvalidTokenError as exc:
             raise AuthError(f"Invalid token: {exc}")
 

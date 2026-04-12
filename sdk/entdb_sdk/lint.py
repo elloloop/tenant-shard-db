@@ -90,9 +90,7 @@ def _node_edge_mutual_exclusion(
     edge_names = {e.name for e in edges}
     overlap = node_names & edge_names
     for name in sorted(overlap):
-        result.errors.append(
-            f"Message '{name}' has both entdb.node and entdb.edge annotations"
-        )
+        result.errors.append(f"Message '{name}' has both entdb.node and entdb.edge annotations")
 
 
 def _edge_has_from_to(edges: list[EdgeInfo], result: LintResult) -> None:
@@ -104,13 +102,9 @@ def _edge_has_from_to(edges: list[EdgeInfo], result: LintResult) -> None:
     """
     for e in edges:
         if e.from_type == 0:
-            result.errors.append(
-                f"Edge '{e.name}' (edge_id={e.edge_id}) is missing from_type"
-            )
+            result.errors.append(f"Edge '{e.name}' (edge_id={e.edge_id}) is missing from_type")
         if e.to_type == 0:
-            result.errors.append(
-                f"Edge '{e.name}' (edge_id={e.edge_id}) is missing to_type"
-            )
+            result.errors.append(f"Edge '{e.name}' (edge_id={e.edge_id}) is missing to_type")
 
 
 # ── ACL Safety (errors) ─────────────────────────────────────────────
@@ -158,14 +152,10 @@ def _financial_needs_legal_basis(
     """data_policy FINANCIAL requires non-empty legal_basis."""
     for n in nodes:
         if n.data_policy == "FINANCIAL" and not n.legal_basis:
-            result.errors.append(
-                f"Node '{n.name}' has data_policy=FINANCIAL but no legal_basis"
-            )
+            result.errors.append(f"Node '{n.name}' has data_policy=FINANCIAL but no legal_basis")
     for e in edges:
         if e.data_policy == "FINANCIAL" and not e.legal_basis:
-            result.errors.append(
-                f"Edge '{e.name}' has data_policy=FINANCIAL but no legal_basis"
-            )
+            result.errors.append(f"Edge '{e.name}' has data_policy=FINANCIAL but no legal_basis")
 
 
 def _audit_needs_legal_basis(
@@ -174,14 +164,10 @@ def _audit_needs_legal_basis(
     """data_policy AUDIT requires non-empty legal_basis."""
     for n in nodes:
         if n.data_policy == "AUDIT" and not n.legal_basis:
-            result.errors.append(
-                f"Node '{n.name}' has data_policy=AUDIT but no legal_basis"
-            )
+            result.errors.append(f"Node '{n.name}' has data_policy=AUDIT but no legal_basis")
     for e in edges:
         if e.data_policy == "AUDIT" and not e.legal_basis:
-            result.errors.append(
-                f"Edge '{e.name}' has data_policy=AUDIT but no legal_basis"
-            )
+            result.errors.append(f"Edge '{e.name}' has data_policy=AUDIT but no legal_basis")
 
 
 def _healthcare_needs_legal_basis(
@@ -190,14 +176,10 @@ def _healthcare_needs_legal_basis(
     """data_policy HEALTHCARE requires non-empty legal_basis."""
     for n in nodes:
         if n.data_policy == "HEALTHCARE" and not n.legal_basis:
-            result.errors.append(
-                f"Node '{n.name}' has data_policy=HEALTHCARE but no legal_basis"
-            )
+            result.errors.append(f"Node '{n.name}' has data_policy=HEALTHCARE but no legal_basis")
     for e in edges:
         if e.data_policy == "HEALTHCARE" and not e.legal_basis:
-            result.errors.append(
-                f"Edge '{e.name}' has data_policy=HEALTHCARE but no legal_basis"
-            )
+            result.errors.append(f"Edge '{e.name}' has data_policy=HEALTHCARE but no legal_basis")
 
 
 def _retention_needs_legal_basis(
@@ -219,9 +201,7 @@ def _retention_needs_legal_basis(
 # ── GDPR Warnings ───────────────────────────────────────────────────
 
 
-def _data_policy_unset(
-    nodes: list[NodeInfo], edges: list[EdgeInfo], result: LintResult
-) -> None:
+def _data_policy_unset(nodes: list[NodeInfo], edges: list[EdgeInfo], result: LintResult) -> None:
     """WARNING: node/edge type has no data_policy set (defaults to PERSONAL)."""
     for n in nodes:
         if n.data_policy == "PERSONAL":
@@ -237,10 +217,9 @@ def _data_policy_unset(
             )
 
 
-def _string_pii_unmarked(
-    nodes: list[NodeInfo], edges: list[EdgeInfo], result: LintResult
-) -> None:
+def _string_pii_unmarked(nodes: list[NodeInfo], edges: list[EdgeInfo], result: LintResult) -> None:
     """WARNING: string field without pii=true or pii_false=true must explicitly declare."""
+
     def _check_fields(entity_name: str, fields: list[FieldInfo]) -> None:
         for f in fields:
             if f.kind in ("str", "enum") and not f.pii and not f.pii_false:
@@ -293,9 +272,7 @@ def _edge_self_referential(edges: list[EdgeInfo], result: LintResult) -> None:
 # ── Main entry point ────────────────────────────────────────────────
 
 
-def lint_schema(
-    proto_path: str, include_dirs: list[str] | None = None
-) -> LintResult:
+def lint_schema(proto_path: str, include_dirs: list[str] | None = None) -> LintResult:
     """Run all lint rules on a parsed proto schema.
 
     Args:

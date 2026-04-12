@@ -27,6 +27,7 @@ from dbaas.entdb_server.api.jwt_auth import (
 # Helpers: self-signed RSA key pair and mock JWKS
 # ---------------------------------------------------------------------------
 
+
 def _generate_rsa_keypair():
     """Generate an RSA private key and return (private_key, public_key) objects."""
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -85,6 +86,7 @@ def _encode_token(
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def rsa_keys():
     """Provide a fresh RSA key pair."""
@@ -111,6 +113,7 @@ def authenticator(jwt_config):
 # Tests: JwtConfig and pre-configured providers
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestJwtConfig:
     def test_defaults(self):
@@ -135,6 +138,7 @@ class TestJwtConfig:
 # Tests: JwtAuthenticator.validate_token
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestValidateToken:
     @pytest.mark.asyncio
@@ -143,7 +147,11 @@ class TestValidateToken:
         jwks = _build_jwks(pub)
         token = _encode_token(priv)
 
-        with patch.object(authenticator, "_fetch_jwks", return_value=jwks["keys"][0] and {k["kid"]: k for k in jwks["keys"]}):
+        with patch.object(
+            authenticator,
+            "_fetch_jwks",
+            return_value=jwks["keys"][0] and {k["kid"]: k for k in jwks["keys"]},
+        ):
             # Seed the cache
             authenticator._cache.keys = {k["kid"]: k for k in jwks["keys"]}
             authenticator._cache.fetched_at = time.monotonic()
@@ -210,8 +218,13 @@ class TestValidateToken:
         priv, _ = rsa_keys
         now = int(time.time())
         token = pyjwt.encode(
-            {"sub": "x", "iss": "https://test.example.com", "aud": "test-audience",
-             "exp": now + 3600, "iat": now},
+            {
+                "sub": "x",
+                "iss": "https://test.example.com",
+                "aud": "test-audience",
+                "exp": now + 3600,
+                "iat": now,
+            },
             _private_key_pem(priv),
             algorithm="RS256",
             # No kid in headers
@@ -263,6 +276,7 @@ class TestValidateToken:
 # Tests: JWKS cache behavior
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestJwksCache:
     def test_cache_hit_does_not_refetch(self, authenticator, rsa_keys):
@@ -303,6 +317,7 @@ class TestJwksCache:
 # Tests: extract_actor
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.unit
 class TestExtractActor:
     def test_actor_from_sub(self, authenticator):
@@ -333,6 +348,7 @@ class TestExtractActor:
 # ---------------------------------------------------------------------------
 # Tests: AuthInterceptor (unified interceptor)
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestAuthInterceptor:
@@ -422,6 +438,7 @@ class TestAuthInterceptor:
 # ---------------------------------------------------------------------------
 # Tests: _looks_like_jwt helper
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.unit
 class TestLooksLikeJwt:

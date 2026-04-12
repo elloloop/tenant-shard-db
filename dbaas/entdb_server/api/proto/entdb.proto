@@ -110,6 +110,12 @@ service EntDBService {
     rpc DelegateAccess(DelegateAccessRequest) returns (DelegateAccessResponse);
     rpc SetLegalHold(LegalHoldRequest) returns (LegalHoldResponse);
     rpc RevokeAllUserAccess(RevokeAllUserAccessRequest) returns (RevokeAllUserAccessResponse);
+
+    // GDPR operations (Issue #103, ADR-004)
+    rpc DeleteUser(DeleteUserRequest) returns (DeleteUserResponse);
+    rpc ExportUserData(ExportUserDataRequest) returns (ExportUserDataResponse);
+    rpc FreezeUser(FreezeUserRequest) returns (FreezeUserResponse);
+    rpc CancelUserDeletion(CancelUserDeletionRequest) returns (CancelUserDeletionResponse);
 }
 
 // Common message types

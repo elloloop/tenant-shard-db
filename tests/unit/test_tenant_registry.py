@@ -155,6 +155,7 @@ class _AbortError(BaseException):
     generic 'except Exception' blocks in the gRPC handler code, matching
     the behavior of grpc.aio.AbortError in a real gRPC server.
     """
+
     pass
 
 

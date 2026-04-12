@@ -116,17 +116,29 @@ class TestBreakingChanges:
 
     def test_field_removed(self):
         """Rule 3: Removing a field from a node type is breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "User", fields=[
-                _field(1, "email"),
-                _field(2, "name"),
-            ])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "User", fields=[
-                _field(1, "email"),
-            ])
-        ])
+        old = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email"),
+                        _field(2, "name"),
+                    ],
+                )
+            ]
+        )
+        new = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email"),
+                    ],
+                )
+            ]
+        )
 
         issues = _check_compat(old, new)
 
@@ -136,12 +148,8 @@ class TestBreakingChanges:
 
     def test_field_kind_changed(self):
         """Rule 4: Changing field kind/type is breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "age", "str")])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "age", "int")])
-        ])
+        old = _snapshot(node_types=[_node(1, "User", fields=[_field(1, "age", "str")])])
+        new = _snapshot(node_types=[_node(1, "User", fields=[_field(1, "age", "int")])])
 
         issues = _check_compat(old, new)
 
@@ -173,15 +181,19 @@ class TestBreakingChanges:
 
     def test_required_field_added_without_default(self):
         """Rule 7: Required field added without default is breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "email")])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "User", fields=[
-                _field(1, "email"),
-                _field(2, "name", required=True),
-            ])
-        ])
+        old = _snapshot(node_types=[_node(1, "User", fields=[_field(1, "email")])])
+        new = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email"),
+                        _field(2, "name", required=True),
+                    ],
+                )
+            ]
+        )
 
         issues = _check_compat(old, new)
 
@@ -191,15 +203,19 @@ class TestBreakingChanges:
 
     def test_required_field_added_with_default_is_ok(self):
         """Rule 7 exception: Required + default is non-breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "email")])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "User", fields=[
-                _field(1, "email"),
-                _field(2, "role", required=True, default_value="member"),
-            ])
-        ])
+        old = _snapshot(node_types=[_node(1, "User", fields=[_field(1, "email")])])
+        new = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email"),
+                        _field(2, "role", required=True, default_value="member"),
+                    ],
+                )
+            ]
+        )
 
         issues = _check_compat(old, new)
 
@@ -208,16 +224,20 @@ class TestBreakingChanges:
 
     def test_enum_value_removed(self):
         """Rule 8: Removing an enum value is breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "Task", fields=[
-                _field(1, "status", "enum", enum_values=["todo", "doing", "done"])
-            ])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "Task", fields=[
-                _field(1, "status", "enum", enum_values=["todo", "done"])
-            ])
-        ])
+        old = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "Task",
+                    fields=[_field(1, "status", "enum", enum_values=["todo", "doing", "done"])],
+                )
+            ]
+        )
+        new = _snapshot(
+            node_types=[
+                _node(1, "Task", fields=[_field(1, "status", "enum", enum_values=["todo", "done"])])
+            ]
+        )
 
         issues = _check_compat(old, new)
 
@@ -307,15 +327,19 @@ class TestNonBreakingChanges:
 
     def test_optional_field_added(self):
         """Rule 14: New optional field added is non-breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "email")])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "User", fields=[
-                _field(1, "email"),
-                _field(2, "avatar_url"),
-            ])
-        ])
+        old = _snapshot(node_types=[_node(1, "User", fields=[_field(1, "email")])])
+        new = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email"),
+                        _field(2, "avatar_url"),
+                    ],
+                )
+            ]
+        )
 
         issues = _check_compat(old, new)
 
@@ -326,16 +350,20 @@ class TestNonBreakingChanges:
 
     def test_enum_value_added(self):
         """Rule 15: New enum value added is non-breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "Task", fields=[
-                _field(1, "status", "enum", enum_values=["todo", "done"])
-            ])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "Task", fields=[
-                _field(1, "status", "enum", enum_values=["todo", "doing", "done"])
-            ])
-        ])
+        old = _snapshot(
+            node_types=[
+                _node(1, "Task", fields=[_field(1, "status", "enum", enum_values=["todo", "done"])])
+            ]
+        )
+        new = _snapshot(
+            node_types=[
+                _node(
+                    1,
+                    "Task",
+                    fields=[_field(1, "status", "enum", enum_values=["todo", "doing", "done"])],
+                )
+            ]
+        )
 
         issues = _check_compat(old, new)
 
@@ -357,12 +385,12 @@ class TestNonBreakingChanges:
 
     def test_description_changed_field(self):
         """Rule 16: Description changed on field is non-breaking."""
-        old = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "email", description="old")])
-        ])
-        new = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "email", description="new")])
-        ])
+        old = _snapshot(
+            node_types=[_node(1, "User", fields=[_field(1, "email", description="old")])]
+        )
+        new = _snapshot(
+            node_types=[_node(1, "User", fields=[_field(1, "email", description="new")])]
+        )
 
         issues = _check_compat(old, new)
 
@@ -439,20 +467,28 @@ class TestEdgeCases:
         """Multiple breaking changes in one check."""
         old = _snapshot(
             node_types=[
-                _node(1, "User", fields=[
-                    _field(1, "email", "str"),
-                    _field(2, "name", "str"),
-                ]),
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email", "str"),
+                        _field(2, "name", "str"),
+                    ],
+                ),
                 _node(2, "Task"),
             ],
             edge_types=[_edge(101, "OWNS", propagate_share=True)],
         )
         new = _snapshot(
             node_types=[
-                _node(1, "User", fields=[
-                    _field(1, "email", "int"),  # kind changed
-                    # field 2 removed
-                ]),
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email", "int"),  # kind changed
+                        # field 2 removed
+                    ],
+                ),
                 # Task removed
             ],
             edge_types=[_edge(101, "OWNS", propagate_share=False)],  # propagate changed
@@ -498,14 +534,25 @@ class TestEdgeCases:
         """init then check with same data = 0 changes."""
         snap = _snapshot(
             node_types=[
-                _node(1, "User", fields=[
-                    _field(1, "email", "str", required=True, pii=True),
-                    _field(2, "name", "str"),
-                ], data_policy="PERSONAL", description="A user"),
-                _node(2, "Task", fields=[
-                    _field(1, "title", "str", required=True),
-                    _field(2, "status", "enum", enum_values=["todo", "done"]),
-                ], data_policy="BUSINESS"),
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email", "str", required=True, pii=True),
+                        _field(2, "name", "str"),
+                    ],
+                    data_policy="PERSONAL",
+                    description="A user",
+                ),
+                _node(
+                    2,
+                    "Task",
+                    fields=[
+                        _field(1, "title", "str", required=True),
+                        _field(2, "status", "enum", enum_values=["todo", "done"]),
+                    ],
+                    data_policy="BUSINESS",
+                ),
             ],
             edge_types=[
                 _edge(101, "OWNS", from_type=1, to_type=2, propagate_share=False),
@@ -529,10 +576,14 @@ class TestEdgeCases:
         )
         new = _snapshot(
             node_types=[
-                _node(1, "User", fields=[
-                    _field(1, "email", "int"),      # breaking: kind changed
-                    _field(2, "avatar", "str"),      # non-breaking: field added
-                ]),
+                _node(
+                    1,
+                    "User",
+                    fields=[
+                        _field(1, "email", "int"),  # breaking: kind changed
+                        _field(2, "avatar", "str"),  # non-breaking: field added
+                    ],
+                ),
             ],
         )
 
@@ -580,11 +631,18 @@ class TestCLIExitCodes:
 
         def mock_parse_proto(path, include_dirs=None):
             from entdb_sdk.codegen import FieldInfo, NodeInfo
+
             return (
-                [NodeInfo(type_id=1, name="User", fields=[
-                    FieldInfo(field_id=1, name="email", kind="str"),
-                    FieldInfo(field_id=2, name="avatar", kind="str"),
-                ])],
+                [
+                    NodeInfo(
+                        type_id=1,
+                        name="User",
+                        fields=[
+                            FieldInfo(field_id=1, name="email", kind="str"),
+                            FieldInfo(field_id=2, name="avatar", kind="str"),
+                        ],
+                    )
+                ],
                 [],
             )
 
@@ -609,19 +667,25 @@ class TestCLIExitCodes:
         from entdb_sdk.cli import cmd_check
 
         snapshot_path = tmp_path / "snapshot.json"
-        snap = _snapshot(node_types=[
-            _node(1, "User", fields=[_field(1, "email"), _field(2, "name")])
-        ])
+        snap = _snapshot(
+            node_types=[_node(1, "User", fields=[_field(1, "email"), _field(2, "name")])]
+        )
         snapshot_path.write_text(json.dumps(snap))
 
         from entdb_sdk.codegen import FieldInfo, NodeInfo
 
         def mock_parse_proto(path, include_dirs=None):
             return (
-                [NodeInfo(type_id=1, name="User", fields=[
-                    FieldInfo(field_id=1, name="email", kind="str"),
-                    # field 2 removed — breaking
-                ])],
+                [
+                    NodeInfo(
+                        type_id=1,
+                        name="User",
+                        fields=[
+                            FieldInfo(field_id=1, name="email", kind="str"),
+                            # field 2 removed — breaking
+                        ],
+                    )
+                ],
                 [],
             )
 
@@ -652,9 +716,15 @@ class TestCLIExitCodes:
 
         def mock_parse_proto(path, include_dirs=None):
             return (
-                [NodeInfo(type_id=1, name="User", fields=[
-                    FieldInfo(field_id=1, name="email", kind="str"),
-                ])],
+                [
+                    NodeInfo(
+                        type_id=1,
+                        name="User",
+                        fields=[
+                            FieldInfo(field_id=1, name="email", kind="str"),
+                        ],
+                    )
+                ],
                 [],
             )
 
@@ -700,9 +770,17 @@ class TestCLIExitCodes:
 
         def mock_parse_proto(path, include_dirs=None):
             return (
-                [NodeInfo(type_id=1, name="User", fields=[
-                    FieldInfo(field_id=1, name="email", kind="str", required=True, pii=True),
-                ])],
+                [
+                    NodeInfo(
+                        type_id=1,
+                        name="User",
+                        fields=[
+                            FieldInfo(
+                                field_id=1, name="email", kind="str", required=True, pii=True
+                            ),
+                        ],
+                    )
+                ],
                 [EdgeInfo(edge_id=101, name="OWNS", from_type=1, to_type=2, props=[])],
             )
 
@@ -741,12 +819,20 @@ class TestCLIExitCodes:
         def mock_parse_proto(path, include_dirs=None):
             return (
                 [
-                    NodeInfo(type_id=1, name="User", fields=[
-                        FieldInfo(field_id=1, name="email", kind="str", required=True),
-                    ]),
-                    NodeInfo(type_id=2, name="Task", fields=[
-                        FieldInfo(field_id=1, name="title", kind="str"),
-                    ]),
+                    NodeInfo(
+                        type_id=1,
+                        name="User",
+                        fields=[
+                            FieldInfo(field_id=1, name="email", kind="str", required=True),
+                        ],
+                    ),
+                    NodeInfo(
+                        type_id=2,
+                        name="Task",
+                        fields=[
+                            FieldInfo(field_id=1, name="title", kind="str"),
+                        ],
+                    ),
                 ],
                 [EdgeInfo(edge_id=101, name="OWNS", from_type=1, to_type=2, props=[])],
             )
@@ -758,7 +844,9 @@ class TestCLIExitCodes:
 
         # Init
         init_args = argparse.Namespace(
-            proto=str(proto_file), include=None, force=False,
+            proto=str(proto_file),
+            include=None,
+            force=False,
         )
         assert cmd_init(init_args) == 0
 

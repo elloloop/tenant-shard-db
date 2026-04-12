@@ -28,13 +28,12 @@ from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _task_type() -> NodeTypeDef:
     return NodeTypeDef(
         type_id=101,
         name="Task",
-        fields=(
-            FieldDef(field_id=1, name="title", kind=FieldKind.STRING, required=True),
-        ),
+        fields=(FieldDef(field_id=1, name="title", kind=FieldKind.STRING, required=True),),
     )
 
 
@@ -109,6 +108,7 @@ def client():
 # 1. Commit stores offset
 # ---------------------------------------------------------------------------
 
+
 class TestCommitStoresOffset:
     async def test_commit_stores_stream_position(self, client):
         plan = client.atomic("t1", "user:1")
@@ -118,9 +118,7 @@ class TestCommitStoresOffset:
         assert client._last_offsets["t1"] == "pos_42"
 
     async def test_commit_stores_different_positions(self, client):
-        client._grpc.execute_atomic = AsyncMock(
-            return_value=_success_result("t1", "pos_100")
-        )
+        client._grpc.execute_atomic = AsyncMock(return_value=_success_result("t1", "pos_100"))
         plan = client.atomic("t1", "user:1")
         plan.create(TASK, {"title": "x"})
         await plan.commit()
@@ -159,6 +157,7 @@ class TestCommitStoresOffset:
 # 2. get() auto-includes after_offset
 # ---------------------------------------------------------------------------
 
+
 class TestGetAutoOffset:
     async def test_get_includes_tracked_offset(self, client):
         client._last_offsets["t1"] = "pos_42"
@@ -196,6 +195,7 @@ class TestGetAutoOffset:
 # 3. query() auto-includes after_offset
 # ---------------------------------------------------------------------------
 
+
 class TestQueryAutoOffset:
     async def test_query_includes_tracked_offset(self, client):
         client._last_offsets["t1"] = "pos_42"
@@ -215,6 +215,7 @@ class TestQueryAutoOffset:
 # ---------------------------------------------------------------------------
 # 4. get_many() auto-includes after_offset
 # ---------------------------------------------------------------------------
+
 
 class TestGetManyAutoOffset:
     async def test_get_many_includes_tracked_offset(self, client):
@@ -236,6 +237,7 @@ class TestGetManyAutoOffset:
 # 5. Edge read methods resolve offsets
 # ---------------------------------------------------------------------------
 
+
 class TestEdgeAutoOffset:
     async def test_edges_out_resolves_offset(self, client):
         client._last_offsets["t1"] = "pos_42"
@@ -254,6 +256,7 @@ class TestEdgeAutoOffset:
 # 6. connected() and shared_with_me() resolve offsets
 # ---------------------------------------------------------------------------
 
+
 class TestAclReadAutoOffset:
     async def test_connected_resolves_offset(self, client):
         client._last_offsets["t1"] = "pos_42"
@@ -269,6 +272,7 @@ class TestAclReadAutoOffset:
 # ---------------------------------------------------------------------------
 # 7. Different tenants track independently
 # ---------------------------------------------------------------------------
+
 
 class TestMultiTenantTracking:
     async def test_tenants_track_independently(self, client):
@@ -314,6 +318,7 @@ class TestMultiTenantTracking:
 # 8. clear_offsets resets
 # ---------------------------------------------------------------------------
 
+
 class TestClearOffsets:
     def test_clear_offsets_empties_dict(self, client):
         client._last_offsets["t1"] = "pos_42"
@@ -334,6 +339,7 @@ class TestClearOffsets:
 # ---------------------------------------------------------------------------
 # 9. End-to-end flow: commit then read
 # ---------------------------------------------------------------------------
+
 
 class TestEndToEndFlow:
     async def test_commit_then_get_uses_offset(self, client):
@@ -376,6 +382,7 @@ class TestEndToEndFlow:
 # ---------------------------------------------------------------------------
 # 10. _resolve_offset helper
 # ---------------------------------------------------------------------------
+
 
 class TestResolveOffset:
     def test_unset_returns_tracked(self, client):

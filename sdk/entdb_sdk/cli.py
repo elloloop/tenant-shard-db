@@ -144,9 +144,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"Compatible: {len(issues)} non-breaking changes")
 
     snapshot_path.write_text(json.dumps(snapshot, indent=2) + "\n")
-    print(
-        f"Snapshot written to {snapshot_path} ({len(nodes)} node types, {len(edges)} edge types)"
-    )
+    print(f"Snapshot written to {snapshot_path} ({len(nodes)} node types, {len(edges)} edge types)")
     return 0
 
 
@@ -224,9 +222,7 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 1
 
     if non_breaking:
-        print(
-            f"Schema compatible: 0 breaking, {len(non_breaking)} non-breaking changes"
-        )
+        print(f"Schema compatible: 0 breaking, {len(non_breaking)} non-breaking changes")
         for i in non_breaking:
             print(f"  [OK] {i['code']}: {i['message']}")
     else:
@@ -273,55 +269,67 @@ def _check_compat(old: dict, new: dict) -> list[dict]:
             # Check if same name exists with different type_id (rule 5)
             if n["name"] in new_nodes_by_name:
                 new_n = new_nodes_by_name[n["name"]]
-                issues.append({
-                    "breaking": True,
-                    "code": "TYPE_ID_CHANGED",
-                    "message": f"{n['name']} type_id changed from {tid} to {new_n['type_id']}",
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "TYPE_ID_CHANGED",
+                        "message": f"{n['name']} type_id changed from {tid} to {new_n['type_id']}",
+                    }
+                )
             else:
-                issues.append({
-                    "breaking": True,
-                    "code": "NODE_REMOVED",
-                    "message": f"{n['name']} (type_id={tid}) removed",
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "NODE_REMOVED",
+                        "message": f"{n['name']} (type_id={tid}) removed",
+                    }
+                )
 
     # ── Rule 12: New node type added ─────────────────────────────────
     for tid, n in new_nodes.items():
         if tid not in old_nodes:
             # Skip if this was a type_id change (already reported above)
             if n["name"] not in old_nodes_by_name:
-                issues.append({
-                    "breaking": False,
-                    "code": "NODE_ADDED",
-                    "message": f"{n['name']} (type_id={tid}) added",
-                })
+                issues.append(
+                    {
+                        "breaking": False,
+                        "code": "NODE_ADDED",
+                        "message": f"{n['name']} (type_id={tid}) added",
+                    }
+                )
 
     # ── Rule 2: Edge type removed ────────────────────────────────────
     for eid, e in old_edges.items():
         if eid not in new_edges:
             if e["name"] in new_edges_by_name:
                 new_e = new_edges_by_name[e["name"]]
-                issues.append({
-                    "breaking": True,
-                    "code": "EDGE_ID_CHANGED",
-                    "message": f"{e['name']} edge_id changed from {eid} to {new_e['edge_id']}",
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "EDGE_ID_CHANGED",
+                        "message": f"{e['name']} edge_id changed from {eid} to {new_e['edge_id']}",
+                    }
+                )
             else:
-                issues.append({
-                    "breaking": True,
-                    "code": "EDGE_REMOVED",
-                    "message": f"{e['name']} (edge_id={eid}) removed",
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "EDGE_REMOVED",
+                        "message": f"{e['name']} (edge_id={eid}) removed",
+                    }
+                )
 
     # ── Rule 13: New edge type added ─────────────────────────────────
     for eid, e in new_edges.items():
         if eid not in old_edges:
             if e["name"] not in old_edges_by_name:
-                issues.append({
-                    "breaking": False,
-                    "code": "EDGE_ADDED",
-                    "message": f"{e['name']} (edge_id={eid}) added",
-                })
+                issues.append(
+                    {
+                        "breaking": False,
+                        "code": "EDGE_ADDED",
+                        "message": f"{e['name']} (edge_id={eid}) added",
+                    }
+                )
 
     # ── Node-level checks on shared type_ids ─────────────────────────
     for tid in sorted(set(old_nodes) & set(new_nodes)):
@@ -334,24 +342,28 @@ def _check_compat(old: dict, new: dict) -> list[dict]:
         # ── Rule 3: Field removed ────────────────────────────────────
         for fid, f in old_fields.items():
             if fid not in new_fields:
-                issues.append({
-                    "breaking": True,
-                    "code": "FIELD_REMOVED",
-                    "message": f"{node_name}.{f['name']} removed",
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "FIELD_REMOVED",
+                        "message": f"{node_name}.{f['name']} removed",
+                    }
+                )
 
         # ── Rule 4: Field kind/type changed ──────────────────────────
         for fid in sorted(set(old_fields) & set(new_fields)):
             old_f, new_f = old_fields[fid], new_fields[fid]
             if old_f.get("kind") != new_f.get("kind"):
-                issues.append({
-                    "breaking": True,
-                    "code": "FIELD_KIND_CHANGED",
-                    "message": (
-                        f"{node_name}.{old_f['name']} kind changed "
-                        f"from {old_f.get('kind')!r} to {new_f.get('kind')!r}"
-                    ),
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "FIELD_KIND_CHANGED",
+                        "message": (
+                            f"{node_name}.{old_f['name']} kind changed "
+                            f"from {old_f.get('kind')!r} to {new_f.get('kind')!r}"
+                        ),
+                    }
+                )
 
             # ── Rule 8: Enum value removed ───────────────────────────
             old_enum = set(old_f.get("enum_values") or [])
@@ -360,47 +372,57 @@ def _check_compat(old: dict, new: dict) -> list[dict]:
             added_vals = new_enum - old_enum
 
             for val in sorted(removed_vals):
-                issues.append({
-                    "breaking": True,
-                    "code": "ENUM_VALUE_REMOVED",
-                    "message": f"{node_name}.{old_f['name']} — {val!r} removed",
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "ENUM_VALUE_REMOVED",
+                        "message": f"{node_name}.{old_f['name']} — {val!r} removed",
+                    }
+                )
 
             # ── Rule 15: New enum value added ────────────────────────
             for val in sorted(added_vals):
-                issues.append({
-                    "breaking": False,
-                    "code": "ENUM_VALUE_ADDED",
-                    "message": f"{node_name}.{new_f['name']} — {val!r} added",
-                })
+                issues.append(
+                    {
+                        "breaking": False,
+                        "code": "ENUM_VALUE_ADDED",
+                        "message": f"{node_name}.{new_f['name']} — {val!r} added",
+                    }
+                )
 
             # ── Rule 16: Description changed (field-level) ──────────
             if old_f.get("description", "") != new_f.get("description", ""):
-                issues.append({
-                    "breaking": False,
-                    "code": "DESCRIPTION_CHANGED",
-                    "message": f"{node_name}.{new_f['name']} description changed",
-                })
+                issues.append(
+                    {
+                        "breaking": False,
+                        "code": "DESCRIPTION_CHANGED",
+                        "message": f"{node_name}.{new_f['name']} description changed",
+                    }
+                )
 
         # ── Rule 7: Required field added without default ─────────────
         # ── Rule 14: New optional field added ────────────────────────
         for fid, f in new_fields.items():
             if fid not in old_fields:
                 if f.get("required") and not f.get("default_value"):
-                    issues.append({
-                        "breaking": True,
-                        "code": "REQUIRED_FIELD_ADDED",
-                        "message": (
-                            f"{node_name}.{f['name']} (field_id={fid}) "
-                            f"added as required without default"
-                        ),
-                    })
+                    issues.append(
+                        {
+                            "breaking": True,
+                            "code": "REQUIRED_FIELD_ADDED",
+                            "message": (
+                                f"{node_name}.{f['name']} (field_id={fid}) "
+                                f"added as required without default"
+                            ),
+                        }
+                    )
                 else:
-                    issues.append({
-                        "breaking": False,
-                        "code": "FIELD_ADDED",
-                        "message": f"{node_name}.{f['name']} (field_id={fid}) added",
-                    })
+                    issues.append(
+                        {
+                            "breaking": False,
+                            "code": "FIELD_ADDED",
+                            "message": f"{node_name}.{f['name']} (field_id={fid}) added",
+                        }
+                    )
 
         # ── Rule 11: data_policy changed (node) ─────────────────────
         old_dp = old_n.get("data_policy", "PERSONAL")
@@ -409,39 +431,47 @@ def _check_compat(old: dict, new: dict) -> list[dict]:
             old_rank = _DATA_POLICY_RESTRICTIVENESS.get(old_dp, 2)
             new_rank = _DATA_POLICY_RESTRICTIVENESS.get(new_dp, 2)
             if new_rank > old_rank:
-                issues.append({
-                    "breaking": True,
-                    "code": "DATA_POLICY_MORE_RESTRICTIVE",
-                    "message": (
-                        f"{node_name} data_policy changed from {old_dp} to {new_dp} "
-                        f"(more restrictive)"
-                    ),
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "DATA_POLICY_MORE_RESTRICTIVE",
+                        "message": (
+                            f"{node_name} data_policy changed from {old_dp} to {new_dp} "
+                            f"(more restrictive)"
+                        ),
+                    }
+                )
             else:
-                issues.append({
-                    "breaking": False,
-                    "code": "DATA_POLICY_LESS_RESTRICTIVE",
-                    "message": (
-                        f"{node_name} data_policy changed from {old_dp} to {new_dp} "
-                        f"(less restrictive)"
-                    ),
-                })
+                issues.append(
+                    {
+                        "breaking": False,
+                        "code": "DATA_POLICY_LESS_RESTRICTIVE",
+                        "message": (
+                            f"{node_name} data_policy changed from {old_dp} to {new_dp} "
+                            f"(less restrictive)"
+                        ),
+                    }
+                )
 
         # ── Rule 16: Description changed (node-level) ───────────────
         if old_n.get("description", "") != new_n.get("description", ""):
-            issues.append({
-                "breaking": False,
-                "code": "DESCRIPTION_CHANGED",
-                "message": f"{node_name} description changed",
-            })
+            issues.append(
+                {
+                    "breaking": False,
+                    "code": "DESCRIPTION_CHANGED",
+                    "message": f"{node_name} description changed",
+                }
+            )
 
         # ── Rule 17: Node deprecated ────────────────────────────────
         if not old_n.get("deprecated") and new_n.get("deprecated"):
-            issues.append({
-                "breaking": False,
-                "code": "NODE_DEPRECATED",
-                "message": f"{node_name} deprecated",
-            })
+            issues.append(
+                {
+                    "breaking": False,
+                    "code": "NODE_DEPRECATED",
+                    "message": f"{node_name} deprecated",
+                }
+            )
 
     # ── Edge-level checks on shared edge_ids ─────────────────────────
     for eid in sorted(set(old_edges) & set(new_edges)):
@@ -450,25 +480,31 @@ def _check_compat(old: dict, new: dict) -> list[dict]:
 
         # ── Rule 9: propagate_share changed ──────────────────────────
         if old_e.get("propagate_share") != new_e.get("propagate_share"):
-            issues.append({
-                "breaking": True,
-                "code": "PROPAGATE_SHARE_CHANGED",
-                "message": f"{edge_name} propagate_share changed",
-            })
+            issues.append(
+                {
+                    "breaking": True,
+                    "code": "PROPAGATE_SHARE_CHANGED",
+                    "message": f"{edge_name} propagate_share changed",
+                }
+            )
 
         # ── Rule 10: from/to type changed ────────────────────────────
         if old_e.get("from_type") != new_e.get("from_type"):
-            issues.append({
-                "breaking": True,
-                "code": "FROM_TYPE_CHANGED",
-                "message": f"{edge_name} from_type changed",
-            })
+            issues.append(
+                {
+                    "breaking": True,
+                    "code": "FROM_TYPE_CHANGED",
+                    "message": f"{edge_name} from_type changed",
+                }
+            )
         if old_e.get("to_type") != new_e.get("to_type"):
-            issues.append({
-                "breaking": True,
-                "code": "TO_TYPE_CHANGED",
-                "message": f"{edge_name} to_type changed",
-            })
+            issues.append(
+                {
+                    "breaking": True,
+                    "code": "TO_TYPE_CHANGED",
+                    "message": f"{edge_name} to_type changed",
+                }
+            )
 
         # ── Rule 11: data_policy changed (edge) ─────────────────────
         old_dp = old_e.get("data_policy", "PERSONAL")
@@ -477,31 +513,37 @@ def _check_compat(old: dict, new: dict) -> list[dict]:
             old_rank = _DATA_POLICY_RESTRICTIVENESS.get(old_dp, 2)
             new_rank = _DATA_POLICY_RESTRICTIVENESS.get(new_dp, 2)
             if new_rank > old_rank:
-                issues.append({
-                    "breaking": True,
-                    "code": "DATA_POLICY_MORE_RESTRICTIVE",
-                    "message": (
-                        f"{edge_name} data_policy changed from {old_dp} to {new_dp} "
-                        f"(more restrictive)"
-                    ),
-                })
+                issues.append(
+                    {
+                        "breaking": True,
+                        "code": "DATA_POLICY_MORE_RESTRICTIVE",
+                        "message": (
+                            f"{edge_name} data_policy changed from {old_dp} to {new_dp} "
+                            f"(more restrictive)"
+                        ),
+                    }
+                )
             else:
-                issues.append({
-                    "breaking": False,
-                    "code": "DATA_POLICY_LESS_RESTRICTIVE",
-                    "message": (
-                        f"{edge_name} data_policy changed from {old_dp} to {new_dp} "
-                        f"(less restrictive)"
-                    ),
-                })
+                issues.append(
+                    {
+                        "breaking": False,
+                        "code": "DATA_POLICY_LESS_RESTRICTIVE",
+                        "message": (
+                            f"{edge_name} data_policy changed from {old_dp} to {new_dp} "
+                            f"(less restrictive)"
+                        ),
+                    }
+                )
 
         # ── Rule 16: Description changed (edge-level) ───────────────
         if old_e.get("description", "") != new_e.get("description", ""):
-            issues.append({
-                "breaking": False,
-                "code": "DESCRIPTION_CHANGED",
-                "message": f"{edge_name} description changed",
-            })
+            issues.append(
+                {
+                    "breaking": False,
+                    "code": "DESCRIPTION_CHANGED",
+                    "message": f"{edge_name} description changed",
+                }
+            )
 
     return issues
 

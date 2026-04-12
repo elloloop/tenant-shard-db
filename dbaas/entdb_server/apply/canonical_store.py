@@ -444,7 +444,13 @@ class CanonicalStore:
     def _classify_op(fn: Callable) -> str:
         """Classify a sync helper as 'read' or 'write' by its name."""
         name = fn.__name__
-        if "create" in name or "update" in name or "delete" in name or "mark" in name or "batch" in name:
+        if (
+            "create" in name
+            or "update" in name
+            or "delete" in name
+            or "mark" in name
+            or "batch" in name
+        ):
             return "write"
         return "read"
 
@@ -500,9 +506,7 @@ class CanonicalStore:
         if cache_key not in self._connections:
             # Open with encryption if configured
             if self.encryption_config.enabled:
-                tenant_key = derive_tenant_key(
-                    self.encryption_config.master_key, tenant_id
-                )
+                tenant_key = derive_tenant_key(self.encryption_config.master_key, tenant_id)
                 conn = open_encrypted_connection(
                     str(db_path),
                     tenant_key,
@@ -2372,20 +2376,22 @@ class CanonicalStore:
             conn.execute("BEGIN IMMEDIATE")
             try:
                 rows = conn.execute(
-                    "SELECT node_id, acl_blob FROM nodes "
-                    "WHERE tenant_id = ? AND owner_actor = ?",
+                    "SELECT node_id, acl_blob FROM nodes WHERE tenant_id = ? AND owner_actor = ?",
                     (tenant_id, from_user),
                 ).fetchall()
                 cursor = conn.execute(
-                    "UPDATE nodes SET owner_actor = ? "
-                    "WHERE tenant_id = ? AND owner_actor = ?",
+                    "UPDATE nodes SET owner_actor = ? WHERE tenant_id = ? AND owner_actor = ?",
                     (to_user, tenant_id, from_user),
                 )
                 count = cursor.rowcount
                 for row in rows:
                     acl = json.loads(row["acl_blob"]) if row["acl_blob"] else []
                     self._update_visibility(
-                        conn, tenant_id, row["node_id"], to_user, acl,
+                        conn,
+                        tenant_id,
+                        row["node_id"],
+                        to_user,
+                        acl,
                     )
                 conn.execute("COMMIT")
                 return count
@@ -2423,17 +2429,20 @@ class CanonicalStore:
             to_user,
         )
         import json as _json
+
         await self.append_audit(
             tenant_id=tenant_id,
             actor_id=actor,
             action="transfer_content",
             target_type="user",
             target_id=from_user,
-            metadata=_json.dumps({
-                "from_user": from_user,
-                "to_user": to_user,
-                "transferred": count,
-            }),
+            metadata=_json.dumps(
+                {
+                    "from_user": from_user,
+                    "to_user": to_user,
+                    "transferred": count,
+                }
+            ),
         )
         return {
             "transferred": count,
@@ -2455,8 +2464,7 @@ class CanonicalStore:
         """Grant to_user the given permission on every node owned by from_user."""
         with self._get_connection(tenant_id) as conn:
             rows = conn.execute(
-                "SELECT node_id FROM nodes "
-                "WHERE tenant_id = ? AND owner_actor = ?",
+                "SELECT node_id FROM nodes WHERE tenant_id = ? AND owner_actor = ?",
                 (tenant_id, from_user),
             ).fetchall()
             count = 0
@@ -2515,19 +2523,22 @@ class CanonicalStore:
             now,
         )
         import json as _json
+
         await self.append_audit(
             tenant_id=tenant_id,
             actor_id=actor,
             action="delegate_access",
             target_type="user",
             target_id=from_user,
-            metadata=_json.dumps({
-                "from_user": from_user,
-                "to_user": to_user,
-                "permission": permission,
-                "expires_at": expires_at,
-                "delegated": count,
-            }),
+            metadata=_json.dumps(
+                {
+                    "from_user": from_user,
+                    "to_user": to_user,
+                    "permission": permission,
+                    "expires_at": expires_at,
+                    "delegated": count,
+                }
+            ),
         )
         return {
             "delegated": count,
@@ -2561,8 +2572,7 @@ class CanonicalStore:
                 # direct access (owner visibility rows are re-generated
                 # lazily on next write, so we don't touch those).
                 conn.execute(
-                    "DELETE FROM node_visibility "
-                    "WHERE tenant_id = ? AND principal = ?",
+                    "DELETE FROM node_visibility WHERE tenant_id = ? AND principal = ?",
                     (tenant_id, user_id),
                 )
                 conn.execute("COMMIT")
@@ -2599,17 +2609,20 @@ class CanonicalStore:
             user_id,
         )
         import json as _json
+
         await self.append_audit(
             tenant_id=tenant_id,
             actor_id=actor,
             action="revoke_user_access",
             target_type="user",
             target_id=user_id,
-            metadata=_json.dumps({
-                "user_id": user_id,
-                "revoked_grants": grants,
-                "revoked_groups": groups,
-            }),
+            metadata=_json.dumps(
+                {
+                    "user_id": user_id,
+                    "revoked_grants": grants,
+                    "revoked_groups": groups,
+                }
+            ),
         )
         return {
             "revoked_grants": grants,
@@ -3309,9 +3322,7 @@ class CanonicalStore:
         Returns:
             True if notification was found and updated
         """
-        return await self._run_sync(
-            self._sync_mark_notification_read, tenant_id, notification_id
-        )
+        return await self._run_sync(self._sync_mark_notification_read, tenant_id, notification_id)
 
     def _sync_mark_all_read(
         self,
@@ -3377,15 +3388,17 @@ class CanonicalStore:
         now = int(time.time() * 1000)
         rows = []
         for entry in entries:
-            rows.append((
-                str(uuid.uuid4()),
-                entry["user_id"],
-                entry["type"],
-                entry["node_id"],
-                entry.get("snippet"),
-                0,
-                now,
-            ))
+            rows.append(
+                (
+                    str(uuid.uuid4()),
+                    entry["user_id"],
+                    entry["type"],
+                    entry["node_id"],
+                    entry.get("snippet"),
+                    0,
+                    now,
+                )
+            )
         with self._get_connection(tenant_id) as conn:
             conn.execute("BEGIN IMMEDIATE")
             try:
@@ -3419,9 +3432,7 @@ class CanonicalStore:
         Returns:
             Number of notifications created
         """
-        return await self._run_sync(
-            self._sync_batch_create_notifications, tenant_id, entries
-        )
+        return await self._run_sync(self._sync_batch_create_notifications, tenant_id, entries)
 
     # ── Read Cursors ──────────────────────────────────────────────────
 
@@ -3458,9 +3469,7 @@ class CanonicalStore:
             user_id: User identifier
             channel_id: Channel identifier
         """
-        await self._run_sync(
-            self._sync_update_read_cursor, tenant_id, user_id, channel_id
-        )
+        await self._run_sync(self._sync_update_read_cursor, tenant_id, user_id, channel_id)
 
     def _sync_get_read_cursor(
         self,
@@ -3492,9 +3501,7 @@ class CanonicalStore:
         Returns:
             Last read timestamp (Unix ms) or None if no cursor exists
         """
-        return await self._run_sync(
-            self._sync_get_read_cursor, tenant_id, user_id, channel_id
-        )
+        return await self._run_sync(self._sync_get_read_cursor, tenant_id, user_id, channel_id)
 
     def _sync_get_unread_channels(
         self,
@@ -3538,9 +3545,7 @@ class CanonicalStore:
         Returns:
             List of dicts with 'channel_id' and 'unread_count'
         """
-        return await self._run_sync(
-            self._sync_get_unread_channels, tenant_id, user_id
-        )
+        return await self._run_sync(self._sync_get_unread_channels, tenant_id, user_id)
 
     # ── GDPR: anonymization and export ──────────────────────────────────
 
@@ -3639,10 +3644,7 @@ class CanonicalStore:
                         payload = {}
 
                     is_owner = owner == user_id
-                    is_subject = (
-                        subject_field is not None
-                        and payload.get(subject_field) == user_id
-                    )
+                    is_subject = subject_field is not None and payload.get(subject_field) == user_id
                     if not (is_owner or is_subject):
                         continue
 
@@ -3653,8 +3655,7 @@ class CanonicalStore:
                             (tenant_id, node_id, node_id),
                         )
                         conn.execute(
-                            "DELETE FROM node_visibility "
-                            "WHERE tenant_id = ? AND node_id = ?",
+                            "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
                             (tenant_id, node_id),
                         )
                         conn.execute(
@@ -3730,7 +3731,8 @@ class CanonicalStore:
                             edge_type = reg.get_edge_type(edge_type_id)
                             if edge_type is not None:
                                 edge_pii = [
-                                    p.name for p in edge_type.props
+                                    p.name
+                                    for p in edge_type.props
                                     if getattr(p, "pii", False) and not p.deprecated
                                 ]
                         except Exception:
@@ -3777,8 +3779,7 @@ class CanonicalStore:
                     (user_id,),
                 )
                 conn.execute(
-                    "DELETE FROM node_visibility "
-                    "WHERE tenant_id = ? AND principal = ?",
+                    "DELETE FROM node_visibility WHERE tenant_id = ? AND principal = ?",
                     (tenant_id, user_id),
                 )
 
@@ -3880,9 +3881,7 @@ class CanonicalStore:
                     payload = {}
 
                 is_owner = owner == user_id
-                is_subject = (
-                    subject_field is not None and payload.get(subject_field) == user_id
-                )
+                is_subject = subject_field is not None and payload.get(subject_field) == user_id
                 if not (is_owner or is_subject):
                     continue
                 # AUDIT policy → not exportable
@@ -3915,6 +3914,4 @@ class CanonicalStore:
         Returns only nodes the user owns or is the subject of, excluding
         AUDIT records (per the export policy table in ADR-004).
         """
-        return await self._run_sync(
-            self._sync_export_user_data, tenant_id, user_id, registry
-        )
+        return await self._run_sync(self._sync_export_user_data, tenant_id, user_id, registry)

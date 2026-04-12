@@ -84,9 +84,7 @@ def collect_cc1_governance(repo: Path) -> dict[str, Any]:
         "compliance_dir": _exists(repo / "docs" / "compliance"),
         "adr_dir": _exists(repo / "docs" / "adr"),
     }
-    recent_commits = _run(
-        ["git", "log", "--format=%H|%aI|%an|%s", "-n", "50"], repo
-    )
+    recent_commits = _run(["git", "log", "--format=%H|%aI|%an|%s", "-n", "50"], repo)
     commits: list[dict[str, str]] = []
     for line in recent_commits.splitlines():
         parts = line.split("|", 3)
@@ -131,11 +129,11 @@ def collect_cc6_access_control(repo: Path) -> dict[str, Any]:
                 or "check_access" in content
                 or "permit" in content,
             }
-    tests = sorted(
-        p.name
-        for p in (repo / "tests" / "unit").glob("test_acl*.py")
-        if p.is_file()
-    ) if (repo / "tests" / "unit").exists() else []
+    tests = (
+        sorted(p.name for p in (repo / "tests" / "unit").glob("test_acl*.py") if p.is_file())
+        if (repo / "tests" / "unit").exists()
+        else []
+    )
     return {
         "control_family": "CC6.1/CC6.2/CC6.3",
         "description": "Logical access control implementation",
@@ -152,7 +150,9 @@ def collect_cc6_encryption(repo: Path) -> dict[str, Any]:
     # Look for mentions of TLS, KMS, encryption
     signals = {
         "tls_mentioned": bool(re.search(r"\btls\b|ssl|certificate", config_text, re.IGNORECASE)),
-        "kms_mentioned": bool(re.search(r"\bkms\b|aes[-_]?256|encrypt", config_text, re.IGNORECASE)),
+        "kms_mentioned": bool(
+            re.search(r"\bkms\b|aes[-_]?256|encrypt", config_text, re.IGNORECASE)
+        ),
         "token_auth_mentioned": bool(re.search(r"bearer|token|mtls", config_text, re.IGNORECASE)),
     }
     return {
@@ -179,9 +179,7 @@ def collect_cc7_monitoring(repo: Path) -> dict[str, Any]:
     metrics_tests = []
     unit_dir = repo / "tests" / "unit"
     if unit_dir.exists():
-        metrics_tests = sorted(
-            p.name for p in unit_dir.glob("test_metrics*.py") if p.is_file()
-        )
+        metrics_tests = sorted(p.name for p in unit_dir.glob("test_metrics*.py") if p.is_file())
     return {
         "control_family": "CC7.1/CC7.2",
         "description": "Monitoring, metrics, tracing, audit logging",

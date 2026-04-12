@@ -219,10 +219,7 @@ class TestNotifications:
     @pytest.mark.asyncio
     async def test_batch_create_notifications(self, store):
         """batch_create_notifications inserts all entries."""
-        entries = [
-            {"user_id": f"user_{i}", "type": "mention", "node_id": "n1"}
-            for i in range(50)
-        ]
+        entries = [{"user_id": f"user_{i}", "type": "mention", "node_id": "n1"} for i in range(50)]
         count = await store.batch_create_notifications(TENANT, entries)
         assert count == 50
 

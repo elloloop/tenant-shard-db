@@ -349,10 +349,12 @@ class EntDBServicer(EntDBServiceServicer):
 
         # Not a member — check for cross-tenant node_access
         actor_ids = await self.canonical_store.resolve_actor_groups(
-            tenant_id, actor,
+            tenant_id,
+            actor,
         )
         has_access = await self.canonical_store.has_node_access(
-            tenant_id, actor_ids,
+            tenant_id,
+            actor_ids,
         )
         if has_access:
             return "cross_tenant"
@@ -401,9 +403,7 @@ class EntDBServicer(EntDBServiceServicer):
             # ExecuteAtomic is always a write. The status check is finer
             # grained: legal_hold rejects deletes (delete_node, delete_edge)
             # but still permits creates/updates.
-            has_delete = any(
-                op.get("op") in ("delete_node", "delete_edge") for op in ops
-            )
+            has_delete = any(op.get("op") in ("delete_node", "delete_edge") for op in ops)
             await self._check_tenant_access(
                 tenant_id=ctx.tenant_id,
                 actor=ctx.actor,
@@ -564,9 +564,7 @@ class EntDBServicer(EntDBServiceServicer):
 
     def _payload_id_to_name_json(self, n: Any) -> str:
         """Egress helper: return a JSON string payload keyed by field name."""
-        return translate_payload_json_to_names(
-            n.payload_json, n.type_id, self.schema_registry
-        )
+        return translate_payload_json_to_names(n.payload_json, n.type_id, self.schema_registry)
 
     def _convert_node_ref(self, ref: Any) -> Any:
         """Convert protobuf node reference to internal format."""
@@ -651,7 +649,9 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             role = await self._check_cross_tenant_read(
-                request.context.tenant_id, request.context.actor, context,
+                request.context.tenant_id,
+                request.context.actor,
+                context,
             )
 
             # Wait for offset if requested (read-after-write consistency)
@@ -672,10 +672,13 @@ class EntDBServicer(EntDBServiceServicer):
             # Cross-tenant: verify access to this specific node
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
-                    request.context.tenant_id, request.context.actor,
+                    request.context.tenant_id,
+                    request.context.actor,
                 )
                 has_access = await self.canonical_store.can_access(
-                    request.context.tenant_id, request.node_id, actor_ids,
+                    request.context.tenant_id,
+                    request.node_id,
+                    actor_ids,
                 )
                 if not has_access:
                     await context.abort(
@@ -716,7 +719,9 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             role = await self._check_cross_tenant_read(
-                request.context.tenant_id, request.context.actor, context,
+                request.context.tenant_id,
+                request.context.actor,
+                context,
             )
 
             # Wait for offset if requested (read-after-write consistency)
@@ -730,7 +735,8 @@ class EntDBServicer(EntDBServiceServicer):
             actor_ids = None
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
-                    request.context.tenant_id, request.context.actor,
+                    request.context.tenant_id,
+                    request.context.actor,
                 )
 
             nodes = []
@@ -748,7 +754,9 @@ class EntDBServicer(EntDBServiceServicer):
                 # Cross-tenant: verify per-node access
                 if actor_ids is not None:
                     has_access = await self.canonical_store.can_access(
-                        request.context.tenant_id, node_id, actor_ids,
+                        request.context.tenant_id,
+                        node_id,
+                        actor_ids,
                     )
                     if not has_access:
                         missing_ids.append(node_id)
@@ -788,7 +796,9 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             role = await self._check_cross_tenant_read(
-                request.context.tenant_id, request.context.actor, context,
+                request.context.tenant_id,
+                request.context.actor,
+                context,
             )
 
             # Wait for offset if requested (read-after-write consistency)
@@ -819,12 +829,15 @@ class EntDBServicer(EntDBServiceServicer):
             # Cross-tenant: filter to only accessible nodes
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
-                    request.context.tenant_id, request.context.actor,
+                    request.context.tenant_id,
+                    request.context.actor,
                 )
                 accessible = []
                 for n in nodes:
                     if await self.canonical_store.can_access(
-                        request.context.tenant_id, n.node_id, actor_ids,
+                        request.context.tenant_id,
+                        n.node_id,
+                        actor_ids,
                     ):
                         accessible.append(n)
                 nodes = accessible
@@ -1247,9 +1260,7 @@ class EntDBServicer(EntDBServiceServicer):
             if self.global_store:
                 try:
                     if actor_id.startswith("group:"):
-                        members = await self.canonical_store.get_group_members(
-                            tenant_id, actor_id
-                        )
+                        members = await self.canonical_store.get_group_members(tenant_id, actor_id)
                         for member_id in members:
                             await self.global_store.add_shared(
                                 member_id, tenant_id, request.node_id, permission
@@ -1287,17 +1298,13 @@ class EntDBServicer(EntDBServiceServicer):
             if found and self.global_store:
                 try:
                     if actor_id.startswith("group:"):
-                        members = await self.canonical_store.get_group_members(
-                            tenant_id, actor_id
-                        )
+                        members = await self.canonical_store.get_group_members(tenant_id, actor_id)
                         for member_id in members:
                             await self.global_store.remove_shared(
                                 member_id, tenant_id, request.node_id
                             )
                     else:
-                        await self.global_store.remove_shared(
-                            actor_id, tenant_id, request.node_id
-                        )
+                        await self.global_store.remove_shared(actor_id, tenant_id, request.node_id)
                 except Exception as gs_err:
                     logger.warning(f"shared_index update failed on RevokeAccess: {gs_err}")
             record_grpc_request("RevokeAccess", "ok", time.perf_counter() - start)
@@ -1323,7 +1330,8 @@ class EntDBServicer(EntDBServiceServicer):
             tenant_id = request.context.tenant_id
             actor = request.context.actor
             actor_ids = await self.canonical_store.resolve_actor_groups(
-                tenant_id, actor,
+                tenant_id,
+                actor,
             )
             limit = request.limit or 100
             offset = request.offset or 0
@@ -1401,8 +1409,10 @@ class EntDBServicer(EntDBServiceServicer):
                     )
                     for entry in access_entries:
                         await self.global_store.add_shared(
-                            member_actor_id, tenant_id,
-                            entry["node_id"], entry["permission"],
+                            member_actor_id,
+                            tenant_id,
+                            entry["node_id"],
+                            entry["permission"],
                         )
                 except Exception as gs_err:
                     logger.warning(f"shared_index update failed on AddGroupMember: {gs_err}")
@@ -1433,7 +1443,9 @@ class EntDBServicer(EntDBServiceServicer):
                         tenant_id, group_id
                     )
                 except Exception as gs_err:
-                    logger.warning(f"Failed to read group access for shared_index cleanup: {gs_err}")
+                    logger.warning(
+                        f"Failed to read group access for shared_index cleanup: {gs_err}"
+                    )
             found = await self.canonical_store.remove_group_member(
                 tenant_id=tenant_id,
                 group_id=group_id,
@@ -1476,7 +1488,6 @@ class EntDBServicer(EntDBServiceServicer):
             logger.error(f"TransferOwnership failed: {e}", exc_info=True)
             return TransferOwnershipResponse(found=False, error=str(e))
 
-
     # --- User registry handlers ---
 
     def _is_admin_or_system(self, actor: str) -> bool:
@@ -1485,11 +1496,7 @@ class EntDBServicer(EntDBServiceServicer):
 
     def _is_self_or_admin(self, actor: str, user_id: str) -> bool:
         """Check if actor is the user themselves or an admin/system."""
-        return (
-            self._is_admin_or_system(actor)
-            or actor == f"user:{user_id}"
-            or actor == user_id
-        )
+        return self._is_admin_or_system(actor) or actor == f"user:{user_id}" or actor == user_id
 
     def _user_dict_to_proto(self, user: dict) -> UserInfo:
         """Convert a user dict to a UserInfo proto message."""
@@ -1531,7 +1538,9 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "name is required")
 
             user = await self.global_store.create_user(
-                request.user_id, request.email, request.name,
+                request.user_id,
+                request.email,
+                request.name,
             )
 
             record_grpc_request("CreateUser", "ok", time.perf_counter() - start)
@@ -1654,7 +1663,9 @@ class EntDBServicer(EntDBServiceServicer):
             offset = request.offset or 0
 
             users = await self.global_store.list_users(
-                status=status, limit=limit, offset=offset,
+                status=status,
+                limit=limit,
+                offset=offset,
             )
 
             proto_users = [self._user_dict_to_proto(u) for u in users]
@@ -2015,7 +2026,9 @@ class EntDBServicer(EntDBServiceServicer):
                     )
 
             updated = await self.global_store.change_role(
-                request.tenant_id, request.user_id, request.new_role,
+                request.tenant_id,
+                request.user_id,
+                request.new_role,
             )
 
             if not updated:
@@ -2045,9 +2058,7 @@ class EntDBServicer(EntDBServiceServicer):
         Regular users must be owner or admin of the tenant.
         """
         if not actor:
-            await context.abort(
-                grpc.StatusCode.INVALID_ARGUMENT, "actor is required"
-            )
+            await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
         if self._is_admin_or_system(actor):
             return
         if self.global_store is None:
@@ -2075,17 +2086,11 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.tenant_id, context)
             if not request.tenant_id:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
             if not request.from_user:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "from_user is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "from_user is required")
             if not request.to_user:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "to_user is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_user is required")
             await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "TransferUserContent"
             )
@@ -2096,17 +2101,13 @@ class EntDBServicer(EntDBServiceServicer):
                 to_user=request.to_user,
                 actor=request.actor,
             )
-            record_grpc_request(
-                "TransferUserContent", "ok", time.perf_counter() - start
-            )
+            record_grpc_request("TransferUserContent", "ok", time.perf_counter() - start)
             return TransferUserContentResponse(
                 success=True,
                 transferred=result["transferred"],
             )
         except Exception as e:
-            record_grpc_request(
-                "TransferUserContent", "error", time.perf_counter() - start
-            )
+            record_grpc_request("TransferUserContent", "error", time.perf_counter() - start)
             if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
                 raise
             logger.error(f"TransferUserContent failed: {e}", exc_info=True)
@@ -2122,17 +2123,11 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.tenant_id, context)
             if not request.tenant_id:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
             if not request.from_user:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "from_user is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "from_user is required")
             if not request.to_user:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "to_user is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_user is required")
             await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "DelegateAccess"
             )
@@ -2147,18 +2142,14 @@ class EntDBServicer(EntDBServiceServicer):
                 expires_at=expires_at,
                 actor=request.actor,
             )
-            record_grpc_request(
-                "DelegateAccess", "ok", time.perf_counter() - start
-            )
+            record_grpc_request("DelegateAccess", "ok", time.perf_counter() - start)
             return DelegateAccessResponse(
                 success=True,
                 delegated=result["delegated"],
                 expires_at=result["expires_at"] or 0,
             )
         except Exception as e:
-            record_grpc_request(
-                "DelegateAccess", "error", time.perf_counter() - start
-            )
+            record_grpc_request("DelegateAccess", "error", time.perf_counter() - start)
             if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
                 raise
             logger.error(f"DelegateAccess failed: {e}", exc_info=True)
@@ -2178,9 +2169,7 @@ class EntDBServicer(EntDBServiceServicer):
                     "Tenant registry not configured",
                 )
             if not request.tenant_id:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
             await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "SetLegalHold"
             )
@@ -2189,12 +2178,8 @@ class EntDBServicer(EntDBServiceServicer):
                 request.tenant_id, bool(request.enabled), request.actor
             )
             if not updated:
-                record_grpc_request(
-                    "SetLegalHold", "ok", time.perf_counter() - start
-                )
-                return LegalHoldResponse(
-                    success=False, error="Tenant not found"
-                )
+                record_grpc_request("SetLegalHold", "ok", time.perf_counter() - start)
+                return LegalHoldResponse(success=False, error="Tenant not found")
 
             new_status = "legal_hold" if request.enabled else "active"
             # Audit log — best effort; failing to audit should not
@@ -2207,24 +2192,20 @@ class EntDBServicer(EntDBServiceServicer):
                     action="set_legal_hold",
                     target_type="tenant",
                     target_id=request.tenant_id,
-                    metadata=json.dumps({
-                        "enabled": bool(request.enabled),
-                        "status": new_status,
-                    }),
+                    metadata=json.dumps(
+                        {
+                            "enabled": bool(request.enabled),
+                            "status": new_status,
+                        }
+                    ),
                 )
             except Exception as audit_err:
-                logger.warning(
-                    f"audit append failed on SetLegalHold: {audit_err}"
-                )
+                logger.warning(f"audit append failed on SetLegalHold: {audit_err}")
 
-            record_grpc_request(
-                "SetLegalHold", "ok", time.perf_counter() - start
-            )
+            record_grpc_request("SetLegalHold", "ok", time.perf_counter() - start)
             return LegalHoldResponse(success=True, status=new_status)
         except Exception as e:
-            record_grpc_request(
-                "SetLegalHold", "error", time.perf_counter() - start
-            )
+            record_grpc_request("SetLegalHold", "error", time.perf_counter() - start)
             if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
                 raise
             logger.error(f"SetLegalHold failed: {e}", exc_info=True)
@@ -2240,13 +2221,9 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.tenant_id, context)
             if not request.tenant_id:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
             if not request.user_id:
-                await context.abort(
-                    grpc.StatusCode.INVALID_ARGUMENT, "user_id is required"
-                )
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
             await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "RevokeAllUserAccess"
             )
@@ -2277,13 +2254,9 @@ class EntDBServicer(EntDBServiceServicer):
                             if ok:
                                 revoked_shared += 1
                 except Exception as gs_err:
-                    logger.warning(
-                        f"shared_index cleanup failed on RevokeAllUserAccess: {gs_err}"
-                    )
+                    logger.warning(f"shared_index cleanup failed on RevokeAllUserAccess: {gs_err}")
 
-            record_grpc_request(
-                "RevokeAllUserAccess", "ok", time.perf_counter() - start
-            )
+            record_grpc_request("RevokeAllUserAccess", "ok", time.perf_counter() - start)
             return RevokeAllUserAccessResponse(
                 success=True,
                 revoked_grants=result["revoked_grants"],
@@ -2291,9 +2264,7 @@ class EntDBServicer(EntDBServiceServicer):
                 revoked_shared=revoked_shared,
             )
         except Exception as e:
-            record_grpc_request(
-                "RevokeAllUserAccess", "error", time.perf_counter() - start
-            )
+            record_grpc_request("RevokeAllUserAccess", "error", time.perf_counter() - start)
             if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
                 raise
             logger.error(f"RevokeAllUserAccess failed: {e}", exc_info=True)

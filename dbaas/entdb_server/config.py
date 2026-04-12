@@ -63,9 +63,7 @@ class EncryptionConfig:
             ValueError: If encryption is enabled but master key is missing.
         """
         if self.enabled and not self.master_key:
-            raise ValueError(
-                "ENTDB_MASTER_KEY is required when ENTDB_ENCRYPTION_ENABLED=true"
-            )
+            raise ValueError("ENTDB_MASTER_KEY is required when ENTDB_ENCRYPTION_ENABLED=true")
 
 
 class WalBackend(Enum):

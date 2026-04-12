@@ -60,9 +60,7 @@ class TestComplianceDocs:
         """Each required compliance doc meets its minimum line count."""
         path = COMPLIANCE_DIR / filename
         actual = _line_count(path)
-        assert actual >= min_lines, (
-            f"{filename} has only {actual} lines, expected >= {min_lines}"
-        )
+        assert actual >= min_lines, f"{filename} has only {actual} lines, expected >= {min_lines}"
 
     def test_readme_links_resolve(self):
         """All relative markdown links in the compliance README resolve."""

@@ -505,9 +505,7 @@ class DbClient:
         """Clear tracked offsets. Useful for testing."""
         self._last_offsets.clear()
 
-    def _resolve_offset(
-        self, tenant_id: str, after_offset: str | None | _Unset
-    ) -> str | None:
+    def _resolve_offset(self, tenant_id: str, after_offset: str | None | _Unset) -> str | None:
         """Resolve the after_offset for a read operation.
 
         If after_offset is _UNSET (not provided by caller), use the tracked

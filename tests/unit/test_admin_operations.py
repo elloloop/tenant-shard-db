@@ -158,7 +158,10 @@ class TestTransferUserContent:
         n3 = _create_node(store, owner=BOB)  # unrelated
 
         result = await store.transfer_user_content(
-            TENANT, ALICE, BOB, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            actor=ADMIN,
         )
 
         assert result["transferred"] == 2
@@ -173,7 +176,10 @@ class TestTransferUserContent:
 
     async def test_returns_zero_when_no_nodes(self, store):
         result = await store.transfer_user_content(
-            TENANT, ALICE, BOB, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            actor=ADMIN,
         )
         assert result["transferred"] == 0
 
@@ -181,7 +187,10 @@ class TestTransferUserContent:
         _create_node(store, owner=ALICE)
         _create_node(store, owner=ALICE)
         await store.transfer_user_content(
-            TENANT, ALICE, BOB, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            actor=ADMIN,
         )
         entries = await store.get_audit_log(TENANT, limit=10)
         matches = [e for e in entries if e["action"] == "transfer_content"]
@@ -195,7 +204,10 @@ class TestTransferUserContent:
     async def test_visibility_index_updated(self, store):
         nid = _create_node(store, owner=ALICE)
         await store.transfer_user_content(
-            TENANT, ALICE, BOB, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            actor=ADMIN,
         )
         # BOB should now have visibility on the transferred node.
         accessible = await store.can_access(TENANT, nid, [BOB])
@@ -215,7 +227,12 @@ class TestDelegateAccess:
 
         expires = int(time.time() * 1000) + 3600_000
         result = await store.delegate_access(
-            TENANT, ALICE, BOB, "read", expires, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            "read",
+            expires,
+            actor=ADMIN,
         )
 
         assert result["delegated"] == 2
@@ -231,12 +248,16 @@ class TestDelegateAccess:
         nid = _create_node(store, owner=ALICE)
         expires = int(time.time() * 1000) + 60_000
         await store.delegate_access(
-            TENANT, ALICE, BOB, "read", expires, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            "read",
+            expires,
+            actor=ADMIN,
         )
         with store._get_connection(TENANT) as conn:
             row = conn.execute(
-                "SELECT expires_at, permission FROM node_access "
-                "WHERE node_id = ? AND actor_id = ?",
+                "SELECT expires_at, permission FROM node_access WHERE node_id = ? AND actor_id = ?",
                 (nid, BOB),
             ).fetchone()
         assert row is not None
@@ -246,12 +267,16 @@ class TestDelegateAccess:
     async def test_permanent_delegation_has_null_expiry(self, store):
         nid = _create_node(store, owner=ALICE)
         await store.delegate_access(
-            TENANT, ALICE, BOB, "read", None, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            "read",
+            None,
+            actor=ADMIN,
         )
         with store._get_connection(TENANT) as conn:
             row = conn.execute(
-                "SELECT expires_at FROM node_access "
-                "WHERE node_id = ? AND actor_id = ?",
+                "SELECT expires_at FROM node_access WHERE node_id = ? AND actor_id = ?",
                 (nid, BOB),
             ).fetchone()
         assert row["expires_at"] is None
@@ -259,7 +284,12 @@ class TestDelegateAccess:
     async def test_audit_logged(self, store):
         _create_node(store, owner=ALICE)
         await store.delegate_access(
-            TENANT, ALICE, BOB, "write", None, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            "write",
+            None,
+            actor=ADMIN,
         )
         entries = await store.get_audit_log(TENANT, limit=10)
         matches = [e for e in entries if e["action"] == "delegate_access"]
@@ -274,7 +304,12 @@ class TestDelegateAccess:
         _create_node(store, owner=ALICE)
         past = int(time.time() * 1000) - 10_000
         await store.delegate_access(
-            TENANT, ALICE, BOB, "read", past, actor=ADMIN,
+            TENANT,
+            ALICE,
+            BOB,
+            "read",
+            past,
+            actor=ADMIN,
         )
         shared = await store.list_shared_with_me(TENANT, [BOB])
         assert shared == []
@@ -302,7 +337,9 @@ class TestSetLegalHold:
 
     async def test_returns_false_for_unknown_tenant(self, global_store):
         updated = await global_store.set_legal_hold(
-            "ghost", True, actor=ADMIN,
+            "ghost",
+            True,
+            actor=ADMIN,
         )
         assert updated is False
 
@@ -324,7 +361,8 @@ class TestRevokeUserAccess:
 
         with store._get_connection(TENANT) as conn:
             rows = conn.execute(
-                "SELECT 1 FROM node_access WHERE actor_id = ?", (BOB,),
+                "SELECT 1 FROM node_access WHERE actor_id = ?",
+                (BOB,),
             ).fetchall()
         assert rows == []
 
@@ -346,8 +384,7 @@ class TestRevokeUserAccess:
         carol_rows = conn = store._get_connection(TENANT)
         with carol_rows as conn:
             remain = conn.execute(
-                "SELECT member_actor_id FROM group_users "
-                "WHERE group_id = 'group:team'",
+                "SELECT member_actor_id FROM group_users WHERE group_id = 'group:team'",
             ).fetchall()
         assert any(r[0] == CAROL for r in remain)
 
@@ -358,8 +395,7 @@ class TestRevokeUserAccess:
 
         with store._get_connection(TENANT) as conn:
             rows = conn.execute(
-                "SELECT 1 FROM node_visibility "
-                "WHERE tenant_id = ? AND principal = ?",
+                "SELECT 1 FROM node_visibility WHERE tenant_id = ? AND principal = ?",
                 (TENANT, BOB),
             ).fetchall()
         assert rows == []
@@ -375,7 +411,9 @@ class TestRevokeUserAccess:
 
     async def test_returns_zero_counts_when_nothing_to_revoke(self, store):
         result = await store.revoke_user_access(
-            TENANT, "user:ghost", actor=ADMIN,
+            TENANT,
+            "user:ghost",
+            actor=ADMIN,
         )
         assert result["revoked_grants"] == 0
         assert result["revoked_groups"] == 0
@@ -389,7 +427,8 @@ class TestRevokeUserAccess:
 class TestTransferUserContentHandler:
     async def test_owner_can_transfer(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         _create_node(store, owner=ALICE)
         _create_node(store, owner=ALICE)
@@ -410,7 +449,8 @@ class TestTransferUserContentHandler:
 
     async def test_member_cannot_transfer(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"bob": "member"},
+            global_store,
+            members={"bob": "member"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -429,7 +469,8 @@ class TestTransferUserContentHandler:
 
     async def test_viewer_cannot_transfer(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"bob": "viewer"},
+            global_store,
+            members={"bob": "viewer"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -473,7 +514,8 @@ class TestTransferUserContentHandler:
 class TestDelegateAccessHandler:
     async def test_admin_can_delegate(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "admin"},
+            global_store,
+            members={"admin": "admin"},
         )
         _create_node(store, owner=ALICE)
         _create_node(store, owner=ALICE)
@@ -496,7 +538,8 @@ class TestDelegateAccessHandler:
 
     async def test_non_admin_cannot_delegate(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"bob": "member"},
+            global_store,
+            members={"bob": "member"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -516,7 +559,8 @@ class TestDelegateAccessHandler:
 
     async def test_default_permission_is_read(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         nid = _create_node(store, owner=ALICE)
         servicer = _make_servicer(store, global_store)
@@ -533,8 +577,7 @@ class TestDelegateAccessHandler:
         )
         with store._get_connection(TENANT) as conn:
             row = conn.execute(
-                "SELECT permission FROM node_access "
-                "WHERE node_id = ? AND actor_id = ?",
+                "SELECT permission FROM node_access WHERE node_id = ? AND actor_id = ?",
                 (nid, BOB),
             ).fetchone()
         assert row["permission"] == "read"
@@ -548,7 +591,8 @@ class TestDelegateAccessHandler:
 class TestSetLegalHoldHandler:
     async def test_owner_can_enable_hold(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -578,7 +622,8 @@ class TestSetLegalHoldHandler:
 
     async def test_member_cannot_set_hold(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"bob": "member"},
+            global_store,
+            members={"bob": "member"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -591,7 +636,8 @@ class TestSetLegalHoldHandler:
 
     async def test_set_hold_appends_audit_entry(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -662,7 +708,8 @@ class TestLegalHoldBlocksDeletes:
 class TestRevokeAllUserAccessHandler:
     async def test_admin_can_revoke(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "admin"},
+            global_store,
+            members={"admin": "admin"},
         )
         nid = _create_node(store, owner=ALICE)
         await store.share_node(TENANT, nid, BOB, "read", ALICE)
@@ -672,7 +719,9 @@ class TestRevokeAllUserAccessHandler:
         ctx = _FakeContext()
         resp = await servicer.RevokeAllUserAccess(
             RevokeAllUserAccessRequest(
-                actor=ADMIN, tenant_id=TENANT, user_id=BOB,
+                actor=ADMIN,
+                tenant_id=TENANT,
+                user_id=BOB,
             ),
             ctx,
         )
@@ -682,14 +731,17 @@ class TestRevokeAllUserAccessHandler:
 
     async def test_non_admin_cannot_revoke(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"bob": "member"},
+            global_store,
+            members={"bob": "member"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
         with pytest.raises(_AbortError):
             await servicer.RevokeAllUserAccess(
                 RevokeAllUserAccessRequest(
-                    actor=BOB, tenant_id=TENANT, user_id=CAROL,
+                    actor=BOB,
+                    tenant_id=TENANT,
+                    user_id=CAROL,
                 ),
                 ctx,
             )
@@ -697,7 +749,8 @@ class TestRevokeAllUserAccessHandler:
 
     async def test_cleans_up_shared_index(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         # Seed shared_index directly so we can verify cleanup.
         await global_store.add_shared(BOB, TENANT, "node-1", "read")
@@ -708,7 +761,9 @@ class TestRevokeAllUserAccessHandler:
         ctx = _FakeContext()
         resp = await servicer.RevokeAllUserAccess(
             RevokeAllUserAccessRequest(
-                actor=ADMIN, tenant_id=TENANT, user_id=BOB,
+                actor=ADMIN,
+                tenant_id=TENANT,
+                user_id=BOB,
             ),
             ctx,
         )
@@ -722,14 +777,17 @@ class TestRevokeAllUserAccessHandler:
 
     async def test_missing_user_id_rejected(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
         with pytest.raises(_AbortError):
             await servicer.RevokeAllUserAccess(
                 RevokeAllUserAccessRequest(
-                    actor=ADMIN, tenant_id=TENANT, user_id="",
+                    actor=ADMIN,
+                    tenant_id=TENANT,
+                    user_id="",
                 ),
                 ctx,
             )
@@ -760,7 +818,8 @@ class TestPermissionsAndValidation:
 
     async def test_transfer_requires_from_user(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
@@ -778,7 +837,8 @@ class TestPermissionsAndValidation:
 
     async def test_delegate_requires_to_user(self, store, global_store):
         await _bootstrap_tenant(
-            global_store, members={"admin": "owner"},
+            global_store,
+            members={"admin": "owner"},
         )
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()

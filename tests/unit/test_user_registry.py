@@ -148,7 +148,10 @@ class TestCreateUser:
     async def test_create_user_duplicate_email(self):
         store = _make_global_store()
         import sqlite3
-        store.create_user.side_effect = sqlite3.IntegrityError("UNIQUE constraint failed: user_registry.email")
+
+        store.create_user.side_effect = sqlite3.IntegrityError(
+            "UNIQUE constraint failed: user_registry.email"
+        )
         servicer = _build_servicer(global_store=store)
         context = _mock_context()
 
@@ -352,8 +355,22 @@ class TestListUsers:
     async def test_list_users_default(self):
         store = _make_global_store()
         store.list_users.return_value = [
-            {"user_id": "u1", "email": "a@e.com", "name": "A", "status": "active", "created_at": 1, "updated_at": 1},
-            {"user_id": "u2", "email": "b@e.com", "name": "B", "status": "active", "created_at": 2, "updated_at": 2},
+            {
+                "user_id": "u1",
+                "email": "a@e.com",
+                "name": "A",
+                "status": "active",
+                "created_at": 1,
+                "updated_at": 1,
+            },
+            {
+                "user_id": "u2",
+                "email": "b@e.com",
+                "name": "B",
+                "status": "active",
+                "created_at": 2,
+                "updated_at": 2,
+            },
         ]
         servicer = _build_servicer(global_store=store)
         context = _mock_context()
@@ -440,18 +457,20 @@ class TestSDKUserRegistryClient:
         client = DbClient("localhost:50051")
         client._connected = True
         client._grpc = AsyncMock()
-        client._grpc.create_user = AsyncMock(return_value={
-            "success": True,
-            "error": None,
-            "user": {
-                "user_id": "u1",
-                "email": "alice@example.com",
-                "name": "Alice",
-                "status": "active",
-                "created_at": 1000,
-                "updated_at": 1000,
-            },
-        })
+        client._grpc.create_user = AsyncMock(
+            return_value={
+                "success": True,
+                "error": None,
+                "user": {
+                    "user_id": "u1",
+                    "email": "alice@example.com",
+                    "name": "Alice",
+                    "status": "active",
+                    "created_at": 1000,
+                    "updated_at": 1000,
+                },
+            }
+        )
 
         result = await client.create_user("u1", "alice@example.com", "Alice")
         assert result["success"] is True
@@ -464,14 +483,16 @@ class TestSDKUserRegistryClient:
         client = DbClient("localhost:50051")
         client._connected = True
         client._grpc = AsyncMock()
-        client._grpc.get_user = AsyncMock(return_value={
-            "user_id": "u1",
-            "email": "alice@example.com",
-            "name": "Alice",
-            "status": "active",
-            "created_at": 1000,
-            "updated_at": 1000,
-        })
+        client._grpc.get_user = AsyncMock(
+            return_value={
+                "user_id": "u1",
+                "email": "alice@example.com",
+                "name": "Alice",
+                "status": "active",
+                "created_at": 1000,
+                "updated_at": 1000,
+            }
+        )
 
         result = await client.get_user("u1")
         assert result is not None
@@ -496,10 +517,12 @@ class TestSDKUserRegistryClient:
         client = DbClient("localhost:50051")
         client._connected = True
         client._grpc = AsyncMock()
-        client._grpc.update_user = AsyncMock(return_value={
-            "success": True,
-            "error": None,
-        })
+        client._grpc.update_user = AsyncMock(
+            return_value={
+                "success": True,
+                "error": None,
+            }
+        )
 
         result = await client.update_user("u1", name="Alice Updated")
         assert result["success"] is True
@@ -511,10 +534,26 @@ class TestSDKUserRegistryClient:
         client = DbClient("localhost:50051")
         client._connected = True
         client._grpc = AsyncMock()
-        client._grpc.list_users = AsyncMock(return_value=[
-            {"user_id": "u1", "email": "a@e.com", "name": "A", "status": "active", "created_at": 1, "updated_at": 1},
-            {"user_id": "u2", "email": "b@e.com", "name": "B", "status": "active", "created_at": 2, "updated_at": 2},
-        ])
+        client._grpc.list_users = AsyncMock(
+            return_value=[
+                {
+                    "user_id": "u1",
+                    "email": "a@e.com",
+                    "name": "A",
+                    "status": "active",
+                    "created_at": 1,
+                    "updated_at": 1,
+                },
+                {
+                    "user_id": "u2",
+                    "email": "b@e.com",
+                    "name": "B",
+                    "status": "active",
+                    "created_at": 2,
+                    "updated_at": 2,
+                },
+            ]
+        )
 
         result = await client.list_users(status="active", limit=50, offset=0)
         assert len(result) == 2
