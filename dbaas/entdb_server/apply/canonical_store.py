@@ -6,6 +6,8 @@ This module manages the per-tenant SQLite database that stores:
 - Edges connecting nodes
 - Applied events for idempotency checking
 - Node visibility index for ACL filtering
+- Notifications (per-user mailbox within the tenant)
+- Read cursors (per-user, per-channel last-read timestamps)
 
 The canonical store is the materialized view of the WAL stream.
 It can be rebuilt by replaying events from the stream or archive.
@@ -72,6 +74,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..config import EncryptionConfig
+from ..encryption import derive_tenant_key, is_sqlcipher_available, open_encrypted_connection
 from ..metrics import metrics_enabled as _metrics_enabled
 from ..metrics import record_sqlite_op as _record_sqlite_op
 
@@ -416,7 +420,7 @@ class CanonicalStore:
     def _classify_op(fn: Callable) -> str:
         """Classify a sync helper as 'read' or 'write' by its name."""
         name = fn.__name__
-        if "create" in name or "update" in name or "delete" in name:
+        if "create" in name or "update" in name or "delete" in name or "mark" in name or "batch" in name:
             return "write"
         return "read"
 
@@ -599,6 +603,35 @@ class CanonicalStore:
 
             CREATE INDEX IF NOT EXISTS idx_inherit_from
                 ON acl_inherit(inherit_from);
+
+            -- Notifications (per-user mailbox within tenant)
+            CREATE TABLE IF NOT EXISTS notifications (
+                id          TEXT PRIMARY KEY,
+                user_id     TEXT NOT NULL,
+                type        TEXT NOT NULL,
+                node_id     TEXT NOT NULL,
+                snippet     TEXT,
+                read        INTEGER DEFAULT 0,
+                created_at  INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_notif_user
+                ON notifications(user_id, read, created_at DESC);
+
+            -- Read cursors (per-user, per-channel last-read timestamp)
+            CREATE TABLE IF NOT EXISTS read_cursors (
+                user_id      TEXT NOT NULL,
+                channel_id   TEXT NOT NULL,
+                last_read_at INTEGER NOT NULL,
+                PRIMARY KEY (user_id, channel_id)
+            );
+
+            -- Type metadata (data policy, PII fields, subject field)
+            CREATE TABLE IF NOT EXISTS type_metadata (
+                type_id       INTEGER PRIMARY KEY,
+                data_policy   TEXT NOT NULL DEFAULT 'personal',
+                pii_fields    TEXT NOT NULL DEFAULT '[]',
+                subject_field TEXT DEFAULT NULL
+            );
 
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
@@ -2228,6 +2261,99 @@ class CanonicalStore:
             new_owner,
         )
 
+    # ── Cross-tenant access helpers ─────────────────────────────────────
+
+    def _sync_has_node_access(
+        self,
+        tenant_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if any of actor_ids has at least one node_access entry in tenant."""
+        placeholders = ",".join("?" for _ in actor_ids)
+        with self._get_connection(tenant_id) as conn:
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM node_access
+                WHERE actor_id IN ({placeholders})
+                  AND permission != 'deny'
+                  AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
+                """,
+                (*actor_ids, int(time.time() * 1000)),
+            ).fetchone()
+            return row is not None
+
+    async def has_node_access(
+        self,
+        tenant_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if actor has at least one node_access entry in the tenant.
+
+        Used for cross-tenant QueryNodes authorization: the actor is not
+        a tenant member but may have explicit node_access grants.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor_ids: Pre-resolved list from resolve_actor_groups
+
+        Returns:
+            True if at least one non-deny, non-expired entry exists
+        """
+        return await self._run_sync(
+            self._sync_has_node_access,
+            tenant_id,
+            actor_ids,
+        )
+
+    def _sync_has_node_access_for_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if any of actor_ids has node_access for a specific node."""
+        placeholders = ",".join("?" for _ in actor_ids)
+        with self._get_connection(tenant_id) as conn:
+            row = conn.execute(
+                f"""
+                SELECT 1 FROM node_access
+                WHERE node_id = ?
+                  AND actor_id IN ({placeholders})
+                  AND permission != 'deny'
+                  AND (expires_at IS NULL OR expires_at > ?)
+                LIMIT 1
+                """,
+                (node_id, *actor_ids, int(time.time() * 1000)),
+            ).fetchone()
+            return row is not None
+
+    async def has_node_access_for_node(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> bool:
+        """Check if actor has explicit node_access for a specific node.
+
+        Used for cross-tenant GetNode authorization: the actor is not
+        a tenant member but may have a direct node_access grant.
+
+        Args:
+            tenant_id: Tenant identifier
+            node_id: Node identifier
+            actor_ids: Pre-resolved list from resolve_actor_groups
+
+        Returns:
+            True if a non-deny, non-expired entry exists for the node
+        """
+        return await self._run_sync(
+            self._sync_has_node_access_for_node,
+            tenant_id,
+            node_id,
+            actor_ids,
+        )
+
     def list_tenants(self) -> list[str]:
         """Scan data_dir for tenant database files and return tenant IDs.
 
@@ -2359,3 +2485,365 @@ class CanonicalStore:
             Path to database file
         """
         return self._get_db_path(tenant_id)
+
+    # ── Notifications ─────────────────────────────────────────────────
+
+    def _sync_create_notification(
+        self,
+        tenant_id: str,
+        user_id: str,
+        type_: str,
+        node_id: str,
+        snippet: str | None,
+    ) -> str:
+        notif_id = str(uuid.uuid4())
+        now = int(time.time() * 1000)
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT INTO notifications (id, user_id, type, node_id, snippet, read, created_at)
+                VALUES (?, ?, ?, ?, ?, 0, ?)
+                """,
+                (notif_id, user_id, type_, node_id, snippet, now),
+            )
+        return notif_id
+
+    async def create_notification(
+        self,
+        tenant_id: str,
+        user_id: str,
+        type: str,
+        node_id: str,
+        snippet: str | None = None,
+    ) -> str:
+        """Create a notification for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to notify
+            type: Notification type (e.g. 'mention', 'reply')
+            node_id: Related node ID
+            snippet: Optional preview text
+
+        Returns:
+            Notification ID
+        """
+        return await self._run_sync(
+            self._sync_create_notification, tenant_id, user_id, type, node_id, snippet
+        )
+
+    def _sync_get_notifications(
+        self,
+        tenant_id: str,
+        user_id: str,
+        unread_only: bool,
+        limit: int,
+        offset: int,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            if unread_only:
+                cursor = conn.execute(
+                    """
+                    SELECT id, user_id, type, node_id, snippet, read, created_at
+                    FROM notifications
+                    WHERE user_id = ? AND read = 0
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (user_id, limit, offset),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, user_id, type, node_id, snippet, read, created_at
+                    FROM notifications
+                    WHERE user_id = ?
+                    ORDER BY created_at DESC
+                    LIMIT ? OFFSET ?
+                    """,
+                    (user_id, limit, offset),
+                )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_notifications(
+        self,
+        tenant_id: str,
+        user_id: str,
+        unread_only: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict]:
+        """Get notifications for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to get notifications for
+            unread_only: If True, only return unread notifications
+            limit: Maximum number of results
+            offset: Pagination offset
+
+        Returns:
+            List of notification dicts
+        """
+        return await self._run_sync(
+            self._sync_get_notifications, tenant_id, user_id, unread_only, limit, offset
+        )
+
+    def _sync_mark_notification_read(
+        self,
+        tenant_id: str,
+        notification_id: str,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "UPDATE notifications SET read = 1 WHERE id = ?",
+                (notification_id,),
+            )
+            return cursor.rowcount > 0
+
+    async def mark_notification_read(
+        self,
+        tenant_id: str,
+        notification_id: str,
+    ) -> bool:
+        """Mark a single notification as read.
+
+        Args:
+            tenant_id: Tenant identifier
+            notification_id: Notification to mark read
+
+        Returns:
+            True if notification was found and updated
+        """
+        return await self._run_sync(
+            self._sync_mark_notification_read, tenant_id, notification_id
+        )
+
+    def _sync_mark_all_read(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "UPDATE notifications SET read = 1 WHERE user_id = ? AND read = 0",
+                (user_id,),
+            )
+            return cursor.rowcount
+
+    async def mark_all_read(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        """Mark all notifications as read for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User whose notifications to mark read
+
+        Returns:
+            Number of notifications marked read
+        """
+        return await self._run_sync(self._sync_mark_all_read, tenant_id, user_id)
+
+    def _sync_get_unread_count(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM notifications WHERE user_id = ? AND read = 0",
+                (user_id,),
+            )
+            return cursor.fetchone()[0]
+
+    async def get_unread_count(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> int:
+        """Get unread notification count for a user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to count unread for
+
+        Returns:
+            Number of unread notifications
+        """
+        return await self._run_sync(self._sync_get_unread_count, tenant_id, user_id)
+
+    def _sync_batch_create_notifications(
+        self,
+        tenant_id: str,
+        entries: list[dict],
+    ) -> int:
+        now = int(time.time() * 1000)
+        rows = []
+        for entry in entries:
+            rows.append((
+                str(uuid.uuid4()),
+                entry["user_id"],
+                entry["type"],
+                entry["node_id"],
+                entry.get("snippet"),
+                0,
+                now,
+            ))
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                conn.executemany(
+                    """
+                    INSERT INTO notifications (id, user_id, type, node_id, snippet, read, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+        return len(rows)
+
+    async def batch_create_notifications(
+        self,
+        tenant_id: str,
+        entries: list[dict],
+    ) -> int:
+        """Batch create notifications (e.g. for @everyone).
+
+        Uses a single transaction with executemany for efficiency.
+        Should handle 1000 inserts in ~5-10ms.
+
+        Args:
+            tenant_id: Tenant identifier
+            entries: List of dicts with keys: user_id, type, node_id, snippet (optional)
+
+        Returns:
+            Number of notifications created
+        """
+        return await self._run_sync(
+            self._sync_batch_create_notifications, tenant_id, entries
+        )
+
+    # ── Read Cursors ──────────────────────────────────────────────────
+
+    def _sync_update_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> None:
+        now = int(time.time() * 1000)
+        with self._get_connection(tenant_id) as conn:
+            conn.execute(
+                """
+                INSERT INTO read_cursors (user_id, channel_id, last_read_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT (user_id, channel_id)
+                DO UPDATE SET last_read_at = excluded.last_read_at
+                """,
+                (user_id, channel_id, now),
+            )
+
+    async def update_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> None:
+        """Update the read cursor for a user in a channel.
+
+        Sets last_read_at to current time. Uses UPSERT for idempotency.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier
+            channel_id: Channel identifier
+        """
+        await self._run_sync(
+            self._sync_update_read_cursor, tenant_id, user_id, channel_id
+        )
+
+    def _sync_get_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> int | None:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "SELECT last_read_at FROM read_cursors WHERE user_id = ? AND channel_id = ?",
+                (user_id, channel_id),
+            )
+            row = cursor.fetchone()
+            return row[0] if row else None
+
+    async def get_read_cursor(
+        self,
+        tenant_id: str,
+        user_id: str,
+        channel_id: str,
+    ) -> int | None:
+        """Get the read cursor for a user in a channel.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier
+            channel_id: Channel identifier
+
+        Returns:
+            Last read timestamp (Unix ms) or None if no cursor exists
+        """
+        return await self._run_sync(
+            self._sync_get_read_cursor, tenant_id, user_id, channel_id
+        )
+
+    def _sync_get_unread_channels(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            # Find channels where notifications exist after the user's read cursor.
+            # Notifications act as the source of channel activity; the read_cursor
+            # records when the user last viewed a channel.
+            cursor = conn.execute(
+                """
+                SELECT n.node_id AS channel_id,
+                       COUNT(*)  AS unread_count
+                FROM notifications n
+                LEFT JOIN read_cursors rc
+                    ON rc.user_id = ? AND rc.channel_id = n.node_id
+                WHERE n.user_id = ?
+                  AND n.read = 0
+                  AND (rc.last_read_at IS NULL OR n.created_at > rc.last_read_at)
+                GROUP BY n.node_id
+                """,
+                (user_id, user_id),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_unread_channels(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> list[dict]:
+        """Get channels with unread notification counts for a user.
+
+        Returns channels where the user has unread notifications that were
+        created after their last read cursor for that channel.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User identifier
+
+        Returns:
+            List of dicts with 'channel_id' and 'unread_count'
+        """
+        return await self._run_sync(
+            self._sync_get_unread_channels, tenant_id, user_id
+        )
