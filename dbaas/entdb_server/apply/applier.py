@@ -736,6 +736,22 @@ class Applier:
                             (to_ref, from_ref),
                         )
 
+                    elif op_type == "admin_transfer_content":
+                        from_user = op["from_user"]
+                        to_user = op["to_user"]
+                        conn.execute(
+                            "UPDATE nodes SET owner_actor = ?, updated_at = ? "
+                            "WHERE tenant_id = ? AND owner_actor = ?",
+                            (to_user, event.ts_ms, tenant_id, from_user),
+                        )
+
+                    elif op_type == "admin_revoke_access":
+                        user_id = op["user_id"]
+                        conn.execute(
+                            "DELETE FROM node_visibility WHERE tenant_id = ? AND grantee = ?",
+                            (tenant_id, user_id),
+                        )
+
                     else:
                         logger.warning(f"Unknown operation type: {op_type}")
 
