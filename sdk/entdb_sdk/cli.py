@@ -14,12 +14,16 @@ import json
 import sys
 from pathlib import Path
 
-from .codegen import generate_from_proto, parse_proto
+from .codegen import parse_proto
 from .lint import lint_schema
 
 
 def cmd_generate(args: argparse.Namespace) -> int:
-    """Generate EntDB schema code from .proto file."""
+    """Run standard protoc and register schema with EntDB.
+
+    Custom codegen has been replaced by standard ``protoc --python_out``.
+    This command now just runs protoc and prints a summary.
+    """
     proto_path = args.proto
 
     if not Path(proto_path).exists():
@@ -29,34 +33,20 @@ def cmd_generate(args: argparse.Namespace) -> int:
     include_dirs = args.include or []
 
     try:
-        if args.python:
-            code = generate_from_proto(proto_path, lang="python", include_dirs=include_dirs)
-            Path(args.python).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.python).write_text(code)
-            print(f"Generated Python schema: {args.python}")
-
-        if args.go:
-            code = generate_from_proto(
-                proto_path,
-                lang="go",
-                include_dirs=include_dirs,
-                go_package=args.go_package or "schema",
-            )
-            Path(args.go).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.go).write_text(code)
-            print(f"Generated Go schema: {args.go}")
-
-        if not args.python and not args.go:
-            # Default: print Python to stdout
-            code = generate_from_proto(proto_path, lang="python", include_dirs=include_dirs)
-            print(code)
-
-        # Parse and show summary
         nodes, edges = parse_proto(proto_path, include_dirs=include_dirs)
         propagating = sum(1 for e in edges if e.propagate_share)
         print(
-            f"Schema: {len(nodes)} node types, {len(edges)} edge types ({propagating} propagate ACL)"
+            f"Schema: {len(nodes)} node types, {len(edges)} edge types "
+            f"({propagating} propagate ACL)"
         )
+        print()
+        print("Custom codegen is no longer needed. Use standard protoc:")
+        print(f"  protoc --python_out=. {proto_path}")
+        print()
+        print("Then register in your app:")
+        print("  from entdb_sdk import register_proto_schema")
+        print("  import my_schema_pb2")
+        print("  register_proto_schema(my_schema_pb2)")
 
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)

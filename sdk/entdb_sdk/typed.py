@@ -1,9 +1,12 @@
 """Strongly-typed primitives for the EntDB SDK.
 
-All user-facing types live here: ``TypedNode``, ``TypedEdge``,
-``Permission``, ``ACLEntry``, and ``NodeRef`` / ``EdgeRef``.
-Generated code (``entdb codegen``) subclasses ``TypedNode`` and
-``TypedEdge`` with concrete fields.
+All user-facing types live here: ``Actor``, ``Permission``,
+``ACLEntry``, ``TypedNode``, ``TypedEdge``, and reference types.
+
+With proto-first workflow, standard ``protoc`` output replaces custom
+codegen — proto messages ARE the typed classes.  These primitives
+complement the proto types with SDK-specific concepts (permissions,
+ACL grants, actor identifiers).
 """
 
 from __future__ import annotations
@@ -11,6 +14,65 @@ from __future__ import annotations
 import dataclasses
 import enum
 from typing import Any, ClassVar, Self
+
+# ── Actor ─────────────────────────────────────────────────────────────
+
+
+class Actor:
+    """Typed actor identifier — replaces raw ``"user:bob"`` strings.
+
+    Factory methods enforce the ``kind:id`` format and prevent typos.
+
+    Example::
+
+        bob = Actor.user("bob")
+        admins = Actor.group("admins")
+        api = Actor.service("ingestion-pipeline")
+    """
+
+    __slots__ = ("_value",)
+
+    def __init__(self, value: str) -> None:
+        if ":" not in value:
+            raise ValueError(f"Actor must be 'kind:id' (e.g. 'user:bob'), got {value!r}")
+        self._value = value
+
+    @classmethod
+    def user(cls, user_id: str) -> Actor:
+        return cls(f"user:{user_id}")
+
+    @classmethod
+    def group(cls, group_id: str) -> Actor:
+        return cls(f"group:{group_id}")
+
+    @classmethod
+    def service(cls, service_id: str) -> Actor:
+        return cls(f"service:{service_id}")
+
+    @property
+    def kind(self) -> str:
+        return self._value.split(":", 1)[0]
+
+    @property
+    def id(self) -> str:
+        return self._value.split(":", 1)[1]
+
+    def __str__(self) -> str:
+        return self._value
+
+    def __repr__(self) -> str:
+        return f"Actor({self._value!r})"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Actor):
+            return self._value == other._value
+        if isinstance(other, str):
+            return self._value == other
+        return NotImplemented
+
+    def __hash__(self) -> int:
+        return hash(self._value)
+
 
 # ── Enums ────────────────────────────────────────────────────────────
 

@@ -36,6 +36,7 @@ Version: see VERSION file at project root.
 
 from ._version import __version__
 from .client import DbClient, Plan, Receipt
+from .codegen import register_proto_schema
 from .errors import (
     ConnectionError,
     EntDbError,
@@ -60,7 +61,7 @@ from .schema import (
     field,
 )
 from .scope import ActorScope, ScopedPlan, TenantScope
-from .typed import ACLEntry, AliasRef, NodeRef, Permission, TypedEdge, TypedNode
+from .typed import ACLEntry, Actor, AliasRef, NodeRef, Permission, TypedEdge, TypedNode
 
 __all__ = [
     # Version
@@ -80,6 +81,9 @@ __all__ = [
     "ACLEntry",
     "NodeRef",
     "AliasRef",
+    "Actor",
+    # Proto-first registration
+    "register_proto_schema",
     # Hierarchical scopes
     "TenantScope",
     "ActorScope",

@@ -54,6 +54,59 @@ __all__ = ["Node", "Edge", "TenantScope", "ActorScope", "ScopedPlan"]
 logger = logging.getLogger(__name__)
 
 
+def _resolve_create_input(
+    node_or_type: Any,
+    data: dict[str, Any] | None,
+    registry: Any,
+    **kwargs: Any,
+) -> tuple[Any, dict[str, Any]]:
+    """Resolve create() input to (NodeTypeDef, payload dict).
+
+    Accepts proto messages, TypedNode instances, or NodeTypeDef + dict.
+    """
+    # Proto message — has DESCRIPTOR attribute from protoc output
+    if hasattr(node_or_type, "DESCRIPTOR") and hasattr(node_or_type, "ListFields"):
+        from google.protobuf.json_format import MessageToDict
+
+        desc = node_or_type.DESCRIPTOR
+        from ._generated import entdb_options_pb2
+
+        opts = desc.GetOptions()
+        if opts.HasExtension(entdb_options_pb2.node):
+            type_id = opts.Extensions[entdb_options_pb2.node].type_id
+        else:
+            raise ValidationError(
+                f"Proto message {desc.name} has no entdb.node option",
+                errors=[f"{desc.name} missing (entdb.node) annotation"],
+            )
+        node_type = registry.get_node_type(type_id)
+        if node_type is None:
+            raise ValidationError(
+                f"type_id {type_id} from {desc.name} not in registry",
+                errors=[f"type_id {type_id} not registered"],
+            )
+        payload = MessageToDict(node_or_type, preserving_proto_field_name=True)
+        payload.update(kwargs)
+        return node_type, payload
+
+    # TypedNode instance
+    if isinstance(node_or_type, TypedNode):
+        node_type = registry.get_node_type(node_or_type._type_id)
+        if node_type is None:
+            raise ValidationError(
+                f"Unknown type_id {node_or_type._type_id}",
+                errors=[f"type_id {node_or_type._type_id} not in registry"],
+            )
+        payload = node_or_type.to_payload()
+        payload.update(kwargs)
+        return node_type, payload
+
+    # NodeTypeDef + data dict (original path)
+    payload = dict(data or {})
+    payload.update(kwargs)
+    return node_or_type, payload
+
+
 def _acl_entries_to_dicts(
     entries: list[ACLEntry] | list[dict[str, str]],
 ) -> list[dict[str, str]]:
@@ -155,7 +208,7 @@ class Plan:
 
     def create(
         self,
-        node_or_type: TypedNode | NodeTypeDef,
+        node_or_type: Any,
         data: dict[str, Any] | None = None,
         *,
         acl: list[ACLEntry] | list[dict[str, str]] | None = None,
@@ -165,27 +218,17 @@ class Plan:
     ) -> Plan:
         """Add a create_node operation.
 
-        Accepts either a ``TypedNode`` instance (payload extracted
-        automatically) or a ``NodeTypeDef`` + data dict.
+        Accepts a proto message instance, a ``TypedNode`` instance,
+        or a ``NodeTypeDef`` + data dict.
 
         Returns:
             Self for chaining
         """
         self._ensure_not_committed()
 
-        if isinstance(node_or_type, TypedNode):
-            node_type = self._client.registry.get_node_type(node_or_type._type_id)
-            if node_type is None:
-                raise ValidationError(
-                    f"Unknown type_id {node_or_type._type_id}",
-                    errors=[f"type_id {node_or_type._type_id} not in registry"],
-                )
-            payload = node_or_type.to_payload()
-            payload.update(kwargs)
-        else:
-            node_type = node_or_type
-            payload = dict(data or {})
-            payload.update(kwargs)
+        node_type, payload = _resolve_create_input(
+            node_or_type, data, self._client.registry, **kwargs
+        )
 
         is_valid, errors = node_type.validate_payload(payload)
         if not is_valid:

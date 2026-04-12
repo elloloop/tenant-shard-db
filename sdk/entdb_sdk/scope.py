@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from .typed import ACLEntry, Permission, TypedEdge, TypedNode
+from .typed import ACLEntry, Actor, Permission, TypedEdge, TypedNode
 
 if TYPE_CHECKING:
     from ._grpc_client import Edge, Node
@@ -31,29 +31,21 @@ class ScopedPlan:
 
     def create(
         self,
-        node: TypedNode | NodeTypeDef,
+        node: Any,
         data: dict[str, Any] | None = None,
         *,
         acl: list[ACLEntry] | None = None,
         as_: str | None = None,
-        fanout_to: list[str] | None = None,
+        fanout_to: list[Actor | str] | None = None,
     ) -> ScopedPlan:
         """Add a create_node operation.
 
-        Accepts either a ``TypedNode`` instance (payload extracted
-        automatically) or a ``NodeTypeDef`` + data dict.
+        Accepts a proto message instance, a ``TypedNode`` instance, or
+        a ``NodeTypeDef`` + data dict.
         """
-        if isinstance(node, TypedNode):
-            from .registry import get_registry
-
-            registry = get_registry()
-            node_type = registry.get_node_type(node._type_id)
-            payload = node.to_payload()
-            acl_dicts = _acl_to_dicts(acl) if acl else None
-            self._plan.create(node_type, payload, acl=acl_dicts, as_=as_, fanout_to=fanout_to)
-        else:
-            acl_dicts = _acl_to_dicts(acl) if acl else None
-            self._plan.create(node, data, acl=acl_dicts, as_=as_, fanout_to=fanout_to)
+        acl_dicts = _acl_to_dicts(acl) if acl else None
+        fanout_strs = [str(a) for a in fanout_to] if fanout_to else None
+        self._plan.create(node, data, acl=acl_dicts, as_=as_, fanout_to=fanout_strs)
         return self
 
     def update(
@@ -113,8 +105,8 @@ class TenantScope:
         self._client = client
         self._tenant_id = tenant_id
 
-    def actor(self, actor: str) -> ActorScope:
-        return ActorScope(self._client, self._tenant_id, actor)
+    def actor(self, actor: Actor | str) -> ActorScope:
+        return ActorScope(self._client, self._tenant_id, str(actor))
 
 
 class ActorScope:
@@ -241,7 +233,7 @@ class ActorScope:
     async def share(
         self,
         node_id: str,
-        grantee: str,
+        grantee: Actor | str,
         perm: Permission = Permission.READ,
         *,
         actor_type: str = "user",
@@ -251,7 +243,9 @@ class ActorScope:
     ) -> bool:
         kwargs: dict[str, Any] = {"permission": perm.value, "actor_type": actor_type}
         kwargs.update(_optional(expires_at=expires_at, trace_id=trace_id, timeout=timeout))
-        return await self._client.share(node_id, grantee, self._tenant_id, self._actor, **kwargs)
+        return await self._client.share(
+            node_id, str(grantee), self._tenant_id, self._actor, **kwargs
+        )
 
     async def revoke(
         self,
