@@ -2,7 +2,7 @@ name: Deploy Documentation
 
 on:
   push:
-    branches: [main, feature/proto-schema]
+    branches: [main]
     paths:
       - 'docs-site/**'
       - 'docs/**'
