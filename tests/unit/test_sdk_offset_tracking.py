@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcNode, GrpcReceipt
+from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt, Node
 from sdk.entdb_sdk.client import _UNSET, DbClient
 from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
 
@@ -45,8 +45,8 @@ TASK = _task_type()
 EDGE = _edge_type()
 
 
-def _make_grpc_node(tenant_id: str = "t1", node_id: str = "n1") -> GrpcNode:
-    return GrpcNode(
+def _make_grpc_node(tenant_id: str = "t1", node_id: str = "n1") -> Node:
+    return Node(
         tenant_id=tenant_id,
         node_id=node_id,
         type_id=101,

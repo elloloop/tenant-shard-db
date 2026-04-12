@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import grpc
@@ -109,8 +109,19 @@ _DEFAULT_TIMEOUT: float = 30.0
 
 
 @dataclass
-class GrpcNode:
-    """Internal node representation from gRPC response."""
+class Node:
+    """A node from the database.
+
+    Attributes:
+        tenant_id: Tenant identifier
+        node_id: Unique node ID
+        type_id: Node type ID
+        payload: Field values
+        created_at: Creation timestamp (Unix ms)
+        updated_at: Last update timestamp (Unix ms)
+        owner_actor: Creator
+        acl: Access control list
+    """
 
     tenant_id: str
     node_id: str
@@ -119,12 +130,21 @@ class GrpcNode:
     created_at: int
     updated_at: int
     owner_actor: str
-    acl: list[dict[str, str]]
+    acl: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
-class GrpcEdge:
-    """Internal edge representation from gRPC response."""
+class Edge:
+    """An edge from the database.
+
+    Attributes:
+        tenant_id: Tenant identifier
+        edge_type_id: Edge type ID
+        from_node_id: Source node
+        to_node_id: Target node
+        props: Edge properties
+        created_at: Creation timestamp
+    """
 
     tenant_id: str
     edge_type_id: int
@@ -132,6 +152,32 @@ class GrpcEdge:
     to_node_id: str
     props: dict[str, Any]
     created_at: int
+
+
+def _node_from_proto(n: Any) -> Node:
+    """Build a user-facing Node directly from a proto Node message."""
+    return Node(
+        tenant_id=n.tenant_id,
+        node_id=n.node_id,
+        type_id=n.type_id,
+        payload=_struct_to_dict(n.payload),
+        created_at=n.created_at,
+        updated_at=n.updated_at,
+        owner_actor=n.owner_actor,
+        acl=_acl_proto_to_list(n.acl),
+    )
+
+
+def _edge_from_proto(e: Any) -> Edge:
+    """Build a user-facing Edge directly from a proto Edge message."""
+    return Edge(
+        tenant_id=e.tenant_id,
+        edge_type_id=e.edge_type_id,
+        from_node_id=e.from_node_id,
+        to_node_id=e.to_node_id,
+        props=_struct_to_dict(e.props),
+        created_at=e.created_at,
+    )
 
 
 @dataclass
@@ -554,7 +600,7 @@ class GrpcClient:
         wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> GrpcNode | None:
+    ) -> Node | None:
         """Get a node by ID.
 
         Args:
@@ -568,7 +614,7 @@ class GrpcClient:
             timeout: Per-call timeout in seconds
 
         Returns:
-            GrpcNode if found, None otherwise
+            Node if found, None otherwise
         """
         stub = self._ensure_connected()
         metadata = self._build_metadata()
@@ -591,17 +637,7 @@ class GrpcClient:
         if not response.found:
             return None
 
-        node = response.node
-        return GrpcNode(
-            tenant_id=node.tenant_id,
-            node_id=node.node_id,
-            type_id=node.type_id,
-            payload=_struct_to_dict(node.payload),
-            created_at=node.created_at,
-            updated_at=node.updated_at,
-            owner_actor=node.owner_actor,
-            acl=_acl_proto_to_list(node.acl),
-        )
+        return _node_from_proto(response.node)
 
     async def get_nodes(
         self,
@@ -614,7 +650,7 @@ class GrpcClient:
         wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> tuple[list[GrpcNode], list[str]]:
+    ) -> tuple[list[Node], list[str]]:
         """Get multiple nodes by IDs.
 
         Args:
@@ -648,19 +684,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [
-            GrpcNode(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=_struct_to_dict(n.payload),
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=_acl_proto_to_list(n.acl),
-            )
-            for n in response.nodes
-        ]
+        nodes = [_node_from_proto(n) for n in response.nodes]
 
         return nodes, list(response.missing_ids)
 
@@ -679,7 +703,7 @@ class GrpcClient:
         wait_timeout_ms: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> tuple[list[GrpcNode], bool]:
+    ) -> tuple[list[Node], bool]:
         """Query nodes by type.
 
         Args:
@@ -731,19 +755,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [
-            GrpcNode(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=_struct_to_dict(n.payload),
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=_acl_proto_to_list(n.acl),
-            )
-            for n in response.nodes
-        ]
+        nodes = [_node_from_proto(n) for n in response.nodes]
 
         return nodes, response.has_more
 
@@ -757,7 +769,7 @@ class GrpcClient:
         *,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> tuple[list[GrpcEdge], bool]:
+    ) -> tuple[list[Edge], bool]:
         """Get outgoing edges from a node.
 
         Args:
@@ -789,17 +801,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        edges = [
-            GrpcEdge(
-                tenant_id=e.tenant_id,
-                edge_type_id=e.edge_type_id,
-                from_node_id=e.from_node_id,
-                to_node_id=e.to_node_id,
-                props=_struct_to_dict(e.props),
-                created_at=e.created_at,
-            )
-            for e in response.edges
-        ]
+        edges = [_edge_from_proto(e) for e in response.edges]
 
         return edges, response.has_more
 
@@ -813,7 +815,7 @@ class GrpcClient:
         *,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> tuple[list[GrpcEdge], bool]:
+    ) -> tuple[list[Edge], bool]:
         """Get incoming edges to a node.
 
         Args:
@@ -845,17 +847,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        edges = [
-            GrpcEdge(
-                tenant_id=e.tenant_id,
-                edge_type_id=e.edge_type_id,
-                from_node_id=e.from_node_id,
-                to_node_id=e.to_node_id,
-                props=_struct_to_dict(e.props),
-                created_at=e.created_at,
-            )
-            for e in response.edges
-        ]
+        edges = [_edge_from_proto(e) for e in response.edges]
 
         return edges, response.has_more
 
@@ -1068,7 +1060,7 @@ class GrpcClient:
         offset: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> tuple[list[GrpcNode], bool]:
+    ) -> tuple[list[Node], bool]:
         """Get connected nodes via edge type with ACL filtering.
 
         Args:
@@ -1102,21 +1094,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [
-            GrpcNode(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=json_format.MessageToDict(n.payload)
-                if n.payload and n.payload.fields
-                else {},
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=[{"principal": e.principal, "permission": e.permission} for e in n.acl],
-            )
-            for n in response.nodes
-        ]
+        nodes = [_node_from_proto(n) for n in response.nodes]
 
         return nodes, response.has_more
 
@@ -1220,7 +1198,7 @@ class GrpcClient:
         offset: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> tuple[list[GrpcNode], bool]:
+    ) -> tuple[list[Node], bool]:
         """List nodes shared with the calling actor.
 
         Args:
@@ -1250,21 +1228,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [
-            GrpcNode(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=json_format.MessageToDict(n.payload)
-                if n.payload and n.payload.fields
-                else {},
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=[{"principal": e.principal, "permission": e.permission} for e in n.acl],
-            )
-            for n in response.nodes
-        ]
+        nodes = [_node_from_proto(n) for n in response.nodes]
 
         return nodes, response.has_more
 
