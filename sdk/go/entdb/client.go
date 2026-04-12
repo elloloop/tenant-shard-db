@@ -22,6 +22,8 @@ type Transport interface {
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
 	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error)
+	// Share grants permission on a node to another actor.
+	Share(ctx context.Context, tenantID, actor, nodeID, grantee, permission string) error
 }
 
 // grpcTransport is the production Transport backed by a gRPC connection.
@@ -76,8 +78,11 @@ func (t *grpcTransport) QueryNodes(_ context.Context, _, _ string, _ int, _ map[
 }
 
 func (t *grpcTransport) ExecuteAtomic(_ context.Context, _, _, _ string, _ []Operation) (*CommitResult, error) {
-	// Requires generated proto stubs to implement.
 	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
+}
+
+func (t *grpcTransport) Share(_ context.Context, _, _, _, _, _ string) error {
+	return &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
 }
 
 // DbClient is the main entry point for the EntDB Go SDK.
@@ -149,7 +154,7 @@ func (c *DbClient) Config() clientConfig { return c.config }
 // Tenant returns a TenantScope for the given tenant, allowing callers to
 // chain .Actor(actor) to get a fully-scoped handle.
 //
-//	scope := client.Tenant("acme").Actor("user:bob")
+//	scope := client.Tenant("acme").Actor(entdb.UserActor("bob"))
 //	node, err := scope.Get(ctx, 1, "node-123")
 func (c *DbClient) Tenant(tenantID string) *TenantScope {
 	return &TenantScope{

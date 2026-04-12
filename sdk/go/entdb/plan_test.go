@@ -44,7 +44,7 @@ func TestPlan_CreateWithACL(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	acl := []ACLEntry{{Principal: "user:bob", Permission: "read"}}
+	acl := []ACLEntry{{Grantee: UserActor("bob"), Permission: PermissionRead}}
 	alias := plan.CreateWithACL(1, map[string]any{"title": "Secret"}, acl)
 	if alias == "" {
 		t.Fatal("expected non-empty alias")
@@ -54,8 +54,8 @@ func TestPlan_CreateWithACL(t *testing.T) {
 	if len(ops[0].ACL) != 1 {
 		t.Fatalf("expected 1 ACL entry, got %d", len(ops[0].ACL))
 	}
-	if ops[0].ACL[0].Principal != "user:bob" {
-		t.Errorf("expected principal user:bob, got %s", ops[0].ACL[0].Principal)
+	if ops[0].ACL[0].Grantee != UserActor("bob") {
+		t.Errorf("expected principal user:bob, got %s", ops[0].ACL[0].Grantee.String())
 	}
 }
 
@@ -226,11 +226,11 @@ func TestScope_Chaining(t *testing.T) {
 	mock := &mockTransport{getNodeResp: expected}
 	client := newClientWithTransport("localhost:50051", mock)
 
-	scope := client.Tenant("acme").Actor("user:bob")
+	scope := client.Tenant("acme").Actor(UserActor("bob"))
 	if scope.TenantID() != "acme" {
 		t.Errorf("expected tenant acme, got %s", scope.TenantID())
 	}
-	if scope.ActorID() != "user:bob" {
+	if scope.ActorID() != UserActor("bob") {
 		t.Errorf("expected actor user:bob, got %s", scope.ActorID())
 	}
 
@@ -248,7 +248,7 @@ func TestScope_Query(t *testing.T) {
 	mock := &mockTransport{queryResp: expected}
 	client := newClientWithTransport("localhost:50051", mock)
 
-	scope := client.Tenant("acme").Actor("user:bob")
+	scope := client.Tenant("acme").Actor(UserActor("bob"))
 	nodes, err := scope.Query(context.Background(), 1, map[string]any{"status": "active"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -262,11 +262,11 @@ func TestScope_Plan(t *testing.T) {
 	mock := &mockTransport{}
 	client := newClientWithTransport("localhost:50051", mock)
 
-	plan := client.Tenant("acme").Actor("user:bob").Plan()
+	plan := client.Tenant("acme").Actor(UserActor("bob")).Plan()
 	if plan.TenantID() != "acme" {
 		t.Errorf("expected tenant acme, got %s", plan.TenantID())
 	}
-	if plan.Actor() != "user:bob" {
+	if plan.Actor() != "user:bob" /* Plan stores string internally */ {
 		t.Errorf("expected actor user:bob, got %s", plan.Actor())
 	}
 }
@@ -279,8 +279,8 @@ func TestNode_Fields(t *testing.T) {
 		Payload:    map[string]any{"title": "Hello", "count": 7},
 		CreatedAt:  1000,
 		UpdatedAt:  2000,
-		OwnerActor: "user:alice",
-		ACL:        []ACLEntry{{Principal: "user:bob", Permission: "read"}},
+		OwnerActor: UserActor("alice"),
+		ACL:        []ACLEntry{{Grantee: UserActor("bob"), Permission: PermissionRead}},
 	}
 	if node.TenantID != "t1" {
 		t.Errorf("TenantID = %s, want t1", node.TenantID)
@@ -294,8 +294,14 @@ func TestNode_Fields(t *testing.T) {
 	if len(node.ACL) != 1 {
 		t.Fatalf("ACL len = %d, want 1", len(node.ACL))
 	}
-	if node.ACL[0].Principal != "user:bob" {
-		t.Errorf("ACL[0].Principal = %s, want user:bob", node.ACL[0].Principal)
+	if node.ACL[0].Grantee != UserActor("bob") {
+		t.Errorf("ACL[0].Grantee = %s, want user:bob", node.ACL[0].Grantee)
+	}
+	if node.ACL[0].Permission != PermissionRead {
+		t.Errorf("ACL[0].Permission = %s, want read", node.ACL[0].Permission)
+	}
+	if node.OwnerActor != UserActor("alice") {
+		t.Errorf("OwnerActor = %s, want user:alice", node.OwnerActor)
 	}
 }
 
@@ -371,5 +377,80 @@ func TestErrors(t *testing.T) {
 				t.Errorf("Error() = %q, want %q", msg, tt.wantMsg)
 			}
 		})
+	}
+}
+
+func TestActor_Constructors(t *testing.T) {
+	tests := []struct {
+		name  string
+		actor Actor
+		kind  string
+		id    string
+		str   string
+	}{
+		{"user", UserActor("bob"), "user", "bob", "user:bob"},
+		{"group", GroupActor("admins"), "group", "admins", "group:admins"},
+		{"service", ServiceActor("api"), "service", "api", "service:api"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.actor.Kind() != tt.kind {
+				t.Errorf("Kind() = %q, want %q", tt.actor.Kind(), tt.kind)
+			}
+			if tt.actor.ID() != tt.id {
+				t.Errorf("ID() = %q, want %q", tt.actor.ID(), tt.id)
+			}
+			if tt.actor.String() != tt.str {
+				t.Errorf("String() = %q, want %q", tt.actor.String(), tt.str)
+			}
+		})
+	}
+}
+
+func TestActor_ParseActor(t *testing.T) {
+	a, err := ParseActor("user:charlie")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if a != UserActor("charlie") {
+		t.Errorf("got %v, want user:charlie", a)
+	}
+	_, err = ParseActor("invalid")
+	if err == nil {
+		t.Fatal("expected error for invalid actor string")
+	}
+}
+
+func TestActor_Equality(t *testing.T) {
+	a := UserActor("bob")
+	b := UserActor("bob")
+	c := GroupActor("bob")
+	if a != b {
+		t.Error("same actors should be equal")
+	}
+	if a == c {
+		t.Error("different kinds should not be equal")
+	}
+}
+
+func TestPermission_Values(t *testing.T) {
+	if string(PermissionRead) != "read" {
+		t.Errorf("PermissionRead = %q, want read", PermissionRead)
+	}
+	if string(PermissionWrite) != "write" {
+		t.Errorf("PermissionWrite = %q, want write", PermissionWrite)
+	}
+	if string(PermissionAdmin) != "admin" {
+		t.Errorf("PermissionAdmin = %q, want admin", PermissionAdmin)
+	}
+}
+
+func TestScope_Share(t *testing.T) {
+	mock := &mockTransport{}
+	client := newTestClient(t, mock)
+	scope := client.Tenant("acme").Actor(UserActor("alice"))
+	err := scope.Share(context.Background(), "n1", UserActor("charlie"), PermissionWrite)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
