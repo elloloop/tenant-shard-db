@@ -8,7 +8,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
   <h2>1. Define Your Schema</h2>
   <p>Create <code>schema.py</code> in your project:</p>
-  <pre><code>from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
+  <pre is:raw><code>from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
 
 # Node types
 User = NodeTypeDef(type_id=1, name="User", fields=(
@@ -35,12 +35,12 @@ HasComment = EdgeTypeDef(edge_id=2, name="HasComment",
     propagate_share=True)  # comments inherit task ACL</code></pre>
 
   <h2>2. Initialize Schema Baseline</h2>
-  <pre><code># Generate snapshot for CI compatibility checks
+  <pre is:raw><code># Generate snapshot for CI compatibility checks
 entdb init
 # Creates .entdb/snapshot.json — commit this to git</code></pre>
 
   <h2>3. Connect and Create Data</h2>
-  <pre><code>import asyncio
+  <pre is:raw><code>import asyncio
 from entdb_sdk import DbClient
 from schema import Task, Comment, HasComment, AssignedTo, User
 
@@ -65,7 +65,7 @@ async def main():
 asyncio.run(main())</code></pre>
 
   <h2>4. Share a Task</h2>
-  <pre><code>async def share_task(db, task_id):
+  <pre is:raw><code>async def share_task(db, task_id):
     # Share with bob — comments are automatically shared
     await db.share(task_id, actor_id="user:bob",
                    permission="write", tenant_id="acme",
@@ -77,13 +77,13 @@ asyncio.run(main())</code></pre>
     print(f"Bob sees {len(comments)} comments")</code></pre>
 
   <h2>5. Update Data</h2>
-  <pre><code>async def update_task(db, task_id):
+  <pre is:raw><code>async def update_task(db, task_id):
     plan = db.atomic("acme", "user:alice")
     plan.update(Task, task_id, {"status": "in_progress"})
     await plan.commit()</code></pre>
 
   <h2>6. Add Schema Field (Later)</h2>
-  <pre><code># Add a due_date field to Task (non-breaking change)
+  <pre is:raw><code># Add a due_date field to Task (non-breaking change)
 Task = NodeTypeDef(type_id=2, name="Task", fields=(
     field(1, "title", "str", required=True),
     field(2, "status", "enum", enum_values=("todo", "in_progress", "done")),

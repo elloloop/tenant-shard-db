@@ -7,7 +7,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <p>EntDB ships three CLI commands that run in your CI pipeline. Together they guarantee schema safety, GDPR compliance, and backward compatibility.</p>
 
   <h2>The Three Commands</h2>
-  <pre><code># 1. LINT — catch schema mistakes (missing data_policy, unmarked PII, etc.)
+  <pre is:raw><code># 1. LINT — catch schema mistakes (missing data_policy, unmarked PII, etc.)
 entdb lint schema.proto
 
 # 2. CHECK — block breaking changes (removed fields, changed types, etc.)
@@ -17,7 +17,7 @@ entdb check schema.proto --baseline .entdb/snapshot.json
 entdb generate schema.proto --python myapp/schema.py --go pkg/schema/types.go</code></pre>
 
   <h2>GitHub Actions Setup</h2>
-  <pre><code># .github/workflows/ci.yml
+  <pre is:raw><code># .github/workflows/ci.yml
 name: CI
 on: [push, pull_request]
 
@@ -77,7 +77,7 @@ jobs:
   </table>
 
   <h2>First-Time Setup</h2>
-  <pre><code># 1. Install the SDK
+  <pre is:raw><code># 1. Install the SDK
 pip install entdb-sdk
 
 # 2. Initialize the baseline snapshot
@@ -93,7 +93,7 @@ git commit -m "Initialize schema baseline"
 # From now on, every PR is checked automatically.</code></pre>
 
   <h2>After Making Schema Changes</h2>
-  <pre><code># Non-breaking change (add field, add type):
+  <pre is:raw><code># Non-breaking change (add field, add type):
 # CI passes automatically. Snapshot auto-updates on next init.
 
 # Breaking change (rare, requires migration):
@@ -103,7 +103,7 @@ git add .entdb/snapshot.json
 git commit -m "Accept breaking schema change: removed legacy field"</code></pre>
 
   <h2>pyproject.toml Configuration</h2>
-  <pre><code>[tool.entdb]
+  <pre is:raw><code>[tool.entdb]
 schema = "schema.proto"
 snapshot = ".entdb/snapshot.json"</code></pre>
 </DocsLayout>

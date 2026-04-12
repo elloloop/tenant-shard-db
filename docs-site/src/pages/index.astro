@@ -20,7 +20,7 @@ import DocsLayout from "../layouts/DocsLayout.astro";
   <h2>The Lifecycle</h2>
 
   <h3>1. Define Your Schema</h3>
-  <pre><code>from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
+  <pre is:raw><code>from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
 
 Task = NodeTypeDef(
     type_id=1, name="Task",
@@ -44,21 +44,21 @@ HasComment = EdgeTypeDef(
 )</code></pre>
 
   <h3>2. Initialize & Connect</h3>
-  <pre><code>from entdb_sdk import DbClient
+  <pre is:raw><code>from entdb_sdk import DbClient
 
 async with DbClient("localhost:50051", api_key="your-key") as db:
     # All operations go through the client
     pass</code></pre>
 
   <h3>3. Create Data</h3>
-  <pre><code>plan = db.atomic("acme", "user:alice")
+  <pre is:raw><code>plan = db.atomic("acme", "user:alice")
 plan.create(Task, {"{"}title": "Ship v2", "status": "todo"{"}"}, as_="t")
 plan.create(Comment, {"{"}body": "Let's go!"{"}"}, as_="c")
 plan.edge_create(HasComment, from_="$t.id", to="$c.id")
 result = await plan.commit(wait_applied=True)</code></pre>
 
   <h3>4. Share & Control Access</h3>
-  <pre><code># Share task with bob — comments are automatically shared (propagate_share)
+  <pre is:raw><code># Share task with bob — comments are automatically shared (propagate_share)
 await db.share(task_id, actor_id="user:bob", permission="write",
                tenant_id="acme", granted_by="user:alice")
 
@@ -66,13 +66,13 @@ await db.share(task_id, actor_id="user:bob", permission="write",
 comments = await db.connected(task_id, HasComment, tenant_id="acme", actor="user:bob")</code></pre>
 
   <h3>5. Read with Consistency</h3>
-  <pre><code># After a write, read with offset guarantee
+  <pre is:raw><code># After a write, read with offset guarantee
 result = await plan.commit()
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
                     after_offset=result.receipt.stream_position)</code></pre>
 
   <h3>6. Evolve Your Schema</h3>
-  <pre><code># Add a new field (non-breaking)
+  <pre is:raw><code># Add a new field (non-breaking)
 Task = NodeTypeDef(
     type_id=1, name="Task",
     fields=(
@@ -87,7 +87,7 @@ $ entdb check
 Schema compatible: 1 non-breaking change (field added)</code></pre>
 
   <h2>Architecture</h2>
-  <pre><code>Clients (gRPC / Python SDK / Go SDK)
+  <pre is:raw><code>Clients (gRPC / Python SDK / Go SDK)
         |
    EntDB Server
    |          |

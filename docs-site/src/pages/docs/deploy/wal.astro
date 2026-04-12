@@ -19,7 +19,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   </table>
 
   <h2>Kafka (Recommended)</h2>
-  <pre><code># Environment variables
+  <pre is:raw><code># Environment variables
 WAL_BACKEND=kafka
 KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 KAFKA_TOPIC=entdb-events
@@ -28,7 +28,7 @@ KAFKA_REPLICATION_FACTOR=3
 KAFKA_NUM_PARTITIONS=6</code></pre>
 
   <h2>Local (Development)</h2>
-  <pre><code># No external dependencies — events stay in memory
+  <pre is:raw><code># No external dependencies — events stay in memory
 WAL_BACKEND=local
 
 # Data is lost on restart. Use only for development.</code></pre>
@@ -38,13 +38,13 @@ WAL_BACKEND=local
 
   <h2>Multi-Tenant Partitioning</h2>
   <p>All tenants share a single WAL topic, partitioned by <code>tenant_id</code>. This ensures events for the same tenant are ordered and processed sequentially:</p>
-  <pre><code># Kafka topic: entdb-events
+  <pre is:raw><code># Kafka topic: entdb-events
 # Partition key: tenant_id
 # Result: events for tenant "acme" always go to the same partition</code></pre>
 
   <h2>Swapping Backends</h2>
   <p>All backends implement the same <code>WalStream</code> protocol. Swapping is a config change:</p>
-  <pre><code># Switch from Kafka to Kinesis
+  <pre is:raw><code># Switch from Kafka to Kinesis
 WAL_BACKEND=kinesis
 KINESIS_STREAM_NAME=entdb-events
 AWS_REGION=us-east-1</code></pre>

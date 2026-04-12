@@ -7,78 +7,78 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <p>Complete example: task management app with projects, tasks, comments, assignments, and sharing between friends.</p>
 
   <h2>1. Schema (schema.proto)</h2>
-  <pre><code>syntax = "proto3";
+  <pre is:raw><code>syntax = "proto3";
 import "entdb_options.proto";
 
-enum TaskStatus {"{"}TODO = 0; IN_PROGRESS = 1; DONE = 2;{"}"}
-enum Priority   {"{"}LOW = 0; MEDIUM = 1; HIGH = 2; URGENT = 3;{"}"}
+enum TaskStatus {TODO = 0; IN_PROGRESS = 1; DONE = 2;}
+enum Priority   {LOW = 0; MEDIUM = 1; HIGH = 2; URGENT = 3;}
 
-message Project {"{"}
-    option (entdb.node) = {"{"}
+message Project {
+    option (entdb.node) = {
         type_id: 1
         tenant_visible: true
         data_policy: DATA_POLICY_BUSINESS
-    {"}"};
-    string name = 1        [(entdb.field) = {"{"}required: true, pii_false: true{"}"}];
-    string description = 2 [(entdb.field) = {"{"}pii_false: true{"}"}];
-{"}"}
+    };
+    string name = 1        [(entdb.field) = {required: true, pii_false: true}];
+    string description = 2 [(entdb.field) = {pii_false: true}];
+}
 
-message Task {"{"}
-    option (entdb.node) = {"{"}
+message Task {
+    option (entdb.node) = {
         type_id: 2
         inherit: true
         data_policy: DATA_POLICY_BUSINESS
-    {"}"};
-    string title = 1       [(entdb.field) = {"{"}required: true, searchable: true, pii_false: true{"}"}];
+    };
+    string title = 1       [(entdb.field) = {required: true, searchable: true, pii_false: true}];
     TaskStatus status = 2;
     Priority priority = 3;
-    string assignee_id = 4 [(entdb.field) = {"{"}pii: true{"}"}];
-{"}"}
+    string assignee_id = 4 [(entdb.field) = {pii: true}];
+}
 
-message Comment {"{"}
-    option (entdb.node) = {"{"}
+message Comment {
+    option (entdb.node) = {
         type_id: 3
         inherit: true
         data_policy: DATA_POLICY_PERSONAL
         subject_field: "author_id"
-    {"}"};
-    string body = 1        [(entdb.field) = {"{"}required: true, pii: true{"}"}];
-    string author_id = 2   [(entdb.field) = {"{"}pii: true{"}"}];
-{"}"}
+    };
+    string body = 1        [(entdb.field) = {required: true, pii: true}];
+    string author_id = 2   [(entdb.field) = {pii: true}];
+}
 
 // Edges
-message ProjectHasTask {"{"}
-    option (entdb.edge) = {"{"}edge_id: 1, name: "HAS_TASK", propagate_share: true{"}"};
+message ProjectHasTask {
+    option (entdb.edge) = {edge_id: 1, name: "HAS_TASK", propagate_share: true};
     Project from = 15;
     Task to = 16;
-{"}"}
+}
 
-message TaskHasComment {"{"}
-    option (entdb.edge) = {"{"}edge_id: 2, name: "HAS_COMMENT", propagate_share: true{"}"};
+message TaskHasComment {
+    option (entdb.edge) = {edge_id: 2, name: "HAS_COMMENT", propagate_share: true};
     Task from = 15;
     Comment to = 16;
-{"}"}
+}
 
-message TaskAssignedTo {"{"}
-    option (entdb.edge) = {"{"}edge_id: 3, name: "ASSIGNED_TO"{"}"};
+message TaskAssignedTo {
+    option (entdb.edge) = {edge_id: 3, name: "ASSIGNED_TO"};
     Task from = 15;
     User to = 16;
-{"}"}</code></pre>
+}</code></pre>
 
   <h2>2. Generate types</h2>
-  <pre><code>entdb generate schema.proto --python myapp/schema.py
+  <pre is:raw><code>entdb generate schema.proto --python myapp/schema.py
 entdb init schema.proto</code></pre>
 
   <h2>3. Connect and create</h2>
-  <pre><code>from entdb_sdk import DbClient
+  <pre is:raw><code>from entdb_sdk import DbClient
 from myapp.schema import Project, Task, Comment, ProjectHasTask, TaskHasComment
 
 async with DbClient("localhost:50051") as db:
     # Create project with tasks — atomic
     plan = db.atomic("alice", "user:alice")
-    plan.create(Project, {"{"}name": "Q4 Launch"{"}"}, as_="project")
-    plan.create(Task, {"{"}title": "Design mockups", "status": "TODO"{"}"}, as_="task1")
-    plan.create(Task, {"{"}title": "Backend API", "status": "TODO"{"}"}, as_="task2")
+    plan.create(Project, {name": "Q4 Launch"}, as_="project")
+    plan.create(Task, {title": "Design mockups", "status": "TODO"}, as_="task1")
+    plan.create(Task, {title": "Backend API", "status": "TODO"}, as_="task2")
     plan.edge_create(ProjectHasTask, from_="$project.id", to="$task1.id")
     plan.edge_create(ProjectHasTask, from_="$project.id", to="$task2.id")
     result = await plan.commit()
@@ -86,7 +86,7 @@ async with DbClient("localhost:50051") as db:
     project_id = result.created_node_ids[0]</code></pre>
 
   <h2>4. Share with teammates</h2>
-  <pre><code># Share the project — tasks are automatically shared (propagate_share)
+  <pre is:raw><code># Share the project — tasks are automatically shared (propagate_share)
 await db.share(project_id, "user:bob", "write", "alice", granted_by="user:alice")
 await db.share(project_id, "user:carol", "read", "alice", granted_by="user:alice")
 
@@ -103,11 +103,11 @@ await db.share(next_project_id, "group:team-launch", "write", "alice", granted_b
 # All group members get access. Add new members to the group = instant access.</code></pre>
 
   <h2>5. Query tasks</h2>
-  <pre><code># Alice queries her tasks (automatic ACL filtering)
-tasks = await db.query(Task, "alice", "user:alice", filter={"{"}status": "TODO"{"}"})
+  <pre is:raw><code># Alice queries her tasks (automatic ACL filtering)
+tasks = await db.query(Task, "alice", "user:alice", filter={status": "TODO"})
 
 # Bob queries (sees only what he has access to)
-bob_tasks = await db.query(Task, "alice", "user:bob", filter={"{"}status": "TODO"{"}"})
+bob_tasks = await db.query(Task, "alice", "user:bob", filter={status": "TODO"})
 
 # Get all comments on a task (ACL via parent)
 comments = await db.connected(task_id, TaskHasComment, "alice", "user:bob")
@@ -116,14 +116,14 @@ comments = await db.connected(task_id, TaskHasComment, "alice", "user:bob")
 shared = await db.shared_with_me("user:bob", "alice")</code></pre>
 
   <h2>6. Add a comment</h2>
-  <pre><code># Bob adds a comment to alice's task (has write access)
+  <pre is:raw><code># Bob adds a comment to alice's task (has write access)
 plan = db.atomic("alice", "user:bob")
-plan.create(Comment, {"{"}body": "Mockups look great!", "author_id": "user:bob"{"}"}, as_="c")
+plan.create(Comment, {body": "Mockups look great!", "author_id": "user:bob"}, as_="c")
 plan.edge_create(TaskHasComment, from_=task_id, to="$c.id")
 await plan.commit()</code></pre>
 
   <h2>7. Read-after-write consistency</h2>
-  <pre><code># SDK handles this automatically:
+  <pre is:raw><code># SDK handles this automatically:
 result = await plan.commit()
 # Next read is guaranteed to see the write:
 task = await db.get(Task, result.created_node_ids[0], "alice", "user:alice")

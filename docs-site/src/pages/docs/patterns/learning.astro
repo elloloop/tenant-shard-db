@@ -19,7 +19,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   </table>
 
   <h2>1. Platform setup</h2>
-  <pre><code># Platform admin creates the content tenant
+  <pre is:raw><code># Platform admin creates the content tenant
 await db.create_tenant("easyloops", "EasyLoops Learning")
 
 # Create subscription groups
@@ -28,9 +28,9 @@ await db.group_add("pro-tier", "user:placeholder", "easyloops")
 
 # Create courses (public catalog)
 plan = db.atomic("easyloops", "system:admin")
-plan.create(Course, {"{"}title": "Python 101", "price": 0{"}"}, as_="c1")
-plan.create(Course, {"{"}title": "System Design", "price": 49{"}"}, as_="c2")
-plan.create(Lesson, {"{"}title": "Variables", "content": "..."{"}"}, as_="l1")
+plan.create(Course, {title": "Python 101", "price": 0}, as_="c1")
+plan.create(Course, {title": "System Design", "price": 49}, as_="c2")
+plan.create(Lesson, {title": "Variables", "content": "..."}, as_="l1")
 plan.edge_create(CourseHasLesson, from_="$c1.id", to="$l1.id")
 result = await plan.commit()
 
@@ -43,7 +43,7 @@ await db.share(result.created_node_ids[1], "group:pro-tier", "read",
                "easyloops", granted_by="system:admin")</code></pre>
 
   <h2>2. Student enrollment</h2>
-  <pre><code># Alice subscribes to pro tier
+  <pre is:raw><code># Alice subscribes to pro tier
 await db.add_tenant_member("easyloops", "user:alice", role="viewer")
 await db.group_add("pro-tier", "user:alice", "easyloops")
 
@@ -52,13 +52,13 @@ courses = await db.query(Course, "easyloops", "user:alice")
 lessons = await db.connected(course_id, CourseHasLesson, "easyloops", "user:alice")</code></pre>
 
   <h2>3. Student progress (cross-tenant)</h2>
-  <pre><code># Alice's progress lives in HER personal tenant
+  <pre is:raw><code># Alice's progress lives in HER personal tenant
 plan = db.atomic("alice", "user:alice")
-plan.create(Progress, {"{"}
+plan.create(Progress, {
     course_ref": "easyloops:course-python101",
     "completed_lessons": 3,
     "quiz_score": 85
-{"}"})
+})
 await plan.commit()
 
 # Platform reads alice's progress (for analytics)
@@ -67,7 +67,7 @@ await db.share(progress_id, "user:platform-analytics", "read",
                "alice", granted_by="user:alice")</code></pre>
 
   <h2>4. Organization bulk enrollment</h2>
-  <pre><code># Acme Corp creates their tenant
+  <pre is:raw><code># Acme Corp creates their tenant
 await db.create_tenant("acme-corp", "Acme Corp")
 
 # Create an engineering group
@@ -83,47 +83,47 @@ for member in ["user:bob", "user:carol"]:
 # All engineering members now have pro course access</code></pre>
 
   <h2>5. Schema</h2>
-  <pre><code>message Course {"{"}
-    option (entdb.node) = {"{"}
+  <pre is:raw><code>message Course {
+    option (entdb.node) = {
         type_id: 1
         public: true                   // catalog is public
         data_policy: DATA_POLICY_BUSINESS
-    {"}"};
-    string title = 1 [(entdb.field) = {"{"}required: true, pii_false: true{"}"}];
+    };
+    string title = 1 [(entdb.field) = {required: true, pii_false: true}];
     int32 price = 2;
-{"}"}
+}
 
-message Lesson {"{"}
-    option (entdb.node) = {"{"}
+message Lesson {
+    option (entdb.node) = {
         type_id: 2
         inherit: true                  // inherits from course
         data_policy: DATA_POLICY_BUSINESS
-    {"}"};
-    string title = 1   [(entdb.field) = {"{"}required: true, pii_false: true{"}"}];
-    string content = 2 [(entdb.field) = {"{"}pii_false: true{"}"}];
-{"}"}
+    };
+    string title = 1   [(entdb.field) = {required: true, pii_false: true}];
+    string content = 2 [(entdb.field) = {pii_false: true}];
+}
 
-message Progress {"{"}
-    option (entdb.node) = {"{"}
+message Progress {
+    option (entdb.node) = {
         type_id: 3
         data_policy: DATA_POLICY_PERSONAL  // student's data
         subject_field: "student_id"
-    {"}"};
-    string course_ref = 1       [(entdb.field) = {"{"}pii_false: true{"}"}];
+    };
+    string course_ref = 1       [(entdb.field) = {pii_false: true}];
     int32 completed_lessons = 2;
     int32 quiz_score = 3;
-    string student_id = 4       [(entdb.field) = {"{"}pii: true{"}"}];
-{"}"}
+    string student_id = 4       [(entdb.field) = {pii: true}];
+}
 
-message CourseHasLesson {"{"}
-    option (entdb.edge) = {"{"}
+message CourseHasLesson {
+    option (entdb.edge) = {
         edge_id: 1
         name: "HAS_LESSON"
         propagate_share: true          // enroll in course = access lessons
-    {"}"};
+    };
     Course from = 15;
     Lesson to = 16;
-{"}"}</code></pre>
+}</code></pre>
 
   <h2>What the database handles</h2>
   <ul>
