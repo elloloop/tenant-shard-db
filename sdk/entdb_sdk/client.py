@@ -515,6 +515,8 @@ class DbClient:
         If a specific string, use that value.
         """
         if isinstance(after_offset, _Unset):
+            if not hasattr(self, "_last_offsets"):
+                return None
             return self._last_offsets.get(tenant_id)
         return after_offset
 
@@ -980,6 +982,8 @@ class DbClient:
             )
             # Track last write offset per tenant for read-after-write consistency
             if result.receipt.stream_position:
+                if not hasattr(self, "_last_offsets"):
+                    self._last_offsets = {}
                 self._last_offsets[tenant_id] = result.receipt.stream_position
 
         return CommitResult(
