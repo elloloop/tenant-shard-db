@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Refraction-UI CSS variables (HSL triplets — see tailwind-config) */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 243 75% 59%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 243 75% 59%;
+  }
+
+  .dark {
+    --background: 222 47% 5%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 7%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 7%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 234 89% 74%;
+    --primary-foreground: 222 47% 11%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 234 89% 74%;
+  }
+}
+
+/* Content typography — using refraction-ui tokens, no custom classes */
+@layer components {
+  .prose h1 {
+    @apply text-3xl font-bold tracking-tight mb-4;
+  }
+  .prose h2 {
+    @apply text-2xl font-semibold mt-10 mb-3 pb-2 border-b border-border;
+  }
+  .prose h3 {
+    @apply text-lg font-semibold mt-6 mb-2;
+  }
+  .prose p {
+    @apply mb-4 text-muted-foreground leading-relaxed;
+  }
+  .prose ul,
+  .prose ol {
+    @apply mb-4 pl-6 text-muted-foreground;
+  }
+  .prose li {
+    @apply mb-1;
+  }
+  .prose strong {
+    @apply text-foreground font-semibold;
+  }
+  .prose a {
+    @apply text-primary hover:underline;
+  }
+  .prose code {
+    @apply bg-muted text-foreground px-1.5 py-0.5 rounded text-sm border border-border;
+  }
+  .prose pre {
+    @apply bg-muted border border-border rounded-lg p-4 overflow-x-auto mb-5;
+  }
+  .prose pre code {
+    @apply bg-transparent border-0 p-0 text-sm leading-relaxed;
+  }
+  .prose table {
+    @apply w-full border-collapse mb-5 text-sm;
+  }
+  .prose th,
+  .prose td {
+    @apply text-left px-3 py-2 border-b border-border;
+  }
+  .prose th {
+    @apply text-xs uppercase tracking-wide text-muted-foreground font-semibold bg-muted/40;
+  }
+  .prose td {
+    @apply text-muted-foreground;
+  }
+  .prose blockquote {
+    @apply border-l-4 border-primary bg-primary/5 px-4 py-3 my-4 rounded-r-lg text-foreground;
+  }
+}
