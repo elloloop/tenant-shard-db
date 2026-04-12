@@ -59,6 +59,8 @@ from .schema import (
     SubjectExitPolicy,
     field,
 )
+from .scope import ActorScope, ScopedPlan, TenantScope
+from .typed import TypedNode
 
 __all__ = [
     # Version
@@ -72,6 +74,11 @@ __all__ = [
     "FieldDef",
     "FieldKind",
     "field",
+    "TypedNode",
+    # Hierarchical scopes
+    "TenantScope",
+    "ActorScope",
+    "ScopedPlan",
     # Registry
     "SchemaRegistry",
     "get_registry",

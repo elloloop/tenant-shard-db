@@ -43,11 +43,12 @@ from .errors import (
 )
 from .registry import SchemaRegistry, get_registry
 from .schema import EdgeTypeDef, NodeTypeDef
+from .scope import ActorScope, ScopedPlan, TenantScope
 
 # Re-exported for backwards compatibility. Node/Edge are defined in
 # _grpc_client.py so the gRPC layer can build them directly from proto
 # messages without an intermediate shape.
-__all__ = ["Node", "Edge"]
+__all__ = ["Node", "Edge", "TenantScope", "ActorScope", "ScopedPlan"]
 
 logger = logging.getLogger(__name__)
 
@@ -530,6 +531,26 @@ class DbClient:
         """
         self._ensure_connected()
         return Plan(self, tenant_id, actor, idempotency_key, trace_id=trace_id)
+
+    def tenant(self, tenant_id: str) -> TenantScope:
+        """Create a tenant-scoped handle.
+
+        Returns a ``TenantScope`` that captures this client and tenant_id.
+        Call ``.actor(actor)`` on the result to get an ``ActorScope`` with
+        convenient read/write methods that no longer require tenant_id/actor.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            TenantScope bound to this client and tenant
+
+        Example:
+            >>> alice = db.tenant("alice").actor("user:bob")
+            >>> task = await alice.get(Task, "t1")
+        """
+        self._ensure_connected()
+        return TenantScope(self, tenant_id)
 
     async def wait_for_offset(
         self,

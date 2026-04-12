@@ -1009,7 +1009,11 @@ class Applier:
         node: Node,
         op: dict[str, Any],
     ) -> None:
-        """Fanout a node to user mailboxes.
+        """Fanout a node to user mailboxes via canonical store notifications.
+
+        Writes notification rows into the per-tenant SQLite notifications
+        table instead of opening separate mailbox files per user, avoiding
+        the file-descriptor tax.
 
         Args:
             event: Source event
@@ -1025,32 +1029,34 @@ class Applier:
             if principal.startswith("user:"):
                 recipients.append(principal)
 
-        # Create mailbox items for each recipient
+        # Build batch notification entries for the canonical store
+        snippet = self._generate_snippet(node.payload)
+        entries: list[dict[str, Any]] = []
         for recipient in set(recipients):
             if recipient.startswith("user:"):
-                user_id = recipient
+                entries.append(
+                    {
+                        "user_id": recipient,
+                        "type": str(node.type_id),
+                        "node_id": node.node_id,
+                        "snippet": snippet,
+                    }
+                )
 
-                # Generate snippet from payload
-                snippet = self._generate_snippet(node.payload)
+        if not entries:
+            return
 
-                try:
-                    await self.mailbox_store.add_item(
-                        tenant_id=event.tenant_id,
-                        user_id=user_id,
-                        source_type_id=node.type_id,
-                        source_node_id=node.node_id,
-                        snippet=snippet,
-                        ts=event.ts_ms,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to fanout to mailbox: {e}",
-                        extra={
-                            "tenant_id": event.tenant_id,
-                            "user_id": user_id,
-                            "node_id": node.node_id,
-                        },
-                    )
+        try:
+            await self.canonical_store.batch_create_notifications(event.tenant_id, entries)
+        except Exception as e:
+            logger.warning(
+                f"Failed to fanout notifications: {e}",
+                extra={
+                    "tenant_id": event.tenant_id,
+                    "node_id": node.node_id,
+                    "recipient_count": len(entries),
+                },
+            )
 
     def _generate_snippet(self, payload: dict[str, Any]) -> str:
         """Generate searchable snippet from payload.

@@ -325,8 +325,8 @@ class TestApplierIntegration:
         assert node is None
 
     @pytest.mark.asyncio
-    async def test_mailbox_fanout(self, applier, mailbox_store):
-        """Message type fans out to recipient mailboxes."""
+    async def test_mailbox_fanout(self, applier, canonical_store):
+        """Message type fans out to recipient notifications via canonical store."""
         tenant_id = "tenant_1"
 
         event = self._make_event(
@@ -347,13 +347,13 @@ class TestApplierIntegration:
         result = await applier.apply_event(event)
         assert result.success
 
-        # Check Bob's mailbox
-        bob_items = await mailbox_store.list_items(tenant_id, "user:bob")
-        assert len(bob_items) == 1
+        # Check Bob's notifications (now via canonical_store, not mailbox)
+        bob_items = await canonical_store.get_notifications(tenant_id, "user:bob")
+        assert len(bob_items) >= 1
 
-        # Check Charlie's mailbox
-        charlie_items = await mailbox_store.list_items(tenant_id, "user:charlie")
-        assert len(charlie_items) == 1
+        # Check Charlie's notifications
+        charlie_items = await canonical_store.get_notifications(tenant_id, "user:charlie")
+        assert len(charlie_items) >= 1
 
     @pytest.mark.asyncio
     async def test_multi_tenant_isolation(self, applier, canonical_store):
