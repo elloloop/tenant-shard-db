@@ -21,9 +21,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcNode, GrpcReceipt
-from sdk.entdb_sdk.client import DbClient, _UNSET
+from sdk.entdb_sdk.client import _UNSET, DbClient
 from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

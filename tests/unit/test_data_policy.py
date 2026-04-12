@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import json
 import logging
-import tempfile
 from pathlib import Path
 
 import pytest
@@ -27,7 +26,6 @@ from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 from dbaas.entdb_server.data_policy import REQUIRES_LEGAL_BASIS, DataPolicy
 from dbaas.entdb_server.schema.registry import SchemaRegistry
 from dbaas.entdb_server.schema.types import NodeTypeDef, field
-
 
 # ---------------------------------------------------------------------------
 # DataPolicy enum
@@ -68,7 +66,7 @@ class TestDataPolicyEnum:
 
     def test_requires_legal_basis_set(self):
         """FINANCIAL, AUDIT, HEALTHCARE require legal_basis."""
-        assert REQUIRES_LEGAL_BASIS == frozenset({"financial", "audit", "healthcare"})
+        assert frozenset({"financial", "audit", "healthcare"}) == REQUIRES_LEGAL_BASIS
 
 
 # ---------------------------------------------------------------------------

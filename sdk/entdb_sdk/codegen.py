@@ -138,6 +138,8 @@ def parse_proto(
     """
     from google.protobuf import descriptor_pb2
 
+    from ._generated import entdb_options_pb2  # noqa: F401 — registers extensions
+
     proto_path = Path(proto_path).resolve()
     if not proto_path.exists():
         raise FileNotFoundError(f"Proto file not found: {proto_path}")
@@ -179,176 +181,129 @@ def parse_proto(
     nodes: list[NodeInfo] = []
     edges: list[EdgeInfo] = []
 
-    # Custom option field numbers (from entdb_options.proto)
-    NODE_OPT = 50100
-    EDGE_OPT = 50101
-    FIELD_OPT = 50102
-
     for file_desc in desc_set.file:
         for msg in file_desc.message_type:
-            node_info = _extract_node(msg, NODE_OPT, FIELD_OPT)
+            node_info = _extract_node(msg)
             if node_info:
                 nodes.append(node_info)
                 continue
 
-            edge_info = _extract_edge(msg, EDGE_OPT, FIELD_OPT)
+            edge_info = _extract_edge(msg)
             if edge_info:
                 edges.append(edge_info)
 
     return nodes, edges
 
 
-def _decode_varint(data: bytes, pos: int) -> tuple[int, int]:
-    """Decode a varint from bytes at the given position."""
-    result = 0
-    shift = 0
-    while pos < len(data):
-        b = data[pos]
-        result |= (b & 0x7F) << shift
-        pos += 1
-        if (b & 0x80) == 0:
-            return result, pos
-        shift += 7
-    raise ValueError("Truncated varint")
+def _reparse_message_options(options) -> Any:
+    """Re-parse MessageOptions through the generated options module.
 
-
-def _encode_varint(value: int) -> bytes:
-    """Encode an integer as a varint."""
-    buf = bytearray()
-    while value > 0x7F:
-        buf.append((value & 0x7F) | 0x80)
-        value >>= 7
-    buf.append(value & 0x7F)
-    return bytes(buf)
-
-
-def _get_option_value(options, field_number: int) -> bytes | None:
-    """Extract a custom option value from proto options by field number.
-
-    Custom extensions are stored as unknown fields in the serialized options.
-    We parse the raw wire format to find the field by number.
+    ``FileDescriptorSet`` stores custom extensions as unknown fields on
+    the options message because the descriptor's pool has no knowledge
+    of our extensions. By serializing + re-parsing into a freshly imported
+    ``MessageOptions`` (which has the entdb extensions registered via the
+    ``entdb_options_pb2`` import in ``parse_proto``), the extensions
+    become accessible via ``options.Extensions[entdb_options_pb2.node]``.
     """
-    if not options or not options.ByteSize():
-        return None
+    from google.protobuf import descriptor_pb2
 
-    raw = options.SerializeToString()
-    if not raw:
-        return None
-
-    pos = 0
-    while pos < len(raw):
-        tag, pos = _decode_varint(raw, pos)
-        fn = tag >> 3
-        wt = tag & 0x7
-
-        if wt == 0:  # VARINT
-            val, next_pos = _decode_varint(raw, pos)
-            if fn == field_number:
-                return _encode_varint(val)
-            pos = next_pos
-        elif wt == 2:  # LENGTH_DELIMITED
-            length, pos = _decode_varint(raw, pos)
-            data = raw[pos : pos + length]
-            if fn == field_number:
-                return data
-            pos += length
-        elif wt == 5:  # FIXED32
-            if fn == field_number:
-                return raw[pos : pos + 4]
-            pos += 4
-        elif wt == 1:  # FIXED64
-            if fn == field_number:
-                return raw[pos : pos + 8]
-            pos += 8
-        else:
-            break  # Unknown wire type
-
-    return None
+    raw = options.SerializeToString() if options is not None else b""
+    reparsed = descriptor_pb2.MessageOptions()
+    if raw:
+        reparsed.ParseFromString(raw)
+    return reparsed
 
 
-def _extract_node(msg, node_opt_num: int, field_opt_num: int) -> NodeInfo | None:
+def _reparse_field_options(options) -> Any:
+    """Re-parse FieldOptions through the generated options module.
+
+    See ``_reparse_message_options`` for rationale.
+    """
+    from google.protobuf import descriptor_pb2
+
+    raw = options.SerializeToString() if options is not None else b""
+    reparsed = descriptor_pb2.FieldOptions()
+    if raw:
+        reparsed.ParseFromString(raw)
+    return reparsed
+
+
+def _extract_node(msg) -> NodeInfo | None:
     """Extract NodeInfo from a proto message descriptor if it has entdb.node option."""
-    raw_opts = _get_option_value(msg.options, node_opt_num)
-    if raw_opts is None:
+    from ._generated import entdb_options_pb2
+
+    opts = _reparse_message_options(msg.options)
+    if not opts.HasExtension(entdb_options_pb2.node):
         return None
 
-    node_opts = _parse_node_opts(raw_opts)
-    if node_opts is None or node_opts.get("type_id", 0) == 0:
+    node_opts = opts.Extensions[entdb_options_pb2.node]
+    if node_opts.type_id == 0:
         return None
 
-    fields = []
-    for fd in msg.field:
-        fi = _extract_field(fd, field_opt_num)
-        fields.append(fi)
-
-    dp_num = node_opts.get("data_policy", 0)
-    data_policy = _DATA_POLICY_NAMES.get(dp_num, "PERSONAL")
+    fields = [_extract_field(fd) for fd in msg.field]
+    data_policy = _DATA_POLICY_NAMES.get(int(node_opts.data_policy), "PERSONAL")
 
     return NodeInfo(
-        type_id=node_opts["type_id"],
+        type_id=node_opts.type_id,
         name=msg.name,
         fields=fields,
-        acl_public=node_opts.get("public", False),
-        acl_tenant_visible=node_opts.get("tenant_visible", False),
-        acl_inherit=node_opts.get("inherit", False),
-        is_private=node_opts.get("private", False),
+        acl_public=node_opts.public,
+        acl_tenant_visible=node_opts.tenant_visible,
+        acl_inherit=node_opts.inherit,
+        is_private=node_opts.private,
         data_policy=data_policy,
-        subject_field=node_opts.get("subject_field", ""),
-        retention_days=node_opts.get("retention_days", 0),
-        legal_basis=node_opts.get("legal_basis", ""),
-        deprecated=node_opts.get("deprecated", False),
-        description=node_opts.get("description", ""),
+        subject_field=node_opts.subject_field,
+        retention_days=node_opts.retention_days,
+        legal_basis=node_opts.legal_basis,
+        deprecated=node_opts.deprecated,
+        description=node_opts.description,
     )
 
 
-def _extract_edge(msg, edge_opt_num: int, field_opt_num: int) -> EdgeInfo | None:
+def _extract_edge(msg) -> EdgeInfo | None:
     """Extract EdgeInfo from a proto message if it has entdb.edge option."""
-    raw_opts = _get_option_value(msg.options, edge_opt_num)
-    if raw_opts is None:
+    from ._generated import entdb_options_pb2
+
+    opts = _reparse_message_options(msg.options)
+    if not opts.HasExtension(entdb_options_pb2.edge):
         return None
 
-    edge_opts = _parse_edge_opts(raw_opts)
-    if edge_opts is None or edge_opts.get("edge_id", 0) == 0:
+    edge_opts = opts.Extensions[entdb_options_pb2.edge]
+    if edge_opts.edge_id == 0:
         return None
 
-    props = []
-    for fd in msg.field:
-        fi = _extract_field(fd, field_opt_num)
-        props.append(fi)
-
-    dp_num = edge_opts.get("data_policy", 0)
-    data_policy = _DATA_POLICY_NAMES.get(dp_num, "PERSONAL")
-
-    se_num = edge_opts.get("on_subject_exit", 0)
-    on_subject_exit = _SUBJECT_EXIT_NAMES.get(se_num, "BOTH")
+    props = [_extract_field(fd) for fd in msg.field]
+    data_policy = _DATA_POLICY_NAMES.get(int(edge_opts.data_policy), "PERSONAL")
+    on_subject_exit = _SUBJECT_EXIT_NAMES.get(int(edge_opts.on_subject_exit), "BOTH")
 
     return EdgeInfo(
-        edge_id=edge_opts["edge_id"],
-        name=edge_opts.get("name", msg.name),
+        edge_id=edge_opts.edge_id,
+        name=edge_opts.name or msg.name,
         from_type=0,
         to_type=0,
         props=props,
-        propagate_share=edge_opts.get("propagate_share", False),
-        unique_per_from=edge_opts.get("unique_per_from", False),
+        propagate_share=edge_opts.propagate_share,
+        unique_per_from=edge_opts.unique_per_from,
         data_policy=data_policy,
         on_subject_exit=on_subject_exit,
-        retention_days=edge_opts.get("retention_days", 0),
-        legal_basis=edge_opts.get("legal_basis", ""),
-        deprecated=edge_opts.get("deprecated", False),
-        description=edge_opts.get("description", ""),
+        retention_days=edge_opts.retention_days,
+        legal_basis=edge_opts.legal_basis,
+        deprecated=edge_opts.deprecated,
+        description=edge_opts.description,
     )
 
 
-def _extract_field(fd, field_opt_num: int) -> FieldInfo:
+def _extract_field(fd) -> FieldInfo:
     """Extract FieldInfo from a proto field descriptor."""
-    raw_opts = _get_option_value(fd.options, field_opt_num) if fd.options else None
+    from ._generated import entdb_options_pb2
 
-    opts: dict[str, Any] = {}
-    if raw_opts is not None:
-        opts = _parse_field_opts(raw_opts)
+    opts = _reparse_field_options(fd.options) if fd.options else None
+    fext = None
+    if opts is not None and opts.HasExtension(entdb_options_pb2.field):
+        fext = opts.Extensions[entdb_options_pb2.field]
 
-    kind_override = opts.get("kind", "")
-    enum_str = opts.get("enum_values", "")
+    kind_override = fext.kind if fext is not None else ""
+    enum_str = fext.enum_values if fext is not None else ""
     enum_values = tuple(v.strip() for v in enum_str.split(",") if v.strip()) if enum_str else None
 
     kind = _resolve_kind(fd.type, fd.label, kind_override)
@@ -359,201 +314,18 @@ def _extract_field(fd, field_opt_num: int) -> FieldInfo:
         field_id=fd.number,
         name=fd.name,
         kind=kind,
-        required=opts.get("required", False),
-        searchable=opts.get("searchable", False),
-        indexed=opts.get("indexed", False),
-        pii=opts.get("pii", False),
-        phi=opts.get("phi", False),
-        pii_false=opts.get("pii_false", False),
+        required=bool(fext.required) if fext is not None else False,
+        searchable=bool(fext.searchable) if fext is not None else False,
+        indexed=bool(fext.indexed) if fext is not None else False,
+        pii=bool(fext.pii) if fext is not None else False,
+        phi=bool(fext.phi) if fext is not None else False,
+        pii_false=bool(fext.pii_false) if fext is not None else False,
         enum_values=enum_values,
-        ref_type_id=opts.get("ref_type_id") or None,
-        deprecated=opts.get("deprecated", False),
-        description=opts.get("description", ""),
-        default_value=opts.get("default_value") or None,
+        ref_type_id=(fext.ref_type_id or None) if fext is not None else None,
+        deprecated=bool(fext.deprecated) if fext is not None else False,
+        description=fext.description if fext is not None else "",
+        default_value=(fext.default_value or None) if fext is not None else None,
     )
-
-
-def _parse_node_opts(raw: bytes) -> dict[str, Any]:
-    """Parse raw bytes into NodeOpts dict using protobuf wire format.
-
-    Field numbers (from entdb_options.proto v2):
-      1: type_id (varint)
-      2: public (bool/varint)
-      3: tenant_visible (bool/varint)
-      4: inherit (bool/varint)
-      5: private (bool/varint)
-      6: data_policy (enum/varint)
-      7: subject_field (string)
-      8: retention_days (varint)
-      9: legal_basis (string)
-      10: description (string)
-      11: deprecated (bool/varint)
-    """
-    result: dict[str, Any] = {}
-    pos = 0
-    while pos < len(raw):
-        tag, new_pos = _decode_varint(raw, pos)
-        field_number = tag >> 3
-        wire_type = tag & 0x7
-
-        if wire_type == 0:  # VARINT
-            val, pos = _decode_varint(raw, new_pos)
-            if field_number == 1:
-                result["type_id"] = val
-            elif field_number == 2:
-                result["public"] = bool(val)
-            elif field_number == 3:
-                result["tenant_visible"] = bool(val)
-            elif field_number == 4:
-                result["inherit"] = bool(val)
-            elif field_number == 5:
-                result["private"] = bool(val)
-            elif field_number == 6:
-                result["data_policy"] = val
-            elif field_number == 8:
-                result["retention_days"] = val
-            elif field_number == 11:
-                result["deprecated"] = bool(val)
-        elif wire_type == 2:  # LENGTH_DELIMITED
-            length, pos = _decode_varint(raw, new_pos)
-            val_bytes = raw[pos : pos + length]
-            pos = pos + length
-            if field_number == 7:
-                result["subject_field"] = val_bytes.decode("utf-8")
-            elif field_number == 9:
-                result["legal_basis"] = val_bytes.decode("utf-8")
-            elif field_number == 10:
-                result["description"] = val_bytes.decode("utf-8")
-        else:
-            pos = new_pos
-            if wire_type == 5:  # FIXED32
-                pos += 4
-            elif wire_type == 1:  # FIXED64
-                pos += 8
-
-    return result
-
-
-def _parse_edge_opts(raw: bytes) -> dict[str, Any]:
-    """Parse EdgeOpts from raw bytes.
-
-    Field numbers (from entdb_options.proto v2):
-      1: edge_id (varint)
-      2: name (string)
-      3: propagate_share (bool/varint)
-      4: unique_per_from (bool/varint)
-      5: data_policy (enum/varint)
-      6: on_subject_exit (enum/varint)
-      7: retention_days (varint)
-      8: legal_basis (string)
-      9: description (string)
-      10: deprecated (bool/varint)
-    """
-    result: dict[str, Any] = {}
-    pos = 0
-    while pos < len(raw):
-        tag, new_pos = _decode_varint(raw, pos)
-        field_number = tag >> 3
-        wire_type = tag & 0x7
-
-        if wire_type == 0:  # VARINT
-            val, pos = _decode_varint(raw, new_pos)
-            if field_number == 1:
-                result["edge_id"] = val
-            elif field_number == 3:
-                result["propagate_share"] = bool(val)
-            elif field_number == 4:
-                result["unique_per_from"] = bool(val)
-            elif field_number == 5:
-                result["data_policy"] = val
-            elif field_number == 6:
-                result["on_subject_exit"] = val
-            elif field_number == 7:
-                result["retention_days"] = val
-            elif field_number == 10:
-                result["deprecated"] = bool(val)
-        elif wire_type == 2:  # LENGTH_DELIMITED
-            length, pos = _decode_varint(raw, new_pos)
-            val_bytes = raw[pos : pos + length]
-            pos = pos + length
-            if field_number == 2:
-                result["name"] = val_bytes.decode("utf-8")
-            elif field_number == 8:
-                result["legal_basis"] = val_bytes.decode("utf-8")
-            elif field_number == 9:
-                result["description"] = val_bytes.decode("utf-8")
-        else:
-            pos = new_pos
-            if wire_type == 5:  # FIXED32
-                pos += 4
-            elif wire_type == 1:  # FIXED64
-                pos += 8
-
-    return result
-
-
-def _parse_field_opts(raw: bytes) -> dict[str, Any]:
-    """Parse FieldOpts from raw bytes.
-
-    Field numbers (from entdb_options.proto v2):
-      1: required (bool/varint)
-      2: searchable (bool/varint)
-      3: indexed (bool/varint)
-      4: pii (bool/varint)
-      5: phi (bool/varint)
-      6: enum_values (string)
-      7: kind (string)
-      8: ref_type_id (varint)
-      9: default_value (string)
-      10: description (string)
-      11: deprecated (bool/varint)
-      12: pii_false (bool/varint)
-    """
-    result: dict[str, Any] = {}
-    pos = 0
-    while pos < len(raw):
-        tag, new_pos = _decode_varint(raw, pos)
-        field_number = tag >> 3
-        wire_type = tag & 0x7
-
-        if wire_type == 0:  # VARINT
-            val, pos = _decode_varint(raw, new_pos)
-            if field_number == 1:
-                result["required"] = bool(val)
-            elif field_number == 2:
-                result["searchable"] = bool(val)
-            elif field_number == 3:
-                result["indexed"] = bool(val)
-            elif field_number == 4:
-                result["pii"] = bool(val)
-            elif field_number == 5:
-                result["phi"] = bool(val)
-            elif field_number == 8:
-                result["ref_type_id"] = val
-            elif field_number == 11:
-                result["deprecated"] = bool(val)
-            elif field_number == 12:
-                result["pii_false"] = bool(val)
-        elif wire_type == 2:  # LENGTH_DELIMITED
-            length, pos = _decode_varint(raw, new_pos)
-            val_bytes = raw[pos : pos + length]
-            pos = pos + length
-            if field_number == 6:
-                result["enum_values"] = val_bytes.decode("utf-8")
-            elif field_number == 7:
-                result["kind"] = val_bytes.decode("utf-8")
-            elif field_number == 9:
-                result["default_value"] = val_bytes.decode("utf-8")
-            elif field_number == 10:
-                result["description"] = val_bytes.decode("utf-8")
-        else:
-            pos = new_pos
-            if wire_type == 5:  # FIXED32
-                pos += 4
-            elif wire_type == 1:  # FIXED64
-                pos += 8
-
-    return result
 
 
 # ── Code Generators ───────────────────────────────────────────────────

@@ -13,7 +13,6 @@ import sys
 import tempfile
 
 import pytest
-
 from google.protobuf import descriptor_pb2
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

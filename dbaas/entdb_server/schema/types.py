@@ -92,6 +92,25 @@ class AclPermission(Enum):
     ADMIN = "admin"  # Can modify ACL
 
 
+class OnSubjectExit(str, Enum):
+    """Controls which direction of an edge is affected when a data subject
+    (user) is deleted or anonymized for GDPR purposes.
+
+    Values:
+        FROM: Edge is acted upon only when the user is the ``from`` node.
+        TO:   Edge is acted upon only when the user is the ``to`` node.
+        BOTH: Edge is acted upon regardless of direction (default for edges
+              carrying PII about the data subject).
+
+    Used by GDPR anonymization/deletion routines to decide whether an edge
+    should be deleted or anonymized when a user is removed.
+    """
+
+    FROM = "from"
+    TO = "to"
+    BOTH = "both"
+
+
 @dataclass(frozen=True)
 class AclEntry:
     """ACL entry granting permission to a principal.
@@ -562,6 +581,8 @@ class EdgeTypeDef:
     unique_per_from: bool = False
     deprecated: bool = False
     description: str = ""
+    data_policy: DataPolicy | None = None
+    on_subject_exit: OnSubjectExit = OnSubjectExit.BOTH
 
     def __post_init__(self) -> None:
         """Validate edge type definition."""
@@ -641,12 +662,18 @@ class EdgeTypeDef:
             result["deprecated"] = True
         if self.description:
             result["description"] = self.description
+        if self.data_policy is not None:
+            result["data_policy"] = self.data_policy.value
+        result["on_subject_exit"] = self.on_subject_exit.value
         return result
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> EdgeTypeDef:
         """Create from dictionary representation."""
         props = tuple(FieldDef.from_dict(p) for p in data.get("props", []))
+        dp_raw = data.get("data_policy")
+        data_policy = DataPolicy(dp_raw) if dp_raw is not None else None
+        ose_raw = data.get("on_subject_exit", "both")
         return cls(
             edge_id=data["edge_id"],
             name=data["name"],
@@ -656,6 +683,8 @@ class EdgeTypeDef:
             unique_per_from=data.get("unique_per_from", False),
             deprecated=data.get("deprecated", False),
             description=data.get("description", ""),
+            data_policy=data_policy,
+            on_subject_exit=OnSubjectExit(ose_raw),
         )
 
     def __hash__(self) -> int:

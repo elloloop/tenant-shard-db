@@ -27,6 +27,13 @@ from .compat import (
     check_compatibility,
     generate_fingerprint,
 )
+from .field_id_translation import (
+    id_to_name_keys,
+    looks_id_keyed,
+    name_to_id_keys,
+    translate_filter_name_to_id,
+    translate_payload_json_to_names,
+)
 from .registry import SchemaRegistry, freeze_registry, get_registry
 from .types import (
     AclEntry,
@@ -35,6 +42,7 @@ from .types import (
     FieldDef,
     FieldKind,
     NodeTypeDef,
+    OnSubjectExit,
     field,
 )
 
@@ -47,6 +55,7 @@ __all__ = [
     "field",
     "AclEntry",
     "AclPermission",
+    "OnSubjectExit",
     # Data policy
     "DataPolicy",
     # Registry
@@ -59,4 +68,10 @@ __all__ = [
     "CompatibilityError",
     "check_compatibility",
     "generate_fingerprint",
+    # Field-id translation (issue #104)
+    "id_to_name_keys",
+    "looks_id_keyed",
+    "name_to_id_keys",
+    "translate_filter_name_to_id",
+    "translate_payload_json_to_names",
 ]

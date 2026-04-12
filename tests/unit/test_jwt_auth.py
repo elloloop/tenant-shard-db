@@ -23,7 +23,6 @@ from dbaas.entdb_server.api.jwt_auth import (
     JwtConfig,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers: self-signed RSA key pair and mock JWKS
 # ---------------------------------------------------------------------------
@@ -253,9 +252,11 @@ class TestValidateToken:
         authenticator._cache.keys = {}
         authenticator._cache.fetched_at = time.monotonic()
 
-        with patch.object(authenticator, "_fetch_jwks", return_value={}):
-            with pytest.raises(AuthError, match="No JWKS key found"):
-                await authenticator.validate_token(token)
+        with (
+            patch.object(authenticator, "_fetch_jwks", return_value={}),
+            pytest.raises(AuthError, match="No JWKS key found"),
+        ):
+            await authenticator.validate_token(token)
 
 
 # ---------------------------------------------------------------------------

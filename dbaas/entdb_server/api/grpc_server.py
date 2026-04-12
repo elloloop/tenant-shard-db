@@ -30,6 +30,12 @@ from google.protobuf.struct_pb2 import Struct
 from grpc import aio as grpc_aio
 
 from ..metrics import record_grpc_request
+from ..schema.field_id_translation import (
+    id_to_name_keys,
+    name_to_id_keys,
+    translate_filter_name_to_id,
+    translate_payload_json_to_names,
+)
 from ..sharding import ShardingConfig
 from .generated import (
     AclEntry,
@@ -468,7 +474,13 @@ class EntDBServicer(EntDBServiceServicer):
             raise
 
     def _convert_operations(self, operations: list) -> list[dict[str, Any]]:
-        """Convert protobuf operations to internal format."""
+        """Convert protobuf operations to internal format.
+
+        Ingress field-id translation (issue #104): any ``create_node.data``
+        or ``update_node.patch`` payload is translated from name-keyed to
+        id-keyed using the schema registry so that storage is keyed by the
+        stable numeric ``field_id``.  Unknown field names are dropped.
+        """
         result = []
 
         for op in operations:
@@ -476,10 +488,12 @@ class EntDBServicer(EntDBServiceServicer):
 
             if op_type == "create_node":
                 create = op.create_node
+                data = _struct_to_dict(create.data)
+                data = name_to_id_keys(data, create.type_id, self.schema_registry)
                 internal_op: dict[str, Any] = {
                     "op": "create_node",
                     "type_id": create.type_id,
-                    "data": _struct_to_dict(create.data),
+                    "data": data,
                 }
                 if create.id:
                     internal_op["id"] = create.id
@@ -494,12 +508,14 @@ class EntDBServicer(EntDBServiceServicer):
 
             elif op_type == "update_node":
                 update = op.update_node
+                patch = _struct_to_dict(update.patch)
+                patch = name_to_id_keys(patch, update.type_id, self.schema_registry)
                 result.append(
                     {
                         "op": "update_node",
                         "type_id": update.type_id,
                         "id": update.id,
-                        "patch": _struct_to_dict(update.patch),
+                        "patch": patch,
                     }
                 )
 
@@ -537,6 +553,20 @@ class EntDBServicer(EntDBServiceServicer):
                 )
 
         return result
+
+    def _payload_id_to_name_dict(self, n: Any) -> dict[str, Any]:
+        """Egress helper: return the stored payload keyed by field name.
+
+        Reads ``node.payload`` (id-keyed on disk) and uses the schema
+        registry to remap keys.  See :func:`id_to_name_keys`.
+        """
+        return id_to_name_keys(n.payload, n.type_id, self.schema_registry)
+
+    def _payload_id_to_name_json(self, n: Any) -> str:
+        """Egress helper: return a JSON string payload keyed by field name."""
+        return translate_payload_json_to_names(
+            n.payload_json, n.type_id, self.schema_registry
+        )
 
     def _convert_node_ref(self, ref: Any) -> Any:
         """Convert protobuf node reference to internal format."""
@@ -660,7 +690,7 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=node.tenant_id,
                     node_id=node.node_id,
                     type_id=node.type_id,
-                    payload=_dict_to_struct(node.payload),
+                    payload=_dict_to_struct(self._payload_id_to_name_dict(node)),
                     created_at=node.created_at,
                     updated_at=node.updated_at,
                     owner_actor=node.owner_actor,
@@ -729,7 +759,7 @@ class EntDBServicer(EntDBServiceServicer):
                         tenant_id=node.tenant_id,
                         node_id=node.node_id,
                         type_id=node.type_id,
-                        payload=_dict_to_struct(node.payload),
+                        payload=_dict_to_struct(self._payload_id_to_name_dict(node)),
                         created_at=node.created_at,
                         updated_at=node.updated_at,
                         owner_actor=node.owner_actor,
@@ -771,6 +801,10 @@ class EntDBServicer(EntDBServiceServicer):
             filter_dict = None
             if request.filters:
                 filter_dict = {f.field: json_format.MessageToDict(f.value) for f in request.filters}
+                # Ingress: translate name-keyed filter to id-keyed (issue #104)
+                filter_dict = translate_filter_name_to_id(
+                    filter_dict, request.type_id, self.schema_registry
+                )
 
             nodes = await self.canonical_store.query_nodes(
                 tenant_id=request.context.tenant_id,
@@ -800,7 +834,7 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=n.tenant_id,
                     node_id=n.node_id,
                     type_id=n.type_id,
-                    payload=_dict_to_struct(n.payload),
+                    payload=_dict_to_struct(self._payload_id_to_name_dict(n)),
                     created_at=n.created_at,
                     updated_at=n.updated_at,
                     owner_actor=n.owner_actor,
@@ -1138,12 +1172,16 @@ class EntDBServicer(EntDBServiceServicer):
     # --- ACL v2 handlers ---
 
     def _node_to_proto(self, n: Any) -> Node:
-        """Convert an internal Node to a protobuf Node message."""
+        """Convert an internal Node to a protobuf Node message.
+
+        Egress translates the stored id-keyed payload back to name-keyed
+        JSON so clients always see field names (issue #104).
+        """
         return Node(
             tenant_id=n.tenant_id,
             node_id=n.node_id,
             type_id=n.type_id,
-            payload_json=n.payload_json,
+            payload_json=self._payload_id_to_name_json(n),
             created_at=n.created_at,
             updated_at=n.updated_at,
             owner_actor=n.owner_actor,

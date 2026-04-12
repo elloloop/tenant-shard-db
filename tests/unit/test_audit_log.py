@@ -15,7 +15,6 @@ Tests cover:
 
 import asyncio
 import sqlite3
-import tempfile
 import time
 
 import pytest
@@ -24,7 +23,6 @@ from dbaas.entdb_server.apply.canonical_store import (
     CanonicalStore,
     _compute_entry_hash,
 )
-
 
 # ── fixtures ──────────────────────────────────────────────────────────
 
@@ -50,13 +48,13 @@ TENANT = "t1"
 
 async def _append(store, **kwargs):
     """Shorthand for append_audit with defaults."""
-    defaults = dict(
-        tenant_id=TENANT,
-        actor_id="user:alice",
-        action="create_node",
-        target_type="node",
-        target_id="n1",
-    )
+    defaults = {
+        "tenant_id": TENANT,
+        "actor_id": "user:alice",
+        "action": "create_node",
+        "target_type": "node",
+        "target_id": "n1",
+    }
     defaults.update(kwargs)
     return await store.append_audit(**defaults)
 

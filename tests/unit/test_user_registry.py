@@ -15,17 +15,11 @@ import pytest
 
 from dbaas.entdb_server.api.generated import (
     CreateUserRequest,
-    CreateUserResponse,
     GetUserRequest,
-    GetUserResponse,
     ListUsersRequest,
-    ListUsersResponse,
     UpdateUserRequest,
-    UpdateUserResponse,
-    UserInfo,
 )
 from dbaas.entdb_server.api.grpc_server import EntDBServicer
-
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -143,7 +137,7 @@ class TestCreateUser:
         )
 
         with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
-            response = await servicer.CreateUser(request, context)
+            await servicer.CreateUser(request, context)
 
         # context.abort was called with PERMISSION_DENIED
         context.abort.assert_called()
@@ -184,7 +178,7 @@ class TestCreateUser:
         )
 
         with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
-            response = await servicer.CreateUser(request, context)
+            await servicer.CreateUser(request, context)
 
         context.abort.assert_called()
         assert "email" in str(context.abort.call_args).lower()
@@ -242,7 +236,7 @@ class TestGetUser:
         request = GetUserRequest(user_id="u1")
 
         with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
-            response = await servicer.GetUser(request, context)
+            await servicer.GetUser(request, context)
 
         context.abort.assert_called()
         assert "actor" in str(context.abort.call_args).lower()
@@ -305,7 +299,7 @@ class TestUpdateUser:
         )
 
         with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
-            response = await servicer.UpdateUser(request, context)
+            await servicer.UpdateUser(request, context)
 
         context.abort.assert_called()
         assert "user themselves or admin" in str(context.abort.call_args)
@@ -414,7 +408,7 @@ class TestNoGlobalStore:
         )
 
         with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
-            response = await servicer.CreateUser(request, context)
+            await servicer.CreateUser(request, context)
 
         context.abort.assert_called()
         assert "not configured" in str(context.abort.call_args).lower()
@@ -427,7 +421,7 @@ class TestNoGlobalStore:
         request = GetUserRequest(actor="user:u1", user_id="u1")
 
         with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
-            response = await servicer.GetUser(request, context)
+            await servicer.GetUser(request, context)
 
         context.abort.assert_called()
         assert "not configured" in str(context.abort.call_args).lower()

@@ -28,10 +28,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..data_policy import REQUIRES_LEGAL_BASIS, DataPolicy
+from ..data_policy import REQUIRES_LEGAL_BASIS
 from ..global_store import GlobalStore
 from ..metrics import record_applier_event
-from ..schema.registry import SchemaRegistry, get_registry
+from ..schema.registry import get_registry
 from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
 from .canonical_store import CanonicalStore, Edge, Node

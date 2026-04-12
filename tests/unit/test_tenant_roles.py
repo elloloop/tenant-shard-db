@@ -44,7 +44,6 @@ from dbaas.entdb_server.api.generated import (
 from dbaas.entdb_server.api.grpc_server import EntDBServicer
 from dbaas.entdb_server.global_store import GlobalStore
 
-
 # ── Test scaffolding ─────────────────────────────────────────────────
 
 

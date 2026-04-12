@@ -30,7 +30,6 @@ from dbaas.entdb_server.encryption import (
     shred_tenant,
 )
 
-
 # ── Key derivation tests ─────────────────────────────────────────────
 
 

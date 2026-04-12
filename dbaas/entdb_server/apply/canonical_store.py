@@ -3148,6 +3148,38 @@ class CanonicalStore:
         """
         return self._get_db_path(tenant_id)
 
+    def delete_tenant_database(self, tenant_id: str) -> bool:
+        """Remove a tenant's SQLite database file from disk.
+
+        Also closes and evicts any pooled connection for the tenant and
+        best-effort removes the WAL/SHM sidecar files. Used by the GDPR
+        deletion worker when a personal tenant is being erased.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            True if the database file existed and was removed.
+        """
+        db_path = self._get_db_path(tenant_id)
+        cache_key = str(db_path)
+        conn = self._connections.pop(cache_key, None)
+        if conn is not None:
+            with contextlib.suppress(Exception):
+                conn.close()
+        removed = False
+        if db_path.exists():
+            with contextlib.suppress(FileNotFoundError):
+                db_path.unlink()
+                removed = True
+        # WAL / SHM sidecars
+        for suffix in ("-wal", "-shm"):
+            sidecar = db_path.with_name(db_path.name + suffix)
+            if sidecar.exists():
+                with contextlib.suppress(FileNotFoundError):
+                    sidecar.unlink()
+        return removed
+
     # ── Notifications ─────────────────────────────────────────────────
 
     def _sync_create_notification(
@@ -3508,4 +3540,381 @@ class CanonicalStore:
         """
         return await self._run_sync(
             self._sync_get_unread_channels, tenant_id, user_id
+        )
+
+    # ── GDPR: anonymization and export ──────────────────────────────────
+
+    @staticmethod
+    def anon_id(user_id: str, salt: str = "entdb-gdpr-v1") -> str:
+        """Derive a deterministic anonymous identifier for a user.
+
+        The same (user_id, salt) pair always produces the same anonymous
+        ID so that anonymized conversations and relationships still make
+        sense after deletion. The salt is a per-process constant.
+
+        Args:
+            user_id: Original user identifier (e.g. ``user:alice``)
+            salt: Deterministic salt applied before hashing
+
+        Returns:
+            String of the form ``user:anon-<12 hex chars>``
+        """
+        digest = hashlib.sha256((salt + user_id).encode()).hexdigest()[:12]
+        return f"user:anon-{digest}"
+
+    def _sync_anonymize_user_in_tenant(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+        salt: str,
+    ) -> dict:
+        """Apply per-type data_policy rules for GDPR user deletion.
+
+        Runs in a single transaction. See
+        :meth:`anonymize_user_in_tenant` for the behavioural contract.
+        """
+        from ..data_policy import DataPolicy
+        from ..schema.registry import SchemaRegistry
+
+        reg: SchemaRegistry = registry  # type: ignore[assignment]
+        anon = self.anon_id(user_id, salt)
+        deleted_nodes = 0
+        anonymized_nodes = 0
+        deleted_edges = 0
+        anonymized_edges = 0
+
+        def _scrub_payload(payload: dict, pii_fields: list[str], subject_field: str | None) -> dict:
+            """Return a new payload with pii=true fields scrubbed and
+            subject_field (if any) remapped to the anonymous id when it
+            matches the user being deleted."""
+            out = dict(payload)
+            for fname in pii_fields:
+                if fname in out:
+                    value = out[fname]
+                    if isinstance(value, str):
+                        out[fname] = ""
+                    elif isinstance(value, (int, float)):
+                        out[fname] = 0
+                    elif isinstance(value, list):
+                        out[fname] = []
+                    elif isinstance(value, dict):
+                        out[fname] = {}
+                    else:
+                        out[fname] = None
+            if subject_field and out.get(subject_field) == user_id:
+                out[subject_field] = anon
+            return out
+
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # Collect all candidate nodes (owner_actor = user OR subject_field matches)
+                # We scan the full table once and filter in Python so that subject_field
+                # matches work for JSON-stored payloads. For larger tenants a per-type
+                # path would be faster, but this is straightforward and consistent.
+                rows = conn.execute(
+                    "SELECT node_id, type_id, payload_json, owner_actor "
+                    "FROM nodes WHERE tenant_id = ?",
+                    (tenant_id,),
+                ).fetchall()
+
+                for row in rows:
+                    type_id = row["type_id"]
+                    node_id = row["node_id"]
+                    owner = row["owner_actor"]
+                    try:
+                        policy = reg.get_data_policy(type_id)
+                        pii_fields = reg.get_pii_fields(type_id)
+                        subject_field = reg.get_subject_field(type_id)
+                    except KeyError:
+                        # Unknown type: treat as PERSONAL (strictest)
+                        policy = DataPolicy.PERSONAL
+                        pii_fields = []
+                        subject_field = None
+
+                    try:
+                        payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+                    except json.JSONDecodeError:
+                        payload = {}
+
+                    is_owner = owner == user_id
+                    is_subject = (
+                        subject_field is not None
+                        and payload.get(subject_field) == user_id
+                    )
+                    if not (is_owner or is_subject):
+                        continue
+
+                    if policy in (DataPolicy.PERSONAL, DataPolicy.EPHEMERAL):
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND (from_node_id = ? OR to_node_id = ?)",
+                            (tenant_id, node_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM node_visibility "
+                            "WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        conn.execute(
+                            "DELETE FROM node_access WHERE node_id = ?",
+                            (node_id,),
+                        )
+                        conn.execute(
+                            "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                            (tenant_id, node_id),
+                        )
+                        deleted_nodes += 1
+                    else:
+                        # BUSINESS, FINANCIAL, AUDIT, HEALTHCARE → anonymize
+                        new_payload = _scrub_payload(payload, pii_fields, subject_field)
+                        new_owner = anon if is_owner else owner
+                        conn.execute(
+                            "UPDATE nodes SET payload_json = ?, owner_actor = ?, updated_at = ? "
+                            "WHERE tenant_id = ? AND node_id = ?",
+                            (
+                                json.dumps(new_payload),
+                                new_owner,
+                                int(time.time() * 1000),
+                                tenant_id,
+                                node_id,
+                            ),
+                        )
+                        if is_owner:
+                            # Owner visibility row: rewrite from user_id to anon
+                            conn.execute(
+                                "UPDATE node_visibility SET principal = ? "
+                                "WHERE tenant_id = ? AND node_id = ? AND principal = ?",
+                                (anon, tenant_id, node_id, user_id),
+                            )
+                        anonymized_nodes += 1
+
+                # Edges — consult registry on_subject_exit
+                edge_rows = conn.execute(
+                    "SELECT edge_type_id, from_node_id, to_node_id, props_json "
+                    "FROM edges WHERE tenant_id = ? "
+                    "AND (from_node_id = ? OR to_node_id = ?)",
+                    (tenant_id, user_id, user_id),
+                ).fetchall()
+
+                for er in edge_rows:
+                    edge_type_id = er["edge_type_id"]
+                    from_id = er["from_node_id"]
+                    to_id = er["to_node_id"]
+                    try:
+                        direction = reg.get_edge_on_subject_exit(edge_type_id)
+                        edge_policy = reg.get_edge_data_policy(edge_type_id)
+                    except KeyError:
+                        direction = "both"
+                        edge_policy = DataPolicy.PERSONAL
+
+                    hit_from = from_id == user_id
+                    hit_to = to_id == user_id
+                    if direction == "from" and not hit_from:
+                        continue
+                    if direction == "to" and not hit_to:
+                        continue
+
+                    if edge_policy in (DataPolicy.PERSONAL, DataPolicy.EPHEMERAL):
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND edge_type_id = ? AND from_node_id = ? AND to_node_id = ?",
+                            (tenant_id, edge_type_id, from_id, to_id),
+                        )
+                        deleted_edges += 1
+                    else:
+                        # Anonymize edge: scrub pii props + replace user endpoints with anon
+                        try:
+                            edge_pii = []
+                            edge_type = reg.get_edge_type(edge_type_id)
+                            if edge_type is not None:
+                                edge_pii = [
+                                    p.name for p in edge_type.props
+                                    if getattr(p, "pii", False) and not p.deprecated
+                                ]
+                        except Exception:
+                            edge_pii = []
+                        try:
+                            props = json.loads(er["props_json"]) if er["props_json"] else {}
+                        except json.JSONDecodeError:
+                            props = {}
+                        for fname in edge_pii:
+                            if fname in props:
+                                props[fname] = "" if isinstance(props[fname], str) else None
+                        new_from = anon if hit_from else from_id
+                        new_to = anon if hit_to else to_id
+                        # Delete old row then insert new (primary key includes endpoints)
+                        conn.execute(
+                            "DELETE FROM edges WHERE tenant_id = ? "
+                            "AND edge_type_id = ? AND from_node_id = ? AND to_node_id = ?",
+                            (tenant_id, edge_type_id, from_id, to_id),
+                        )
+                        conn.execute(
+                            "INSERT OR REPLACE INTO edges "
+                            "(tenant_id, edge_type_id, from_node_id, to_node_id, props_json, "
+                            " propagates_acl, created_at) "
+                            "VALUES (?, ?, ?, ?, ?, 0, ?)",
+                            (
+                                tenant_id,
+                                edge_type_id,
+                                new_from,
+                                new_to,
+                                json.dumps(props),
+                                int(time.time() * 1000),
+                            ),
+                        )
+                        anonymized_edges += 1
+
+                # Global cleanup within this tenant: remove user from
+                # groups, direct grants, and visibility index.
+                conn.execute(
+                    "DELETE FROM node_access WHERE actor_id = ?",
+                    (user_id,),
+                )
+                conn.execute(
+                    "DELETE FROM group_users WHERE member_actor_id = ?",
+                    (user_id,),
+                )
+                conn.execute(
+                    "DELETE FROM node_visibility "
+                    "WHERE tenant_id = ? AND principal = ?",
+                    (tenant_id, user_id),
+                )
+
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+        return {
+            "deleted_nodes": deleted_nodes,
+            "anonymized_nodes": anonymized_nodes,
+            "deleted_edges": deleted_edges,
+            "anonymized_edges": anonymized_edges,
+            "anon_id": anon,
+        }
+
+    async def anonymize_user_in_tenant(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+        salt: str = "entdb-gdpr-v1",
+    ) -> dict:
+        """Apply per-type data_policy rules for GDPR user deletion.
+
+        For each node in the tenant where owner_actor == user_id or
+        subject_field matches user_id:
+
+            - PERSONAL    → delete the node
+            - EPHEMERAL   → delete the node
+            - BUSINESS    → anonymize: scrub pii=true fields, replace owner
+            - FINANCIAL   → anonymize PII but retain the record
+            - AUDIT       → anonymize PII but retain the record
+            - HEALTHCARE  → anonymize PII but retain the record
+
+        For each edge where the user is ``from`` or ``to`` endpoint,
+        the edge's ``on_subject_exit`` policy decides which direction is
+        affected (``from``, ``to``, or ``both``). Deletable policies
+        delete the edge; retained policies rewrite the endpoint to the
+        anonymous id and scrub pii=true props.
+
+        Args:
+            tenant_id: Tenant whose canonical store to anonymize
+            user_id: User to delete (format: ``user:<id>``)
+            registry: :class:`SchemaRegistry` with node/edge types
+            salt: Deterministic salt for the anonymous id derivation
+
+        Returns:
+            Dict with counts: ``deleted_nodes``, ``anonymized_nodes``,
+            ``deleted_edges``, ``anonymized_edges``, ``anon_id``.
+        """
+        return await self._run_sync(
+            self._sync_anonymize_user_in_tenant,
+            tenant_id,
+            user_id,
+            registry,
+            salt,
+        )
+
+    def _sync_export_user_data(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+    ) -> dict:
+        """Collect exportable nodes for a user in a single tenant.
+
+        Returns a dict containing a list of node records that belong to
+        the user either by ownership or by ``subject_field`` match. Nodes
+        whose type has ``data_policy = AUDIT`` are excluded from export
+        (audit records are not subject access requestable).
+        """
+        from ..data_policy import DataPolicy
+        from ..schema.registry import SchemaRegistry
+
+        reg: SchemaRegistry = registry  # type: ignore[assignment]
+        nodes_out: list[dict] = []
+
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                "SELECT node_id, type_id, payload_json, created_at, updated_at, owner_actor "
+                "FROM nodes WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchall()
+
+            for row in rows:
+                type_id = row["type_id"]
+                owner = row["owner_actor"]
+                try:
+                    policy = reg.get_data_policy(type_id)
+                    subject_field = reg.get_subject_field(type_id)
+                except KeyError:
+                    policy = DataPolicy.PERSONAL
+                    subject_field = None
+
+                try:
+                    payload = json.loads(row["payload_json"]) if row["payload_json"] else {}
+                except json.JSONDecodeError:
+                    payload = {}
+
+                is_owner = owner == user_id
+                is_subject = (
+                    subject_field is not None and payload.get(subject_field) == user_id
+                )
+                if not (is_owner or is_subject):
+                    continue
+                # AUDIT policy → not exportable
+                if policy == DataPolicy.AUDIT:
+                    continue
+
+                nodes_out.append(
+                    {
+                        "tenant_id": tenant_id,
+                        "node_id": row["node_id"],
+                        "type_id": type_id,
+                        "payload": payload,
+                        "created_at": row["created_at"],
+                        "updated_at": row["updated_at"],
+                        "owner_actor": owner,
+                        "data_policy": policy.value,
+                    }
+                )
+
+        return {"tenant_id": tenant_id, "nodes": nodes_out}
+
+    async def export_user_data_for_tenant(
+        self,
+        tenant_id: str,
+        user_id: str,
+        registry: object,
+    ) -> dict:
+        """Export a user's content from a single tenant.
+
+        Returns only nodes the user owns or is the subject of, excluding
+        AUDIT records (per the export policy table in ADR-004).
+        """
+        return await self._run_sync(
+            self._sync_export_user_data, tenant_id, user_id, registry
         )

@@ -12,7 +12,6 @@ Covers:
 - Multiple tenants, multiple shares
 """
 
-import asyncio
 import time
 import uuid
 

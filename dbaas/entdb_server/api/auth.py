@@ -30,7 +30,7 @@ from collections.abc import Callable
 
 import grpc
 
-from .jwt_auth import AuthError, JwtAuthenticator, JwtConfig
+from .jwt_auth import AuthError, JwtAuthenticator
 
 logger = logging.getLogger(__name__)
 

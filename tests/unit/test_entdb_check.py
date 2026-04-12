@@ -6,13 +6,10 @@ for all breaking and non-breaking change rules.
 
 from __future__ import annotations
 
-import json
 import copy
+import json
 
-import pytest
-
-from entdb_sdk.cli import _check_compat
-
+from sdk.entdb_sdk.cli import _check_compat
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -570,8 +567,9 @@ class TestCLIExitCodes:
 
     def test_cmd_check_returns_0_when_compatible(self, tmp_path, monkeypatch):
         """Exit code 0 when no breaking changes."""
-        from entdb_sdk.cli import cmd_check
         import argparse
+
+        from entdb_sdk.cli import cmd_check
 
         # Write a baseline snapshot
         snapshot_path = tmp_path / "snapshot.json"
@@ -579,10 +577,9 @@ class TestCLIExitCodes:
         snapshot_path.write_text(json.dumps(snap))
 
         # Monkeypatch parse_proto to return matching data
-        from entdb_sdk import codegen
 
         def mock_parse_proto(path, include_dirs=None):
-            from entdb_sdk.codegen import NodeInfo, FieldInfo
+            from entdb_sdk.codegen import FieldInfo, NodeInfo
             return (
                 [NodeInfo(type_id=1, name="User", fields=[
                     FieldInfo(field_id=1, name="email", kind="str"),
@@ -607,8 +604,9 @@ class TestCLIExitCodes:
 
     def test_cmd_check_returns_1_when_breaking(self, tmp_path, monkeypatch):
         """Exit code 1 when breaking changes detected."""
-        from entdb_sdk.cli import cmd_check
         import argparse
+
+        from entdb_sdk.cli import cmd_check
 
         snapshot_path = tmp_path / "snapshot.json"
         snap = _snapshot(node_types=[
@@ -616,7 +614,7 @@ class TestCLIExitCodes:
         ])
         snapshot_path.write_text(json.dumps(snap))
 
-        from entdb_sdk.codegen import NodeInfo, FieldInfo
+        from entdb_sdk.codegen import FieldInfo, NodeInfo
 
         def mock_parse_proto(path, include_dirs=None):
             return (
@@ -642,14 +640,15 @@ class TestCLIExitCodes:
 
     def test_cmd_check_returns_0_when_unchanged(self, tmp_path, monkeypatch):
         """Exit code 0 when schema is unchanged."""
-        from entdb_sdk.cli import cmd_check
         import argparse
+
+        from entdb_sdk.cli import cmd_check
 
         snapshot_path = tmp_path / "snapshot.json"
         snap = _snapshot(node_types=[_node(1, "User", fields=[_field(1, "email")])])
         snapshot_path.write_text(json.dumps(snap))
 
-        from entdb_sdk.codegen import NodeInfo, FieldInfo
+        from entdb_sdk.codegen import FieldInfo, NodeInfo
 
         def mock_parse_proto(path, include_dirs=None):
             return (
@@ -674,8 +673,9 @@ class TestCLIExitCodes:
 
     def test_cmd_check_missing_baseline(self, tmp_path, capsys):
         """Exit code 1 when baseline file is missing."""
-        from entdb_sdk.cli import cmd_check
         import argparse
+
+        from entdb_sdk.cli import cmd_check
 
         proto_file = tmp_path / "schema.proto"
         proto_file.write_text("syntax = 'proto3';")
@@ -690,12 +690,13 @@ class TestCLIExitCodes:
 
     def test_cmd_init_creates_snapshot(self, tmp_path, monkeypatch):
         """entdb init creates .entdb/snapshot.json."""
-        from entdb_sdk.cli import cmd_init
         import argparse
+
+        from entdb_sdk.cli import cmd_init
 
         monkeypatch.chdir(tmp_path)
 
-        from entdb_sdk.codegen import NodeInfo, EdgeInfo, FieldInfo
+        from entdb_sdk.codegen import EdgeInfo, FieldInfo, NodeInfo
 
         def mock_parse_proto(path, include_dirs=None):
             return (
@@ -729,12 +730,13 @@ class TestCLIExitCodes:
 
     def test_cmd_init_then_check_zero_changes(self, tmp_path, monkeypatch):
         """init followed by check with same schema = 0 changes."""
-        from entdb_sdk.cli import cmd_init, cmd_check
         import argparse
+
+        from entdb_sdk.cli import cmd_check, cmd_init
 
         monkeypatch.chdir(tmp_path)
 
-        from entdb_sdk.codegen import NodeInfo, EdgeInfo, FieldInfo
+        from entdb_sdk.codegen import EdgeInfo, FieldInfo, NodeInfo
 
         def mock_parse_proto(path, include_dirs=None):
             return (

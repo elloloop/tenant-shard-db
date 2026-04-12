@@ -17,7 +17,6 @@ import pytest
 
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 
-
 TENANT = "tenant_1"
 
 

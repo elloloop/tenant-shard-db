@@ -10,8 +10,6 @@ import os
 import subprocess
 import sys
 
-import pytest
-
 # Ensure the local sdk/ tree is importable (it has codegen, lint, cli).
 _SDK_ROOT = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -21,8 +19,7 @@ if _SDK_ROOT not in sys.path:
     sys.path.insert(0, _SDK_ROOT)
 
 from entdb_sdk.codegen import EdgeInfo, FieldInfo, NodeInfo
-from entdb_sdk.lint import LintResult, lint_parsed
-
+from entdb_sdk.lint import lint_parsed
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

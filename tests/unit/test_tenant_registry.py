@@ -18,7 +18,6 @@ import pytest
 
 from dbaas.entdb_server.global_store import GlobalStore
 
-
 # -- GlobalStore unit tests ------------------------------------------------
 
 

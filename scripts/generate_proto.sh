@@ -43,6 +43,14 @@ python -m grpc_tools.protoc \
     --grpc_python_out="$SDK_OUT" \
     "$PROTO_DIR/entdb.proto"
 
+# Generate entdb_options for the SDK (used by codegen to parse
+# entdb extension options from user .proto files)
+SDK_OPTIONS_PROTO_DIR="$ROOT_DIR/sdk/entdb_sdk/proto"
+python -m grpc_tools.protoc \
+    -I"$SDK_OPTIONS_PROTO_DIR" \
+    --python_out="$SDK_OUT" \
+    "$SDK_OPTIONS_PROTO_DIR/entdb_options.proto"
+
 # Fix imports in generated files (grpc_tools generates absolute imports)
 # Change "import entdb_pb2" to "from . import entdb_pb2"
 # Use sed compatible with both macOS and Linux
