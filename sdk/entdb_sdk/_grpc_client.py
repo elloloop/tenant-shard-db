@@ -22,8 +22,15 @@ from grpc import aio as grpc_aio
 
 from ._generated import (
     AclEntry,
+    ArchiveTenantRequest,
+    ChangeMemberRoleRequest,
     CreateEdgeOp,
     CreateNodeOp,
+    # Tenant registry
+    CreateTenantRequest,
+    # User registry
+    CreateUserRequest,
+    DelegateAccessRequest,
     DeleteEdgeOp,
     DeleteNodeOp,
     EntDBServiceStub,
@@ -37,9 +44,15 @@ from ._generated import (
     GetNodesRequest,
     GetReceiptStatusRequest,
     GetSchemaRequest,
+    GetTenantMembersRequest,
+    GetTenantRequest,
+    GetUserRequest,
+    GetUserTenantsRequest,
     GroupMemberRequest,
     HealthRequest,
+    LegalHoldRequest,
     ListSharedWithMeRequest,
+    ListUsersRequest,
     NodeRef,
     Operation,
     QueryNodesRequest,
@@ -48,11 +61,17 @@ from ._generated import (
     # Request types
     RequestContext,
     RevokeAccessRequest,
+    RevokeAllUserAccessRequest,
     SearchMailboxRequest,
     ShareNodeRequest,
+    # Tenant membership
+    TenantMemberRequest,
     TransferOwnershipRequest,
+    # Admin operations (Issue #90)
+    TransferUserContentRequest,
     TypedNodeRef,
     UpdateNodeOp,
+    UpdateUserRequest,
     WaitForOffsetRequest,
 )
 
@@ -1369,3 +1388,715 @@ class GrpcClient:
         )
 
         return response.found
+
+    # --- User registry methods ---
+
+    async def create_user(
+        self,
+        user_id: str,
+        email: str,
+        name: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Create a new user in the global registry.
+
+        Args:
+            user_id: Unique user identifier
+            email: User email
+            name: Display name
+            actor: Actor performing the operation (must be admin or system)
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, user, and optional error
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = CreateUserRequest(
+            actor=actor,
+            user_id=user_id,
+            email=email,
+            name=name,
+        )
+
+        response = await self._retry(
+            stub.CreateUser,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        result: dict[str, Any] = {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+        if response.user and response.user.user_id:
+            result["user"] = {
+                "user_id": response.user.user_id,
+                "email": response.user.email,
+                "name": response.user.name,
+                "status": response.user.status,
+                "created_at": response.user.created_at,
+                "updated_at": response.user.updated_at,
+            }
+        return result
+
+    async def get_user(
+        self,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Get a user by ID.
+
+        Args:
+            user_id: User identifier
+            actor: Actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            User dict or None if not found
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetUserRequest(
+            actor=actor,
+            user_id=user_id,
+        )
+
+        response = await self._retry(
+            stub.GetUser,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        if not response.found:
+            return None
+
+        return {
+            "user_id": response.user.user_id,
+            "email": response.user.email,
+            "name": response.user.name,
+            "status": response.user.status,
+            "created_at": response.user.created_at,
+            "updated_at": response.user.updated_at,
+        }
+
+    async def update_user(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        email: str = "",
+        name: str = "",
+        status: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Update user fields.
+
+        Args:
+            user_id: User identifier
+            actor: Actor performing the operation (user themselves or admin)
+            email: New email (empty = no change)
+            name: New name (empty = no change)
+            status: New status (empty = no change)
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and optional error
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = UpdateUserRequest(
+            actor=actor or f"user:{user_id}",
+            user_id=user_id,
+            email=email,
+            name=name,
+            status=status,
+        )
+
+        response = await self._retry(
+            stub.UpdateUser,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    async def list_users(
+        self,
+        *,
+        actor: str = "system:admin",
+        status: str = "active",
+        limit: int = 100,
+        offset: int = 0,
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List users filtered by status.
+
+        Args:
+            actor: Actor performing the operation
+            status: Status filter (e.g. 'active', 'suspended')
+            limit: Maximum results
+            offset: Pagination offset
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of user dicts
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ListUsersRequest(
+            actor=actor,
+            status=status,
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._retry(
+            stub.ListUsers,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return [
+            {
+                "user_id": u.user_id,
+                "email": u.email,
+                "name": u.name,
+                "status": u.status,
+                "created_at": u.created_at,
+                "updated_at": u.updated_at,
+            }
+            for u in response.users
+        ]
+
+    # --- Tenant registry methods ---
+
+    async def create_tenant(
+        self,
+        actor: str,
+        tenant_id: str,
+        name: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Create a new tenant.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Unique tenant identifier
+            name: Tenant display name
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, tenant, error fields
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = CreateTenantRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            name=name,
+        )
+
+        response = await self._retry(
+            stub.CreateTenant,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        result: dict[str, Any] = {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+        if response.tenant and response.tenant.tenant_id:
+            result["tenant"] = {
+                "tenant_id": response.tenant.tenant_id,
+                "name": response.tenant.name,
+                "status": response.tenant.status,
+                "created_at": response.tenant.created_at,
+            }
+        return result
+
+    async def get_tenant(
+        self,
+        actor: str,
+        tenant_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Get a tenant by ID.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Tenant identifier
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Tenant dict or None if not found
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetTenantRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+        )
+
+        response = await self._retry(
+            stub.GetTenant,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        if not response.found:
+            return None
+
+        return {
+            "tenant_id": response.tenant.tenant_id,
+            "name": response.tenant.name,
+            "status": response.tenant.status,
+            "created_at": response.tenant.created_at,
+        }
+
+    async def archive_tenant(
+        self,
+        actor: str,
+        tenant_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Archive a tenant.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Tenant identifier
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ArchiveTenantRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+        )
+
+        response = await self._retry(
+            stub.ArchiveTenant,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    async def add_tenant_member(
+        self,
+        actor: str,
+        tenant_id: str,
+        user_id: str,
+        role: str = "member",
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Add a member to a tenant.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Tenant identifier
+            user_id: User to add
+            role: Membership role
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = TenantMemberRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            role=role,
+        )
+
+        response = await self._retry(
+            stub.AddTenantMember,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    async def remove_tenant_member(
+        self,
+        actor: str,
+        tenant_id: str,
+        user_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Remove a member from a tenant.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Tenant identifier
+            user_id: User to remove
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = TenantMemberRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+
+        response = await self._retry(
+            stub.RemoveTenantMember,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    async def get_tenant_members(
+        self,
+        actor: str,
+        tenant_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all members of a tenant.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Tenant identifier
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of member dicts
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetTenantMembersRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+        )
+
+        response = await self._retry(
+            stub.GetTenantMembers,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return [
+            {
+                "tenant_id": m.tenant_id,
+                "user_id": m.user_id,
+                "role": m.role,
+                "joined_at": m.joined_at,
+            }
+            for m in response.members
+        ]
+
+    async def get_user_tenants(
+        self,
+        actor: str,
+        user_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all tenants a user belongs to.
+
+        Args:
+            actor: Actor performing the operation
+            user_id: User identifier
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of membership dicts
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetUserTenantsRequest(
+            actor=actor,
+            user_id=user_id,
+        )
+
+        response = await self._retry(
+            stub.GetUserTenants,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return [
+            {
+                "tenant_id": m.tenant_id,
+                "user_id": m.user_id,
+                "role": m.role,
+                "joined_at": m.joined_at,
+            }
+            for m in response.memberships
+        ]
+
+    async def change_member_role(
+        self,
+        actor: str,
+        tenant_id: str,
+        user_id: str,
+        new_role: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Change a member's role in a tenant.
+
+        Args:
+            actor: Actor performing the operation
+            tenant_id: Tenant identifier
+            user_id: User whose role to change
+            new_role: New role
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success and error fields
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = ChangeMemberRoleRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            new_role=new_role,
+        )
+
+        response = await self._retry(
+            stub.ChangeMemberRole,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    # --- Admin operations (Issue #90, ADR-003) -----------------------
+
+    async def transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Reassign ownership of all nodes from one user to another.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Current owner (e.g. ``user:alice``)
+            to_user: New owner (e.g. ``user:bob``)
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``transferred`` (count), ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = TransferUserContentRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            from_user=from_user,
+            to_user=to_user,
+        )
+        response = await self._retry(
+            stub.TransferUserContent,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "transferred": response.transferred,
+            "error": response.error if response.error else None,
+        }
+
+    async def delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str = "read",
+        expires_at: int | None = None,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Grant temporary access to another user's content.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Content owner
+            to_user: Recipient of delegated access
+            permission: Permission level (``read``, ``write``, ...)
+            expires_at: Expiry timestamp in Unix ms, or None for permanent
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``delegated`` (count), ``expires_at``, ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = DelegateAccessRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            from_user=from_user,
+            to_user=to_user,
+            permission=permission,
+            expires_at=expires_at or 0,
+        )
+        response = await self._retry(
+            stub.DelegateAccess,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "delegated": response.delegated,
+            "expires_at": response.expires_at,
+            "error": response.error if response.error else None,
+        }
+
+    async def set_legal_hold(
+        self,
+        tenant_id: str,
+        enabled: bool,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Enable or disable legal hold on a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            enabled: True to put tenant on hold, False to release
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``status`` (``legal_hold`` or
+            ``active``), and ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = LegalHoldRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            enabled=enabled,
+        )
+        response = await self._retry(
+            stub.SetLegalHold,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "status": response.status,
+            "error": response.error if response.error else None,
+        }
+
+    async def revoke_all_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Remove ALL access for a user in a tenant.
+
+        Removes node_access grants, group memberships, and
+        cross-tenant shared_index entries for the given user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to revoke
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``revoked_grants``,
+            ``revoked_groups``, ``revoked_shared``, and ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = RevokeAllUserAccessRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        response = await self._retry(
+            stub.RevokeAllUserAccess,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "revoked_grants": response.revoked_grants,
+            "revoked_groups": response.revoked_groups,
+            "revoked_shared": response.revoked_shared,
+            "error": response.error if response.error else None,
+        }

@@ -22,7 +22,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <h2>Inheritance: The Key Feature</h2>
   <p>When you share a task with Bob, he can automatically see all comments on that task. You don't need to share each comment individually.</p>
 
-  <pre><code># Define structural edge
+  <pre is:raw><code># Define structural edge
 HasComment = EdgeTypeDef(
     edge_id=1, name="HasComment",
     from_type=Task, to_type=Comment,
@@ -38,7 +38,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h3>How inheritance works internally</h3>
   <p>When a structural edge is created (<code>propagate_share=True</code>), an <code>acl_inherit</code> row is inserted:</p>
-  <pre><code># Creating an edge: task_1 → comment_42 (HasComment, propagate_share=True)
+  <pre is:raw><code># Creating an edge: task_1 → comment_42 (HasComment, propagate_share=True)
 # Internally inserts: acl_inherit(node_id="comment_42", inherit_from="task_1")
 
 # Access check for comment_42:
@@ -48,7 +48,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h3>Deep inheritance</h3>
   <p>Inheritance chains can be multiple levels deep:</p>
-  <pre><code># project → task → comment (3 levels)
+  <pre is:raw><code># project → task → comment (3 levels)
 # Share project with Bob → Bob can see all tasks AND all comments</code></pre>
 
   <h3>New nodes inherit automatically</h3>
@@ -59,7 +59,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h2>Private Nodes</h2>
   <p>Some node types should never inherit from parents &mdash; grades, drafts, moderator notes:</p>
-  <pre><code>Grade = NodeTypeDef(
+  <pre is:raw><code>Grade = NodeTypeDef(
     type_id=10, name="Grade",
     fields=(field(1, "score", "int", required=True),),
     acl_defaults=AclDefaults(
@@ -84,7 +84,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h2>Groups</h2>
   <p>Groups are a way to share with multiple users at once. Groups can contain users and other groups (nested):</p>
-  <pre><code># Add users to groups
+  <pre is:raw><code># Add users to groups
 await db.group_add("group:eng", "user:alice", tenant_id)
 await db.group_add("group:eng", "user:bob", tenant_id)
 
@@ -96,7 +96,7 @@ await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice"
 
   <h2>Deny Rules</h2>
   <p>Explicit deny overrides all inherited access:</p>
-  <pre><code># Bob has write on task (and all comments via inheritance)
+  <pre is:raw><code># Bob has write on task (and all comments via inheritance)
 await db.share(task_id, "user:bob", "write", tenant_id, granted_by="user:alice")
 
 # But this specific comment is confidential

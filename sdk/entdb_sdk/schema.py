@@ -34,6 +34,25 @@ from enum import Enum
 from typing import Any
 
 
+class DataPolicy(Enum):
+    """Data classification for GDPR compliance."""
+
+    PERSONAL = 0  # user's own data, fully exportable, DELETE on exit
+    BUSINESS = 1  # business data, contributions exportable, ANONYMIZE on exit
+    FINANCIAL = 2  # legal retention required, RETAIN + ANONYMIZE PII
+    AUDIT = 3  # security logs, not user-exportable, RETAIN + ANONYMIZE PII
+    EPHEMERAL = 4  # temporary, not exportable, DELETE on exit
+    HEALTHCARE = 5  # PHI, field-level encryption, 6yr retention
+
+
+class SubjectExitPolicy(Enum):
+    """What happens to edges when referenced user exits."""
+
+    BOTH = 0  # act on edges in both directions
+    FROM = 1  # only when user is the source (from)
+    TO = 2  # only when user is the target (to)
+
+
 @dataclass(frozen=True)
 class AclDefaults:
     """Default ACL configuration for a node type.
@@ -122,6 +141,9 @@ class FieldDef:
     ref_type_id: int | None = None
     indexed: bool = False
     searchable: bool = False
+    pii: bool = False
+    phi: bool = False
+    pii_false: bool = False
     deprecated: bool = False
     description: str = ""
 
@@ -235,6 +257,12 @@ class FieldDef:
             result["indexed"] = True
         if self.searchable:
             result["searchable"] = True
+        if self.pii:
+            result["pii"] = True
+        if self.phi:
+            result["phi"] = True
+        if self.pii_false:
+            result["pii_false"] = True
         if self.deprecated:
             result["deprecated"] = True
         if self.description:
@@ -253,6 +281,9 @@ def field(
     ref_type_id: int | None = None,
     indexed: bool = False,
     searchable: bool = False,
+    pii: bool = False,
+    phi: bool = False,
+    pii_false: bool = False,
     deprecated: bool = False,
     description: str = "",
 ) -> FieldDef:
@@ -268,6 +299,9 @@ def field(
         ref_type_id: Target type for references
         indexed: Create index
         searchable: Include in FTS
+        pii: Personally identifiable information
+        phi: Protected health information
+        pii_false: Explicitly declared as NOT PII
         deprecated: Deprecated flag
         description: Documentation
 
@@ -290,6 +324,9 @@ def field(
         ref_type_id=ref_type_id,
         indexed=indexed,
         searchable=searchable,
+        pii=pii,
+        phi=phi,
+        pii_false=pii_false,
         deprecated=deprecated,
         description=description,
     )
@@ -324,6 +361,10 @@ class NodeTypeDef:
     name: str
     fields: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
     acl_defaults: AclDefaults = dataclass_field(default_factory=AclDefaults)
+    data_policy: DataPolicy = DataPolicy.PERSONAL
+    subject_field: str = ""
+    retention_days: int = 0
+    legal_basis: str = ""
     deprecated: bool = False
     description: str = ""
 
@@ -375,14 +416,22 @@ class NodeTypeDef:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result: dict[str, Any] = {
             "type_id": self.type_id,
             "name": self.name,
             "fields": [f.to_dict() for f in self.fields],
             "acl_defaults": self.acl_defaults.to_dict(),
+            "data_policy": self.data_policy.name,
             "deprecated": self.deprecated,
             "description": self.description,
         }
+        if self.subject_field:
+            result["subject_field"] = self.subject_field
+        if self.retention_days:
+            result["retention_days"] = self.retention_days
+        if self.legal_basis:
+            result["legal_basis"] = self.legal_basis
+        return result
 
     def new(self, **kwargs: Any) -> dict[str, Any]:
         """Create a validated payload for this type.
@@ -463,6 +512,10 @@ class EdgeTypeDef:
     props: tuple[FieldDef, ...] = dataclass_field(default_factory=tuple)
     propagate_share: bool = False
     unique_per_from: bool = False
+    data_policy: DataPolicy = DataPolicy.PERSONAL
+    on_subject_exit: SubjectExitPolicy = SubjectExitPolicy.BOTH
+    retention_days: int = 0
+    legal_basis: str = ""
     deprecated: bool = False
     description: str = ""
 
@@ -506,7 +559,7 @@ class EdgeTypeDef:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        result: dict[str, Any] = {
             "edge_id": self.edge_id,
             "name": self.name,
             "from_type_id": self.from_type_id,
@@ -514,9 +567,16 @@ class EdgeTypeDef:
             "props": [p.to_dict() for p in self.props],
             "propagate_share": self.propagate_share,
             "unique_per_from": self.unique_per_from,
+            "data_policy": self.data_policy.name,
+            "on_subject_exit": self.on_subject_exit.name,
             "deprecated": self.deprecated,
             "description": self.description,
         }
+        if self.retention_days:
+            result["retention_days"] = self.retention_days
+        if self.legal_basis:
+            result["legal_basis"] = self.legal_basis
+        return result
 
     def __hash__(self) -> int:
         return hash(self.edge_id)

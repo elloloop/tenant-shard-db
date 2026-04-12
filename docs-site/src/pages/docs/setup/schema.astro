@@ -1,0 +1,83 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Define Schema">
+  <h1>Define Your Schema</h1>
+  <p>Your data model is defined in a <code>.proto</code> file using EntDB custom options. This is the single source of truth — Python and Go types are generated from it.</p>
+
+  <h2>Step 1: Create schema.proto</h2>
+  <pre is:raw><code>syntax = "proto3";
+import "entdb_options.proto";
+import "google/protobuf/timestamp.proto";
+
+// Enums are proto-native — compile-time safe
+enum TaskStatus {
+  TODO = 0;
+  IN_PROGRESS = 1;
+  REVIEW = 2;
+  DONE = 3;
+}
+
+// Nodes are messages with entdb.node option
+message Task {
+    option (entdb.node) = {
+        type_id: 1                           // stable ID, never changes
+        tenant_visible: true                 // all tenant members can see
+        inherit: true                        // children inherit ACL
+        data_policy: DATA_POLICY_BUSINESS    // GDPR classification
+    };
+
+    string title = 1       [(entdb.field) = {required: true, searchable: true, pii_false: true}];
+    TaskStatus status = 2;
+    string assignee_id = 3 [(entdb.field) = {pii: true}];  // PII: identifies a person
+    google.protobuf.Timestamp due_date = 4;
+}
+
+// Edges are messages with typed from/to references
+message HasComment {
+    option (entdb.edge) = {
+        edge_id: 1
+        name: "HAS_COMMENT"
+        propagate_share: true                // share task = share comments
+        data_policy: DATA_POLICY_BUSINESS
+    };
+
+    Task from = 15;       // protoc VALIDATES Task exists
+    Comment to = 16;      // protoc VALIDATES Comment exists
+}</code></pre>
+
+  <h2>Step 2: What the schema declares</h2>
+  <table>
+    <tr><th>Annotation</th><th>Purpose</th><th>Example</th></tr>
+    <tr><td><code>type_id</code></td><td>Stable numeric ID (immutable)</td><td><code>type_id: 1</code></td></tr>
+    <tr><td><code>data_policy</code></td><td>GDPR classification</td><td><code>DATA_POLICY_BUSINESS</code></td></tr>
+    <tr><td><code>pii: true</code></td><td>Field contains PII (scrubbed on deletion)</td><td><code>assignee_id</code></td></tr>
+    <tr><td><code>pii_false: true</code></td><td>Explicitly NOT PII (silences lint)</td><td><code>title</code></td></tr>
+    <tr><td><code>tenant_visible</code></td><td>All tenant members can see</td><td><code>true</code></td></tr>
+    <tr><td><code>inherit</code></td><td>Inherit ACL from structural parent</td><td><code>true</code></td></tr>
+    <tr><td><code>propagate_share</code></td><td>Sharing source shares target</td><td><code>true</code> on edges</td></tr>
+    <tr><td><code>subject_field</code></td><td>Who data is ABOUT (for GDPR export)</td><td><code>"employee_id"</code></td></tr>
+    <tr><td><code>retention_days</code></td><td>Legal retention period</td><td><code>2555</code> (7 years)</td></tr>
+    <tr><td><code>legal_basis</code></td><td>Why data is retained</td><td><code>"Companies Act s.386"</code></td></tr>
+  </table>
+
+  <h2>Step 3: Data policies</h2>
+  <table>
+    <tr><th>Policy</th><th>Export?</th><th>On user exit</th><th>Retention</th></tr>
+    <tr><td><code>PERSONAL</code> (default)</td><td>Full</td><td>DELETE</td><td>None</td></tr>
+    <tr><td><code>BUSINESS</code></td><td>User's contributions</td><td>ANONYMIZE</td><td>None</td></tr>
+    <tr><td><code>FINANCIAL</code></td><td>Full (subject match)</td><td>RETAIN + anonymize PII</td><td>Required</td></tr>
+    <tr><td><code>AUDIT</code></td><td>Not exportable</td><td>RETAIN + anonymize PII</td><td>Required</td></tr>
+    <tr><td><code>HEALTHCARE</code></td><td>Full (patient)</td><td>RETAIN + anonymize PII</td><td>6 years min</td></tr>
+    <tr><td><code>EPHEMERAL</code></td><td>No</td><td>DELETE</td><td>None</td></tr>
+  </table>
+  <p>If you don't set <code>data_policy</code>, it defaults to <code>PERSONAL</code> (strictest). The lint will warn you.</p>
+
+  <h2>Step 4: PII field rules</h2>
+  <p>Every string field must be explicitly marked <code>pii: true</code> or <code>pii_false: true</code>. Unmarked fields produce a lint warning. This forces you to think about data classification from day one.</p>
+
+  <pre is:raw><code>string email = 1       [(entdb.field) = {pii: true}];     // scrubbed on user deletion
+string title = 2       [(entdb.field) = {pii_false: true}]; // explicitly not PII
+string description = 3; // WARNING: unmarked — lint will flag this</code></pre>
+</DocsLayout>

@@ -51,10 +51,12 @@ from .registry import (
 )
 from .schema import (
     AclDefaults,
+    DataPolicy,
     EdgeTypeDef,
     FieldDef,
     FieldKind,
     NodeTypeDef,
+    SubjectExitPolicy,
     field,
 )
 
@@ -63,6 +65,8 @@ __all__ = [
     "__version__",
     # Schema types
     "AclDefaults",
+    "DataPolicy",
+    "SubjectExitPolicy",
     "NodeTypeDef",
     "EdgeTypeDef",
     "FieldDef",

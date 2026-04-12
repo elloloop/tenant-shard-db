@@ -140,6 +140,86 @@ class EntDBServiceStub(object):
                 request_serializer=entdb__pb2.TransferOwnershipRequest.SerializeToString,
                 response_deserializer=entdb__pb2.TransferOwnershipResponse.FromString,
                 _registered_method=True)
+        self.CreateUser = channel.unary_unary(
+                '/entdb.v1.EntDBService/CreateUser',
+                request_serializer=entdb__pb2.CreateUserRequest.SerializeToString,
+                response_deserializer=entdb__pb2.CreateUserResponse.FromString,
+                _registered_method=True)
+        self.GetUser = channel.unary_unary(
+                '/entdb.v1.EntDBService/GetUser',
+                request_serializer=entdb__pb2.GetUserRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GetUserResponse.FromString,
+                _registered_method=True)
+        self.UpdateUser = channel.unary_unary(
+                '/entdb.v1.EntDBService/UpdateUser',
+                request_serializer=entdb__pb2.UpdateUserRequest.SerializeToString,
+                response_deserializer=entdb__pb2.UpdateUserResponse.FromString,
+                _registered_method=True)
+        self.ListUsers = channel.unary_unary(
+                '/entdb.v1.EntDBService/ListUsers',
+                request_serializer=entdb__pb2.ListUsersRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ListUsersResponse.FromString,
+                _registered_method=True)
+        self.CreateTenant = channel.unary_unary(
+                '/entdb.v1.EntDBService/CreateTenant',
+                request_serializer=entdb__pb2.CreateTenantRequest.SerializeToString,
+                response_deserializer=entdb__pb2.CreateTenantResponse.FromString,
+                _registered_method=True)
+        self.GetTenant = channel.unary_unary(
+                '/entdb.v1.EntDBService/GetTenant',
+                request_serializer=entdb__pb2.GetTenantRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GetTenantResponse.FromString,
+                _registered_method=True)
+        self.ArchiveTenant = channel.unary_unary(
+                '/entdb.v1.EntDBService/ArchiveTenant',
+                request_serializer=entdb__pb2.ArchiveTenantRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ArchiveTenantResponse.FromString,
+                _registered_method=True)
+        self.AddTenantMember = channel.unary_unary(
+                '/entdb.v1.EntDBService/AddTenantMember',
+                request_serializer=entdb__pb2.TenantMemberRequest.SerializeToString,
+                response_deserializer=entdb__pb2.TenantMemberResponse.FromString,
+                _registered_method=True)
+        self.RemoveTenantMember = channel.unary_unary(
+                '/entdb.v1.EntDBService/RemoveTenantMember',
+                request_serializer=entdb__pb2.TenantMemberRequest.SerializeToString,
+                response_deserializer=entdb__pb2.TenantMemberResponse.FromString,
+                _registered_method=True)
+        self.GetTenantMembers = channel.unary_unary(
+                '/entdb.v1.EntDBService/GetTenantMembers',
+                request_serializer=entdb__pb2.GetTenantMembersRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GetTenantMembersResponse.FromString,
+                _registered_method=True)
+        self.GetUserTenants = channel.unary_unary(
+                '/entdb.v1.EntDBService/GetUserTenants',
+                request_serializer=entdb__pb2.GetUserTenantsRequest.SerializeToString,
+                response_deserializer=entdb__pb2.GetUserTenantsResponse.FromString,
+                _registered_method=True)
+        self.ChangeMemberRole = channel.unary_unary(
+                '/entdb.v1.EntDBService/ChangeMemberRole',
+                request_serializer=entdb__pb2.ChangeMemberRoleRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ChangeMemberRoleResponse.FromString,
+                _registered_method=True)
+        self.TransferUserContent = channel.unary_unary(
+                '/entdb.v1.EntDBService/TransferUserContent',
+                request_serializer=entdb__pb2.TransferUserContentRequest.SerializeToString,
+                response_deserializer=entdb__pb2.TransferUserContentResponse.FromString,
+                _registered_method=True)
+        self.DelegateAccess = channel.unary_unary(
+                '/entdb.v1.EntDBService/DelegateAccess',
+                request_serializer=entdb__pb2.DelegateAccessRequest.SerializeToString,
+                response_deserializer=entdb__pb2.DelegateAccessResponse.FromString,
+                _registered_method=True)
+        self.SetLegalHold = channel.unary_unary(
+                '/entdb.v1.EntDBService/SetLegalHold',
+                request_serializer=entdb__pb2.LegalHoldRequest.SerializeToString,
+                response_deserializer=entdb__pb2.LegalHoldResponse.FromString,
+                _registered_method=True)
+        self.RevokeAllUserAccess = channel.unary_unary(
+                '/entdb.v1.EntDBService/RevokeAllUserAccess',
+                request_serializer=entdb__pb2.RevokeAllUserAccessRequest.SerializeToString,
+                response_deserializer=entdb__pb2.RevokeAllUserAccessResponse.FromString,
+                _registered_method=True)
 
 
 class EntDBServiceServicer(object):
@@ -294,6 +374,106 @@ class EntDBServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateUser(self, request, context):
+        """User registry CRUD
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetUser(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def UpdateUser(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ListUsers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CreateTenant(self, request, context):
+        """Tenant registry CRUD
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTenant(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ArchiveTenant(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def AddTenantMember(self, request, context):
+        """Tenant membership management
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RemoveTenantMember(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTenantMembers(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetUserTenants(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ChangeMemberRole(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TransferUserContent(self, request, context):
+        """Admin operations (Issue #90, ADR-003)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DelegateAccess(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetLegalHold(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RevokeAllUserAccess(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EntDBServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -401,6 +581,86 @@ def add_EntDBServiceServicer_to_server(servicer, server):
                     servicer.TransferOwnership,
                     request_deserializer=entdb__pb2.TransferOwnershipRequest.FromString,
                     response_serializer=entdb__pb2.TransferOwnershipResponse.SerializeToString,
+            ),
+            'CreateUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateUser,
+                    request_deserializer=entdb__pb2.CreateUserRequest.FromString,
+                    response_serializer=entdb__pb2.CreateUserResponse.SerializeToString,
+            ),
+            'GetUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetUser,
+                    request_deserializer=entdb__pb2.GetUserRequest.FromString,
+                    response_serializer=entdb__pb2.GetUserResponse.SerializeToString,
+            ),
+            'UpdateUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.UpdateUser,
+                    request_deserializer=entdb__pb2.UpdateUserRequest.FromString,
+                    response_serializer=entdb__pb2.UpdateUserResponse.SerializeToString,
+            ),
+            'ListUsers': grpc.unary_unary_rpc_method_handler(
+                    servicer.ListUsers,
+                    request_deserializer=entdb__pb2.ListUsersRequest.FromString,
+                    response_serializer=entdb__pb2.ListUsersResponse.SerializeToString,
+            ),
+            'CreateTenant': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateTenant,
+                    request_deserializer=entdb__pb2.CreateTenantRequest.FromString,
+                    response_serializer=entdb__pb2.CreateTenantResponse.SerializeToString,
+            ),
+            'GetTenant': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTenant,
+                    request_deserializer=entdb__pb2.GetTenantRequest.FromString,
+                    response_serializer=entdb__pb2.GetTenantResponse.SerializeToString,
+            ),
+            'ArchiveTenant': grpc.unary_unary_rpc_method_handler(
+                    servicer.ArchiveTenant,
+                    request_deserializer=entdb__pb2.ArchiveTenantRequest.FromString,
+                    response_serializer=entdb__pb2.ArchiveTenantResponse.SerializeToString,
+            ),
+            'AddTenantMember': grpc.unary_unary_rpc_method_handler(
+                    servicer.AddTenantMember,
+                    request_deserializer=entdb__pb2.TenantMemberRequest.FromString,
+                    response_serializer=entdb__pb2.TenantMemberResponse.SerializeToString,
+            ),
+            'RemoveTenantMember': grpc.unary_unary_rpc_method_handler(
+                    servicer.RemoveTenantMember,
+                    request_deserializer=entdb__pb2.TenantMemberRequest.FromString,
+                    response_serializer=entdb__pb2.TenantMemberResponse.SerializeToString,
+            ),
+            'GetTenantMembers': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTenantMembers,
+                    request_deserializer=entdb__pb2.GetTenantMembersRequest.FromString,
+                    response_serializer=entdb__pb2.GetTenantMembersResponse.SerializeToString,
+            ),
+            'GetUserTenants': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetUserTenants,
+                    request_deserializer=entdb__pb2.GetUserTenantsRequest.FromString,
+                    response_serializer=entdb__pb2.GetUserTenantsResponse.SerializeToString,
+            ),
+            'ChangeMemberRole': grpc.unary_unary_rpc_method_handler(
+                    servicer.ChangeMemberRole,
+                    request_deserializer=entdb__pb2.ChangeMemberRoleRequest.FromString,
+                    response_serializer=entdb__pb2.ChangeMemberRoleResponse.SerializeToString,
+            ),
+            'TransferUserContent': grpc.unary_unary_rpc_method_handler(
+                    servicer.TransferUserContent,
+                    request_deserializer=entdb__pb2.TransferUserContentRequest.FromString,
+                    response_serializer=entdb__pb2.TransferUserContentResponse.SerializeToString,
+            ),
+            'DelegateAccess': grpc.unary_unary_rpc_method_handler(
+                    servicer.DelegateAccess,
+                    request_deserializer=entdb__pb2.DelegateAccessRequest.FromString,
+                    response_serializer=entdb__pb2.DelegateAccessResponse.SerializeToString,
+            ),
+            'SetLegalHold': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetLegalHold,
+                    request_deserializer=entdb__pb2.LegalHoldRequest.FromString,
+                    response_serializer=entdb__pb2.LegalHoldResponse.SerializeToString,
+            ),
+            'RevokeAllUserAccess': grpc.unary_unary_rpc_method_handler(
+                    servicer.RevokeAllUserAccess,
+                    request_deserializer=entdb__pb2.RevokeAllUserAccessRequest.FromString,
+                    response_serializer=entdb__pb2.RevokeAllUserAccessResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -971,6 +1231,438 @@ class EntDBService(object):
             '/entdb.v1.EntDBService/TransferOwnership',
             entdb__pb2.TransferOwnershipRequest.SerializeToString,
             entdb__pb2.TransferOwnershipResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateUser(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/CreateUser',
+            entdb__pb2.CreateUserRequest.SerializeToString,
+            entdb__pb2.CreateUserResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetUser(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/GetUser',
+            entdb__pb2.GetUserRequest.SerializeToString,
+            entdb__pb2.GetUserResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def UpdateUser(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/UpdateUser',
+            entdb__pb2.UpdateUserRequest.SerializeToString,
+            entdb__pb2.UpdateUserResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ListUsers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/ListUsers',
+            entdb__pb2.ListUsersRequest.SerializeToString,
+            entdb__pb2.ListUsersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateTenant(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/CreateTenant',
+            entdb__pb2.CreateTenantRequest.SerializeToString,
+            entdb__pb2.CreateTenantResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTenant(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/GetTenant',
+            entdb__pb2.GetTenantRequest.SerializeToString,
+            entdb__pb2.GetTenantResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ArchiveTenant(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/ArchiveTenant',
+            entdb__pb2.ArchiveTenantRequest.SerializeToString,
+            entdb__pb2.ArchiveTenantResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def AddTenantMember(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/AddTenantMember',
+            entdb__pb2.TenantMemberRequest.SerializeToString,
+            entdb__pb2.TenantMemberResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RemoveTenantMember(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/RemoveTenantMember',
+            entdb__pb2.TenantMemberRequest.SerializeToString,
+            entdb__pb2.TenantMemberResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTenantMembers(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/GetTenantMembers',
+            entdb__pb2.GetTenantMembersRequest.SerializeToString,
+            entdb__pb2.GetTenantMembersResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetUserTenants(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/GetUserTenants',
+            entdb__pb2.GetUserTenantsRequest.SerializeToString,
+            entdb__pb2.GetUserTenantsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ChangeMemberRole(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/ChangeMemberRole',
+            entdb__pb2.ChangeMemberRoleRequest.SerializeToString,
+            entdb__pb2.ChangeMemberRoleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TransferUserContent(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/TransferUserContent',
+            entdb__pb2.TransferUserContentRequest.SerializeToString,
+            entdb__pb2.TransferUserContentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DelegateAccess(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/DelegateAccess',
+            entdb__pb2.DelegateAccessRequest.SerializeToString,
+            entdb__pb2.DelegateAccessResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetLegalHold(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/SetLegalHold',
+            entdb__pb2.LegalHoldRequest.SerializeToString,
+            entdb__pb2.LegalHoldResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RevokeAllUserAccess(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/RevokeAllUserAccess',
+            entdb__pb2.RevokeAllUserAccessRequest.SerializeToString,
+            entdb__pb2.RevokeAllUserAccessResponse.FromString,
             options,
             channel_credentials,
             insecure,
