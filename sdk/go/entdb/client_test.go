@@ -49,6 +49,10 @@ func (m *mockTransport) ExecuteAtomic(_ context.Context, _, _, _ string, _ []Ope
 	return m.commitResp, m.commitErr
 }
 
+func (m *mockTransport) Share(_ context.Context, _, _, _, _, _ string) error {
+	return nil
+}
+
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
 	t.Helper()
 	return newClientWithTransport("localhost:50051", transport, opts...)
