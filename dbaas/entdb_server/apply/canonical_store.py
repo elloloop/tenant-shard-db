@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import sqlite3
@@ -102,6 +103,24 @@ def _compare_stream_pos(a: str, b: str) -> int:
         Positive if a > b, negative if a < b, zero if equal.
     """
     return _parse_stream_offset(a) - _parse_stream_offset(b)
+
+
+def _compute_entry_hash(
+    event_id: str,
+    prev_hash: str,
+    actor_id: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    created_at: int,
+) -> str:
+    """Compute the SHA-256 hash for an audit log entry.
+
+    The hash covers the core immutable fields so that any modification
+    to a row (or its predecessor) breaks the chain.
+    """
+    content = f"{event_id}:{prev_hash}:{actor_id}:{action}:{target_type}:{target_id}:{created_at}"
+    return hashlib.sha256(content.encode()).hexdigest()
 
 
 class TenantNotFoundError(Exception):
@@ -648,6 +667,25 @@ class CanonicalStore:
                 pii_fields    TEXT NOT NULL DEFAULT '[]',
                 subject_field TEXT DEFAULT NULL
             );
+
+            -- Audit log with hash chain for tamper evidence
+            CREATE TABLE IF NOT EXISTS audit_log (
+                event_id    TEXT PRIMARY KEY,
+                prev_hash   TEXT NOT NULL,
+                actor_id    TEXT NOT NULL,
+                action      TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                target_id   TEXT NOT NULL,
+                ip_address  TEXT,
+                user_agent  TEXT,
+                metadata    TEXT,
+                created_at  INTEGER NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_audit_time
+                ON audit_log(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_actor
+                ON audit_log(actor_id, created_at DESC);
 
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
@@ -2528,6 +2566,311 @@ class CanonicalStore:
             Stream position string or None
         """
         return await self._run_sync(self._sync_get_last_applied_position, tenant_id)
+
+    # ── audit log (hash-chained) ─────────────────────────────────────────
+
+    def _sync_append_audit(
+        self,
+        tenant_id: str,
+        actor_id: str,
+        action: str,
+        target_type: str,
+        target_id: str,
+        ip_address: str | None,
+        user_agent: str | None,
+        metadata: str | None,
+    ) -> str:
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                # 1. Get the last entry's hash (or "genesis" for the first)
+                cursor = conn.execute(
+                    """
+                    SELECT event_id, prev_hash, actor_id, action,
+                           target_type, target_id, created_at
+                    FROM audit_log ORDER BY created_at ASC, rowid ASC
+                    """,
+                )
+                rows = cursor.fetchall()
+
+                if rows:
+                    last = rows[-1]
+                    prev_hash = _compute_entry_hash(
+                        last["event_id"],
+                        last["prev_hash"],
+                        last["actor_id"],
+                        last["action"],
+                        last["target_type"],
+                        last["target_id"],
+                        last["created_at"],
+                    )
+                else:
+                    prev_hash = "genesis"
+
+                # 2. Create new entry
+                event_id = str(uuid.uuid4())
+                now = int(time.time() * 1000)
+
+                conn.execute(
+                    """
+                    INSERT INTO audit_log
+                        (event_id, prev_hash, actor_id, action, target_type,
+                         target_id, ip_address, user_agent, metadata, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_id,
+                        prev_hash,
+                        actor_id,
+                        action,
+                        target_type,
+                        target_id,
+                        ip_address,
+                        user_agent,
+                        metadata,
+                        now,
+                    ),
+                )
+
+                conn.execute("COMMIT")
+                return event_id
+
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    async def append_audit(
+        self,
+        tenant_id: str,
+        actor_id: str,
+        action: str,
+        target_type: str,
+        target_id: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+        metadata: str | None = None,
+    ) -> str:
+        """Append a tamper-evident audit entry.
+
+        Each entry stores the SHA-256 hash of the previous entry's content,
+        forming a hash chain.  Any modification or deletion of a prior entry
+        will break the chain (detectable via ``verify_audit_chain``).
+
+        Args:
+            tenant_id: Tenant identifier
+            actor_id: Who performed the action
+            action: Action performed (e.g. "create_node")
+            target_type: Type of target (e.g. "node")
+            target_id: ID of target
+            ip_address: Optional client IP
+            user_agent: Optional client user-agent
+            metadata: Optional JSON metadata string
+
+        Returns:
+            The new event_id.
+        """
+        return await self._run_sync(
+            self._sync_append_audit,
+            tenant_id,
+            actor_id,
+            action,
+            target_type,
+            target_id,
+            ip_address,
+            user_agent,
+            metadata,
+        )
+
+    def _sync_get_audit_log(
+        self,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        actor_id: str | None,
+        action: str | None,
+        after: int | None,
+        before: int | None,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            clauses: list[str] = []
+            params: list[Any] = []
+
+            if actor_id is not None:
+                clauses.append("actor_id = ?")
+                params.append(actor_id)
+            if action is not None:
+                clauses.append("action = ?")
+                params.append(action)
+            if after is not None:
+                clauses.append("created_at > ?")
+                params.append(after)
+            if before is not None:
+                clauses.append("created_at < ?")
+                params.append(before)
+
+            where = ""
+            if clauses:
+                where = "WHERE " + " AND ".join(clauses)
+
+            query = f"""
+                SELECT event_id, prev_hash, actor_id, action, target_type,
+                       target_id, ip_address, user_agent, metadata, created_at
+                FROM audit_log
+                {where}
+                ORDER BY created_at DESC
+                LIMIT ? OFFSET ?
+            """
+            params.extend([limit, offset])
+
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def get_audit_log(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        actor_id: str | None = None,
+        action: str | None = None,
+        after: int | None = None,
+        before: int | None = None,
+    ) -> list[dict]:
+        """Query audit log with optional filters.
+
+        Args:
+            tenant_id: Tenant identifier
+            limit: Max entries to return
+            offset: Pagination offset
+            actor_id: Filter by actor
+            action: Filter by action type
+            after: Only entries after this timestamp (Unix ms)
+            before: Only entries before this timestamp (Unix ms)
+
+        Returns:
+            List of audit entries (newest first).
+        """
+        return await self._run_sync(
+            self._sync_get_audit_log,
+            tenant_id,
+            limit,
+            offset,
+            actor_id,
+            action,
+            after,
+            before,
+        )
+
+    def _sync_verify_audit_chain(self, tenant_id: str) -> tuple[bool, str]:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                """
+                SELECT event_id, prev_hash, actor_id, action,
+                       target_type, target_id, created_at
+                FROM audit_log
+                ORDER BY created_at ASC, rowid ASC
+                """,
+            )
+            rows = cursor.fetchall()
+
+            if not rows:
+                return (True, "ok")
+
+            # First entry must have prev_hash == "genesis"
+            first = rows[0]
+            if first["prev_hash"] != "genesis":
+                return (False, f"Break at event_id {first['event_id']}: genesis expected")
+
+            for i in range(1, len(rows)):
+                prev = rows[i - 1]
+                curr = rows[i]
+
+                expected_prev_hash = _compute_entry_hash(
+                    prev["event_id"],
+                    prev["prev_hash"],
+                    prev["actor_id"],
+                    prev["action"],
+                    prev["target_type"],
+                    prev["target_id"],
+                    prev["created_at"],
+                )
+
+                if curr["prev_hash"] != expected_prev_hash:
+                    return (False, f"Break at event_id {curr['event_id']}")
+
+            return (True, "ok")
+
+    async def verify_audit_chain(self, tenant_id: str) -> tuple[bool, str]:
+        """Verify the entire audit chain is intact.
+
+        Walks through all entries in chronological order and recomputes
+        each entry's expected ``prev_hash``.  If any mismatch is found
+        the chain has been tampered with.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            Tuple of (valid, message).  ``valid`` is True when the chain
+            is intact; ``message`` is "ok" or describes the break.
+        """
+        return await self._run_sync(self._sync_verify_audit_chain, tenant_id)
+
+    def _sync_export_audit_log(
+        self,
+        tenant_id: str,
+        after: int | None,
+        before: int | None,
+    ) -> list[dict]:
+        with self._get_connection(tenant_id) as conn:
+            clauses: list[str] = []
+            params: list[Any] = []
+
+            if after is not None:
+                clauses.append("created_at > ?")
+                params.append(after)
+            if before is not None:
+                clauses.append("created_at < ?")
+                params.append(before)
+
+            where = ""
+            if clauses:
+                where = "WHERE " + " AND ".join(clauses)
+
+            query = f"""
+                SELECT event_id, prev_hash, actor_id, action, target_type,
+                       target_id, ip_address, user_agent, metadata, created_at
+                FROM audit_log
+                {where}
+                ORDER BY created_at ASC, rowid ASC
+            """
+
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    async def export_audit_log(
+        self,
+        tenant_id: str,
+        after: int | None = None,
+        before: int | None = None,
+    ) -> list[dict]:
+        """Export audit entries for compliance.
+
+        Returns entries in chronological order (oldest first).
+
+        Args:
+            tenant_id: Tenant identifier
+            after: Only entries after this timestamp (Unix ms)
+            before: Only entries before this timestamp (Unix ms)
+
+        Returns:
+            List of audit entries (oldest first).
+        """
+        return await self._run_sync(
+            self._sync_export_audit_log,
+            tenant_id,
+            after,
+            before,
+        )
 
     def get_db_path(self, tenant_id: str) -> Path:
         """Get the database file path for a tenant.
