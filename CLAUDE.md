@@ -1,5 +1,19 @@
 # EntDB — Agent Instructions
 
+## Workflow (MUST follow)
+
+### Always run CI locally before pushing
+Before every `git push`, run the full local CI suite and fix any failures:
+
+```bash
+python -m pytest tests/unit/ tests/integration/ -q   # all tests must pass
+uvx ruff@0.15.7 check .                              # lint must be clean
+uvx ruff@0.15.7 format --check .                     # format must be clean
+cd sdk/go/entdb && go vet ./... && go test ./...      # Go SDK (if modified)
+```
+
+Do NOT push code that you haven't verified locally. Do NOT rely on GitHub CI to catch failures — fix them before push.
+
 ## Architecture Invariants (MUST NOT violate)
 
 ### 1. All writes go through the WAL
