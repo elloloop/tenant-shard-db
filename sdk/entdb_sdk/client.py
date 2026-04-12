@@ -1780,3 +1780,88 @@ class DbClient:
             actor=actor,
             timeout=timeout,
         )
+
+    # --- GDPR operations (Issue #103, ADR-004) ---
+
+    async def delete_user(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        grace_days: int = 30,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Right to erasure (GDPR Article 17).
+
+        Queues the user for deletion after a grace period during which
+        the user may cancel the request. After the grace period expires,
+        a background worker runs the per-type ``data_policy`` rules:
+
+            - PERSONAL/EPHEMERAL nodes are deleted
+            - BUSINESS/FINANCIAL/AUDIT/HEALTHCARE nodes are anonymized
+            - Personal tenants (sole-owner) are dropped entirely
+
+        Args:
+            user_id: User to delete
+            actor: Actor performing the request (defaults to ``user:<user_id>``)
+            grace_days: Grace period in days (defaults to 30)
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``requested_at``, ``execute_at``,
+            ``status``, and ``error``.
+        """
+        self._ensure_connected()
+        return await self._grpc.delete_user(
+            user_id=user_id,
+            actor=actor,
+            grace_days=grace_days,
+            timeout=timeout,
+        )
+
+    async def cancel_user_deletion(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Cancel a pending user deletion during the grace period."""
+        self._ensure_connected()
+        return await self._grpc.cancel_user_deletion(
+            user_id=user_id,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def export_user_data(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Right to access / portability (GDPR Articles 15, 20)."""
+        self._ensure_connected()
+        return await self._grpc.export_user_data(
+            user_id=user_id,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def freeze_user(
+        self,
+        user_id: str,
+        *,
+        enabled: bool = True,
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Right to restrict processing (GDPR Article 18)."""
+        self._ensure_connected()
+        return await self._grpc.freeze_user(
+            user_id=user_id,
+            enabled=enabled,
+            actor=actor,
+            timeout=timeout,
+        )

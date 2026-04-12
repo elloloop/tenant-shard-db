@@ -220,6 +220,26 @@ class EntDBServiceStub(object):
                 request_serializer=entdb__pb2.RevokeAllUserAccessRequest.SerializeToString,
                 response_deserializer=entdb__pb2.RevokeAllUserAccessResponse.FromString,
                 _registered_method=True)
+        self.DeleteUser = channel.unary_unary(
+                '/entdb.v1.EntDBService/DeleteUser',
+                request_serializer=entdb__pb2.DeleteUserRequest.SerializeToString,
+                response_deserializer=entdb__pb2.DeleteUserResponse.FromString,
+                _registered_method=True)
+        self.ExportUserData = channel.unary_unary(
+                '/entdb.v1.EntDBService/ExportUserData',
+                request_serializer=entdb__pb2.ExportUserDataRequest.SerializeToString,
+                response_deserializer=entdb__pb2.ExportUserDataResponse.FromString,
+                _registered_method=True)
+        self.FreezeUser = channel.unary_unary(
+                '/entdb.v1.EntDBService/FreezeUser',
+                request_serializer=entdb__pb2.FreezeUserRequest.SerializeToString,
+                response_deserializer=entdb__pb2.FreezeUserResponse.FromString,
+                _registered_method=True)
+        self.CancelUserDeletion = channel.unary_unary(
+                '/entdb.v1.EntDBService/CancelUserDeletion',
+                request_serializer=entdb__pb2.CancelUserDeletionRequest.SerializeToString,
+                response_deserializer=entdb__pb2.CancelUserDeletionResponse.FromString,
+                _registered_method=True)
 
 
 class EntDBServiceServicer(object):
@@ -474,6 +494,31 @@ class EntDBServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def DeleteUser(self, request, context):
+        """GDPR operations (Issue #103, ADR-004)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ExportUserData(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def FreezeUser(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CancelUserDeletion(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EntDBServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -661,6 +706,26 @@ def add_EntDBServiceServicer_to_server(servicer, server):
                     servicer.RevokeAllUserAccess,
                     request_deserializer=entdb__pb2.RevokeAllUserAccessRequest.FromString,
                     response_serializer=entdb__pb2.RevokeAllUserAccessResponse.SerializeToString,
+            ),
+            'DeleteUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.DeleteUser,
+                    request_deserializer=entdb__pb2.DeleteUserRequest.FromString,
+                    response_serializer=entdb__pb2.DeleteUserResponse.SerializeToString,
+            ),
+            'ExportUserData': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExportUserData,
+                    request_deserializer=entdb__pb2.ExportUserDataRequest.FromString,
+                    response_serializer=entdb__pb2.ExportUserDataResponse.SerializeToString,
+            ),
+            'FreezeUser': grpc.unary_unary_rpc_method_handler(
+                    servicer.FreezeUser,
+                    request_deserializer=entdb__pb2.FreezeUserRequest.FromString,
+                    response_serializer=entdb__pb2.FreezeUserResponse.SerializeToString,
+            ),
+            'CancelUserDeletion': grpc.unary_unary_rpc_method_handler(
+                    servicer.CancelUserDeletion,
+                    request_deserializer=entdb__pb2.CancelUserDeletionRequest.FromString,
+                    response_serializer=entdb__pb2.CancelUserDeletionResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1663,6 +1728,114 @@ class EntDBService(object):
             '/entdb.v1.EntDBService/RevokeAllUserAccess',
             entdb__pb2.RevokeAllUserAccessRequest.SerializeToString,
             entdb__pb2.RevokeAllUserAccessResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DeleteUser(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/DeleteUser',
+            entdb__pb2.DeleteUserRequest.SerializeToString,
+            entdb__pb2.DeleteUserResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExportUserData(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/ExportUserData',
+            entdb__pb2.ExportUserDataRequest.SerializeToString,
+            entdb__pb2.ExportUserDataResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def FreezeUser(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/FreezeUser',
+            entdb__pb2.FreezeUserRequest.SerializeToString,
+            entdb__pb2.FreezeUserResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CancelUserDeletion(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/CancelUserDeletion',
+            entdb__pb2.CancelUserDeletionRequest.SerializeToString,
+            entdb__pb2.CancelUserDeletionResponse.FromString,
             options,
             channel_credentials,
             insecure,

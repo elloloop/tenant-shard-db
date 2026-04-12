@@ -41,6 +41,8 @@ from .generated import (
     AclEntry,
     ArchiveTenantRequest,
     ArchiveTenantResponse,
+    CancelUserDeletionRequest,
+    CancelUserDeletionResponse,
     ChangeMemberRoleRequest,
     ChangeMemberRoleResponse,
     CreateTenantRequest,
@@ -49,11 +51,17 @@ from .generated import (
     CreateUserResponse,
     DelegateAccessRequest,
     DelegateAccessResponse,
+    DeleteUserRequest,
+    DeleteUserResponse,
     Edge,
     EntDBServiceServicer,
     # Request/Response types
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
+    ExportUserDataRequest,
+    ExportUserDataResponse,
+    FreezeUserRequest,
+    FreezeUserResponse,
     # ACL v2
     GetConnectedNodesRequest,
     GetConnectedNodesResponse,
@@ -314,6 +322,17 @@ class EntDBServicer(EntDBServiceServicer):
                 f"Role '{role}' does not have write access",
             )
             return None
+
+        # Frozen / pending-deletion user check (GDPR Article 18: restrict
+        # processing). A frozen user may read but cannot make new writes.
+        if require_write:
+            user = await self.global_store.get_user(actor_uid)
+            if user is not None and user.get("status") in ("frozen", "pending_deletion"):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    f"User '{actor_uid}' is {user.get('status')} and cannot write",
+                )
+                return None
 
         return role
 
@@ -2269,6 +2288,189 @@ class EntDBServicer(EntDBServiceServicer):
                 raise
             logger.error(f"RevokeAllUserAccess failed: {e}", exc_info=True)
             return RevokeAllUserAccessResponse(success=False, error=str(e))
+
+    # ── GDPR operations (Issue #103, ADR-004) ──────────────────────────
+
+    async def DeleteUser(
+        self,
+        request: DeleteUserRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> DeleteUserResponse:
+        """Queue a user for GDPR right-to-erasure.
+
+        The user is not deleted immediately; instead an entry is added to
+        ``deletion_queue`` with a ``grace_days`` grace period (default 30).
+        A background worker processes the queue after the grace period.
+        """
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(grpc.StatusCode.UNIMPLEMENTED, "User registry not configured")
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not self._is_self_or_admin(request.actor, request.user_id):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "DeleteUser requires the user themselves or an admin actor",
+                )
+
+            user = await self.global_store.get_user(request.user_id)
+            if user is None:
+                record_grpc_request("DeleteUser", "ok", time.perf_counter() - start)
+                return DeleteUserResponse(success=False, error="User not found")
+
+            existing = await self.global_store.get_deletion_entry(request.user_id)
+            if existing and existing.get("status") == "pending":
+                record_grpc_request("DeleteUser", "ok", time.perf_counter() - start)
+                return DeleteUserResponse(
+                    success=True,
+                    requested_at=existing["requested_at"],
+                    execute_at=existing["execute_at"],
+                    status="pending",
+                )
+
+            grace = request.grace_days if request.grace_days > 0 else 30
+            entry = await self.global_store.queue_deletion(request.user_id, grace_days=grace)
+            await self.global_store.set_user_status(request.user_id, "pending_deletion")
+
+            record_grpc_request("DeleteUser", "ok", time.perf_counter() - start)
+            return DeleteUserResponse(
+                success=True,
+                requested_at=entry["requested_at"],
+                execute_at=entry["execute_at"],
+                status="pending",
+            )
+        except Exception as e:
+            record_grpc_request("DeleteUser", "error", time.perf_counter() - start)
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"DeleteUser failed: {e}", exc_info=True)
+            return DeleteUserResponse(success=False, error=str(e))
+
+    async def CancelUserDeletion(
+        self,
+        request: CancelUserDeletionRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> CancelUserDeletionResponse:
+        """Cancel a pending user deletion during the grace period."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(grpc.StatusCode.UNIMPLEMENTED, "User registry not configured")
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not self._is_self_or_admin(request.actor, request.user_id):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "CancelUserDeletion requires the user themselves or an admin actor",
+                )
+            ok = await self.global_store.cancel_deletion(request.user_id)
+            if ok:
+                await self.global_store.set_user_status(request.user_id, "active")
+            record_grpc_request("CancelUserDeletion", "ok", time.perf_counter() - start)
+            return CancelUserDeletionResponse(success=ok)
+        except Exception as e:
+            record_grpc_request("CancelUserDeletion", "error", time.perf_counter() - start)
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"CancelUserDeletion failed: {e}", exc_info=True)
+            return CancelUserDeletionResponse(success=False, error=str(e))
+
+    async def ExportUserData(
+        self,
+        request: ExportUserDataRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> ExportUserDataResponse:
+        """Export a user's data across all tenants they belong to."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(grpc.StatusCode.UNIMPLEMENTED, "User registry not configured")
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not self._is_self_or_admin(request.actor, request.user_id):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "ExportUserData requires the user themselves or an admin actor",
+                )
+
+            memberships = await self.global_store.get_user_tenants(request.user_id)
+            # Per-tenant nodes store owner_actor as "user:{id}" principal form.
+            tenant_principal = (
+                request.user_id
+                if request.user_id.startswith("user:")
+                else f"user:{request.user_id}"
+            )
+            tenants_out = []
+            for m in memberships:
+                try:
+                    data = await self.canonical_store.export_user_data_for_tenant(
+                        m["tenant_id"], tenant_principal, self.schema_registry
+                    )
+                    tenants_out.append(data)
+                except Exception as tx_err:  # pragma: no cover - defensive
+                    logger.warning(
+                        "ExportUserData tenant %s failed: %s",
+                        m["tenant_id"],
+                        tx_err,
+                    )
+
+            bundle = {
+                "user_id": request.user_id,
+                "generated_at": int(time.time()),
+                "tenants": tenants_out,
+            }
+            record_grpc_request("ExportUserData", "ok", time.perf_counter() - start)
+            return ExportUserDataResponse(
+                success=True,
+                export_json=json.dumps(bundle),
+            )
+        except Exception as e:
+            record_grpc_request("ExportUserData", "error", time.perf_counter() - start)
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"ExportUserData failed: {e}", exc_info=True)
+            return ExportUserDataResponse(success=False, error=str(e))
+
+    async def FreezeUser(
+        self,
+        request: FreezeUserRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> FreezeUserResponse:
+        """Freeze or unfreeze a user (GDPR Article 18 — restrict processing)."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(grpc.StatusCode.UNIMPLEMENTED, "User registry not configured")
+            if not request.actor:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
+            if not request.user_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
+            if not self._is_self_or_admin(request.actor, request.user_id):
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "FreezeUser requires the user themselves or an admin actor",
+                )
+
+            new_status = "frozen" if request.enabled else "active"
+            ok = await self.global_store.set_user_status(request.user_id, new_status)
+            if not ok:
+                record_grpc_request("FreezeUser", "ok", time.perf_counter() - start)
+                return FreezeUserResponse(success=False, error="User not found")
+            record_grpc_request("FreezeUser", "ok", time.perf_counter() - start)
+            return FreezeUserResponse(success=True, status=new_status)
+        except Exception as e:
+            record_grpc_request("FreezeUser", "error", time.perf_counter() - start)
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"FreezeUser failed: {e}", exc_info=True)
+            return FreezeUserResponse(success=False, error=str(e))
 
 
 class GrpcServer:
