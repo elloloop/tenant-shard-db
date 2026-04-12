@@ -199,6 +199,154 @@ class EntDBServicer(EntDBServiceServicer):
                 f"Tenant '{tenant_id}' is not served by this node{hint}",
             )
 
+    def _actor_user_id(self, actor: str) -> str:
+        """Extract user_id from actor string like 'user:ID'."""
+        if actor.startswith("user:"):
+            return actor[5:]
+        return actor
+
+    async def _check_tenant_access(
+        self,
+        tenant_id: str,
+        actor: str,
+        context,
+        require_write: bool = False,
+        op_kind: str = "read",
+    ) -> str | None:
+        """Check tenant existence, status, and actor role.
+
+        Enforces:
+            - tenant_registry.status:
+                * 'active'      -> all operations allowed
+                * 'archived'    -> reads ok, writes rejected (FAILED_PRECONDITION)
+                * 'legal_hold'  -> reads + creates ok, deletes rejected
+                                   (FAILED_PRECONDITION)
+                * 'deleted'     -> all rejected (NOT_FOUND)
+            - tenant_members.role:
+                * owner / admin / member -> read + write
+                * viewer / guest         -> read only
+                * non-member             -> rejected (PERMISSION_DENIED)
+
+        System actors (``system:*`` and ``__system__``) bypass all checks.
+
+        If ``self.global_store`` is None, the check is skipped (backward
+        compatible) and ``"system"`` is returned.
+
+        Args:
+            tenant_id:    Tenant identifier to check.
+            actor:        Actor string (``user:<id>``, ``system:*`` etc).
+            context:      gRPC servicer context for ``abort()``.
+            require_write: If True, the caller is requesting a write op.
+            op_kind:      One of ``"read"``, ``"create"``, ``"write"``,
+                          ``"delete"``. Used for legal_hold semantics.
+                          Defaults to ``"read"``.
+
+        Returns:
+            The actor's role string (or ``"system"`` for system actors,
+            or ``"system"`` when GlobalStore is not configured). Returns
+            ``None`` only when the call has been aborted (the abort raises,
+            so callers will not actually receive ``None`` in practice).
+        """
+        if self.global_store is None:
+            return "system"
+
+        # System actors bypass everything.
+        if actor.startswith("system:") or actor == "__system__":
+            return "system"
+
+        # Tenant existence + status check.
+        tenant = await self.global_store.get_tenant(tenant_id)
+        if tenant is None:
+            await context.abort(
+                grpc.StatusCode.NOT_FOUND,
+                f"Tenant '{tenant_id}' does not exist",
+            )
+            return None
+
+        status = tenant.get("status", "active")
+        if status == "deleted":
+            await context.abort(
+                grpc.StatusCode.NOT_FOUND,
+                f"Tenant '{tenant_id}' is deleted",
+            )
+            return None
+        if status == "archived" and (require_write or op_kind != "read"):
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"Tenant '{tenant_id}' is archived; writes are not allowed",
+            )
+            return None
+        if status == "legal_hold" and op_kind == "delete":
+            await context.abort(
+                grpc.StatusCode.FAILED_PRECONDITION,
+                f"Tenant '{tenant_id}' is on legal hold; deletes are not allowed",
+            )
+            return None
+
+        # Role check.
+        actor_uid = self._actor_user_id(actor)
+        role = await self._get_member_role(tenant_id, actor_uid)
+        if role is None:
+            await context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"Actor '{actor}' is not a member of tenant '{tenant_id}'",
+            )
+            return None
+
+        if require_write and role in ("viewer", "guest"):
+            await context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"Role '{role}' does not have write access",
+            )
+            return None
+
+        return role
+
+    async def _check_cross_tenant_read(
+        self,
+        tenant_id: str,
+        actor: str,
+        context,
+    ) -> str:
+        """Check read access, allowing cross-tenant actors with node_access.
+
+        If no global_store is configured, returns "local" (backward compat).
+        If the actor is a tenant member, returns "member".
+        If the actor is NOT a member but has at least one node_access
+        entry in the tenant, returns "cross_tenant".
+        Otherwise aborts with PERMISSION_DENIED.
+
+        Returns:
+            "local" (no global_store), "member", or "cross_tenant".
+        """
+        if not self.global_store:
+            return "local"
+
+        # System actors bypass all checks
+        if actor.startswith("system:") or actor == "__system__":
+            return "member"
+
+        # Check membership
+        actor_uid = self._actor_user_id(actor)
+        is_member = await self.global_store.is_member(tenant_id, actor_uid)
+        if is_member:
+            return "member"
+
+        # Not a member — check for cross-tenant node_access
+        actor_ids = await self.canonical_store.resolve_actor_groups(
+            tenant_id, actor,
+        )
+        has_access = await self.canonical_store.has_node_access(
+            tenant_id, actor_ids,
+        )
+        if has_access:
+            return "cross_tenant"
+
+        await context.abort(
+            grpc.StatusCode.PERMISSION_DENIED,
+            "Actor is not a member of this tenant",
+        )
+
     async def ExecuteAtomic(
         self,
         request: ExecuteAtomicRequest,
@@ -233,6 +381,21 @@ class EntDBServicer(EntDBServiceServicer):
 
             # Convert operations to internal format
             ops = self._convert_operations(request.operations)
+
+            # Tenant role + status enforcement.
+            # ExecuteAtomic is always a write. The status check is finer
+            # grained: legal_hold rejects deletes (delete_node, delete_edge)
+            # but still permits creates/updates.
+            has_delete = any(
+                op.get("op") in ("delete_node", "delete_edge") for op in ops
+            )
+            await self._check_tenant_access(
+                tenant_id=ctx.tenant_id,
+                actor=ctx.actor,
+                context=context,
+                require_write=True,
+                op_kind="delete" if has_delete else "write",
+            )
 
             # Assign IDs to create_node ops that don't have one
             created_node_ids = []
@@ -439,10 +602,18 @@ class EntDBServicer(EntDBServiceServicer):
         request: GetNodeRequest,
         context: grpc_aio.ServicerContext,
     ) -> GetNodeResponse:
-        """Get a node by ID."""
+        """Get a node by ID.
+
+        Supports cross-tenant reads: if the actor is not a member of the
+        tenant but has an explicit node_access grant for the requested node,
+        the read is allowed.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            role = await self._check_cross_tenant_read(
+                request.context.tenant_id, request.context.actor, context,
+            )
 
             # Wait for offset if requested (read-after-write consistency)
             if request.after_offset:
@@ -458,6 +629,20 @@ class EntDBServicer(EntDBServiceServicer):
             if not node:
                 record_grpc_request("GetNode", "ok", time.perf_counter() - start)
                 return GetNodeResponse(found=False)
+
+            # Cross-tenant: verify access to this specific node
+            if role == "cross_tenant":
+                actor_ids = await self.canonical_store.resolve_actor_groups(
+                    request.context.tenant_id, request.context.actor,
+                )
+                has_access = await self.canonical_store.can_access(
+                    request.context.tenant_id, request.node_id, actor_ids,
+                )
+                if not has_access:
+                    await context.abort(
+                        grpc.StatusCode.PERMISSION_DENIED,
+                        "Actor does not have access to this node",
+                    )
 
             record_grpc_request("GetNode", "ok", time.perf_counter() - start)
             return GetNodeResponse(
@@ -483,16 +668,30 @@ class EntDBServicer(EntDBServiceServicer):
         request: GetNodesRequest,
         context: grpc_aio.ServicerContext,
     ) -> GetNodesResponse:
-        """Get multiple nodes by IDs."""
+        """Get multiple nodes by IDs.
+
+        Supports cross-tenant reads: nodes the actor does not have
+        node_access for are placed in missing_ids.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            role = await self._check_cross_tenant_read(
+                request.context.tenant_id, request.context.actor, context,
+            )
 
             # Wait for offset if requested (read-after-write consistency)
             if request.after_offset:
                 timeout = request.wait_timeout_ms / 1000.0 if request.wait_timeout_ms else 30.0
                 await self._wait_for_offset(
                     request.context.tenant_id, request.after_offset, timeout
+                )
+
+            # Resolve actor groups once for cross-tenant filtering
+            actor_ids = None
+            if role == "cross_tenant":
+                actor_ids = await self.canonical_store.resolve_actor_groups(
+                    request.context.tenant_id, request.context.actor,
                 )
 
             nodes = []
@@ -503,21 +702,31 @@ class EntDBServicer(EntDBServiceServicer):
                     request.context.tenant_id,
                     node_id,
                 )
-                if node:
-                    nodes.append(
-                        Node(
-                            tenant_id=node.tenant_id,
-                            node_id=node.node_id,
-                            type_id=node.type_id,
-                            payload=_dict_to_struct(node.payload),
-                            created_at=node.created_at,
-                            updated_at=node.updated_at,
-                            owner_actor=node.owner_actor,
-                            acl=_acl_list_to_proto(node.acl),
-                        )
-                    )
-                else:
+                if not node:
                     missing_ids.append(node_id)
+                    continue
+
+                # Cross-tenant: verify per-node access
+                if actor_ids is not None:
+                    has_access = await self.canonical_store.can_access(
+                        request.context.tenant_id, node_id, actor_ids,
+                    )
+                    if not has_access:
+                        missing_ids.append(node_id)
+                        continue
+
+                nodes.append(
+                    Node(
+                        tenant_id=node.tenant_id,
+                        node_id=node.node_id,
+                        type_id=node.type_id,
+                        payload=_dict_to_struct(node.payload),
+                        created_at=node.created_at,
+                        updated_at=node.updated_at,
+                        owner_actor=node.owner_actor,
+                        acl=_acl_list_to_proto(node.acl),
+                    )
+                )
 
             record_grpc_request("GetNodes", "ok", time.perf_counter() - start)
             return GetNodesResponse(nodes=nodes, missing_ids=missing_ids)
@@ -531,10 +740,17 @@ class EntDBServicer(EntDBServiceServicer):
         request: QueryNodesRequest,
         context: grpc_aio.ServicerContext,
     ) -> QueryNodesResponse:
-        """Query nodes by type with optional payload filtering."""
+        """Query nodes by type with optional payload filtering.
+
+        Supports cross-tenant reads: if the actor is not a tenant member
+        but has node_access, only accessible nodes are returned.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            role = await self._check_cross_tenant_read(
+                request.context.tenant_id, request.context.actor, context,
+            )
 
             # Wait for offset if requested (read-after-write consistency)
             if request.after_offset:
@@ -556,6 +772,19 @@ class EntDBServicer(EntDBServiceServicer):
                 order_by=request.order_by or "created_at",
                 descending=request.descending,
             )
+
+            # Cross-tenant: filter to only accessible nodes
+            if role == "cross_tenant":
+                actor_ids = await self.canonical_store.resolve_actor_groups(
+                    request.context.tenant_id, request.context.actor,
+                )
+                accessible = []
+                for n in nodes:
+                    if await self.canonical_store.can_access(
+                        request.context.tenant_id, n.node_id, actor_ids,
+                    ):
+                        accessible.append(n)
+                nodes = accessible
 
             proto_nodes = [
                 Node(
