@@ -3927,3 +3927,99 @@ class CanonicalStore:
         AUDIT records (per the export policy table in ADR-004).
         """
         return await self._run_sync(self._sync_export_user_data, tenant_id, user_id, registry)
+
+    def _sync_migrate_payloads_to_field_ids(
+        self,
+        tenant_id: str,
+        schema_registry: Any,
+    ) -> dict:
+        """Rewrite legacy name-keyed payload_json rows to id-keyed format.
+
+        Idempotent and atomic: the entire scan-and-rewrite runs inside a
+        single SQLite transaction so a partial failure leaves no half-
+        migrated rows behind.
+        """
+        from ..schema.field_id_translation import looks_id_keyed, name_to_id_keys
+
+        scanned = 0
+        migrated = 0
+        skipped = 0
+        unknown_type = 0
+
+        with self._get_connection(tenant_id) as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                rows = conn.execute(
+                    "SELECT node_id, type_id, payload_json FROM nodes WHERE tenant_id = ?",
+                    (tenant_id,),
+                ).fetchall()
+
+                for row in rows:
+                    scanned += 1
+                    node_id = row["node_id"]
+                    type_id = row["type_id"]
+                    payload_raw = row["payload_json"]
+
+                    try:
+                        parsed = json.loads(payload_raw) if payload_raw else {}
+                    except (ValueError, TypeError):
+                        # Unparseable payloads are left untouched.
+                        skipped += 1
+                        continue
+
+                    if not isinstance(parsed, dict):
+                        skipped += 1
+                        continue
+
+                    if looks_id_keyed(parsed):
+                        skipped += 1
+                        continue
+
+                    if schema_registry is None or not hasattr(schema_registry, "get_node_type"):
+                        unknown_type += 1
+                        continue
+
+                    if schema_registry.get_node_type(type_id) is None:
+                        unknown_type += 1
+                        continue
+
+                    new_payload = name_to_id_keys(parsed, type_id, schema_registry)
+                    new_json = json.dumps(new_payload)
+                    conn.execute(
+                        "UPDATE nodes SET payload_json = ? WHERE tenant_id = ? AND node_id = ?",
+                        (new_json, tenant_id, node_id),
+                    )
+                    migrated += 1
+
+                conn.execute("COMMIT")
+            except Exception:
+                with contextlib.suppress(Exception):
+                    conn.execute("ROLLBACK")
+                raise
+
+        return {
+            "scanned": scanned,
+            "migrated": migrated,
+            "skipped": skipped,
+            "unknown_type": unknown_type,
+        }
+
+    async def migrate_payloads_to_field_ids(
+        self,
+        tenant_id: str,
+        schema_registry: Any,
+    ) -> dict:
+        """Rewrite legacy name-keyed payload_json rows to id-keyed format.
+
+        Idempotent: rows already in id-keyed form (per ``looks_id_keyed``) are
+        skipped. Unknown field names are dropped silently (consistent with
+        ``name_to_id_keys`` ingress behavior). Rows whose ``type_id`` is not in
+        the registry are left unchanged.
+
+        Returns a summary dict::
+
+            {"scanned": int, "migrated": int, "skipped": int, "unknown_type": int}
+        """
+        return await self._run_sync(
+            self._sync_migrate_payloads_to_field_ids, tenant_id, schema_registry
+        )
