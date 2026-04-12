@@ -122,10 +122,20 @@ class GdprDeletionWorker:
         return {"processed": len(results), "results": results}
 
     async def _process_user(self, user_id: str) -> dict:
-        """Apply the deletion pipeline for a single user."""
+        """Apply the deletion pipeline for a single user.
+
+        Note on naming: ``global_store`` uses raw user IDs like ``alice``,
+        while per-tenant data stores ``owner_actor`` as a prefixed principal
+        like ``user:alice``. We translate at the boundary so that
+        :meth:`CanonicalStore.anonymize_user_in_tenant` sees the principal
+        form it expects to match against node rows.
+        """
         per_tenant: list[dict] = []
         deleted_tenants: list[str] = []
         memberships = await self.global_store.get_user_tenants(user_id)
+
+        # Per-tenant node/edge rows use the "user:{id}" principal form.
+        tenant_principal = user_id if user_id.startswith("user:") else f"user:{user_id}"
 
         for m in memberships:
             tenant_id = m["tenant_id"]
@@ -149,7 +159,7 @@ class GdprDeletionWorker:
             else:
                 counts = await self.canonical_store.anonymize_user_in_tenant(
                     tenant_id,
-                    user_id,
+                    tenant_principal,
                     self.schema_registry,
                     salt=self.salt,
                 )

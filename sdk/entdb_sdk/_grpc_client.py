@@ -23,6 +23,7 @@ from grpc import aio as grpc_aio
 from ._generated import (
     AclEntry,
     ArchiveTenantRequest,
+    CancelUserDeletionRequest,
     ChangeMemberRoleRequest,
     CreateEdgeOp,
     CreateNodeOp,
@@ -33,9 +34,13 @@ from ._generated import (
     DelegateAccessRequest,
     DeleteEdgeOp,
     DeleteNodeOp,
+    # GDPR operations (Issue #103)
+    DeleteUserRequest,
     EntDBServiceStub,
     ExecuteAtomicRequest,
+    ExportUserDataRequest,
     FieldFilter,
+    FreezeUserRequest,
     # ACL v2
     GetConnectedNodesRequest,
     GetEdgesRequest,
@@ -2098,5 +2103,114 @@ class GrpcClient:
             "revoked_grants": response.revoked_grants,
             "revoked_groups": response.revoked_groups,
             "revoked_shared": response.revoked_shared,
+            "error": response.error if response.error else None,
+        }
+
+    # --- GDPR operations (Issue #103) ---
+
+    async def delete_user(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        grace_days: int = 30,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Queue a user for GDPR right-to-erasure."""
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+        actor_str = actor or f"user:{user_id}"
+        request = DeleteUserRequest(actor=actor_str, user_id=user_id, grace_days=grace_days)
+        response = await self._retry(
+            stub.DeleteUser,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "requested_at": response.requested_at,
+            "execute_at": response.execute_at,
+            "status": response.status,
+            "error": response.error if response.error else None,
+        }
+
+    async def cancel_user_deletion(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Cancel a pending user deletion during the grace period."""
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+        actor_str = actor or f"user:{user_id}"
+        request = CancelUserDeletionRequest(actor=actor_str, user_id=user_id)
+        response = await self._retry(
+            stub.CancelUserDeletion,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    async def export_user_data(
+        self,
+        user_id: str,
+        *,
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Export a user's data across all tenants (JSON bundle)."""
+        import json as _json
+
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+        actor_str = actor or f"user:{user_id}"
+        request = ExportUserDataRequest(actor=actor_str, user_id=user_id)
+        response = await self._retry(
+            stub.ExportUserData,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        bundle = None
+        if response.export_json:
+            try:
+                bundle = _json.loads(response.export_json)
+            except Exception:
+                bundle = None
+        return {
+            "success": response.success,
+            "bundle": bundle,
+            "error": response.error if response.error else None,
+        }
+
+    async def freeze_user(
+        self,
+        user_id: str,
+        *,
+        enabled: bool = True,
+        actor: str = "",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Freeze or unfreeze a user (GDPR Article 18)."""
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+        actor_str = actor or f"user:{user_id}"
+        request = FreezeUserRequest(actor=actor_str, user_id=user_id, enabled=enabled)
+        response = await self._retry(
+            stub.FreezeUser,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "status": response.status,
             "error": response.error if response.error else None,
         }
