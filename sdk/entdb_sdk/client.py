@@ -1657,3 +1657,128 @@ class DbClient:
             new_role=new_role,
             timeout=timeout,
         )
+
+    # --- Admin operations (Issue #90, ADR-003) -----------------------
+
+    async def transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Reassign ownership of all nodes from from_user to to_user.
+
+        Use case: employee offboarding. Requires admin or owner role.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Current owner actor
+            to_user: New owner actor
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, transferred count, and error fields.
+        """
+        self._ensure_connected()
+        return await self._grpc.transfer_user_content(
+            tenant_id=tenant_id,
+            from_user=from_user,
+            to_user=to_user,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str = "read",
+        expires_at: int | None = None,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Grant to_user temporary access to all of from_user's nodes.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Content owner
+            to_user: Delegation recipient
+            permission: Permission level
+            expires_at: Expiry timestamp in Unix ms (None = permanent)
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, delegated count, expires_at, and error fields.
+        """
+        self._ensure_connected()
+        return await self._grpc.delegate_access(
+            tenant_id=tenant_id,
+            from_user=from_user,
+            to_user=to_user,
+            permission=permission,
+            expires_at=expires_at,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def set_legal_hold(
+        self,
+        tenant_id: str,
+        enabled: bool = True,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Enable or disable legal hold on a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            enabled: True to enable, False to release
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, status, and error fields.
+        """
+        self._ensure_connected()
+        return await self._grpc.set_legal_hold(
+            tenant_id=tenant_id,
+            enabled=enabled,
+            actor=actor,
+            timeout=timeout,
+        )
+
+    async def revoke_all_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Remove all access for a user in a tenant (instant termination).
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to revoke
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with success, revoked_grants, revoked_groups,
+            revoked_shared, and error fields.
+        """
+        self._ensure_connected()
+        return await self._grpc.revoke_all_user_access(
+            tenant_id=tenant_id,
+            user_id=user_id,
+            actor=actor,
+            timeout=timeout,
+        )

@@ -76,7 +76,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import EncryptionConfig
-from ..encryption import derive_tenant_key, is_sqlcipher_available, open_encrypted_connection
+from ..encryption import derive_tenant_key, open_encrypted_connection
 from ..metrics import metrics_enabled as _metrics_enabled
 from ..metrics import record_sqlite_op as _record_sqlite_op
 
@@ -2352,6 +2352,271 @@ class CanonicalStore:
             node_id,
             new_owner,
         )
+
+    # ── Admin operations (Issue #90) ────────────────────────────────────
+
+    def _sync_transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+    ) -> int:
+        """Reassign all nodes owned by from_user to to_user.
+
+        Returns the number of nodes updated. Also refreshes the visibility
+        index for each affected node so that the new owner appears as a
+        principal and the old owner is removed (unless they had explicit
+        access via ACL).
+        """
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = conn.execute(
+                    "SELECT node_id, acl_blob FROM nodes "
+                    "WHERE tenant_id = ? AND owner_actor = ?",
+                    (tenant_id, from_user),
+                ).fetchall()
+                cursor = conn.execute(
+                    "UPDATE nodes SET owner_actor = ? "
+                    "WHERE tenant_id = ? AND owner_actor = ?",
+                    (to_user, tenant_id, from_user),
+                )
+                count = cursor.rowcount
+                for row in rows:
+                    acl = json.loads(row["acl_blob"]) if row["acl_blob"] else []
+                    self._update_visibility(
+                        conn, tenant_id, row["node_id"], to_user, acl,
+                    )
+                conn.execute("COMMIT")
+                return count
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    async def transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        actor: str,
+    ) -> dict:
+        """Reassign all nodes where owner_actor=from_user to to_user.
+
+        Use case: employee offboarding, where their manager takes
+        ownership of all their work. Logs the operation to the audit
+        log with action ``transfer_content``.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Current owner actor (e.g. ``user:alice``)
+            to_user: New owner actor (e.g. ``user:bob``)
+            actor: Admin actor performing the operation
+
+        Returns:
+            dict with keys ``transferred`` (count), ``tenant_id``,
+            ``from``, ``to``.
+        """
+        count = await self._run_sync(
+            self._sync_transfer_user_content,
+            tenant_id,
+            from_user,
+            to_user,
+        )
+        import json as _json
+        await self.append_audit(
+            tenant_id=tenant_id,
+            actor_id=actor,
+            action="transfer_content",
+            target_type="user",
+            target_id=from_user,
+            metadata=_json.dumps({
+                "from_user": from_user,
+                "to_user": to_user,
+                "transferred": count,
+            }),
+        )
+        return {
+            "transferred": count,
+            "tenant_id": tenant_id,
+            "from": from_user,
+            "to": to_user,
+        }
+
+    def _sync_delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str,
+        expires_at: int | None,
+        granted_by: str,
+        now: int,
+    ) -> int:
+        """Grant to_user the given permission on every node owned by from_user."""
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                "SELECT node_id FROM nodes "
+                "WHERE tenant_id = ? AND owner_actor = ?",
+                (tenant_id, from_user),
+            ).fetchall()
+            count = 0
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO node_access
+                    (node_id, actor_id, actor_type, permission,
+                     granted_by, granted_at, expires_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["node_id"],
+                        to_user,
+                        "user",
+                        permission,
+                        granted_by,
+                        now,
+                        expires_at,
+                    ),
+                )
+                count += 1
+            return count
+
+    async def delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str,
+        expires_at: int | None,
+        actor: str,
+    ) -> dict:
+        """Grant to_user temporary access to all nodes owned by from_user.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Content owner whose nodes are being delegated
+            to_user: Recipient of the delegation
+            permission: Permission level (``read``, ``write``, ...)
+            expires_at: Expiry timestamp in Unix ms, or None for permanent
+            actor: Admin actor performing the operation
+
+        Returns:
+            dict with keys ``delegated`` (count), ``expires_at``.
+        """
+        now = int(time.time() * 1000)
+        count = await self._run_sync(
+            self._sync_delegate_access,
+            tenant_id,
+            from_user,
+            to_user,
+            permission,
+            expires_at,
+            actor,
+            now,
+        )
+        import json as _json
+        await self.append_audit(
+            tenant_id=tenant_id,
+            actor_id=actor,
+            action="delegate_access",
+            target_type="user",
+            target_id=from_user,
+            metadata=_json.dumps({
+                "from_user": from_user,
+                "to_user": to_user,
+                "permission": permission,
+                "expires_at": expires_at,
+                "delegated": count,
+            }),
+        )
+        return {
+            "delegated": count,
+            "expires_at": expires_at,
+            "tenant_id": tenant_id,
+            "from": from_user,
+            "to": to_user,
+        }
+
+    def _sync_revoke_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+    ) -> tuple[int, int]:
+        """Remove all node_access grants and group memberships for user.
+
+        Returns (revoked_grants, revoked_groups).
+        """
+        with self._get_connection(tenant_id) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                grants = conn.execute(
+                    "DELETE FROM node_access WHERE actor_id = ?",
+                    (user_id,),
+                ).rowcount
+                groups = conn.execute(
+                    "DELETE FROM group_users WHERE member_actor_id = ?",
+                    (user_id,),
+                ).rowcount
+                # Also remove any visibility rows that were granted via
+                # direct access (owner visibility rows are re-generated
+                # lazily on next write, so we don't touch those).
+                conn.execute(
+                    "DELETE FROM node_visibility "
+                    "WHERE tenant_id = ? AND principal = ?",
+                    (tenant_id, user_id),
+                )
+                conn.execute("COMMIT")
+                return (grants, groups)
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    async def revoke_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+        actor: str,
+    ) -> dict:
+        """Remove ALL access for a user in a tenant. Instant termination.
+
+        Removes:
+            - All ``node_access`` grants (direct + via group-id entries
+              whose actor_id equals ``user_id``)
+            - All ``group_users`` rows where the user is a member
+            - All ``node_visibility`` rows naming the user as principal
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to revoke (e.g. ``user:alice``)
+            actor: Admin actor performing the operation
+
+        Returns:
+            dict with keys ``revoked_grants``, ``revoked_groups``.
+        """
+        grants, groups = await self._run_sync(
+            self._sync_revoke_user_access,
+            tenant_id,
+            user_id,
+        )
+        import json as _json
+        await self.append_audit(
+            tenant_id=tenant_id,
+            actor_id=actor,
+            action="revoke_user_access",
+            target_type="user",
+            target_id=user_id,
+            metadata=_json.dumps({
+                "user_id": user_id,
+                "revoked_grants": grants,
+                "revoked_groups": groups,
+            }),
+        )
+        return {
+            "revoked_grants": grants,
+            "revoked_groups": groups,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+        }
 
     # ── Cross-tenant access helpers ─────────────────────────────────────
 

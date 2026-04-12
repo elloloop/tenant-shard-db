@@ -22,8 +22,15 @@ from grpc import aio as grpc_aio
 
 from ._generated import (
     AclEntry,
+    ArchiveTenantRequest,
+    ChangeMemberRoleRequest,
     CreateEdgeOp,
     CreateNodeOp,
+    # Tenant registry
+    CreateTenantRequest,
+    # User registry
+    CreateUserRequest,
+    DelegateAccessRequest,
     DeleteEdgeOp,
     DeleteNodeOp,
     EntDBServiceStub,
@@ -37,9 +44,15 @@ from ._generated import (
     GetNodesRequest,
     GetReceiptStatusRequest,
     GetSchemaRequest,
+    GetTenantMembersRequest,
+    GetTenantRequest,
+    GetUserRequest,
+    GetUserTenantsRequest,
     GroupMemberRequest,
     HealthRequest,
+    LegalHoldRequest,
     ListSharedWithMeRequest,
+    ListUsersRequest,
     NodeRef,
     Operation,
     QueryNodesRequest,
@@ -48,26 +61,18 @@ from ._generated import (
     # Request types
     RequestContext,
     RevokeAccessRequest,
+    RevokeAllUserAccessRequest,
     SearchMailboxRequest,
     ShareNodeRequest,
-    TransferOwnershipRequest,
-    TypedNodeRef,
-    UpdateNodeOp,
-    WaitForOffsetRequest,
-    # User registry
-    CreateUserRequest,
-    GetUserRequest,
-    UpdateUserRequest,
-    ListUsersRequest,
-    # Tenant registry
-    CreateTenantRequest,
-    GetTenantRequest,
-    ArchiveTenantRequest,
     # Tenant membership
     TenantMemberRequest,
-    GetTenantMembersRequest,
-    GetUserTenantsRequest,
-    ChangeMemberRoleRequest,
+    TransferOwnershipRequest,
+    # Admin operations (Issue #90)
+    TransferUserContentRequest,
+    TypedNodeRef,
+    UpdateNodeOp,
+    UpdateUserRequest,
+    WaitForOffsetRequest,
 )
 
 
@@ -1915,5 +1920,183 @@ class GrpcClient:
 
         return {
             "success": response.success,
+            "error": response.error if response.error else None,
+        }
+
+    # --- Admin operations (Issue #90, ADR-003) -----------------------
+
+    async def transfer_user_content(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Reassign ownership of all nodes from one user to another.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Current owner (e.g. ``user:alice``)
+            to_user: New owner (e.g. ``user:bob``)
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``transferred`` (count), ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = TransferUserContentRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            from_user=from_user,
+            to_user=to_user,
+        )
+        response = await self._retry(
+            stub.TransferUserContent,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "transferred": response.transferred,
+            "error": response.error if response.error else None,
+        }
+
+    async def delegate_access(
+        self,
+        tenant_id: str,
+        from_user: str,
+        to_user: str,
+        permission: str = "read",
+        expires_at: int | None = None,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Grant temporary access to another user's content.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: Content owner
+            to_user: Recipient of delegated access
+            permission: Permission level (``read``, ``write``, ...)
+            expires_at: Expiry timestamp in Unix ms, or None for permanent
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``delegated`` (count), ``expires_at``, ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = DelegateAccessRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            from_user=from_user,
+            to_user=to_user,
+            permission=permission,
+            expires_at=expires_at or 0,
+        )
+        response = await self._retry(
+            stub.DelegateAccess,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "delegated": response.delegated,
+            "expires_at": response.expires_at,
+            "error": response.error if response.error else None,
+        }
+
+    async def set_legal_hold(
+        self,
+        tenant_id: str,
+        enabled: bool,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Enable or disable legal hold on a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            enabled: True to put tenant on hold, False to release
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``status`` (``legal_hold`` or
+            ``active``), and ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = LegalHoldRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            enabled=enabled,
+        )
+        response = await self._retry(
+            stub.SetLegalHold,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "status": response.status,
+            "error": response.error if response.error else None,
+        }
+
+    async def revoke_all_user_access(
+        self,
+        tenant_id: str,
+        user_id: str,
+        *,
+        actor: str = "system:admin",
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        """Remove ALL access for a user in a tenant.
+
+        Removes node_access grants, group memberships, and
+        cross-tenant shared_index entries for the given user.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to revoke
+            actor: Admin actor performing the operation
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            Dict with ``success``, ``revoked_grants``,
+            ``revoked_groups``, ``revoked_shared``, and ``error``.
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = RevokeAllUserAccessRequest(
+            actor=actor,
+            tenant_id=tenant_id,
+            user_id=user_id,
+        )
+        response = await self._retry(
+            stub.RevokeAllUserAccess,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+        return {
+            "success": response.success,
+            "revoked_grants": response.revoked_grants,
+            "revoked_groups": response.revoked_groups,
+            "revoked_shared": response.revoked_shared,
             "error": response.error if response.error else None,
         }

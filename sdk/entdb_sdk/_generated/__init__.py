@@ -102,6 +102,15 @@ from .entdb_pb2 import (
     GetUserTenantsResponse,
     ChangeMemberRoleRequest,
     ChangeMemberRoleResponse,
+    # Admin operations (Issue #90)
+    TransferUserContentRequest,
+    TransferUserContentResponse,
+    DelegateAccessRequest,
+    DelegateAccessResponse,
+    LegalHoldRequest,
+    LegalHoldResponse,
+    RevokeAllUserAccessRequest,
+    RevokeAllUserAccessResponse,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 
@@ -193,5 +202,14 @@ __all__ = [
     "GetUserTenantsResponse",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleResponse",
+    # Admin operations (Issue #90)
+    "TransferUserContentRequest",
+    "TransferUserContentResponse",
+    "DelegateAccessRequest",
+    "DelegateAccessResponse",
+    "LegalHoldRequest",
+    "LegalHoldResponse",
+    "RevokeAllUserAccessRequest",
+    "RevokeAllUserAccessResponse",
     "EntDBServiceStub",
 ]

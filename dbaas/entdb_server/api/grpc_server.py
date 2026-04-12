@@ -33,6 +33,16 @@ from ..metrics import record_grpc_request
 from ..sharding import ShardingConfig
 from .generated import (
     AclEntry,
+    ArchiveTenantRequest,
+    ArchiveTenantResponse,
+    ChangeMemberRoleRequest,
+    ChangeMemberRoleResponse,
+    CreateTenantRequest,
+    CreateTenantResponse,
+    CreateUserRequest,
+    CreateUserResponse,
+    DelegateAccessRequest,
+    DelegateAccessResponse,
     Edge,
     EntDBServiceServicer,
     # Request/Response types
@@ -53,16 +63,28 @@ from .generated import (
     GetReceiptStatusResponse,
     GetSchemaRequest,
     GetSchemaResponse,
+    GetTenantMembersRequest,
+    GetTenantMembersResponse,
+    GetTenantRequest,
+    GetTenantResponse,
+    GetUserRequest,
+    GetUserResponse,
+    GetUserTenantsRequest,
+    GetUserTenantsResponse,
     GroupMemberRequest,
     GroupMemberResponse,
     HealthRequest,
     HealthResponse,
+    LegalHoldRequest,
+    LegalHoldResponse,
     ListMailboxUsersRequest,
     ListMailboxUsersResponse,
     ListSharedWithMeRequest,
     ListSharedWithMeResponse,
     ListTenantsRequest,
     ListTenantsResponse,
+    ListUsersRequest,
+    ListUsersResponse,
     MailboxItem,
     MailboxSearchResult,
     Node,
@@ -73,43 +95,30 @@ from .generated import (
     ReceiptStatus,
     RevokeAccessRequest,
     RevokeAccessResponse,
+    RevokeAllUserAccessRequest,
+    RevokeAllUserAccessResponse,
     SearchMailboxRequest,
     SearchMailboxResponse,
     ShareNodeRequest,
     ShareNodeResponse,
-    TenantInfo,
-    TransferOwnershipRequest,
-    TransferOwnershipResponse,
-    WaitForOffsetRequest,
-    WaitForOffsetResponse,
-    # User registry
-    UserInfo,
-    CreateUserRequest,
-    CreateUserResponse,
-    GetUserRequest,
-    GetUserResponse,
-    UpdateUserRequest,
-    UpdateUserResponse,
-    ListUsersRequest,
-    ListUsersResponse,
     # Tenant registry
     TenantDetail,
-    CreateTenantRequest,
-    CreateTenantResponse,
-    GetTenantRequest,
-    GetTenantResponse,
-    ArchiveTenantRequest,
-    ArchiveTenantResponse,
+    TenantInfo,
     # Tenant membership
     TenantMemberInfo,
     TenantMemberRequest,
     TenantMemberResponse,
-    GetTenantMembersRequest,
-    GetTenantMembersResponse,
-    GetUserTenantsRequest,
-    GetUserTenantsResponse,
-    ChangeMemberRoleRequest,
-    ChangeMemberRoleResponse,
+    TransferOwnershipRequest,
+    TransferOwnershipResponse,
+    # Admin operations (Issue #90)
+    TransferUserContentRequest,
+    TransferUserContentResponse,
+    UpdateUserRequest,
+    UpdateUserResponse,
+    # User registry
+    UserInfo,
+    WaitForOffsetRequest,
+    WaitForOffsetResponse,
     add_EntDBServiceServicer_to_server,
 )
 
@@ -1981,6 +1990,276 @@ class EntDBServicer(EntDBServiceServicer):
             record_grpc_request("ChangeMemberRole", "error", time.perf_counter() - start)
             logger.error(f"ChangeMemberRole failed: {e}", exc_info=True)
             return ChangeMemberRoleResponse(success=False, error=str(e))
+
+    # --- Admin operations (Issue #90, ADR-003) -----------------------
+
+    async def _require_admin_or_owner(
+        self,
+        tenant_id: str,
+        actor: str,
+        context: grpc_aio.ServicerContext,
+        rpc_name: str,
+    ) -> None:
+        """Abort unless the actor is admin/owner of the tenant (or system).
+
+        Admin operations require elevated privileges. System actors
+        (``system:*``, ``admin:*``, ``__system__``) bypass all checks.
+        Regular users must be owner or admin of the tenant.
+        """
+        if not actor:
+            await context.abort(
+                grpc.StatusCode.INVALID_ARGUMENT, "actor is required"
+            )
+        if self._is_admin_or_system(actor):
+            return
+        if self.global_store is None:
+            # Without a registry we cannot enforce role membership;
+            # reject non-system actors outright.
+            await context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"{rpc_name} requires admin or owner role",
+            )
+        actor_uid = self._actor_user_id(actor)
+        role = await self._get_member_role(tenant_id, actor_uid)
+        if role not in ("owner", "admin"):
+            await context.abort(
+                grpc.StatusCode.PERMISSION_DENIED,
+                f"{rpc_name} requires admin or owner role",
+            )
+
+    async def TransferUserContent(
+        self,
+        request: TransferUserContentRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> TransferUserContentResponse:
+        """Reassign ownership of all nodes from one user to another."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.tenant_id, context)
+            if not request.tenant_id:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
+                )
+            if not request.from_user:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "from_user is required"
+                )
+            if not request.to_user:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "to_user is required"
+                )
+            await self._require_admin_or_owner(
+                request.tenant_id, request.actor, context, "TransferUserContent"
+            )
+
+            result = await self.canonical_store.transfer_user_content(
+                tenant_id=request.tenant_id,
+                from_user=request.from_user,
+                to_user=request.to_user,
+                actor=request.actor,
+            )
+            record_grpc_request(
+                "TransferUserContent", "ok", time.perf_counter() - start
+            )
+            return TransferUserContentResponse(
+                success=True,
+                transferred=result["transferred"],
+            )
+        except Exception as e:
+            record_grpc_request(
+                "TransferUserContent", "error", time.perf_counter() - start
+            )
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"TransferUserContent failed: {e}", exc_info=True)
+            return TransferUserContentResponse(success=False, error=str(e))
+
+    async def DelegateAccess(
+        self,
+        request: DelegateAccessRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> DelegateAccessResponse:
+        """Grant a user temporary access to another user's content."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.tenant_id, context)
+            if not request.tenant_id:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
+                )
+            if not request.from_user:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "from_user is required"
+                )
+            if not request.to_user:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "to_user is required"
+                )
+            await self._require_admin_or_owner(
+                request.tenant_id, request.actor, context, "DelegateAccess"
+            )
+
+            permission = request.permission or "read"
+            expires_at = request.expires_at if request.expires_at else None
+            result = await self.canonical_store.delegate_access(
+                tenant_id=request.tenant_id,
+                from_user=request.from_user,
+                to_user=request.to_user,
+                permission=permission,
+                expires_at=expires_at,
+                actor=request.actor,
+            )
+            record_grpc_request(
+                "DelegateAccess", "ok", time.perf_counter() - start
+            )
+            return DelegateAccessResponse(
+                success=True,
+                delegated=result["delegated"],
+                expires_at=result["expires_at"] or 0,
+            )
+        except Exception as e:
+            record_grpc_request(
+                "DelegateAccess", "error", time.perf_counter() - start
+            )
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"DelegateAccess failed: {e}", exc_info=True)
+            return DelegateAccessResponse(success=False, error=str(e))
+
+    async def SetLegalHold(
+        self,
+        request: LegalHoldRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> LegalHoldResponse:
+        """Enable or disable legal hold on a tenant."""
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Tenant registry not configured",
+                )
+            if not request.tenant_id:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
+                )
+            await self._require_admin_or_owner(
+                request.tenant_id, request.actor, context, "SetLegalHold"
+            )
+
+            updated = await self.global_store.set_legal_hold(
+                request.tenant_id, bool(request.enabled), request.actor
+            )
+            if not updated:
+                record_grpc_request(
+                    "SetLegalHold", "ok", time.perf_counter() - start
+                )
+                return LegalHoldResponse(
+                    success=False, error="Tenant not found"
+                )
+
+            new_status = "legal_hold" if request.enabled else "active"
+            # Audit log — best effort; failing to audit should not
+            # undo the status change since the tenant row is the
+            # authoritative record.
+            try:
+                await self.canonical_store.append_audit(
+                    tenant_id=request.tenant_id,
+                    actor_id=request.actor,
+                    action="set_legal_hold",
+                    target_type="tenant",
+                    target_id=request.tenant_id,
+                    metadata=json.dumps({
+                        "enabled": bool(request.enabled),
+                        "status": new_status,
+                    }),
+                )
+            except Exception as audit_err:
+                logger.warning(
+                    f"audit append failed on SetLegalHold: {audit_err}"
+                )
+
+            record_grpc_request(
+                "SetLegalHold", "ok", time.perf_counter() - start
+            )
+            return LegalHoldResponse(success=True, status=new_status)
+        except Exception as e:
+            record_grpc_request(
+                "SetLegalHold", "error", time.perf_counter() - start
+            )
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"SetLegalHold failed: {e}", exc_info=True)
+            return LegalHoldResponse(success=False, error=str(e))
+
+    async def RevokeAllUserAccess(
+        self,
+        request: RevokeAllUserAccessRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> RevokeAllUserAccessResponse:
+        """Remove ALL access (grants, group memberships, shared_index) for a user."""
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.tenant_id, context)
+            if not request.tenant_id:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required"
+                )
+            if not request.user_id:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT, "user_id is required"
+                )
+            await self._require_admin_or_owner(
+                request.tenant_id, request.actor, context, "RevokeAllUserAccess"
+            )
+
+            result = await self.canonical_store.revoke_user_access(
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+                actor=request.actor,
+            )
+
+            # Cleanup cross-tenant shared_index entries that originated
+            # from this tenant. We can only scope by source_tenant, so
+            # iterate the user's shared entries and delete those that
+            # point at this tenant.
+            revoked_shared = 0
+            if self.global_store:
+                try:
+                    entries = await self.global_store.get_shared_with_me(
+                        user_id=request.user_id, limit=10000, offset=0
+                    )
+                    for e in entries:
+                        if e.get("source_tenant") == request.tenant_id:
+                            ok = await self.global_store.remove_shared(
+                                request.user_id,
+                                request.tenant_id,
+                                e["node_id"],
+                            )
+                            if ok:
+                                revoked_shared += 1
+                except Exception as gs_err:
+                    logger.warning(
+                        f"shared_index cleanup failed on RevokeAllUserAccess: {gs_err}"
+                    )
+
+            record_grpc_request(
+                "RevokeAllUserAccess", "ok", time.perf_counter() - start
+            )
+            return RevokeAllUserAccessResponse(
+                success=True,
+                revoked_grants=result["revoked_grants"],
+                revoked_groups=result["revoked_groups"],
+                revoked_shared=revoked_shared,
+            )
+        except Exception as e:
+            record_grpc_request(
+                "RevokeAllUserAccess", "error", time.perf_counter() - start
+            )
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"RevokeAllUserAccess failed: {e}", exc_info=True)
+            return RevokeAllUserAccessResponse(success=False, error=str(e))
 
 
 class GrpcServer:

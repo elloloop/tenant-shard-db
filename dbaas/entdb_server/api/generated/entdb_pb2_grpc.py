@@ -200,6 +200,26 @@ class EntDBServiceStub(object):
                 request_serializer=entdb__pb2.ChangeMemberRoleRequest.SerializeToString,
                 response_deserializer=entdb__pb2.ChangeMemberRoleResponse.FromString,
                 _registered_method=True)
+        self.TransferUserContent = channel.unary_unary(
+                '/entdb.v1.EntDBService/TransferUserContent',
+                request_serializer=entdb__pb2.TransferUserContentRequest.SerializeToString,
+                response_deserializer=entdb__pb2.TransferUserContentResponse.FromString,
+                _registered_method=True)
+        self.DelegateAccess = channel.unary_unary(
+                '/entdb.v1.EntDBService/DelegateAccess',
+                request_serializer=entdb__pb2.DelegateAccessRequest.SerializeToString,
+                response_deserializer=entdb__pb2.DelegateAccessResponse.FromString,
+                _registered_method=True)
+        self.SetLegalHold = channel.unary_unary(
+                '/entdb.v1.EntDBService/SetLegalHold',
+                request_serializer=entdb__pb2.LegalHoldRequest.SerializeToString,
+                response_deserializer=entdb__pb2.LegalHoldResponse.FromString,
+                _registered_method=True)
+        self.RevokeAllUserAccess = channel.unary_unary(
+                '/entdb.v1.EntDBService/RevokeAllUserAccess',
+                request_serializer=entdb__pb2.RevokeAllUserAccessRequest.SerializeToString,
+                response_deserializer=entdb__pb2.RevokeAllUserAccessResponse.FromString,
+                _registered_method=True)
 
 
 class EntDBServiceServicer(object):
@@ -429,6 +449,31 @@ class EntDBServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def TransferUserContent(self, request, context):
+        """Admin operations (Issue #90, ADR-003)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DelegateAccess(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SetLegalHold(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RevokeAllUserAccess(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EntDBServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -596,6 +641,26 @@ def add_EntDBServiceServicer_to_server(servicer, server):
                     servicer.ChangeMemberRole,
                     request_deserializer=entdb__pb2.ChangeMemberRoleRequest.FromString,
                     response_serializer=entdb__pb2.ChangeMemberRoleResponse.SerializeToString,
+            ),
+            'TransferUserContent': grpc.unary_unary_rpc_method_handler(
+                    servicer.TransferUserContent,
+                    request_deserializer=entdb__pb2.TransferUserContentRequest.FromString,
+                    response_serializer=entdb__pb2.TransferUserContentResponse.SerializeToString,
+            ),
+            'DelegateAccess': grpc.unary_unary_rpc_method_handler(
+                    servicer.DelegateAccess,
+                    request_deserializer=entdb__pb2.DelegateAccessRequest.FromString,
+                    response_serializer=entdb__pb2.DelegateAccessResponse.SerializeToString,
+            ),
+            'SetLegalHold': grpc.unary_unary_rpc_method_handler(
+                    servicer.SetLegalHold,
+                    request_deserializer=entdb__pb2.LegalHoldRequest.FromString,
+                    response_serializer=entdb__pb2.LegalHoldResponse.SerializeToString,
+            ),
+            'RevokeAllUserAccess': grpc.unary_unary_rpc_method_handler(
+                    servicer.RevokeAllUserAccess,
+                    request_deserializer=entdb__pb2.RevokeAllUserAccessRequest.FromString,
+                    response_serializer=entdb__pb2.RevokeAllUserAccessResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1490,6 +1555,114 @@ class EntDBService(object):
             '/entdb.v1.EntDBService/ChangeMemberRole',
             entdb__pb2.ChangeMemberRoleRequest.SerializeToString,
             entdb__pb2.ChangeMemberRoleResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TransferUserContent(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/TransferUserContent',
+            entdb__pb2.TransferUserContentRequest.SerializeToString,
+            entdb__pb2.TransferUserContentResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def DelegateAccess(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/DelegateAccess',
+            entdb__pb2.DelegateAccessRequest.SerializeToString,
+            entdb__pb2.DelegateAccessResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SetLegalHold(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/SetLegalHold',
+            entdb__pb2.LegalHoldRequest.SerializeToString,
+            entdb__pb2.LegalHoldResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RevokeAllUserAccess(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/RevokeAllUserAccess',
+            entdb__pb2.RevokeAllUserAccessRequest.SerializeToString,
+            entdb__pb2.RevokeAllUserAccessResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -68,11 +68,11 @@ import asyncio
 import logging
 import sqlite3
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .config import EncryptionConfig
 from .encryption import derive_global_key, open_encrypted_connection
@@ -443,6 +443,30 @@ class GlobalStore:
             True if the tenant was found and updated, False otherwise
         """
         return await self._run_sync(self._sync_set_tenant_status, tenant_id, status)
+
+    async def set_legal_hold(
+        self, tenant_id: str, enabled: bool, actor: str
+    ) -> bool:
+        """Toggle legal_hold status on a tenant.
+
+        When ``enabled`` is True, the tenant is put on legal hold
+        (status = ``legal_hold``); deletes are blocked at the gRPC
+        layer by ``_check_tenant_access``. When ``enabled`` is False
+        the tenant is returned to ``active``.
+
+        Args:
+            tenant_id: Tenant identifier
+            enabled: True to enable hold, False to release it
+            actor: Admin actor performing the operation (informational;
+                the actual audit log write is done by the gRPC handler)
+
+        Returns:
+            True if the tenant existed and its status was updated.
+        """
+        new_status = "legal_hold" if enabled else "active"
+        return await self._run_sync(
+            self._sync_set_tenant_status, tenant_id, new_status
+        )
 
     def _sync_set_tenant_status(self, tenant_id: str, status: str) -> bool:
         with self._get_connection() as conn:

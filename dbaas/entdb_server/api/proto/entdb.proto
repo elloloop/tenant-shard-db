@@ -104,6 +104,12 @@ service EntDBService {
     rpc GetTenantMembers(GetTenantMembersRequest) returns (GetTenantMembersResponse);
     rpc GetUserTenants(GetUserTenantsRequest) returns (GetUserTenantsResponse);
     rpc ChangeMemberRole(ChangeMemberRoleRequest) returns (ChangeMemberRoleResponse);
+
+    // Admin operations (Issue #90, ADR-003)
+    rpc TransferUserContent(TransferUserContentRequest) returns (TransferUserContentResponse);
+    rpc DelegateAccess(DelegateAccessRequest) returns (DelegateAccessResponse);
+    rpc SetLegalHold(LegalHoldRequest) returns (LegalHoldResponse);
+    rpc RevokeAllUserAccess(RevokeAllUserAccessRequest) returns (RevokeAllUserAccessResponse);
 }
 
 // Common message types
@@ -799,4 +805,61 @@ message ChangeMemberRoleRequest {
 message ChangeMemberRoleResponse {
     bool success = 1;
     string error = 2;
+}
+
+// Admin operations (Issue #90, ADR-003)
+
+message TransferUserContentRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    string from_user = 3;
+    string to_user = 4;
+}
+
+message TransferUserContentResponse {
+    bool success = 1;
+    int32 transferred = 2;
+    string error = 3;
+}
+
+message DelegateAccessRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    string from_user = 3;
+    string to_user = 4;
+    string permission = 5;
+    int64 expires_at = 6;
+}
+
+message DelegateAccessResponse {
+    bool success = 1;
+    int32 delegated = 2;
+    int64 expires_at = 3;
+    string error = 4;
+}
+
+message LegalHoldRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    bool enabled = 3;
+}
+
+message LegalHoldResponse {
+    bool success = 1;
+    string status = 2;
+    string error = 3;
+}
+
+message RevokeAllUserAccessRequest {
+    string actor = 1;
+    string tenant_id = 2;
+    string user_id = 3;
+}
+
+message RevokeAllUserAccessResponse {
+    bool success = 1;
+    int32 revoked_grants = 2;
+    int32 revoked_groups = 3;
+    int32 revoked_shared = 4;
+    string error = 5;
 }
