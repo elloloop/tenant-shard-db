@@ -35,7 +35,7 @@ class _Unset(Enum):
 
 _UNSET = _Unset.TOKEN
 
-from ._grpc_client import GrpcClient
+from ._grpc_client import Edge, GrpcClient, Node
 from .errors import (
     ConnectionError,
     UnknownFieldError,
@@ -43,6 +43,11 @@ from .errors import (
 )
 from .registry import SchemaRegistry, get_registry
 from .schema import EdgeTypeDef, NodeTypeDef
+
+# Re-exported for backwards compatibility. Node/Edge are defined in
+# _grpc_client.py so the gRPC layer can build them directly from proto
+# messages without an intermediate shape.
+__all__ = ["Node", "Edge"]
 
 logger = logging.getLogger(__name__)
 
@@ -60,52 +65,6 @@ class Receipt:
     tenant_id: str
     idempotency_key: str
     stream_position: str | None = None
-
-
-@dataclass
-class Node:
-    """A node from the database.
-
-    Attributes:
-        tenant_id: Tenant identifier
-        node_id: Unique node ID
-        type_id: Node type ID
-        payload: Field values
-        created_at: Creation timestamp (Unix ms)
-        updated_at: Last update timestamp (Unix ms)
-        owner_actor: Creator
-        acl: Access control list
-    """
-
-    tenant_id: str
-    node_id: str
-    type_id: int
-    payload: dict[str, Any]
-    created_at: int
-    updated_at: int
-    owner_actor: str
-    acl: list[dict[str, str]] = field(default_factory=list)
-
-
-@dataclass
-class Edge:
-    """An edge from the database.
-
-    Attributes:
-        tenant_id: Tenant identifier
-        edge_type_id: Edge type ID
-        from_node_id: Source node
-        to_node_id: Target node
-        props: Edge properties
-        created_at: Creation timestamp
-    """
-
-    tenant_id: str
-    edge_type_id: int
-    from_node_id: str
-    to_node_id: str
-    props: dict[str, Any]
-    created_at: int
 
 
 @dataclass
@@ -432,6 +391,8 @@ class DbClient:
         api_key: str | None = None,
         max_retries: int = 3,
         registry: SchemaRegistry | None = None,
+        schema_module: Any | None = None,
+        schema_fingerprint: str | None = None,
     ) -> None:
         """Initialize client.
 
@@ -441,6 +402,12 @@ class DbClient:
             api_key: Optional API key for authentication
             max_retries: Maximum number of retries for transient gRPC failures
             registry: Optional schema registry
+            schema_module: Optional generated schema module (e.g. the module
+                produced by ``entdb codegen``). If provided and it exposes a
+                ``SCHEMA_FINGERPRINT`` attribute, that value will be sent on
+                every write for server-side version checks.
+            schema_fingerprint: Optional explicit schema fingerprint. Takes
+                precedence over ``schema_module`` and the registry.
         """
         # Parse address
         if ":" in address:
@@ -460,6 +427,25 @@ class DbClient:
         self.registry = registry or get_registry()
         self._connected = False
         self._last_offsets: dict[str, str] = {}  # tenant_id -> stream_position
+        self._schema_fingerprint: str | None = schema_fingerprint
+        if self._schema_fingerprint is None and schema_module is not None:
+            self._schema_fingerprint = getattr(schema_module, "SCHEMA_FINGERPRINT", None)
+
+    def _resolve_schema_fingerprint(self) -> str:
+        """Resolve the schema fingerprint to send with write requests.
+
+        Precedence:
+        1. Explicit ``schema_fingerprint`` passed to ``DbClient(...)``
+        2. ``SCHEMA_FINGERPRINT`` from a generated ``schema_module``
+        3. ``registry.fingerprint`` if the registry has been frozen
+        4. Empty string (backward-compat, server skips the check)
+        """
+        explicit = getattr(self, "_schema_fingerprint", None)
+        if explicit:
+            return explicit
+        registry = getattr(self, "registry", None)
+        reg_fp = getattr(registry, "fingerprint", None) if registry is not None else None
+        return reg_fp or ""
 
     def _ensure_connected(self) -> None:
         """Raise if not connected.
@@ -608,7 +594,7 @@ class DbClient:
         trace_id = trace_id or str(uuid.uuid4())
         resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
-        grpc_node = await self._grpc.get_node(
+        return await self._grpc.get_node(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
@@ -617,20 +603,6 @@ class DbClient:
             wait_timeout_ms=30000 if resolved_offset else 0,
             trace_id=trace_id,
             timeout=timeout,
-        )
-
-        if grpc_node is None:
-            return None
-
-        return Node(
-            tenant_id=grpc_node.tenant_id,
-            node_id=grpc_node.node_id,
-            type_id=grpc_node.type_id,
-            payload=grpc_node.payload,
-            created_at=grpc_node.created_at,
-            updated_at=grpc_node.updated_at,
-            owner_actor=grpc_node.owner_actor,
-            acl=grpc_node.acl,
         )
 
     async def get_many(
@@ -664,7 +636,7 @@ class DbClient:
         trace_id = trace_id or str(uuid.uuid4())
         resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
-        grpc_nodes, missing = await self._grpc.get_nodes(
+        return await self._grpc.get_nodes(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
@@ -674,22 +646,6 @@ class DbClient:
             trace_id=trace_id,
             timeout=timeout,
         )
-
-        nodes = [
-            Node(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=n.payload,
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=n.acl,
-            )
-            for n in grpc_nodes
-        ]
-
-        return nodes, missing
 
     async def query(
         self,
@@ -730,7 +686,7 @@ class DbClient:
         trace_id = trace_id or str(uuid.uuid4())
         resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
-        grpc_nodes, _ = await self._grpc.query_nodes(
+        nodes, _ = await self._grpc.query_nodes(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
@@ -745,19 +701,7 @@ class DbClient:
             timeout=timeout,
         )
 
-        return [
-            Node(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=n.payload,
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=n.acl,
-            )
-            for n in grpc_nodes
-        ]
+        return nodes
 
     async def edges_out(
         self,
@@ -792,7 +736,7 @@ class DbClient:
         _ = resolved_offset  # reserved for gRPC support
 
         edge_type_id = edge_type.edge_id if edge_type else None
-        grpc_edges, _ = await self._grpc.get_edges_from(
+        edges, _ = await self._grpc.get_edges_from(
             tenant_id=tenant_id,
             actor=actor,
             node_id=node_id,
@@ -801,17 +745,7 @@ class DbClient:
             timeout=timeout,
         )
 
-        return [
-            Edge(
-                tenant_id=e.tenant_id,
-                edge_type_id=e.edge_type_id,
-                from_node_id=e.from_node_id,
-                to_node_id=e.to_node_id,
-                props=e.props,
-                created_at=e.created_at,
-            )
-            for e in grpc_edges
-        ]
+        return edges
 
     async def edges_in(
         self,
@@ -846,7 +780,7 @@ class DbClient:
         _ = resolved_offset  # reserved for gRPC support
 
         edge_type_id = edge_type.edge_id if edge_type else None
-        grpc_edges, _ = await self._grpc.get_edges_to(
+        edges, _ = await self._grpc.get_edges_to(
             tenant_id=tenant_id,
             actor=actor,
             node_id=node_id,
@@ -855,17 +789,7 @@ class DbClient:
             timeout=timeout,
         )
 
-        return [
-            Edge(
-                tenant_id=e.tenant_id,
-                edge_type_id=e.edge_type_id,
-                from_node_id=e.from_node_id,
-                to_node_id=e.to_node_id,
-                props=e.props,
-                created_at=e.created_at,
-            )
-            for e in grpc_edges
-        ]
+        return edges
 
     async def search(
         self,
@@ -959,7 +883,7 @@ class DbClient:
             actor=actor,
             operations=operations,
             idempotency_key=idempotency_key,
-            schema_fingerprint=self.registry.fingerprint,
+            schema_fingerprint=self._resolve_schema_fingerprint(),
             wait_applied=wait_applied,
             trace_id=trace_id,
             timeout=timeout,
@@ -1029,7 +953,7 @@ class DbClient:
         resolved_offset = self._resolve_offset(tenant_id, after_offset)
         _ = resolved_offset  # reserved for gRPC support
 
-        grpc_nodes, _ = await self._grpc.get_connected_nodes(
+        nodes, _ = await self._grpc.get_connected_nodes(
             tenant_id=tenant_id,
             actor=actor,
             node_id=node_id,
@@ -1040,19 +964,7 @@ class DbClient:
             timeout=timeout,
         )
 
-        return [
-            Node(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=n.payload,
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=n.acl,
-            )
-            for n in grpc_nodes
-        ]
+        return nodes
 
     async def share(
         self,
@@ -1165,7 +1077,7 @@ class DbClient:
         resolved_offset = self._resolve_offset(tenant_id, after_offset)
         _ = resolved_offset  # reserved for gRPC support
 
-        grpc_nodes, _ = await self._grpc.list_shared_with_me(
+        nodes, _ = await self._grpc.list_shared_with_me(
             tenant_id=tenant_id,
             actor=actor,
             limit=limit,
@@ -1174,19 +1086,7 @@ class DbClient:
             timeout=timeout,
         )
 
-        return [
-            Node(
-                tenant_id=n.tenant_id,
-                node_id=n.node_id,
-                type_id=n.type_id,
-                payload=n.payload,
-                created_at=n.created_at,
-                updated_at=n.updated_at,
-                owner_actor=n.owner_actor,
-                acl=n.acl,
-            )
-            for n in grpc_nodes
-        ]
+        return nodes
 
     async def group_add(
         self,

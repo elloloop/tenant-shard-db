@@ -10,6 +10,8 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -328,15 +330,98 @@ def _extract_field(fd) -> FieldInfo:
     )
 
 
+# ── Schema Fingerprint ────────────────────────────────────────────────
+
+
+def _field_to_canonical(f: FieldInfo) -> dict[str, Any]:
+    """Canonical dict representation of a FieldInfo for fingerprinting."""
+    return {
+        "field_id": f.field_id,
+        "name": f.name,
+        "kind": f.kind,
+        "required": f.required,
+        "searchable": f.searchable,
+        "indexed": f.indexed,
+        "pii": f.pii,
+        "phi": f.phi,
+        "pii_false": f.pii_false,
+        "enum_values": list(f.enum_values) if f.enum_values else None,
+        "ref_type_id": f.ref_type_id,
+        "deprecated": f.deprecated,
+        "description": f.description,
+        "default_value": f.default_value,
+    }
+
+
+def compute_schema_fingerprint(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
+    """Compute a deterministic sha256 fingerprint of a parsed schema.
+
+    The fingerprint is a sha256 over a canonical JSON representation of
+    all NodeTypeDef + EdgeTypeDef + FieldDef tuples, sorted by type_id
+    and field_id. The returned value is prefixed with ``sha256:`` and
+    matches the format used by the server-side schema registry.
+    """
+    canonical = {
+        "node_types": [
+            {
+                "type_id": n.type_id,
+                "name": n.name,
+                "acl_public": n.acl_public,
+                "acl_tenant_visible": n.acl_tenant_visible,
+                "acl_inherit": n.acl_inherit,
+                "is_private": n.is_private,
+                "data_policy": n.data_policy,
+                "subject_field": n.subject_field,
+                "retention_days": n.retention_days,
+                "legal_basis": n.legal_basis,
+                "deprecated": n.deprecated,
+                "description": n.description,
+                "fields": [
+                    _field_to_canonical(f) for f in sorted(n.fields, key=lambda f: f.field_id)
+                ],
+            }
+            for n in sorted(nodes, key=lambda n: n.type_id)
+        ],
+        "edge_types": [
+            {
+                "edge_id": e.edge_id,
+                "name": e.name,
+                "from_type": e.from_type,
+                "to_type": e.to_type,
+                "propagate_share": e.propagate_share,
+                "unique_per_from": e.unique_per_from,
+                "data_policy": e.data_policy,
+                "on_subject_exit": e.on_subject_exit,
+                "retention_days": e.retention_days,
+                "legal_basis": e.legal_basis,
+                "deprecated": e.deprecated,
+                "description": e.description,
+                "props": [
+                    _field_to_canonical(f) for f in sorted(e.props, key=lambda f: f.field_id)
+                ],
+            }
+            for e in sorted(edges, key=lambda e: e.edge_id)
+        ],
+    }
+    blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
+    digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
 # ── Code Generators ───────────────────────────────────────────────────
 
 
 def generate_python(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
     """Generate Python EntDB schema module from parsed proto."""
+    fingerprint = compute_schema_fingerprint(nodes, edges)
     lines = [
         '"""EntDB schema — generated from .proto. Do not edit."""',
         "",
         "from entdb_sdk import AclDefaults, DataPolicy, EdgeTypeDef, NodeTypeDef, SubjectExitPolicy, field",
+        "",
+        "# Deterministic fingerprint of the generated schema. Sent to the",
+        "# server on every write so stale clients can be rejected cleanly.",
+        f"SCHEMA_FINGERPRINT = {fingerprint!r}",
         "",
     ]
 
@@ -448,11 +533,15 @@ def generate_python(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
 
 def generate_go(nodes: list[NodeInfo], edges: list[EdgeInfo], package: str = "schema") -> str:
     """Generate Go EntDB schema module from parsed proto."""
+    fingerprint = compute_schema_fingerprint(nodes, edges)
     lines = [
         "// EntDB schema — generated from .proto. Do not edit.",
         f"package {package}",
         "",
         'import "github.com/elloloop/entdb/sdk/go/entdb"',
+        "",
+        "// SchemaFingerprint is a deterministic sha256 digest of the generated schema.",
+        f'const SchemaFingerprint = "{fingerprint}"',
         "",
     ]
 
