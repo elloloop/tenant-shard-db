@@ -1,5 +1,66 @@
 package entdb
 
+import "fmt"
+
+// ── Actor ───────────────────────────────────────────────────────────
+
+// Actor is a typed principal identifier that replaces raw "user:bob" strings.
+// Use the constructor functions UserActor, GroupActor, ServiceActor.
+type Actor struct {
+	kind string
+	id   string
+}
+
+// UserActor creates an Actor for a user principal.
+func UserActor(id string) Actor { return Actor{kind: "user", id: id} }
+
+// GroupActor creates an Actor for a group principal.
+func GroupActor(id string) Actor { return Actor{kind: "group", id: id} }
+
+// ServiceActor creates an Actor for a service principal.
+func ServiceActor(id string) Actor { return Actor{kind: "service", id: id} }
+
+// ParseActor parses a "kind:id" string into an Actor.
+func ParseActor(s string) (Actor, error) {
+	for i, c := range s {
+		if c == ':' {
+			return Actor{kind: s[:i], id: s[i+1:]}, nil
+		}
+	}
+	return Actor{}, fmt.Errorf("entdb: invalid actor %q (expected kind:id)", s)
+}
+
+// Kind returns the actor kind (user, group, service).
+func (a Actor) Kind() string { return a.kind }
+
+// ID returns the actor identifier.
+func (a Actor) ID() string { return a.id }
+
+// String returns the "kind:id" wire format.
+func (a Actor) String() string { return a.kind + ":" + a.id }
+
+// ── Permission ──────────────────────────────────────────────────────
+
+// Permission represents an ACL permission level.
+type Permission string
+
+const (
+	PermissionRead  Permission = "read"
+	PermissionWrite Permission = "write"
+	PermissionAdmin Permission = "admin"
+)
+
+// ── ACL ─────────────────────────────────────────────────────────────
+
+// ACLEntry represents an access control list entry.
+type ACLEntry struct {
+	Grantee    Actor      `json:"grantee"`
+	Permission Permission `json:"permission"`
+	ExpiresAt  int64      `json:"expires_at,omitempty"`
+}
+
+// ── Node / Edge ─────────────────────────────────────────────────────
+
 // Node represents a graph node in EntDB.
 type Node struct {
 	TenantID   string         `json:"tenant_id"`
@@ -8,7 +69,7 @@ type Node struct {
 	Payload    map[string]any `json:"payload"`
 	CreatedAt  int64          `json:"created_at"`
 	UpdatedAt  int64          `json:"updated_at"`
-	OwnerActor string         `json:"owner_actor"`
+	OwnerActor Actor          `json:"owner_actor"`
 	ACL        []ACLEntry     `json:"acl,omitempty"`
 }
 
@@ -22,12 +83,7 @@ type Edge struct {
 	CreatedAt  int64          `json:"created_at"`
 }
 
-// ACLEntry represents an access control list entry.
-type ACLEntry struct {
-	Principal  string `json:"principal"`
-	Permission string `json:"permission"`
-	ExpiresAt  int64  `json:"expires_at,omitempty"`
-}
+// ── Transaction ─────────────────────────────────────────────────────
 
 // Receipt tracks a committed transaction.
 type Receipt struct {
@@ -45,19 +101,16 @@ type CommitResult struct {
 	Error          string   `json:"error,omitempty"`
 }
 
+// ── Operations ──────────────────────────────────────────────────────
+
 // OperationType enumerates the kinds of operations in a Plan.
 type OperationType int
 
 const (
-	// OpCreateNode is a node creation operation.
 	OpCreateNode OperationType = iota
-	// OpUpdateNode is a node update operation.
 	OpUpdateNode
-	// OpDeleteNode is a node deletion operation.
 	OpDeleteNode
-	// OpCreateEdge is an edge creation operation.
 	OpCreateEdge
-	// OpDeleteEdge is an edge deletion operation.
 	OpDeleteEdge
 )
 
