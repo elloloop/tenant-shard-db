@@ -44,6 +44,7 @@ from .errors import (
 from .registry import SchemaRegistry, get_registry
 from .schema import EdgeTypeDef, NodeTypeDef
 from .scope import ActorScope, ScopedPlan, TenantScope
+from .typed import ACLEntry, TypedNode
 
 # Re-exported for backwards compatibility. Node/Edge are defined in
 # _grpc_client.py so the gRPC layer can build them directly from proto
@@ -51,6 +52,26 @@ from .scope import ActorScope, ScopedPlan, TenantScope
 __all__ = ["Node", "Edge", "TenantScope", "ActorScope", "ScopedPlan"]
 
 logger = logging.getLogger(__name__)
+
+
+def _acl_entries_to_dicts(
+    entries: list[ACLEntry] | list[dict[str, str]],
+) -> list[dict[str, str]]:
+    """Normalize ACL entries: accept both typed ACLEntry and raw dicts."""
+    result = []
+    for e in entries:
+        if isinstance(e, ACLEntry):
+            d: dict[str, str] = {
+                "grantee": e.grantee,
+                "permission": e.permission.value,
+                "actor_type": e.actor_type,
+            }
+            if e.expires_at is not None:
+                d["expires_at"] = str(e.expires_at)
+            result.append(d)
+        else:
+            result.append(e)
+    return result
 
 
 @dataclass
@@ -134,42 +155,40 @@ class Plan:
 
     def create(
         self,
-        node_type: NodeTypeDef,
+        node_or_type: TypedNode | NodeTypeDef,
         data: dict[str, Any] | None = None,
         *,
-        acl: list[dict[str, str]] | None = None,
+        acl: list[ACLEntry] | list[dict[str, str]] | None = None,
         as_: str | None = None,
         fanout_to: list[str] | None = None,
         **kwargs: Any,
     ) -> Plan:
         """Add a create_node operation.
 
-        Args:
-            node_type: Type of node to create
-            data: Payload dictionary (or use kwargs)
-            acl: Access control list
-            as_: Alias for referencing in later operations
-            fanout_to: Users to fanout to
-            **kwargs: Field values (alternative to data)
+        Accepts either a ``TypedNode`` instance (payload extracted
+        automatically) or a ``NodeTypeDef`` + data dict.
 
         Returns:
             Self for chaining
-
-        Raises:
-            RuntimeError: If Plan has already been committed
-            ValidationError: If payload validation fails
-            UnknownFieldError: If unknown field is provided
         """
         self._ensure_not_committed()
 
-        # Merge data and kwargs
-        payload = dict(data or {})
-        payload.update(kwargs)
+        if isinstance(node_or_type, TypedNode):
+            node_type = self._client.registry.get_node_type(node_or_type._type_id)
+            if node_type is None:
+                raise ValidationError(
+                    f"Unknown type_id {node_or_type._type_id}",
+                    errors=[f"type_id {node_or_type._type_id} not in registry"],
+                )
+            payload = node_or_type.to_payload()
+            payload.update(kwargs)
+        else:
+            node_type = node_or_type
+            payload = dict(data or {})
+            payload.update(kwargs)
 
-        # Validate payload
         is_valid, errors = node_type.validate_payload(payload)
         if not is_valid:
-            # Check for unknown fields
             known = {f.name for f in node_type.fields}
             unknown = set(payload.keys()) - known
             if unknown:
@@ -178,6 +197,8 @@ class Plan:
                 raise UnknownFieldError(field_name, node_type.name, suggestions)
             raise ValidationError("; ".join(errors), errors=errors)
 
+        acl_dicts = _acl_entries_to_dicts(acl) if acl else None
+
         op: dict[str, Any] = {
             "create_node": {
                 "type_id": node_type.type_id,
@@ -185,8 +206,8 @@ class Plan:
             }
         }
 
-        if acl:
-            op["create_node"]["acl"] = acl
+        if acl_dicts:
+            op["create_node"]["acl"] = acl_dicts
         if as_:
             op["create_node"]["as"] = as_
         if fanout_to:

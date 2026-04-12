@@ -60,7 +60,7 @@ from .schema import (
     field,
 )
 from .scope import ActorScope, ScopedPlan, TenantScope
-from .typed import TypedNode
+from .typed import ACLEntry, AliasRef, NodeRef, Permission, TypedEdge, TypedNode
 
 __all__ = [
     # Version
@@ -75,6 +75,11 @@ __all__ = [
     "FieldKind",
     "field",
     "TypedNode",
+    "TypedEdge",
+    "Permission",
+    "ACLEntry",
+    "NodeRef",
+    "AliasRef",
     # Hierarchical scopes
     "TenantScope",
     "ActorScope",
