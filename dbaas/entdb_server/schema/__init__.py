@@ -19,6 +19,7 @@ How to change safely:
     - Use schema CLI to verify compatibility before deployment
 """
 
+from ..data_policy import DataPolicy
 from .compat import (
     ChangeKind,
     CompatibilityError,
@@ -46,6 +47,8 @@ __all__ = [
     "field",
     "AclEntry",
     "AclPermission",
+    # Data policy
+    "DataPolicy",
     # Registry
     "SchemaRegistry",
     "get_registry",

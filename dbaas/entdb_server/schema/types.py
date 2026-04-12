@@ -38,6 +38,8 @@ from dataclasses import field as dataclass_field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from ..data_policy import DataPolicy
+
 if TYPE_CHECKING:
     pass
 
@@ -162,6 +164,7 @@ class FieldDef:
     searchable: bool = False
     deprecated: bool = False
     description: str = ""
+    pii: bool = False
 
     def __post_init__(self) -> None:
         """Validate field definition."""
@@ -259,6 +262,8 @@ class FieldDef:
             result["deprecated"] = True
         if self.description:
             result["description"] = self.description
+        if self.pii:
+            result["pii"] = True
         return result
 
     @classmethod
@@ -276,6 +281,7 @@ class FieldDef:
             searchable=data.get("searchable", False),
             deprecated=data.get("deprecated", False),
             description=data.get("description", ""),
+            pii=data.get("pii", False),
         )
 
 
@@ -292,6 +298,7 @@ def field(
     searchable: bool = False,
     deprecated: bool = False,
     description: str = "",
+    pii: bool = False,
 ) -> FieldDef:
     """Convenience function to create a FieldDef.
 
@@ -309,6 +316,7 @@ def field(
         searchable: Whether to include in FTS
         deprecated: Whether field is deprecated
         description: Human-readable description
+        pii: Whether field contains personally identifiable information
 
     Returns:
         FieldDef instance
@@ -316,6 +324,7 @@ def field(
     Example:
         >>> title = field(1, "title", "str", required=True, searchable=True)
         >>> status = field(2, "status", "enum", enum_values=("todo", "done"))
+        >>> email = field(3, "email", "str", pii=True)
     """
     if isinstance(kind, str):
         kind = FieldKind.from_str(kind)
@@ -331,6 +340,7 @@ def field(
         searchable=searchable,
         deprecated=deprecated,
         description=description,
+        pii=pii,
     )
 
 
@@ -352,6 +362,9 @@ class NodeTypeDef:
         deprecated: Whether this type is deprecated
         description: Human-readable description
         default_acl: Default ACL for new nodes of this type
+        data_policy: Data classification policy (defaults to None; PERSONAL at runtime)
+        subject_field: Name of the field that identifies the data subject
+        legal_basis: Legal basis for processing (required for some policies)
 
     Invariants:
         - type_id must be unique across all node types
@@ -375,6 +388,9 @@ class NodeTypeDef:
     deprecated: bool = False
     description: str = ""
     default_acl: tuple[AclEntry, ...] = dataclass_field(default_factory=tuple)
+    data_policy: DataPolicy | None = None
+    subject_field: str | None = None
+    legal_basis: str | None = None
 
     def __post_init__(self) -> None:
         """Validate node type definition."""
@@ -451,6 +467,10 @@ class NodeTypeDef:
 
         return len(errors) == 0, errors
 
+    def get_pii_fields(self) -> list[str]:
+        """Get names of fields marked as PII."""
+        return [f.name for f in self.fields if f.pii and not f.deprecated]
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         result: dict[str, Any] = {
@@ -464,6 +484,12 @@ class NodeTypeDef:
             result["description"] = self.description
         if self.default_acl:
             result["default_acl"] = [a.to_dict() for a in self.default_acl]
+        if self.data_policy is not None:
+            result["data_policy"] = self.data_policy.value
+        if self.subject_field is not None:
+            result["subject_field"] = self.subject_field
+        if self.legal_basis is not None:
+            result["legal_basis"] = self.legal_basis
         return result
 
     @classmethod
@@ -471,6 +497,8 @@ class NodeTypeDef:
         """Create from dictionary representation."""
         fields = tuple(FieldDef.from_dict(f) for f in data.get("fields", []))
         default_acl = tuple(AclEntry.from_dict(a) for a in data.get("default_acl", []))
+        dp_raw = data.get("data_policy")
+        data_policy = DataPolicy(dp_raw) if dp_raw is not None else None
         return cls(
             type_id=data["type_id"],
             name=data["name"],
@@ -478,6 +506,9 @@ class NodeTypeDef:
             deprecated=data.get("deprecated", False),
             description=data.get("description", ""),
             default_acl=default_acl,
+            data_policy=data_policy,
+            subject_field=data.get("subject_field"),
+            legal_basis=data.get("legal_basis"),
         )
 
     def __hash__(self) -> int:

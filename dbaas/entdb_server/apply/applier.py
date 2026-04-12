@@ -28,8 +28,10 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..data_policy import REQUIRES_LEGAL_BASIS, DataPolicy
 from ..global_store import GlobalStore
 from ..metrics import record_applier_event
+from ..schema.registry import SchemaRegistry, get_registry
 from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
 from .canonical_store import CanonicalStore, Edge, Node
@@ -408,6 +410,7 @@ class Applier:
                             acl=op.get("acl", []),
                             created_at=event.ts_ms,
                         )
+                        self._log_data_policy(op["type_id"])
                         alias = op.get("as")
                         if alias:
                             self._node_alias_map[alias] = node.node_id
@@ -629,6 +632,7 @@ class Applier:
                             created_at=event.ts_ms,
                         )
                         created_nodes.append(node.node_id)
+                        self._log_data_policy(op["type_id"])
                         alias = op.get("as")
                         if alias:
                             self._node_alias_map[alias] = node.node_id
@@ -936,6 +940,38 @@ class Applier:
             from_node_id=from_node_id,
             to_node_id=to_node_id,
         )
+
+    def _log_data_policy(self, type_id: int) -> None:
+        """Log the data policy for a created node and warn if needed.
+
+        If the type requires a legal_basis (FINANCIAL, AUDIT, HEALTHCARE)
+        but none is defined, emit a warning as defense-in-depth.
+        """
+        try:
+            registry = get_registry()
+            node_type = registry.get_node_type(type_id)
+            if node_type is None:
+                return
+            policy = registry.get_data_policy(type_id)
+            logger.info(
+                "create_node type_id=%d data_policy=%s",
+                type_id,
+                policy.value,
+            )
+            if (
+                policy.value in REQUIRES_LEGAL_BASIS
+                and node_type.legal_basis is None
+            ):
+                logger.warning(
+                    "Node type '%s' (type_id=%d) has data_policy=%s "
+                    "but no legal_basis defined",
+                    node_type.name,
+                    type_id,
+                    policy.value,
+                )
+        except Exception:
+            # Registry may not be initialized in all environments
+            pass
 
     def _resolve_ref(self, ref: str) -> str:
         """Resolve a reference (possibly an alias)."""

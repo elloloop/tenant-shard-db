@@ -37,6 +37,7 @@ import logging
 import threading
 from collections.abc import Iterator
 
+from ..data_policy import REQUIRES_LEGAL_BASIS, DataPolicy
 from .types import EdgeTypeDef, NodeTypeDef
 
 logger = logging.getLogger(__name__)
@@ -216,6 +217,73 @@ class SchemaRegistry:
         if isinstance(edge_id_or_name, int):
             return self._edge_types.get(edge_id_or_name)
         return self._edge_types_by_name.get(edge_id_or_name)
+
+    def get_data_policy(self, type_id: int) -> DataPolicy:
+        """Get the data policy for a node type.
+
+        If the node type has no data_policy set, defaults to PERSONAL
+        (the strictest policy) and logs a warning.
+
+        Args:
+            type_id: Node type identifier
+
+        Returns:
+            DataPolicy for the type
+
+        Raises:
+            KeyError: If type_id is not registered
+        """
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            raise KeyError(f"Unknown type_id {type_id}")
+
+        if node_type.data_policy is not None:
+            return node_type.data_policy
+
+        logger.warning(
+            "Node type '%s' (type_id=%d) has no data_policy set; "
+            "defaulting to PERSONAL (strictest)",
+            node_type.name,
+            type_id,
+        )
+        return DataPolicy.PERSONAL
+
+    def get_pii_fields(self, type_id: int) -> list[str]:
+        """Get the names of PII-marked fields for a node type.
+
+        Args:
+            type_id: Node type identifier
+
+        Returns:
+            List of field names marked as PII
+
+        Raises:
+            KeyError: If type_id is not registered
+        """
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            raise KeyError(f"Unknown type_id {type_id}")
+        return node_type.get_pii_fields()
+
+    def get_subject_field(self, type_id: int) -> str | None:
+        """Get the subject field for a node type.
+
+        The subject field identifies which field holds the data-subject
+        identifier (e.g. the user who owns the personal data).
+
+        Args:
+            type_id: Node type identifier
+
+        Returns:
+            Field name if set, None otherwise
+
+        Raises:
+            KeyError: If type_id is not registered
+        """
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            raise KeyError(f"Unknown type_id {type_id}")
+        return node_type.subject_field
 
     def node_types(self) -> Iterator[NodeTypeDef]:
         """Iterate over all registered node types."""
