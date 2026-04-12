@@ -188,46 +188,26 @@ class TestPlaygroundParse:
 class TestGeneratedOutputStable:
     """Regenerating Python/Go output from the playground schema is stable."""
 
-    def test_python_output_contains_expected_nodes(self, parsed_playground):
-        from sdk.entdb_sdk.codegen import generate_python
+    def test_generate_functions_removed(self):
+        """Custom codegen is dead — replaced by standard protoc."""
+        import sdk.entdb_sdk.codegen as cg
+
+        assert not hasattr(cg, "generate_python")
+        assert not hasattr(cg, "generate_go")
+        assert not hasattr(cg, "generate_from_proto")
+
+    def test_register_proto_schema_exists(self):
+        from sdk.entdb_sdk.codegen import register_proto_schema
+
+        assert callable(register_proto_schema)
+
+    def test_schema_fingerprint_still_computable(self, parsed_playground):
+        from sdk.entdb_sdk.codegen import compute_schema_fingerprint
 
         nodes, edges = parsed_playground
-        out = generate_python(nodes, edges)
-        assert "User = NodeTypeDef(" in out
-        assert "Project = NodeTypeDef(" in out
-        assert "Task = NodeTypeDef(" in out
-        assert "Comment = NodeTypeDef(" in out
-        assert "DataPolicy.BUSINESS" in out
-        assert "DataPolicy.PERSONAL" in out
-
-    def test_python_output_contains_expected_edges(self, parsed_playground):
-        from sdk.entdb_sdk.codegen import generate_python
-
-        nodes, edges = parsed_playground
-        out = generate_python(nodes, edges)
-        for ename in ("OWNS", "CONTAINS", "ASSIGNED_TO", "ON", "BY"):
-            assert f"{ename} = EdgeTypeDef(" in out
-
-    def test_python_output_is_deterministic(self, parsed_playground):
-        from sdk.entdb_sdk.codegen import generate_python
-
-        nodes, edges = parsed_playground
-        assert generate_python(nodes, edges) == generate_python(nodes, edges)
-
-    def test_go_output_contains_expected_nodes(self, parsed_playground):
-        from sdk.entdb_sdk.codegen import generate_go
-
-        nodes, edges = parsed_playground
-        out = generate_go(nodes, edges)
-        assert "var User = entdb.NodeTypeDef{" in out
-        assert "var Project = entdb.NodeTypeDef{" in out
-
-    def test_python_output_round_trips_through_generate_from_proto(self):
-        from sdk.entdb_sdk.codegen import generate_from_proto
-
-        out = generate_from_proto(str(PLAYGROUND_PROTO), lang="python")
-        assert "User = NodeTypeDef(" in out
-        assert "from entdb_sdk import" in out
+        fp = compute_schema_fingerprint(nodes, edges)
+        assert fp.startswith("sha256:")
+        assert compute_schema_fingerprint(nodes, edges) == fp
 
 
 # ---------------------------------------------------------------------------

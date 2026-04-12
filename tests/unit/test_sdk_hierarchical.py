@@ -211,7 +211,9 @@ class TestActorScopeEdges:
 class TestActorScopeSharing:
     async def test_share_delegates(self, client):
         scope = client.tenant("t1").actor("user:alice")
-        result = await scope.share("n1", "user:charlie", perm="write")
+        from sdk.entdb_sdk.typed import Permission
+
+        result = await scope.share("n1", "user:charlie", perm=Permission.WRITE)
 
         assert result is True
         client._grpc.share_node.assert_called_once()

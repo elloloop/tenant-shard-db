@@ -218,6 +218,14 @@ class GlobalStore:
                 export_path   TEXT,
                 status        TEXT NOT NULL DEFAULT 'pending'
             );
+
+            CREATE TABLE IF NOT EXISTS legal_holds (
+                tenant_id   TEXT NOT NULL,
+                held_by     TEXT NOT NULL,
+                reason      TEXT NOT NULL,
+                created_at  INTEGER NOT NULL,
+                PRIMARY KEY (tenant_id, held_by)
+            );
             """
         )
 
@@ -832,3 +840,184 @@ class GlobalStore:
         with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM tenant_members WHERE user_id = ?", (user_id,))
             return cursor.rowcount
+
+    # ── Admin: transfer_user_content (Issue #90) ─────────────────────
+
+    async def transfer_user_content(self, tenant_id: str, from_user: str, to_user: str) -> dict:
+        """Update tenant_members if needed when transferring content.
+
+        Ensures the *to_user* is a member of the tenant (adds with role
+        ``member`` if not already present). Does **not** touch the
+        per-tenant canonical store — callers should also call
+        ``CanonicalStore.transfer_user_content`` for the node-level
+        ownership transfer.
+
+        Args:
+            tenant_id: Tenant identifier
+            from_user: User giving up ownership
+            to_user: User receiving ownership
+
+        Returns:
+            dict with ``tenant_id``, ``from_user``, ``to_user``, and
+            ``membership_created`` (bool).
+        """
+        return await self._run_sync(self._sync_transfer_user_content, tenant_id, from_user, to_user)
+
+    def _sync_transfer_user_content(self, tenant_id: str, from_user: str, to_user: str) -> dict:
+        now = self._now()
+        membership_created = False
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM tenant_members WHERE tenant_id = ? AND user_id = ?",
+                (tenant_id, to_user),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO tenant_members (tenant_id, user_id, role, joined_at)
+                    VALUES (?, ?, 'member', ?)
+                    """,
+                    (tenant_id, to_user, now),
+                )
+                membership_created = True
+        return {
+            "tenant_id": tenant_id,
+            "from_user": from_user,
+            "to_user": to_user,
+            "membership_created": membership_created,
+        }
+
+    # ── Admin: legal holds (Issue #91) ───────────────────────────────
+
+    async def set_legal_hold_record(self, tenant_id: str, held_by: str, reason: str) -> dict:
+        """Record a legal hold on a tenant.
+
+        Inserts into the ``legal_holds`` table. If the same
+        ``(tenant_id, held_by)`` pair already exists, this is a no-op
+        (idempotent).
+
+        Args:
+            tenant_id: Tenant identifier
+            held_by: Authority or person requesting the hold
+            reason: Free-text reason for the hold
+
+        Returns:
+            dict with hold fields
+        """
+        return await self._run_sync(self._sync_set_legal_hold_record, tenant_id, held_by, reason)
+
+    def _sync_set_legal_hold_record(self, tenant_id: str, held_by: str, reason: str) -> dict:
+        now = self._now()
+        with self._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO legal_holds (tenant_id, held_by, reason, created_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (tenant_id, held_by, reason, now),
+            )
+        return {
+            "tenant_id": tenant_id,
+            "held_by": held_by,
+            "reason": reason,
+            "created_at": now,
+        }
+
+    async def remove_legal_hold(self, tenant_id: str, held_by: str) -> bool:
+        """Remove a specific legal hold from a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+            held_by: Authority that placed the hold
+
+        Returns:
+            True if the hold existed and was removed, False otherwise
+        """
+        return await self._run_sync(self._sync_remove_legal_hold, tenant_id, held_by)
+
+    def _sync_remove_legal_hold(self, tenant_id: str, held_by: str) -> bool:
+        with self._get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM legal_holds WHERE tenant_id = ? AND held_by = ?",
+                (tenant_id, held_by),
+            )
+            return cursor.rowcount > 0
+
+    async def get_legal_holds(self, tenant_id: str) -> list[dict]:
+        """List all active legal holds on a tenant.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            List of hold dicts (tenant_id, held_by, reason, created_at)
+        """
+        return await self._run_sync(self._sync_get_legal_holds, tenant_id)
+
+    def _sync_get_legal_holds(self, tenant_id: str) -> list[dict]:
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM legal_holds WHERE tenant_id = ? ORDER BY created_at",
+                (tenant_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    async def is_under_legal_hold(self, tenant_id: str) -> bool:
+        """Check whether a tenant has any active legal holds.
+
+        Args:
+            tenant_id: Tenant identifier
+
+        Returns:
+            True if at least one legal hold exists for the tenant
+        """
+        return await self._run_sync(self._sync_is_under_legal_hold, tenant_id)
+
+    def _sync_is_under_legal_hold(self, tenant_id: str) -> bool:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM legal_holds WHERE tenant_id = ? LIMIT 1",
+                (tenant_id,),
+            ).fetchone()
+            return row is not None
+
+    # ── Admin: revoke_user_access (Issue #92) ────────────────────────
+
+    async def revoke_user_access(self, tenant_id: str, user_id: str) -> dict:
+        """Remove a user from a tenant and clear their shared_index entries.
+
+        Removes the user from ``tenant_members`` and deletes all
+        ``shared_index`` rows where the user is the grantee and the
+        source tenant matches. Callers should also call
+        ``CanonicalStore.revoke_user_access`` for per-tenant ACL cleanup.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: User to revoke
+
+        Returns:
+            dict with ``tenant_id``, ``user_id``,
+            ``membership_removed`` (bool), and ``shared_removed`` (int).
+        """
+        return await self._run_sync(self._sync_revoke_user_access, tenant_id, user_id)
+
+    def _sync_revoke_user_access(self, tenant_id: str, user_id: str) -> dict:
+        with self._get_connection() as conn:
+            mem_cursor = conn.execute(
+                "DELETE FROM tenant_members WHERE tenant_id = ? AND user_id = ?",
+                (tenant_id, user_id),
+            )
+            membership_removed = mem_cursor.rowcount > 0
+
+            shared_cursor = conn.execute(
+                "DELETE FROM shared_index WHERE user_id = ? AND source_tenant = ?",
+                (user_id, tenant_id),
+            )
+            shared_removed = shared_cursor.rowcount
+
+        return {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "membership_removed": membership_removed,
+            "shared_removed": shared_removed,
+        }
