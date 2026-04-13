@@ -863,7 +863,13 @@ class TestApplierWalStreamInteractions:
         assert r.success
 
     @pytest.mark.asyncio
-    async def test_applier_schema_fingerprint_mismatch(self, tmp_path):
+    async def test_applier_schema_fingerprint_historical_replay_accepted(self, tmp_path):
+        """The Applier must accept events with a stale schema_fingerprint.
+
+        The WAL is immutable history; rejecting historical events on replay
+        would cause silent data loss after a schema deploy. Fingerprint
+        enforcement belongs on the write path (gRPC), not the apply path.
+        """
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
@@ -878,14 +884,15 @@ class TestApplierWalStreamInteractions:
         event = TransactionEvent(
             tenant_id="t1",
             actor="u:1",
-            idempotency_key="fp-bad",
-            schema_fingerprint="sha256:wrong",
+            idempotency_key="fp-historical",
+            schema_fingerprint="sha256:old-fingerprint",
             ts_ms=int(time.time() * 1000),
-            ops=[{"op": "create_node", "type_id": 1, "id": "fp-bad-n", "data": {}}],
+            ops=[{"op": "create_node", "type_id": 1, "id": "fp-hist-n", "data": {}}],
         )
         r = await applier.apply_event(event)
-        assert not r.success
-        assert "Schema mismatch" in r.error
+        assert r.success, f"Historical event should be applied, got error: {r.error}"
+        node = await store.get_node("t1", "fp-hist-n")
+        assert node is not None
 
     @pytest.mark.asyncio
     async def test_applier_stats_tracking(self, tmp_path):

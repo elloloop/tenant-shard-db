@@ -474,19 +474,13 @@ class Applier:
 
         with self.canonical_store.batch_transaction(tenant_id) as conn:
             for record, data in items:
-                # Check schema fingerprint (same guard as apply_event)
-                if self.schema_fingerprint and data.get("schema_fingerprint"):
-                    if data["schema_fingerprint"] != self.schema_fingerprint:
-                        logger.warning(
-                            "Schema mismatch in batch, skipping event",
-                            extra={
-                                "tenant_id": tenant_id,
-                                "expected": self.schema_fingerprint,
-                                "got": data["schema_fingerprint"],
-                            },
-                        )
-                        self._error_count += 1
-                        continue
+                # NOTE: We intentionally do NOT reject events with a
+                # stale schema_fingerprint here. The WAL is an immutable
+                # historical log: older events were valid when written
+                # and must still be applied on replay (e.g. during a
+                # full read-model rebuild after a schema deploy).
+                # schema_fingerprint is only enforced on the WRITE path
+                # at the gRPC boundary to reject stale clients.
 
                 idempotency_key = data.get("idempotency_key", "")
 
@@ -858,16 +852,6 @@ class Applier:
         # Ensure tenant exists
         if not await self.canonical_store.tenant_exists(event.tenant_id):
             await self.canonical_store.initialize_tenant(event.tenant_id)
-
-        # Check schema fingerprint if required
-        if self.schema_fingerprint and event.schema_fingerprint:
-            if event.schema_fingerprint != self.schema_fingerprint:
-                return ApplyResult(
-                    success=False,
-                    event=event,
-                    error=f"Schema mismatch: expected {self.schema_fingerprint}, "
-                    f"got {event.schema_fingerprint}",
-                )
 
         # Apply all operations atomically in a single transaction.
         # The synchronous SQLite work runs in the canonical_store

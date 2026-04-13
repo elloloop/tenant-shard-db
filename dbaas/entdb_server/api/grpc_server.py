@@ -1201,6 +1201,12 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant_access(
+                request.context.tenant_id,
+                request.context.actor,
+                context,
+                require_write=True,
+            )
             tenant_id = request.context.tenant_id
             actor_id = request.actor_id
             permission = request.permission or "read"
@@ -1245,6 +1251,12 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant_access(
+                request.context.tenant_id,
+                request.context.actor,
+                context,
+                require_write=True,
+            )
             tenant_id = request.context.tenant_id
             actor_id = request.actor_id
             found = await self.canonical_store.revoke_access(
