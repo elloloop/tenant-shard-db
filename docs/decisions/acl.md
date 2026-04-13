@@ -4,6 +4,167 @@ Frozen architectural decisions about ACL, principals, and permission scoping. Ne
 
 ---
 
+## 2026-04-13: Typed capability-based permissions (core + per-type extensions)
+
+**Status:** frozen
+**Decided:** 2026-04-13
+**Tags:** acl, permissions, capabilities, proto, typing, safety
+**Supersedes:** none (extends the existing ACL layer without contradicting prior decisions)
+**Superseded by:** none
+
+### Decision
+
+EntDB replaces the coarse three-level `Permission` enum (`READ`/`WRITE`/`ADMIN`) with a **typed, capability-based permission model** in two layers:
+
+**Layer 1 — Core capabilities (built-in, universal).**
+
+A single `CoreCapability` enum ships with EntDB and applies to every node type automatically. User schemas do not re-declare it.
+
+```
+enum CoreCapability {
+  CORE_CAP_UNSPECIFIED = 0;
+  CORE_CAP_READ    = 1;   // can see the node
+  CORE_CAP_COMMENT = 2;   // can create child Comment nodes
+  CORE_CAP_EDIT    = 3;   // can update node fields
+  CORE_CAP_DELETE  = 4;   // can delete the node
+  CORE_CAP_ADMIN   = 5;   // can manage ACL + everything else
+}
+```
+
+**Layer 2 — Extension capabilities (per-type, typed, declared in user proto).**
+
+Each node type that needs domain-specific actions (approve, merge, change_status, publish, etc.) declares its own proto enum and wires it to the type via an `entdb.node` option:
+
+```
+enum PRExtCapability {
+  PR_EXT_CAP_UNSPECIFIED     = 0;
+  PR_EXT_CAP_APPROVE         = 1;
+  PR_EXT_CAP_REQUEST_CHANGES = 2;
+  PR_EXT_CAP_MERGE           = 3;
+}
+
+message PR {
+  option (entdb.node) = {
+    type_id: 301
+    extension_capability_enum: "PRExtCapability"
+    capability_mappings:    [...]   // ops to capabilities
+    capability_implications:[...]   // extensions → core implications
+  };
+}
+```
+
+**ACL entry wire format (typed on both sides):**
+
+```
+message ACLEntry {
+  string grantee = 1;                      // user:, group:, service:, tenant: (see 2026-04-13 cross-tenant decision)
+  int32 type_id = 2;                       // which type this grant applies to
+  repeated CoreCapability core_caps = 3;   // universal, typed
+  repeated int32 ext_cap_ids = 4;          // enum values from the type's extension enum
+  int64 expires_at = 5;
+}
+```
+
+**No capability strings anywhere.** The wire format, storage schema, SDK surface, and server authorization checks are all typed.
+
+**Built-in defaults (not declared by the user):**
+
+1. **Default op mappings:**
+   - `GetNode`, `GetNodes`, `QueryNodes` → `CORE_CAP_READ` on the target
+   - `UpdateNode` → `CORE_CAP_EDIT` on the target (overridable per field via `capability_mappings`)
+   - `DeleteNode` → `CORE_CAP_DELETE` on the target
+   - `ShareNode`, `RevokeNode` → `CORE_CAP_ADMIN` on the target
+   - `CreateNode` → tenant membership (creation is not per-node)
+
+2. **Default implication hierarchy:**
+   - `CORE_CAP_ADMIN` → implies `{READ, COMMENT, EDIT, DELETE}`
+   - `CORE_CAP_EDIT`  → implies `{READ, COMMENT}`
+   - `CORE_CAP_COMMENT` → implies `{READ}`
+   - `CORE_CAP_READ` → implies nothing
+
+3. **Extension implications are user-declared** per type in `capability_implications`. Typical pattern: `PR_EXT_CAP_MERGE implies_core [CORE_CAP_EDIT]`, `PR_EXT_CAP_APPROVE implies_core [CORE_CAP_COMMENT]`.
+
+**Field-level permission gating** is expressed via `capability_mappings` entries with `field` (and optionally `field_value`) selectors:
+
+```
+capability_mappings: [
+  { op: "UpdateNode", field: "status", required_ext: TASK_EXT_CAP_CHANGE_STATUS },
+  { op: "UpdateNode", field: "assignee_id", required_ext: TASK_EXT_CAP_ASSIGN },
+  { op: "UpdateNode", field: "status", field_value: "merged", required_ext: PR_EXT_CAP_MERGE },
+]
+```
+
+This provides field-specific authz without needing a separate field-level ACL concept.
+
+**Child creation gating** is expressed with `op: "CreateChild"` and a `child_type`:
+
+```
+capability_mappings: [
+  { op: "CreateChild", child_type: "Comment", required_core: CORE_CAP_COMMENT },
+]
+```
+
+Creating a `Comment` child with an edge back to a `Task` requires `CORE_CAP_COMMENT` on the Task. The new Comment is a first-class node with its own ACL (author has `EDIT`/`DELETE` on their comment, readers who can see the parent inherit `READ` on the comment by default).
+
+**A type with no custom actions declares nothing ACL-related.** Core caps + default op mappings cover it.
+
+### Context
+
+The three-level `Permission` enum cannot express:
+
+- "Can read and comment but not edit" (needed for reviewer roles, external collaborators)
+- "Can edit the status but not the title" (needed for status-limited workflows)
+- "Can approve but not merge" (needed for PR review gating)
+- "Can comment on a doc but not publish it"
+
+Adding more enum values (`COMMENT`, `SUGGEST`, `APPROVE`, `MERGE`, `PUBLISH`) would require a fixed enum that covers every type. Doesn't scale: a PR's `MERGE` is meaningless for a Task, and a Doc's `PUBLISH` is meaningless for a PR.
+
+Strings were considered and rejected on safety grounds: typos silently grant less permission than intended, wrong-type capabilities are accepted without error, refactoring rots across call sites, and security-sensitive code should never rely on string matching.
+
+The typed, two-layer model gives compile-time safety, per-type vocabulary, IDE autocomplete, and declarative authz-in-proto without requiring the user to re-declare the base capabilities every time.
+
+### Alternatives considered
+
+- **Option 1: Keep 3-level `Permission` enum, add `COMMENT`.** Rejected. Doesn't express approve-vs-merge or field-specific permissions. Doesn't scale to workflows with more than 4 distinct actions.
+- **Option 2: Per-type closed enum covering all capabilities (including base).** Rejected. Every type re-declares `READ`/`EDIT`/`DELETE`/`ADMIN`, boilerplate. Generic "grant read across types" helpers need to know the type at compile time.
+- **Option 3: String capabilities with per-type vocabulary.** Rejected on safety grounds. Typos are silent security bugs. No compile-time check. No mechanical refactoring.
+- **Option 4: Core enum + per-type extension enum, both typed.** Accepted. Best of both worlds: core caps are universal and zero-boilerplate, extensions are typed and per-type, both are compile-checked.
+- **Option 5: Field-level ACL as a first-class concept.** Rejected for now. Field gating is expressed via `capability_mappings` with `field` selectors — lighter weight, same expressiveness for real use cases. A full field-level ACL system (per-field grantees, per-field visibility) would add major complexity for rare needs.
+
+### Consequences
+
+**What this locks in:**
+
+- `ACLEntry` wire format includes `type_id`, `repeated CoreCapability core_caps`, `repeated int32 ext_cap_ids`. The existing `permission: string` field is deprecated; old grants are migrated by deriving core caps (`READ` → `[CORE_CAP_READ]`, `WRITE` → `[CORE_CAP_READ, CORE_CAP_COMMENT, CORE_CAP_EDIT]`, `ADMIN` → `[CORE_CAP_ADMIN]`).
+- The server's authorization path is replaced by a declarative registry built at startup from proto `entdb.node` options. Op handlers no longer hardcode capability checks; they call a generic `check_capability(op_name, node_id, actor)` that resolves the required capability from the registry.
+- Capability implications are computed once per type at startup (transitive closure of the implication DAG) and cached.
+- `CoreCapability` values are stable forever — renumbering them is a wire-breaking change. The same caution applies to extension enum values once published.
+- Extension enums are user-defined proto files; users own the evolution of their own vocabularies. Adding a new extension capability is a proto change + regen + redeploy.
+- Comments are first-class nodes with their own ACLs, not a special-cased field on other nodes. The `CORE_CAP_COMMENT` capability on a parent gates the ability to create Comment children with an edge to that parent.
+
+**What this makes easy:**
+
+- Granting "read-only" access to any node regardless of type: `share(node, grantee, core_caps=[CORE_CAP_READ])`.
+- Expressing domain-specific workflows (PR approve-without-merge, task status-change-without-edit) via a handful of proto lines per type.
+- Compile-time safety at every ACL call site in both Python and Go SDKs.
+- Auditing which capability was required and which grant satisfied it for every request (added to the audit event schema).
+
+**What this makes harder:**
+
+- Adding a new extension capability requires a proto schema change + SDK regen + server redeploy. This friction is intentional — capabilities are part of the API contract and should not churn.
+- Bulk migrations of existing grants when a type's extension enum changes semantics (e.g. splitting `EDIT_ALL` into `EDIT_CONTENT` + `EDIT_METADATA`) require a backfill. Same caveat as any enum evolution.
+- Generic cross-type tooling (admin dashboards that show "all grants for user X") must know each type's extension enum to render extension capability names, not just integers. The server exposes a `GetCapabilityMetadata(type_id)` RPC for this.
+
+### References
+
+- Conversation: 2026-04-13 architecture discussion on capability scoping (read/comment/edit/delete/admin + extensions for per-type actions)
+- Related decisions:
+  - [acl.md — 2026-04-13 Cross-tenant ACL via `tenant:<id>`](acl.md#2026-04-13-cross-tenant-acl-via-tenantid-grantee-and-public-write-role) — grantee principal types, orthogonal to this capability decision
+  - [storage.md — 2026-04-13 Immutable storage mode](storage.md#2026-04-13-immutable-storage-mode-no-built-in-drafts-primitive) — storage boundaries
+- Implementation: pending. Planned as part of the permission-model migration PR after storage routing ships.
+
+---
+
 ## 2026-04-13: Cross-tenant ACL via `tenant:<id>` grantee and PUBLIC write role
 
 **Status:** frozen
