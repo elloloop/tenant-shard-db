@@ -59,7 +59,7 @@ class TestSqliteOffload:
     in canonical_store._executor, not the asyncio event loop."""
 
     @pytest.mark.asyncio
-    async def test_apply_tenant_batch_uses_executor(self, tmp_path, mocker):
+    async def test_apply_tenant_batch_uses_executor(self, tmp_path):
         """A batch apply must call _executor.submit at least once."""
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
@@ -75,14 +75,24 @@ class TestSqliteOffload:
             batch_size=10,
         )
 
-        # Spy on the executor's submit method
-        submit_spy = mocker.spy(store._executor, "submit")
+        # Wrap submit so we can count calls without pytest-mock
+        original_submit = store._executor.submit
+        call_count = 0
 
-        records = await wal.poll_batch("t", "grp", max_records=10, timeout_ms=50)
-        items = [(r, r.value_json()) for r in records]
-        await applier._apply_tenant_batch("tenant-1", items)
+        def counting_submit(fn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return original_submit(fn, *args, **kwargs)
 
-        assert submit_spy.call_count >= 1, (
+        store._executor.submit = counting_submit  # type: ignore[method-assign]
+        try:
+            records = await wal.poll_batch("t", "grp", max_records=10, timeout_ms=50)
+            items = [(r, r.value_json()) for r in records]
+            await applier._apply_tenant_batch("tenant-1", items)
+        finally:
+            store._executor.submit = original_submit  # type: ignore[method-assign]
+
+        assert call_count >= 1, (
             "Expected canonical_store._executor.submit to be called when "
             "applying a batch — sync SQLite work must not run on the "
             "asyncio event loop"
@@ -91,7 +101,7 @@ class TestSqliteOffload:
         store.close_all()
 
     @pytest.mark.asyncio
-    async def test_apply_event_uses_executor(self, tmp_path, mocker):
+    async def test_apply_event_uses_executor(self, tmp_path):
         """A single-event apply must offload to the executor."""
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
@@ -104,15 +114,25 @@ class TestSqliteOffload:
             fanout_config=MailboxFanoutConfig(enabled=False),
         )
 
-        submit_spy = mocker.spy(store._executor, "submit")
+        original_submit = store._executor.submit
+        call_count = 0
 
-        event = TransactionEvent.from_dict(
-            json.loads(_event_bytes("tenant-1", "ev-solo", "node-solo").decode())
-        )
-        result = await applier.apply_event(event)
-        assert result.success
+        def counting_submit(fn, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            return original_submit(fn, *args, **kwargs)
 
-        assert submit_spy.call_count >= 1, (
+        store._executor.submit = counting_submit  # type: ignore[method-assign]
+        try:
+            event = TransactionEvent.from_dict(
+                json.loads(_event_bytes("tenant-1", "ev-solo", "node-solo").decode())
+            )
+            result = await applier.apply_event(event)
+            assert result.success
+        finally:
+            store._executor.submit = original_submit  # type: ignore[method-assign]
+
+        assert call_count >= 1, (
             "Expected canonical_store._executor.submit to be called when "
             "apply_event runs — sync SQLite work must not run on the loop"
         )
