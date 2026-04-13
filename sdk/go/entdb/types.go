@@ -141,6 +141,29 @@ type TenantQuota struct {
 	MaxRPSPerUserBurst     int32 `json:"max_rps_per_user_burst"`
 }
 
+// ── Storage mode ────────────────────────────────────────────────────
+
+// StorageMode selects the physical SQLite file a node lives in.
+//
+// Storage mode is chosen at creation time and is IMMUTABLE. It cannot
+// be changed by Update. See docs/decisions/storage.md for the full
+// rationale.
+type StorageMode int
+
+const (
+	// StorageModeTenant is the default — node lives in tenant.db and
+	// is sharable via ACL within the tenant.
+	StorageModeTenant StorageMode = 0
+
+	// StorageModeUserMailbox — node lives in a per-user SQLite file
+	// ({tenant_id}/user_{user_id}.db) and is private to one user.
+	StorageModeUserMailbox StorageMode = 1
+
+	// StorageModePublic — node lives in the singleton public.db and
+	// is readable by any tenant.
+	StorageModePublic StorageMode = 2
+)
+
 // Operation represents a single mutation in a Plan.
 type Operation struct {
 	Type       OperationType  `json:"type"`
@@ -153,4 +176,13 @@ type Operation struct {
 	FromNodeID string         `json:"from_node_id,omitempty"`
 	ToNodeID   string         `json:"to_node_id,omitempty"`
 	ACL        []ACLEntry     `json:"acl,omitempty"`
+
+	// StorageMode for create_node ops (2026-04-13 storage decision).
+	// Defaults to StorageModeTenant when unset. Immutable after
+	// creation — Update cannot change it.
+	StorageMode StorageMode `json:"storage_mode,omitempty"`
+
+	// TargetUserID is required when StorageMode is
+	// StorageModeUserMailbox; ignored otherwise.
+	TargetUserID string `json:"target_user_id,omitempty"`
 }

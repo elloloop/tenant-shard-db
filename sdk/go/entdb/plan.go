@@ -61,6 +61,51 @@ func (p *Plan) CreateWithACL(typeID int, data map[string]any, acl []ACLEntry) st
 	return alias
 }
 
+// CreateInMailbox adds a create-node operation that stores the node in
+// the target user's private mailbox database.
+//
+// **Storage mode is immutable.** A node created with CreateInMailbox
+// can never be moved to tenant.db or public.db — if you might ever
+// share this data, use Create with an ACL instead. See the 2026-04-13
+// storage decision for the rationale.
+//
+// The targetUser argument is the owning user id (plain "alice" or
+// "user:alice"); that user's mailbox database is created lazily on
+// first write.
+func (p *Plan) CreateInMailbox(targetUser string, typeID int, data map[string]any) string {
+	p.ensureNotCommitted()
+	alias := fmt.Sprintf("_ref_%d", aliasCounter.Add(1))
+	p.operations = append(p.operations, Operation{
+		Type:         OpCreateNode,
+		TypeID:       typeID,
+		Alias:        alias,
+		Data:         data,
+		StorageMode:  StorageModeUserMailbox,
+		TargetUserID: targetUser,
+	})
+	return alias
+}
+
+// CreateInPublic adds a create-node operation that stores the node in
+// the singleton public.db (readable by any tenant).
+//
+// **Storage mode is immutable.** A node created with CreateInPublic
+// can never be moved into a tenant or mailbox file. If you might ever
+// need to restrict visibility, use Create with an explicit ACL
+// instead. See the 2026-04-13 storage decision.
+func (p *Plan) CreateInPublic(typeID int, data map[string]any) string {
+	p.ensureNotCommitted()
+	alias := fmt.Sprintf("_ref_%d", aliasCounter.Add(1))
+	p.operations = append(p.operations, Operation{
+		Type:        OpCreateNode,
+		TypeID:      typeID,
+		Alias:       alias,
+		Data:        data,
+		StorageMode: StorageModePublic,
+	})
+	return alias
+}
+
 // Update adds an update-node operation.
 func (p *Plan) Update(nodeID string, typeID int, patch map[string]any) {
 	p.ensureNotCommitted()

@@ -443,6 +443,17 @@ class GrpcClient:
                     setattr(create_op, "as", create["as"])
                 if create.get("fanout_to"):
                     create_op.fanout_to.extend(create["fanout_to"])
+                # Storage routing (2026-04-13)
+                sm = create.get("storage_mode")
+                if sm:
+                    _sm_to_proto = {
+                        "TENANT": 0,
+                        "USER_MAILBOX": 1,
+                        "PUBLIC": 2,
+                    }
+                    create_op.storage_mode = _sm_to_proto.get(sm, 0)
+                if create.get("target_user_id"):
+                    create_op.target_user_id = create["target_user_id"]
                 proto_op.create_node.CopyFrom(create_op)
 
             elif "update_node" in op:

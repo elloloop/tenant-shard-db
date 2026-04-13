@@ -25,6 +25,8 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,6 +49,20 @@ class ApplierError(Exception):
 
 class SchemaFingerprintMismatch(ApplierError):
     """Event schema doesn't match server schema."""
+
+    pass
+
+
+class ValidationError(ApplierError):
+    """Event is structurally invalid (rejected before any DB write).
+
+    Raised when:
+    - an event mixes storage modes across its ops,
+    - ``update_node`` tries to change an immutable ``storage_mode``,
+    - ``USER_MAILBOX`` ops lack a ``target_user_id``,
+    - a ``create_edge`` op violates the
+      ``USER_MAILBOX -> TENANT -> PUBLIC`` hierarchy.
+    """
 
     pass
 
@@ -464,6 +480,107 @@ class Applier:
                 },
             )
 
+    # ── Storage routing helpers (2026-04-13) ────────────────────────────
+    #
+    # Every WAL event lives in exactly one physical SQLite file: the
+    # tenant.db, a per-user mailbox.db, or the singleton public.db.
+    # ``_event_storage_mode`` inspects the create_node ops in the event
+    # and returns the single storage mode; mixed-mode events are
+    # rejected. ``_open_event_connection`` picks the matching
+    # ``batch_transaction`` context manager on the canonical store.
+    # ``_build_event_storage_map`` returns the
+    # ``{node_id: (mode, user_id)}`` map needed for edge direction
+    # validation. These helpers are additive — they don't change the
+    # existing tenant-only code path when every op is TENANT.
+
+    def _event_storage_mode(self, event: TransactionEvent) -> tuple[str, str | None]:
+        """Return the event's storage mode as ``(mode, target_user_id)``.
+
+        Raises :class:`ValidationError` if the event mixes storage
+        modes (different create_node ops declaring different
+        ``storage_mode`` / ``target_user_id`` values) or if a
+        ``USER_MAILBOX`` op is missing its ``target_user_id``.
+        """
+        observed_mode: str | None = None
+        observed_user: str | None = None
+
+        for op in event.ops:
+            if op.get("op") != "create_node":
+                continue
+            mode = op.get("storage_mode") or "TENANT"
+            tgt_user = op.get("target_user_id") or None
+            if mode == "USER_MAILBOX" and not tgt_user:
+                raise ValidationError("USER_MAILBOX create_node requires target_user_id")
+            if mode != "USER_MAILBOX" and tgt_user:
+                # target_user_id on a non-mailbox create is ignored
+                # but don't let it pollute mode resolution.
+                tgt_user = None
+            if observed_mode is None:
+                observed_mode = mode
+                observed_user = tgt_user
+            else:
+                if mode != observed_mode or tgt_user != observed_user:
+                    raise ValidationError(
+                        "Event mixes storage modes: "
+                        f"{observed_mode}/{observed_user} vs "
+                        f"{mode}/{tgt_user}. Every op in a single "
+                        "event must target the same physical file."
+                    )
+
+        # Events that contain no create_node ops (updates, deletes,
+        # edges, admin ops) default to TENANT.
+        if observed_mode is None:
+            return ("TENANT", None)
+        return (observed_mode, observed_user)
+
+    @contextmanager
+    def _open_event_connection(self, event: TransactionEvent) -> Iterator[Any]:
+        """Open the correct ``batch_transaction`` for this event.
+
+        Returns the same kind of SQLite connection as
+        ``canonical_store.batch_transaction`` but picks the physical
+        file (tenant / mailbox / public) based on the event's storage
+        mode. Raises :class:`ValidationError` for mixed-mode events.
+        """
+        mode, user_id = self._event_storage_mode(event)
+        store = self.canonical_store
+        if mode == "TENANT":
+            with store.batch_transaction(event.tenant_id) as conn:
+                yield conn
+        elif mode == "USER_MAILBOX":
+            assert user_id is not None  # enforced above
+            with store.mailbox_batch_transaction(event.tenant_id, user_id) as conn:
+                yield conn
+        elif mode == "PUBLIC":
+            with store.public_batch_transaction() as conn:
+                yield conn
+        else:  # pragma: no cover - defensive
+            raise ValidationError(f"Unknown storage mode: {mode}")
+
+    def _build_event_storage_map(
+        self, event: TransactionEvent
+    ) -> dict[str, tuple[str, str | None]]:
+        """Build ``{node_id: (storage_mode, target_user_id)}`` for an event.
+
+        Walks every ``create_node`` op and records its declared storage
+        mode. Nodes are keyed by ``id`` when present and by their
+        ``as`` alias so that edge validation can look up both forms
+        before alias resolution has run.
+        """
+        out: dict[str, tuple[str, str | None]] = {}
+        for op in event.ops:
+            if op.get("op") != "create_node":
+                continue
+            mode = op.get("storage_mode") or "TENANT"
+            tgt_user = op.get("target_user_id") if mode == "USER_MAILBOX" else None
+            nid = op.get("id")
+            if nid:
+                out[nid] = (mode, tgt_user)
+            alias = op.get("as")
+            if alias:
+                out[alias] = (mode, tgt_user)
+        return out
+
     def _sync_apply_tenant_batch_body(
         self, tenant_id: str, items: list[tuple]
     ) -> tuple[int, int, int]:
@@ -484,6 +601,21 @@ class Applier:
         applied_count = 0
         skipped_count = 0
         applied_ops_count = 0
+
+        # Storage routing (2026-04-13): if *any* event in the batch is
+        # non-TENANT, fall back to the single-event path so each event
+        # lands in the correct physical file. The existing halt-on-error
+        # logic in ``apply_event`` re-dispatches each one via
+        # ``_open_event_connection``.
+        for _, data in items:
+            for op in data.get("ops", []):
+                if op.get("op") == "create_node" and (
+                    op.get("storage_mode") not in (None, "", "TENANT") or op.get("target_user_id")
+                ):
+                    raise ValidationError(
+                        "Batch apply cannot mix tenant + non-tenant storage "
+                        "modes; re-dispatch per event."
+                    )
 
         with self.canonical_store.batch_transaction(tenant_id) as conn:
             for record, data in items:
@@ -646,7 +778,12 @@ class Applier:
         self._node_alias_map.clear()
         tenant_id = event.tenant_id
 
-        with self.canonical_store.batch_transaction(tenant_id) as conn:
+        # Storage routing: pick the physical file (tenant / mailbox /
+        # public) for this event. Also precompute the per-node storage
+        # map used by the edge direction validator.
+        event_storage_map = self._build_event_storage_map(event)
+
+        with self._open_event_connection(event) as conn:
             # Check idempotency within the transaction
             cursor = conn.execute(
                 "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
@@ -677,8 +814,14 @@ class Applier:
                         self._node_alias_map[alias] = node.node_id
 
                 elif op_type == "update_node":
-                    node_id = self._resolve_ref(op.get("id", ""))
+                    # Storage routing (2026-04-13): ``storage_mode`` is
+                    # immutable — reject any patch that tries to set it.
                     patch = op.get("patch", {})
+                    if isinstance(patch, dict) and "storage_mode" in patch:
+                        raise ValidationError(
+                            "storage_mode is immutable; it cannot be changed by update_node"
+                        )
+                    node_id = self._resolve_ref(op.get("id", ""))
                     cursor = conn.execute(
                         "SELECT payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?",
                         (tenant_id, node_id),
@@ -716,6 +859,18 @@ class Applier:
                     edge_type_id = op["edge_id"]
                     from_ref = self._resolve_node_ref(op["from"])
                     to_ref = self._resolve_node_ref(op["to"])
+                    # Storage routing (2026-04-13): enforce
+                    # ``USER_MAILBOX -> TENANT -> PUBLIC`` hierarchy on
+                    # every edge write.
+                    try:
+                        CanonicalStore._validate_edge_direction(
+                            from_ref,
+                            to_ref,
+                            tenant_id,
+                            event_storage_map,
+                        )
+                    except ValueError as ev:
+                        raise ValidationError(str(ev)) from ev
                     props = op.get("props", {})
                     propagates_acl = 1 if op.get("propagates_acl", False) else 0
                     conn.execute(
