@@ -79,6 +79,8 @@ from .generated import (
     GetSchemaResponse,
     GetTenantMembersRequest,
     GetTenantMembersResponse,
+    GetTenantQuotaRequest,
+    GetTenantQuotaResponse,
     GetTenantRequest,
     GetTenantResponse,
     GetUserRequest,
@@ -2584,6 +2586,65 @@ class EntDBServicer(EntDBServiceServicer):
             logger.error(f"FreezeUser failed: {e}", exc_info=True)
             return FreezeUserResponse(success=False, error=str(e))
 
+    async def GetTenantQuota(
+        self,
+        request: GetTenantQuotaRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetTenantQuotaResponse:
+        """Return the quota config + current-period usage for a tenant.
+
+        Intended for admin dashboards (the built-in console, Grafana
+        panels, etc.). Requires ``admin`` or ``owner`` role on the
+        tenant, as with the other admin RPCs. Unknown tenants get a
+        zero-valued response (unlimited, unused) rather than an error —
+        dashboards can then render an "unlimited" badge without a
+        special-case code path.
+        """
+        start = time.perf_counter()
+        try:
+            if not self.global_store:
+                await context.abort(
+                    grpc.StatusCode.UNIMPLEMENTED,
+                    "Quota registry not configured",
+                )
+            if not request.tenant_id:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
+            await self._require_admin_or_owner(
+                request.tenant_id, request.actor, context, "GetTenantQuota"
+            )
+
+            config = await self.global_store.get_quota_config(request.tenant_id)
+            usage = await self.global_store.get_usage(request.tenant_id)
+
+            # Period end = start of the next calendar month. Computing
+            # it locally keeps dashboards honest even if the row's
+            # ``period_start_ms`` is stale (no writes this period).
+            from ..auth.quota_interceptor import _next_calendar_month_start_ms
+
+            period_end_ms = _next_calendar_month_start_ms()
+
+            cfg = config or {}
+            resp = GetTenantQuotaResponse(
+                tenant_id=request.tenant_id,
+                max_writes_per_month=int(cfg.get("max_writes_per_month", 0) or 0),
+                writes_used=int(usage.get("writes_count", 0) or 0),
+                period_start_ms=int(usage.get("period_start_ms", 0) or 0),
+                period_end_ms=period_end_ms,
+                max_rps_sustained=int(cfg.get("max_rps_sustained", 0) or 0),
+                max_rps_burst=int(cfg.get("max_rps_burst", 0) or 0),
+                max_rps_per_user_sustained=int(cfg.get("max_rps_per_user_sustained", 0) or 0),
+                max_rps_per_user_burst=int(cfg.get("max_rps_per_user_burst", 0) or 0),
+                hard_enforce=bool(cfg.get("hard_enforce", False)),
+            )
+            record_grpc_request("GetTenantQuota", "ok", time.perf_counter() - start)
+            return resp
+        except Exception as e:
+            record_grpc_request("GetTenantQuota", "error", time.perf_counter() - start)
+            if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
+                raise
+            logger.error(f"GetTenantQuota failed: {e}", exc_info=True)
+            raise
+
 
 class GrpcServer:
     """gRPC server wrapper for EntDB.
@@ -2614,6 +2675,7 @@ class GrpcServer:
         rate_limit_enabled: bool = False,
         rate_limit_rps: float = 100.0,
         rate_limit_burst: int = 200,
+        global_store: Any | None = None,
     ) -> None:
         """Initialize the gRPC server.
 
@@ -2643,6 +2705,7 @@ class GrpcServer:
         self.rate_limit_enabled = rate_limit_enabled
         self.rate_limit_rps = rate_limit_rps
         self.rate_limit_burst = rate_limit_burst
+        self.global_store = global_store
         self._server: grpc_aio.Server | None = None
         self._running = False
 
@@ -2667,6 +2730,16 @@ class GrpcServer:
 
             interceptors.append(ApiKeyInterceptor(self.auth_api_keys))
             logger.info("API key authentication enabled")
+
+        # QuotaInterceptor runs AFTER auth so quota checks can trust the
+        # tenant identifier on the request. Conditional on global_store
+        # being configured — a no-auth / no-quota deployment
+        # (e.g. in-process tests) simply skips it.
+        if self.global_store is not None:
+            from ..auth.quota_interceptor import QuotaInterceptor
+
+            interceptors.append(QuotaInterceptor(self.global_store))
+            logger.info("Quota interceptor enabled (three-layer rate limits)")
 
         # Create async gRPC server
         self._server = grpc_aio.server(

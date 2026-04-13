@@ -118,6 +118,9 @@ from .entdb_pb2 import (
     FreezeUserResponse,
     CancelUserDeletionRequest,
     CancelUserDeletionResponse,
+    # Quota dashboard
+    GetTenantQuotaRequest,
+    GetTenantQuotaResponse,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -240,6 +243,9 @@ __all__ = [
     "FreezeUserResponse",
     "CancelUserDeletionRequest",
     "CancelUserDeletionResponse",
+    # Quota dashboard
+    "GetTenantQuotaRequest",
+    "GetTenantQuotaResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",
