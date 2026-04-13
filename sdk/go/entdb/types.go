@@ -114,6 +114,33 @@ const (
 	OpDeleteEdge
 )
 
+// ── Quotas ──────────────────────────────────────────────────────────
+
+// TenantQuota is the decoded snapshot returned by the GetTenantQuota RPC.
+// It mirrors the three-layer rate-limit model (monthly quota, per-tenant
+// token bucket, per-user token bucket) defined in
+// docs/decisions/quotas.md so callers can render a full quota dashboard
+// from a single round-trip.
+//
+// Numeric fields use int64 to match the proto (and to give dashboards
+// headroom for high-volume tiers). A zero value for any *Limit field
+// means "unlimited" — the server treats 0 as unbounded.
+type TenantQuota struct {
+	TenantID string `json:"tenant_id"`
+	// Phase 1 — monthly writes.
+	MaxWritesPerMonth int64 `json:"max_writes_per_month"`
+	WritesUsed        int64 `json:"writes_used"`
+	PeriodStartMs     int64 `json:"period_start_ms"`
+	PeriodEndMs       int64 `json:"period_end_ms"`
+	HardEnforce       bool  `json:"hard_enforce"`
+	// Phase 2 — per-tenant token bucket.
+	MaxRPSSustained int32 `json:"max_rps_sustained"`
+	MaxRPSBurst     int32 `json:"max_rps_burst"`
+	// Phase 3 — per-user token bucket.
+	MaxRPSPerUserSustained int32 `json:"max_rps_per_user_sustained"`
+	MaxRPSPerUserBurst     int32 `json:"max_rps_per_user_burst"`
+}
+
 // Operation represents a single mutation in a Plan.
 type Operation struct {
 	Type       OperationType  `json:"type"`

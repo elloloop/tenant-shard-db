@@ -237,10 +237,14 @@ class GlobalStore:
             );
 
             CREATE TABLE IF NOT EXISTS tenant_quotas (
-                tenant_id            TEXT PRIMARY KEY,
-                max_writes_per_month INTEGER NOT NULL DEFAULT 0,
-                hard_enforce         INTEGER NOT NULL DEFAULT 0,
-                updated_at           INTEGER NOT NULL
+                tenant_id                  TEXT PRIMARY KEY,
+                max_writes_per_month       INTEGER NOT NULL DEFAULT 0,
+                hard_enforce               INTEGER NOT NULL DEFAULT 0,
+                max_rps_sustained          INTEGER NOT NULL DEFAULT 0,
+                max_rps_burst              INTEGER NOT NULL DEFAULT 0,
+                max_rps_per_user_sustained INTEGER NOT NULL DEFAULT 0,
+                max_rps_per_user_burst     INTEGER NOT NULL DEFAULT 0,
+                updated_at                 INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS tenant_usage (
@@ -251,6 +255,34 @@ class GlobalStore:
             );
             """
         )
+        # Backward-compatible migration: databases created before Phase 2
+        # have only the monthly quota columns. Add the token-bucket
+        # columns idempotently so existing deployments can pick up the
+        # new schema without a manual migration step.
+        self._migrate_tenant_quotas(conn)
+
+    def _migrate_tenant_quotas(self, conn: sqlite3.Connection) -> None:
+        """Add Phase 2 / Phase 3 columns to ``tenant_quotas`` if missing.
+
+        SQLite does not support conditional ``ADD COLUMN`` directly, so
+        inspect ``PRAGMA table_info`` first and issue the ALTER only for
+        columns that are not yet present. Safe to call on every startup.
+        """
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(tenant_quotas)").fetchall()}
+        added = False
+        for col in (
+            "max_rps_sustained",
+            "max_rps_burst",
+            "max_rps_per_user_sustained",
+            "max_rps_per_user_burst",
+        ):
+            if col not in existing:
+                conn.execute(
+                    f"ALTER TABLE tenant_quotas ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0"
+                )
+                added = True
+        if added:
+            logger.info("Migrated tenant_quotas with Phase 2/3 RPS columns")
 
     def close(self) -> None:
         """Close the database connection and shut down the executor."""
@@ -1052,15 +1084,28 @@ class GlobalStore:
         tenant_id: str,
         max_writes_per_month: int = 0,
         hard_enforce: bool = False,
+        max_rps_sustained: int = 0,
+        max_rps_burst: int = 0,
+        max_rps_per_user_sustained: int = 0,
+        max_rps_per_user_burst: int = 0,
     ) -> dict:
         """Set or replace the quota config for a tenant.
 
         Args:
             tenant_id: Tenant identifier.
             max_writes_per_month: Monthly write cap. ``0`` means unlimited.
-            hard_enforce: If ``True``, requests over the cap are rejected
-                with ``RESOURCE_EXHAUSTED``. If ``False`` (default), they
-                are logged and allowed (overage billing territory).
+            hard_enforce: If ``True``, requests over the monthly cap are
+                rejected with ``RESOURCE_EXHAUSTED``. If ``False``
+                (default), they are logged and allowed (overage billing
+                territory).
+            max_rps_sustained: Phase 2 — per-tenant steady-state RPS. ``0``
+                means unlimited (no token bucket built).
+            max_rps_burst: Phase 2 — per-tenant token-bucket capacity. ``0``
+                means fall back to ``max_rps_sustained``.
+            max_rps_per_user_sustained: Phase 3 — per-user steady-state RPS.
+                ``0`` means unlimited (no per-user bucket built).
+            max_rps_per_user_burst: Phase 3 — per-user bucket capacity. ``0``
+                means fall back to ``max_rps_per_user_sustained``.
 
         Returns:
             The stored config as a dict.
@@ -1070,27 +1115,58 @@ class GlobalStore:
             tenant_id,
             max_writes_per_month,
             hard_enforce,
+            max_rps_sustained,
+            max_rps_burst,
+            max_rps_per_user_sustained,
+            max_rps_per_user_burst,
         )
 
     def _sync_set_quota_config(
-        self, tenant_id: str, max_writes_per_month: int, hard_enforce: bool
+        self,
+        tenant_id: str,
+        max_writes_per_month: int,
+        hard_enforce: bool,
+        max_rps_sustained: int,
+        max_rps_burst: int,
+        max_rps_per_user_sustained: int,
+        max_rps_per_user_burst: int,
     ) -> dict:
         now = self._now()
         with self._get_connection() as conn:
             conn.execute(
                 """INSERT INTO tenant_quotas
-                       (tenant_id, max_writes_per_month, hard_enforce, updated_at)
-                   VALUES (?, ?, ?, ?)
+                       (tenant_id, max_writes_per_month, hard_enforce,
+                        max_rps_sustained, max_rps_burst,
+                        max_rps_per_user_sustained, max_rps_per_user_burst,
+                        updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(tenant_id) DO UPDATE SET
                        max_writes_per_month = excluded.max_writes_per_month,
                        hard_enforce = excluded.hard_enforce,
+                       max_rps_sustained = excluded.max_rps_sustained,
+                       max_rps_burst = excluded.max_rps_burst,
+                       max_rps_per_user_sustained = excluded.max_rps_per_user_sustained,
+                       max_rps_per_user_burst = excluded.max_rps_per_user_burst,
                        updated_at = excluded.updated_at""",
-                (tenant_id, max_writes_per_month, 1 if hard_enforce else 0, now),
+                (
+                    tenant_id,
+                    max_writes_per_month,
+                    1 if hard_enforce else 0,
+                    max_rps_sustained,
+                    max_rps_burst,
+                    max_rps_per_user_sustained,
+                    max_rps_per_user_burst,
+                    now,
+                ),
             )
         return {
             "tenant_id": tenant_id,
             "max_writes_per_month": max_writes_per_month,
             "hard_enforce": hard_enforce,
+            "max_rps_sustained": max_rps_sustained,
+            "max_rps_burst": max_rps_burst,
+            "max_rps_per_user_sustained": max_rps_per_user_sustained,
+            "max_rps_per_user_burst": max_rps_per_user_burst,
             "updated_at": now,
         }
 
@@ -1110,10 +1186,21 @@ class GlobalStore:
             ).fetchone()
         if row is None:
             return None
+        # Use keys() to survive the Phase 2 migration gap: if a very old
+        # row exists before the ALTER TABLE ran, fall back to zero.
+        keys = row.keys() if hasattr(row, "keys") else []
         return {
             "tenant_id": row["tenant_id"],
             "max_writes_per_month": row["max_writes_per_month"],
             "hard_enforce": bool(row["hard_enforce"]),
+            "max_rps_sustained": row["max_rps_sustained"] if "max_rps_sustained" in keys else 0,
+            "max_rps_burst": row["max_rps_burst"] if "max_rps_burst" in keys else 0,
+            "max_rps_per_user_sustained": (
+                row["max_rps_per_user_sustained"] if "max_rps_per_user_sustained" in keys else 0
+            ),
+            "max_rps_per_user_burst": (
+                row["max_rps_per_user_burst"] if "max_rps_per_user_burst" in keys else 0
+            ),
             "updated_at": row["updated_at"],
         }
 
