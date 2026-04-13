@@ -120,6 +120,9 @@ from .entdb_pb2 import (
     FreezeUserResponse,
     CancelUserDeletionRequest,
     CancelUserDeletionResponse,
+    # Unique keys (2026-04-13)
+    GetNodeByKeyRequest,
+    GetNodeByKeyResponse,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 
@@ -229,5 +232,8 @@ __all__ = [
     "FreezeUserResponse",
     "CancelUserDeletionRequest",
     "CancelUserDeletionResponse",
+    # Unique keys (2026-04-13)
+    "GetNodeByKeyRequest",
+    "GetNodeByKeyResponse",
     "EntDBServiceStub",
 ]

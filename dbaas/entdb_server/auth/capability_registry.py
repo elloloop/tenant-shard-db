@@ -60,6 +60,7 @@ class CoreCapability(IntEnum):
 DEFAULT_OP_REQUIREMENTS: dict[str, CoreCapability] = {
     "GetNode": CoreCapability.READ,
     "GetNodes": CoreCapability.READ,
+    "GetNodeByKey": CoreCapability.READ,
     "QueryNodes": CoreCapability.READ,
     "GetEdgesFrom": CoreCapability.READ,
     "GetEdgesTo": CoreCapability.READ,

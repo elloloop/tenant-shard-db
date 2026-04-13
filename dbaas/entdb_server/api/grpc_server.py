@@ -69,6 +69,8 @@ from .generated import (
     GetEdgesResponse,
     GetMailboxRequest,
     GetMailboxResponse,
+    GetNodeByKeyRequest,
+    GetNodeByKeyResponse,
     GetNodeRequest,
     GetNodeResponse,
     GetNodesRequest,
@@ -499,6 +501,52 @@ class EntDBServicer(EntDBServiceServicer):
             # Convert operations to internal format
             ops = self._convert_operations(request.operations)
 
+            # Unique keys (2026-04-13) — fast-fail pre-validate.
+            # For every create/update op carrying a ``keys`` map we
+            # check the canonical store for a pre-existing row. This
+            # handles the 99% case without a WAL round-trip. The
+            # applier still runs an authoritative check inside its
+            # transaction so races are race-safe.
+            for op in ops:
+                op_kind = op.get("op")
+                op_keys = op.get("keys") or {}
+                if not op_keys:
+                    continue
+                if op_kind == "create_node":
+                    for k_name, k_value in op_keys.items():
+                        if await self.canonical_store.check_key_exists(
+                            ctx.tenant_id,
+                            int(op.get("type_id", 0)),
+                            str(k_name),
+                            str(k_value),
+                        ):
+                            record_grpc_request(
+                                "ExecuteAtomic", "error", time.perf_counter() - start
+                            )
+                            await context.abort(
+                                grpc.StatusCode.ALREADY_EXISTS,
+                                f"Unique key already exists: type_id={op.get('type_id')} "
+                                f"key={k_name}={k_value!r}",
+                            )
+                elif op_kind == "update_node":
+                    node_id = op.get("id", "")
+                    for k_name, k_value in op_keys.items():
+                        if await self.canonical_store.check_key_exists(
+                            ctx.tenant_id,
+                            int(op.get("type_id", 0)),
+                            str(k_name),
+                            str(k_value),
+                            exclude_node_id=node_id,
+                        ):
+                            record_grpc_request(
+                                "ExecuteAtomic", "error", time.perf_counter() - start
+                            )
+                            await context.abort(
+                                grpc.StatusCode.ALREADY_EXISTS,
+                                f"Unique key already exists: type_id={op.get('type_id')} "
+                                f"key={k_name}={k_value!r}",
+                            )
+
             # Tenant role + status enforcement.
             # ExecuteAtomic is always a write. The status check is finer
             # grained: legal_hold rejects deletes (delete_node, delete_edge)
@@ -620,20 +668,28 @@ class EntDBServicer(EntDBServiceServicer):
                 tgt_user = getattr(create, "target_user_id", "") or ""
                 if tgt_user:
                     internal_op["target_user_id"] = tgt_user
+                # Unique keys (2026-04-13). ``keys`` is a proto
+                # ``map<string, string>`` so we copy it into a plain
+                # dict for the internal op format.
+                create_keys = getattr(create, "keys", None)
+                if create_keys:
+                    internal_op["keys"] = {str(k): str(v) for k, v in create_keys.items()}
                 result.append(internal_op)
 
             elif op_type == "update_node":
                 update = op.update_node
                 patch = _struct_to_dict(update.patch)
                 patch = name_to_id_keys(patch, update.type_id, self.schema_registry)
-                result.append(
-                    {
-                        "op": "update_node",
-                        "type_id": update.type_id,
-                        "id": update.id,
-                        "patch": patch,
-                    }
-                )
+                update_internal: dict[str, Any] = {
+                    "op": "update_node",
+                    "type_id": update.type_id,
+                    "id": update.id,
+                    "patch": patch,
+                }
+                update_keys = getattr(update, "keys", None)
+                if update_keys:
+                    update_internal["keys"] = {str(k): str(v) for k, v in update_keys.items()}
+                result.append(update_internal)
 
             elif op_type == "delete_node":
                 delete = op.delete_node
@@ -820,6 +876,67 @@ class EntDBServicer(EntDBServiceServicer):
             record_grpc_request("GetNode", "error", time.perf_counter() - start)
             logger.error(f"GetNode failed: {e}", exc_info=True)
             return GetNodeResponse(found=False)
+
+    async def GetNodeByKey(
+        self,
+        request: GetNodeByKeyRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> GetNodeByKeyResponse:
+        """Resolve a node by its declared unique key.
+
+        Implements the 2026-04-13 unique_keys decision. The handler:
+
+        1. Authenticates the tenant and actor via ``_check_tenant_access``.
+        2. Resolves ``(type_id, key_name, key_value)`` to a ``node_id``
+           via the canonical store.
+        3. Delegates to the same ``GetNode`` path so capability /
+           cross-tenant ACL checks run identically. Actors without
+           ``CORE_CAP_READ`` on the resolved node get
+           ``PERMISSION_DENIED``, never a silent ``found=False``.
+        """
+        start = time.perf_counter()
+        try:
+            # Resolve the key → node_id. Tenant existence is checked
+            # inside the delegated ``GetNode`` call below so we share
+            # one code path for ACL, cross-tenant grants, and
+            # capability lookup.
+            await self._check_tenant(request.tenant_id, context)
+
+            # Read-after-write wait is optional.
+            if request.after_offset:
+                await self._wait_for_offset(request.tenant_id, str(request.after_offset), 30.0)
+
+            node_id = await self.canonical_store.get_node_by_key(
+                request.tenant_id,
+                int(request.type_id),
+                request.key_name,
+                request.key_value,
+            )
+            if not node_id:
+                record_grpc_request("GetNodeByKey", "ok", time.perf_counter() - start)
+                return GetNodeByKeyResponse(found=False)
+
+            # Delegate to GetNode so ACL / cross-tenant / capability
+            # checks are identical (see the 2026-04-13 unique_keys
+            # decision — ``PERMISSION_DENIED`` is the honest answer
+            # when the actor lacks ``CORE_CAP_READ`` on the node).
+            from .generated import RequestContext as _RequestContext
+
+            get_req = GetNodeRequest(
+                context=_RequestContext(
+                    tenant_id=request.tenant_id,
+                    actor=request.actor,
+                ),
+                type_id=int(request.type_id),
+                node_id=node_id,
+            )
+            inner = await self.GetNode(get_req, context)
+            record_grpc_request("GetNodeByKey", "ok", time.perf_counter() - start)
+            return GetNodeByKeyResponse(found=inner.found, node=inner.node)
+        except Exception as e:
+            record_grpc_request("GetNodeByKey", "error", time.perf_counter() - start)
+            logger.error(f"GetNodeByKey failed: {e}", exc_info=True)
+            return GetNodeByKeyResponse(found=False)
 
     async def GetNodes(
         self,

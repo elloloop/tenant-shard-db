@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import sqlite3
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -65,6 +66,52 @@ class ValidationError(ApplierError):
     """
 
     pass
+
+
+def _first_key(keys: dict[str, str]) -> tuple[str, str]:
+    """Return a stable (name, value) pair to describe a key collision.
+
+    Used when ``INSERT OR FAIL`` raises and the applier needs to report
+    which declared key caused the violation. When the op only carried
+    one key we surface that one; for multi-key ops the first-inserted
+    key is a useful hint.
+    """
+    if not keys:
+        return ("", "")
+    name = next(iter(keys))
+    return (str(name), str(keys[name]))
+
+
+class UniqueConstraintError(ApplierError):
+    """A create/update op violated a declared unique key.
+
+    Raised by the applier when an ``INSERT OR FAIL`` on ``node_keys``
+    fails because of a duplicate ``(tenant_id, type_id, key_name,
+    key_value)``. The gRPC boundary surfaces this as
+    ``ALREADY_EXISTS`` so SDKs can catch a typed
+    ``UniqueConstraintError``.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,
+        type_id: int,
+        key_name: str,
+        key_value: str,
+        *,
+        message: str | None = None,
+    ) -> None:
+        self.tenant_id = tenant_id
+        self.type_id = int(type_id)
+        self.key_name = str(key_name)
+        self.key_value = str(key_value)
+        super().__init__(
+            message
+            or (
+                f"Unique key violation: tenant={tenant_id} type_id={type_id} "
+                f"key={key_name}={key_value!r} already exists"
+            )
+        )
 
 
 @dataclass
@@ -807,6 +854,29 @@ class Applier:
                         acl=op.get("acl", []),
                         created_at=event.ts_ms,
                     )
+                    # Unique keys (2026-04-13) — authoritative
+                    # validation. IntegrityError is mapped to a typed
+                    # UniqueConstraintError so the outer error path
+                    # halts cleanly per halt-on-error semantics.
+                    op_keys = op.get("keys") or {}
+                    if op_keys:
+                        try:
+                            self.canonical_store.insert_node_keys(
+                                conn,
+                                tenant_id,
+                                int(op["type_id"]),
+                                node.node_id,
+                                op_keys,
+                                event.ts_ms,
+                            )
+                        except sqlite3.IntegrityError as ie:
+                            dup_name, dup_value = _first_key(op_keys)
+                            raise UniqueConstraintError(
+                                tenant_id,
+                                int(op["type_id"]),
+                                dup_name,
+                                dup_value,
+                            ) from ie
                     created_nodes.append(node.node_id)
                     self._log_data_policy(op["type_id"])
                     alias = op.get("as")
@@ -837,6 +907,27 @@ class Applier:
                             "WHERE tenant_id = ? AND node_id = ?",
                             (json.dumps(existing), event.ts_ms, tenant_id, node_id),
                         )
+                        # Unique keys (2026-04-13) — replace node_keys
+                        # rows when the update carries a ``keys`` map.
+                        op_keys = op.get("keys") or {}
+                        if op_keys:
+                            try:
+                                self.canonical_store.update_node_keys(
+                                    conn,
+                                    tenant_id,
+                                    int(op.get("type_id", 0)),
+                                    node_id,
+                                    op_keys,
+                                    event.ts_ms,
+                                )
+                            except sqlite3.IntegrityError as ie:
+                                dup_name, dup_value = _first_key(op_keys)
+                                raise UniqueConstraintError(
+                                    tenant_id,
+                                    int(op.get("type_id", 0)),
+                                    dup_name,
+                                    dup_value,
+                                ) from ie
 
                 elif op_type == "delete_node":
                     node_id = self._resolve_ref(op.get("id", ""))
@@ -849,6 +940,8 @@ class Applier:
                         "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
                         (tenant_id, node_id),
                     )
+                    # Unique keys (2026-04-13) — cascade cleanup.
+                    self.canonical_store.delete_node_keys(conn, tenant_id, node_id)
                     conn.execute(
                         "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
                         (tenant_id, node_id),

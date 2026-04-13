@@ -47,6 +47,39 @@ func (p *Plan) Create(typeID int, data map[string]any) string {
 	return alias
 }
 
+// CreateWithKeys adds a create-node operation that carries a set of
+// declared unique / secondary lookup keys (2026-04-13 unique_keys
+// decision). The server enforces each (key_name, key_value) pair as
+// unique within (tenant_id, type_id, key_name); duplicates surface as
+// UniqueConstraintError on commit.
+func (p *Plan) CreateWithKeys(typeID int, data map[string]any, keys map[string]string) string {
+	p.ensureNotCommitted()
+	alias := fmt.Sprintf("_ref_%d", aliasCounter.Add(1))
+	p.operations = append(p.operations, Operation{
+		Type:   OpCreateNode,
+		TypeID: typeID,
+		Alias:  alias,
+		Data:   data,
+		Keys:   keys,
+	})
+	return alias
+}
+
+// UpdateWithKeys adds an update-node operation that replaces the
+// node's declared unique / secondary lookup keys (2026-04-13
+// unique_keys decision). Passing an empty map leaves the existing
+// node_keys rows untouched; pass nil to skip the update entirely.
+func (p *Plan) UpdateWithKeys(nodeID string, typeID int, patch map[string]any, keys map[string]string) {
+	p.ensureNotCommitted()
+	p.operations = append(p.operations, Operation{
+		Type:   OpUpdateNode,
+		TypeID: typeID,
+		NodeID: nodeID,
+		Patch:  patch,
+		Keys:   keys,
+	})
+}
+
 // CreateWithACL adds a create-node operation with explicit ACL entries.
 func (p *Plan) CreateWithACL(typeID int, data map[string]any, acl []ACLEntry) string {
 	p.ensureNotCommitted()

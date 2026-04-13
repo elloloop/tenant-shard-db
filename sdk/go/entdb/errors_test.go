@@ -124,3 +124,97 @@ func TestParseRateLimitFromStatus_MalformedRetryAfter(t *testing.T) {
 		t.Errorf("RetryAfterMs should be 0 for malformed trailer, got %d", rle.RetryAfterMs)
 	}
 }
+
+// ── UniqueConstraintError (2026-04-13 unique_keys decision) ────────
+
+func TestNewUniqueConstraintError_Fields(t *testing.T) {
+	uce := NewUniqueConstraintError("tenant-1", 101, "email", "alice@example.com")
+	if uce.TenantID != "tenant-1" {
+		t.Errorf("TenantID = %q, want tenant-1", uce.TenantID)
+	}
+	if uce.TypeID != 101 {
+		t.Errorf("TypeID = %d, want 101", uce.TypeID)
+	}
+	if uce.KeyName != "email" {
+		t.Errorf("KeyName = %q, want email", uce.KeyName)
+	}
+	if uce.KeyValue != "alice@example.com" {
+		t.Errorf("KeyValue = %q", uce.KeyValue)
+	}
+	if uce.Code != "UNIQUE_CONSTRAINT" {
+		t.Errorf("Code = %q", uce.Code)
+	}
+	if got, ok := uce.Details["key_name"].(string); !ok || got != "email" {
+		t.Errorf("Details[key_name] = %v", uce.Details["key_name"])
+	}
+}
+
+func TestUniqueConstraintError_Error(t *testing.T) {
+	uce := NewUniqueConstraintError("tenant-1", 101, "email", "alice@example.com")
+	msg := uce.Error()
+	if !strings.Contains(msg, "UNIQUE_CONSTRAINT") {
+		t.Errorf("Error() = %q missing UNIQUE_CONSTRAINT", msg)
+	}
+	if !strings.Contains(msg, "email") {
+		t.Errorf("Error() = %q missing key name", msg)
+	}
+	if !strings.Contains(msg, "alice@example.com") {
+		t.Errorf("Error() = %q missing key value", msg)
+	}
+}
+
+func TestUniqueConstraintError_ErrorEmptyMessage(t *testing.T) {
+	uce := &UniqueConstraintError{
+		EntDBError: EntDBError{Code: "UNIQUE_CONSTRAINT"},
+		TenantID:   "t1",
+		TypeID:     7,
+		KeyName:    "sku",
+		KeyValue:   "XYZ",
+	}
+	msg := uce.Error()
+	if !strings.Contains(msg, "XYZ") || !strings.Contains(msg, "sku") {
+		t.Errorf("Error() = %q", msg)
+	}
+}
+
+func TestParseUniqueConstraintFromStatus_AlreadyExists(t *testing.T) {
+	st := status.New(codes.AlreadyExists, "unique key already exists: email=alice@example.com")
+	uce := parseUniqueConstraintFromStatus(st.Err(), "tenant-1")
+	if uce == nil {
+		t.Fatalf("expected UniqueConstraintError, got nil")
+	}
+	if uce.TenantID != "tenant-1" {
+		t.Errorf("TenantID = %q", uce.TenantID)
+	}
+	if !strings.Contains(uce.Message, "email=alice@example.com") {
+		t.Errorf("Message = %q", uce.Message)
+	}
+}
+
+func TestParseUniqueConstraintFromStatus_OtherCode(t *testing.T) {
+	st := status.New(codes.NotFound, "nope")
+	uce := parseUniqueConstraintFromStatus(st.Err(), "tenant-1")
+	if uce != nil {
+		t.Errorf("expected nil for non-AlreadyExists code, got %v", uce)
+	}
+}
+
+func TestParseUniqueConstraintFromStatus_NilError(t *testing.T) {
+	if uce := parseUniqueConstraintFromStatus(nil, "tenant-1"); uce != nil {
+		t.Fatalf("expected nil for nil error, got %v", uce)
+	}
+}
+
+func TestUniqueConstraintError_ImplementsErrorInterface(t *testing.T) {
+	var err error = NewUniqueConstraintError("t", 1, "email", "x")
+	if err == nil {
+		t.Fatal("expected non-nil error")
+	}
+	var uce *UniqueConstraintError
+	if !errors.As(err, &uce) {
+		t.Fatalf("errors.As failed to extract *UniqueConstraintError")
+	}
+	if uce.KeyName != "email" {
+		t.Errorf("KeyName=%q", uce.KeyName)
+	}
+}

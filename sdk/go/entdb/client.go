@@ -18,6 +18,9 @@ type Transport interface {
 	Close() error
 	// GetNode retrieves a single node.
 	GetNode(ctx context.Context, tenantID, actor string, typeID int, nodeID string) (*Node, error)
+	// GetNodeByKey resolves a node via a declared unique /
+	// secondary lookup key (2026-04-13 unique_keys decision).
+	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID int, keyName, keyValue string) (*Node, error)
 	// QueryNodes retrieves nodes matching a filter.
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
@@ -73,6 +76,13 @@ func (t *grpcTransport) Close() error {
 
 func (t *grpcTransport) GetNode(_ context.Context, _, _ string, _ int, _ string) (*Node, error) {
 	// Requires generated proto stubs to implement.
+	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
+}
+
+func (t *grpcTransport) GetNodeByKey(_ context.Context, _, _ string, _ int, _, _ string) (*Node, error) {
+	// Requires generated proto stubs to implement. Stays stubbed
+	// in lockstep with GetNode so the real wiring lands in one PR
+	// when the Go proto stubs are generated.
 	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
 }
 

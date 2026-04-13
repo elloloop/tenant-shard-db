@@ -214,6 +214,7 @@ class Plan:
         acl: list[ACLEntry] | list[dict[str, str]] | None = None,
         as_: str | None = None,
         fanout_to: list[str] | None = None,
+        keys: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> Plan:
         """Add a create_node operation.
@@ -255,6 +256,8 @@ class Plan:
             op["create_node"]["as"] = as_
         if fanout_to:
             op["create_node"]["fanout_to"] = fanout_to
+        if keys:
+            op["create_node"]["keys"] = {str(k): str(v) for k, v in keys.items()}
 
         self._operations.append(op)
         return self
@@ -358,6 +361,7 @@ class Plan:
         patch: dict[str, Any],
         *,
         field_mask: list[str] | None = None,
+        keys: dict[str, str] | None = None,
     ) -> Plan:
         """Add an update_node operation.
 
@@ -382,6 +386,8 @@ class Plan:
 
         if field_mask:
             op["update_node"]["field_mask"] = field_mask
+        if keys:
+            op["update_node"]["keys"] = {str(k): str(v) for k, v in keys.items()}
 
         self._operations.append(op)
         return self
@@ -778,6 +784,45 @@ class DbClient:
             node_id=node_id,
             after_offset=resolved_offset,
             wait_timeout_ms=30000 if resolved_offset else 0,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+    async def get_by_key(
+        self,
+        node_type: NodeTypeDef,
+        key_name: str,
+        key_value: str,
+        tenant_id: str,
+        actor: str,
+        *,
+        after_offset: str | None = None,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> Node | None:
+        """Resolve a node via a declared unique/secondary key.
+
+        Implements the 2026-04-13 unique_keys decision. Returns
+        ``None`` if the key is unknown. Duplicates are impossible
+        by construction — the primary key on ``node_keys`` forbids
+        them.
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+        after_int = 0
+        if after_offset:
+            try:
+                after_int = int(after_offset)
+            except (TypeError, ValueError):
+                after_int = 0
+
+        return await self._grpc.get_node_by_key(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=node_type.type_id,
+            key_name=key_name,
+            key_value=key_value,
+            after_offset=after_int,
             trace_id=trace_id,
             timeout=timeout,
         )

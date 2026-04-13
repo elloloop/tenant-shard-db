@@ -40,6 +40,15 @@ func (s *ActorScope) Get(ctx context.Context, typeID int, nodeID string) (*Node,
 	return s.client.Get(ctx, s.tenantID, s.actor.String(), typeID, nodeID)
 }
 
+// GetByKey resolves a node via its declared unique / secondary lookup
+// key (2026-04-13 unique_keys decision). Returns a typed
+// *NotFoundError-style nil when the key is unknown. When the actor
+// lacks read capability on the resolved node the server returns
+// PERMISSION_DENIED, not a silent nil.
+func (s *ActorScope) GetByKey(ctx context.Context, typeID int, keyName, keyValue string) (*Node, error) {
+	return s.client.transport.GetNodeByKey(ctx, s.tenantID, s.actor.String(), typeID, keyName, keyValue)
+}
+
 // Query retrieves nodes matching a filter.
 func (s *ActorScope) Query(ctx context.Context, typeID int, filter map[string]any) ([]*Node, error) {
 	return s.client.Query(ctx, s.tenantID, s.actor.String(), typeID, filter)

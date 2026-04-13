@@ -42,6 +42,7 @@ from .errors import (
     EntDbError,
     RateLimitError,
     SchemaError,
+    UniqueConstraintError,
     UnknownFieldError,
     ValidationError,
 )
@@ -105,4 +106,5 @@ __all__ = [
     "SchemaError",
     "UnknownFieldError",
     "RateLimitError",
+    "UniqueConstraintError",
 ]
