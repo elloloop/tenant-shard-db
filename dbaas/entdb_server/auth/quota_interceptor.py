@@ -241,8 +241,13 @@ class QuotaInterceptor(grpc.aio.ServerInterceptor):
         # We only wrap unary-unary handlers; streaming RPCs are not
         # currently metered. If a streaming RPC starts appearing in
         # _ENFORCED_METHODS the wrapper above needs to be extended.
+        #
+        # Note: grpc.aio does NOT provide its own
+        # unary_unary_rpc_method_handler constructor — we use the
+        # top-level grpc.unary_unary_rpc_method_handler, which works
+        # for both sync and async handler functions.
         if handler.unary_unary is not None:
-            return grpc.aio.unary_unary_rpc_method_handler(
+            return grpc.unary_unary_rpc_method_handler(
                 wrapper,
                 request_deserializer=handler.request_deserializer,
                 response_serializer=handler.response_serializer,
