@@ -14,6 +14,7 @@ import json
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import grpc
 import jwt as pyjwt
 import pytest
 from cryptography.hazmat.primitives import serialization
@@ -639,31 +640,37 @@ class TestAuthInterceptorNoAuth:
 class TestAuthInterceptorHealthBypass:
     """Health check endpoints bypass authentication."""
 
-    def test_health_check_bypasses_auth(self):
+    @pytest.mark.asyncio
+    async def test_health_check_bypasses_auth(self):
         interceptor = AuthInterceptor()
-        continuation = MagicMock(return_value="handler")
+        continuation = AsyncMock(return_value="handler")
         details = MagicMock()
         details.method = "/entdb.EntDBService/Health"
         details.invocation_metadata = []
 
-        result = interceptor.intercept_service(continuation, details)
-        continuation.assert_called_once()
+        result = await interceptor.intercept_service(continuation, details)
+        continuation.assert_awaited_once()
         assert result == "handler"
+
+    def test_interceptor_is_async_base_class(self):
+        """AuthInterceptor must inherit from grpc.aio.ServerInterceptor."""
+        assert issubclass(AuthInterceptor, grpc.aio.ServerInterceptor)
 
 
 @pytest.mark.unit
 class TestAuthInterceptorGrpcReject:
     """The gRPC interceptor rejects unauthenticated requests."""
 
-    def test_no_creds_rejected_grpc(self):
+    @pytest.mark.asyncio
+    async def test_no_creds_rejected_grpc(self):
         interceptor = AuthInterceptor()
-        continuation = MagicMock()
+        continuation = AsyncMock()
         details = MagicMock()
         details.method = "/entdb.EntDBService/ExecuteAtomic"
         details.invocation_metadata = []
 
-        result = interceptor.intercept_service(continuation, details)
-        continuation.assert_not_called()
+        result = await interceptor.intercept_service(continuation, details)
+        continuation.assert_not_awaited()
         assert result is not None  # abort handler
 
 

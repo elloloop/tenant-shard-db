@@ -47,7 +47,17 @@ const sidebarSections = [
   },
   {
     title: "SDK Reference",
-    items: [{ label: "Python SDK", href: "/tenant-shard-db/docs/sdk/python" }],
+    items: [
+      { label: "Python SDK", href: "/tenant-shard-db/docs/sdk/python" },
+      { label: "Go SDK", href: "/tenant-shard-db/docs/sdk/go" },
+    ],
+  },
+  {
+    title: "Compliance",
+    items: [
+      { label: "Audit & Object Lock", href: "/tenant-shard-db/docs/compliance/audit" },
+      { label: "GDPR", href: "/tenant-shard-db/docs/compliance/gdpr" },
+    ],
   },
   {
     title: "Deployment",

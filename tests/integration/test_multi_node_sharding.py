@@ -19,7 +19,6 @@ from dbaas.entdb_server.apply.applier import (
     TransactionEvent,
 )
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.sharding import ShardingConfig
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
@@ -71,7 +70,6 @@ def _event_bytes(tenant_id: str, idempotency_key: str, node_id: str | None = Non
 def _build_applier(
     wal: InMemoryWalStream,
     store: CanonicalStore,
-    mbox: MailboxStore,
     assigned_tenants: frozenset[str] | None = None,
     topic: str = "test-wal",
     batch_size: int = 1,
@@ -80,7 +78,6 @@ def _build_applier(
     return Applier(
         wal=wal,
         canonical_store=store,
-        mailbox_store=mbox,
         topic=topic,
         group_id=group_id,
         fanout_config=MailboxFanoutConfig(enabled=False),
@@ -103,8 +100,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         event = _make_event("t1", "e1")
         result = await applier.apply_event(event)
@@ -117,8 +113,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         await wal.append("test-wal", "other", _event_bytes("other", "e2"))
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -131,8 +126,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         # Append two events: one skipped, one processed
         await wal.append("test-wal", "other", _event_bytes("other", "skip-1"))
@@ -150,9 +144,8 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
         # None means all accepted
-        applier = _build_applier(wal, store, mbox, assigned_tenants=None)
+        applier = _build_applier(wal, store, assigned_tenants=None)
 
         for tid in ["t1", "t2", "t3"]:
             event = _make_event(tid, f"ev-{tid}")
@@ -164,8 +157,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1", "t2", "t3"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1", "t2", "t3"}))
 
         for tid in ["t1", "t2", "t3"]:
             event = _make_event(tid, f"ev-{tid}")
@@ -178,8 +170,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         await wal.append("test-wal", "t2", _event_bytes("t2", "blocked-1"))
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -191,8 +182,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         for i in range(5):
             await wal.append("test-wal", "other", _event_bytes("other", f"skip-{i}"))
@@ -208,8 +198,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         await wal.append("test-wal", "other", _event_bytes("other", "s1"))
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -224,8 +213,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"mine"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"mine"}))
 
         for i in range(100):
             tid = "mine" if i % 2 == 0 else "other"
@@ -249,10 +237,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(
-            wal, store, mbox, assigned_tenants=frozenset({"mine"}), batch_size=10
-        )
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"mine"}), batch_size=10)
 
         for i in range(10):
             tid = "mine" if i < 5 else "other"
@@ -269,8 +254,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"mine"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"mine"}))
 
         # Interleave mine/other
         await wal.append("test-wal", "mine", _event_bytes("mine", "first", node_id="first"))
@@ -291,8 +275,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"only-one"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"only-one"}))
 
         event = _make_event("only-one", "single-ev")
         r = await applier.apply_event(event)
@@ -304,16 +287,15 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
         # First applier: only t1
-        applier1 = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier1 = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
         e1 = _make_event("t1", "phase-1", node_id="p1")
         r1 = await applier1.apply_event(e1)
         assert r1.success and not r1.skipped
 
         # Second applier: only t2 (simulates reassignment)
-        applier2 = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t2"}))
+        applier2 = _build_applier(wal, store, assigned_tenants=frozenset({"t2"}))
         e2 = _make_event("t2", "phase-2", node_id="p2")
         r2 = await applier2.apply_event(e2)
         assert r2.success and not r2.skipped
@@ -327,8 +309,7 @@ class TestApplierTenantFiltering:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         await wal.append("test-wal", "t1", _event_bytes("t1", "with-pos", node_id="wpos"))
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -351,10 +332,9 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
-        applier_a = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"ta"}))
-        applier_b = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"tb"}))
+        applier_a = _build_applier(wal, store, assigned_tenants=frozenset({"ta"}))
+        applier_b = _build_applier(wal, store, assigned_tenants=frozenset({"tb"}))
 
         # Both process their tenant events
         ra = await applier_a.apply_event(_make_event("ta", "ea", node_id="na"))
@@ -366,10 +346,9 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
-        applier_a = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"ta"}))
-        applier_b = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"tb"}))
+        applier_a = _build_applier(wal, store, assigned_tenants=frozenset({"ta"}))
+        applier_b = _build_applier(wal, store, assigned_tenants=frozenset({"tb"}))
 
         await applier_a.apply_event(_make_event("ta", "ea1", node_id="na1"))
         await applier_a.apply_event(_make_event("ta", "ea2", node_id="na2"))
@@ -385,10 +364,9 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
-        applier_a = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"ta"}))
-        applier_b = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"tb"}))
+        applier_a = _build_applier(wal, store, assigned_tenants=frozenset({"ta"}))
+        applier_b = _build_applier(wal, store, assigned_tenants=frozenset({"tb"}))
 
         await applier_a.apply_event(_make_event("ta", "ea", node_id="shared-id"))
         await applier_b.apply_event(_make_event("tb", "eb", node_id="shared-id"))
@@ -403,14 +381,13 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
         for i in range(10):
             tid = "ta" if i % 2 == 0 else "tb"
             await wal.append("test-wal", tid, _event_bytes(tid, f"ev-{i}", node_id=f"n-{i}"))
 
-        applier_a = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"ta"}))
-        applier_b = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"tb"}))
+        applier_a = _build_applier(wal, store, assigned_tenants=frozenset({"ta"}))
+        applier_b = _build_applier(wal, store, assigned_tenants=frozenset({"tb"}))
 
         records = await wal.poll_batch("test-wal", "test-group", max_records=20)
         for rec in records:
@@ -428,11 +405,9 @@ class TestMultiApplierIsolation:
         store_b = CanonicalStore(data_dir=str(tmp_path / "b"), wal_mode=True)
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
-        mbox_a = MailboxStore(data_dir=str(tmp_path / "mbox_a"), wal_mode=True)
-        mbox_b = MailboxStore(data_dir=str(tmp_path / "mbox_b"), wal_mode=True)
 
-        applier_a = _build_applier(wal, store_a, mbox_a, assigned_tenants=frozenset({"ta"}))
-        applier_b = _build_applier(wal, store_b, mbox_b, assigned_tenants=frozenset({"tb"}))
+        applier_a = _build_applier(wal, store_a, assigned_tenants=frozenset({"ta"}))
+        applier_b = _build_applier(wal, store_b, assigned_tenants=frozenset({"tb"}))
 
         await applier_a.apply_event(_make_event("ta", "ea", node_id="only-a"))
         await applier_b.apply_event(_make_event("tb", "eb", node_id="only-b"))
@@ -450,10 +425,9 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
-        applier_a = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"ta"}))
-        applier_b = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"tb"}))
+        applier_a = _build_applier(wal, store, assigned_tenants=frozenset({"ta"}))
+        applier_b = _build_applier(wal, store, assigned_tenants=frozenset({"tb"}))
 
         # Concurrently apply events
         results = await asyncio.gather(
@@ -469,13 +443,12 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
-        applier1 = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier1 = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
         await applier1.apply_event(_make_event("t1", "before", node_id="before"))
 
         # "Restart" with a new applier using same store
-        applier2 = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier2 = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
         await applier2.apply_event(_make_event("t1", "after", node_id="after"))
 
         assert await store.get_node("t1", "before") is not None
@@ -486,10 +459,9 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
 
-        applier_a = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"shared", "ta"}))
-        applier_b = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"shared", "tb"}))
+        applier_a = _build_applier(wal, store, assigned_tenants=frozenset({"shared", "ta"}))
+        applier_b = _build_applier(wal, store, assigned_tenants=frozenset({"shared", "tb"}))
 
         # Both process "shared" tenant
         ra = await applier_a.apply_event(_make_event("shared", "s1", node_id="s1"))
@@ -504,8 +476,7 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         records = await wal.poll_batch("test-wal", "test-group", max_records=10, timeout_ms=50)
         assert records == []
@@ -516,8 +487,7 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"mine"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"mine"}))
 
         tenants = ["mine", "other1", "other2", "other3"]
         for i in range(40):
@@ -537,8 +507,7 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         await wal.append("test-wal", "t1", b"not-json")
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -550,8 +519,7 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"t1"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"t1"}))
 
         await wal.append("test-wal", "t1", json.dumps({"tenant_id": "t1"}).encode())
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -563,9 +531,8 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
         big_set = frozenset(f"tenant-{i}" for i in range(50))
-        applier = _build_applier(wal, store, mbox, assigned_tenants=big_set)
+        applier = _build_applier(wal, store, assigned_tenants=big_set)
 
         r = await applier.apply_event(_make_event("tenant-0", "big-ev", node_id="big-n"))
         assert r.success and not r.skipped
@@ -575,8 +542,7 @@ class TestMultiApplierIsolation:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, assigned_tenants=frozenset({"mine"}))
+        applier = _build_applier(wal, store, assigned_tenants=frozenset({"mine"}))
 
         await wal.append("test-wal", "other", _event_bytes("other", "nope"))
         records = await wal.poll_batch("test-wal", "test-group", max_records=1)
@@ -864,8 +830,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         assert not await store.tenant_exists("new-tenant")
         event = _make_event("new-tenant", "auto-init", node_id="auto-n")
@@ -878,11 +843,9 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             schema_fingerprint="sha256:abc",
             fanout_config=MailboxFanoutConfig(enabled=False),
@@ -904,11 +867,9 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             schema_fingerprint="sha256:expected",
             fanout_config=MailboxFanoutConfig(enabled=False),
@@ -931,8 +892,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         stats_before = applier.stats
         assert stats_before["processed_count"] == 0
@@ -948,8 +908,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         await applier.stop()
         assert not applier._running
@@ -959,8 +918,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = TransactionEvent(
             tenant_id="t1",
@@ -984,8 +942,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         # Create then delete
         create = _make_event("t1", "del-create", node_id="del-target")
@@ -1009,8 +966,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         create = _make_event("t1", "upd-create", node_id="upd-target", payload={"v": 1})
         await applier.apply_event(create)
@@ -1050,8 +1006,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         # Create nodes + edge
         create = TransactionEvent(
@@ -1087,8 +1042,7 @@ class TestApplierWalStreamInteractions:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = TransactionEvent(
             tenant_id="t1",

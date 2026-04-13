@@ -469,12 +469,10 @@ async def test_applier_delete_triggers_shared_cleanup(global_store, store_a):
 
     # Create a minimal Applier with global_store
     mock_wal = AsyncMock()
-    mock_mailbox = AsyncMock()
 
     applier = Applier(
         wal=mock_wal,
         canonical_store=store_a,
-        mailbox_store=mock_mailbox,
         global_store=global_store,
     )
 
@@ -504,12 +502,10 @@ async def test_applier_delete_no_global_store_no_crash(store_a):
 
     node_id = _create_node(store_a)
     mock_wal = AsyncMock()
-    mock_mailbox = AsyncMock()
 
     applier = Applier(
         wal=mock_wal,
         canonical_store=store_a,
-        mailbox_store=mock_mailbox,
         # No global_store
     )
 
@@ -539,7 +535,6 @@ async def test_applier_shared_index_on_share_direct_user(global_store, store_a):
     applier = Applier(
         wal=AsyncMock(),
         canonical_store=store_a,
-        mailbox_store=AsyncMock(),
         global_store=global_store,
     )
 
@@ -564,7 +559,6 @@ async def test_applier_shared_index_on_share_group(global_store, store_a):
     applier = Applier(
         wal=AsyncMock(),
         canonical_store=store_a,
-        mailbox_store=AsyncMock(),
         global_store=global_store,
     )
 
@@ -587,7 +581,6 @@ async def test_applier_shared_index_on_revoke_direct(global_store, store_a):
     applier = Applier(
         wal=AsyncMock(),
         canonical_store=store_a,
-        mailbox_store=AsyncMock(),
         global_store=global_store,
     )
 
@@ -612,7 +605,6 @@ async def test_applier_shared_index_on_revoke_group(global_store, store_a):
     applier = Applier(
         wal=AsyncMock(),
         canonical_store=store_a,
-        mailbox_store=AsyncMock(),
         global_store=global_store,
     )
 
@@ -641,7 +633,6 @@ async def test_applier_group_member_add_cascades(global_store, store_a):
     applier = Applier(
         wal=AsyncMock(),
         canonical_store=store_a,
-        mailbox_store=AsyncMock(),
         global_store=global_store,
     )
 
@@ -668,7 +659,6 @@ async def test_applier_group_member_remove_cascades(global_store, store_a):
     applier = Applier(
         wal=AsyncMock(),
         canonical_store=store_a,
-        mailbox_store=AsyncMock(),
         global_store=global_store,
     )
 

@@ -1,0 +1,62 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="GDPR Operations">
+  <h1>GDPR Operations</h1>
+  <p>
+    EntDB ships with first-class GDPR primitives on the Python SDK. Every
+    operation is routed through the WAL, so each one is captured in the
+    compliance audit trail.
+  </p>
+
+  <h2>user_id vs tenant_principal</h2>
+  <p>
+    GDPR operations are scoped by the <strong>global</strong>
+    <code>user_id</code> (e.g. <code>"alice"</code>), not by the
+    tenant-scoped <code>tenant_principal</code> (e.g.
+    <code>"user:alice"</code>). A single user may exist as a principal
+    across many tenants, and GDPR rights apply across all of them at once.
+  </p>
+
+  <h2>delete_user</h2>
+  <p>
+    Schedules a user for deletion with a configurable grace window. During
+    the grace window the delete is reversible; after the window, all of the
+    user's data across every tenant is hard-deleted.
+  </p>
+  <pre is:raw><code>await db.delete_user("alice", grace_period_days=30, reason="user request")</code></pre>
+
+  <h2>cancel_user_deletion</h2>
+  <p>Cancels a pending deletion during the grace window.</p>
+  <pre is:raw><code>await db.cancel_user_deletion("alice")</code></pre>
+
+  <h2>export_user_data</h2>
+  <p>
+    Returns every node owned by the user, every ACL entry granted to them,
+    and their membership in every tenant. Use this to satisfy the right of
+    access and right of portability.
+  </p>
+  <pre is:raw><code>export = await db.export_user_data("alice")
+# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships</code></pre>
+
+  <h2>freeze_user</h2>
+  <p>
+    Suspends a user without deleting their data. All writes by or to the
+    user are rejected; reads of existing data still work. Useful for legal
+    hold or account suspension.
+  </p>
+  <pre is:raw><code>await db.freeze_user("alice", reason="legal hold")
+await db.unfreeze_user("alice")</code></pre>
+
+  <h2>Audit Trail</h2>
+  <p>
+    Each of these operations appends an event to the WAL with the actor who
+    initiated it, the reason string, and the timestamp. When the WAL is
+    backed by S3 with Object Lock, the record is tamper-evident.
+  </p>
+  <p>
+    See <a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a>
+    for details on Object Lock, crypto-shred, and exporting the audit trail.
+  </p>
+</DocsLayout>

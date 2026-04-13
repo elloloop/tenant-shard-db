@@ -6,16 +6,27 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
   <h1>Core Concepts</h1>
 
   <h2>Nodes</h2>
-  <p>Nodes are the primary entities. Each node has a type (defined by <code>NodeTypeDef</code>), a payload (typed fields), an owner, and ACL configuration.</p>
-  <pre is:raw><code># Types are defined once in schema.py with stable numeric IDs
-Task = NodeTypeDef(type_id=1, name="Task", fields=(
-    field(1, "title", "str", required=True),
-    field(2, "status", "enum", enum_values=("todo", "done")),
-))</code></pre>
-  <p>The <code>type_id</code> and <code>field_id</code> numbers are immutable. Names can change, IDs cannot.</p>
+  <p>
+    Nodes are the primary entities. Node types are defined in a
+    <code>.proto</code> file with a stable numeric <code>type_id</code>, and
+    the SDK stores payloads keyed by protobuf <code>field_id</code> &mdash;
+    never by name. This makes field renames a no-op.
+  </p>
+  <pre is:raw><code>// schema.proto
+message Task {
+  option (entdb.type_id) = 1;
+  string title = 1;
+  string status = 2;   // field_id is the wire key
+}</code></pre>
+  <p>
+    Compile with <code>protoc --python_out</code> and register the generated
+    module with <code>register_proto_schema(schema_pb2)</code>. The
+    <code>type_id</code> and <code>field_id</code> numbers are immutable; the
+    names are not.
+  </p>
 
   <h2>Edges</h2>
-  <p>Edges are unidirectional relationships between nodes. Edge types define which node types can be connected:</p>
+  <p>Edges are unidirectional relationships between nodes. Edge types define which node types can be connected and whether ACLs propagate:</p>
   <pre is:raw><code>AssignedTo = EdgeTypeDef(edge_id=1, name="AssignedTo",
     from_type=Task, to_type=User,
     propagate_share=False)  # assigning doesn't share ACL
@@ -26,49 +37,80 @@ HasComment = EdgeTypeDef(edge_id=2, name="HasComment",
   <p><code>propagate_share=True</code> makes the edge "structural" &mdash; child nodes inherit access from the parent.</p>
 
   <h2>Tenants</h2>
-  <p>Every operation requires a <code>tenant_id</code>. Each tenant gets its own SQLite database file. Tenants are fully isolated &mdash; no cross-tenant queries.</p>
+  <p>
+    Every operation requires a <code>tenant_id</code>. Each tenant gets its
+    own SQLite database file (optionally encrypted with SQLCipher). Tenants
+    are fully isolated &mdash; no cross-tenant queries, no shared tables.
+    Crypto-shred a tenant by destroying its data encryption key and the
+    on-disk file becomes unreadable.
+  </p>
   <pre is:raw><code># Different tenants, completely separate data
-plan_acme = db.atomic("acme", "user:alice")
-plan_globex = db.atomic("globex", "user:bob")</code></pre>
+acme = db.tenant("acme").actor(Actor.user("alice"))
+globex = db.tenant("globex").actor(Actor.user("bob"))</code></pre>
 
   <h2>Actors</h2>
-  <p>Every operation requires an <code>actor</code> &mdash; the identity performing the action. Format: <code>type:id</code>.</p>
+  <p>
+    Every operation requires an <code>Actor</code> &mdash; the typed identity
+    performing the action. Use the constructors instead of raw strings.
+  </p>
+  <pre is:raw><code>from entdb_sdk import Actor
+
+Actor.user("alice")        # user:alice
+Actor.group("eng")         # group:eng
+Actor.service("ingest-api") # service:ingest-api</code></pre>
   <table>
-    <tr><th>Actor</th><th>Description</th></tr>
-    <tr><td><code>user:alice</code></td><td>Specific user</td></tr>
-    <tr><td><code>group:eng</code></td><td>Group identity</td></tr>
-    <tr><td><code>system:applier</code></td><td>System/service account</td></tr>
-    <tr><td><code>tenant:*</code></td><td>Wildcard &mdash; all users in tenant</td></tr>
+    <tr><th>Constructor</th><th>Wire form</th><th>Use for</th></tr>
+    <tr><td><code>Actor.user(id)</code></td><td><code>user:id</code></td><td>Human principals</td></tr>
+    <tr><td><code>Actor.group(id)</code></td><td><code>group:id</code></td><td>Shared team identities</td></tr>
+    <tr><td><code>Actor.service(id)</code></td><td><code>service:id</code></td><td>Backend services / system accounts</td></tr>
   </table>
 
-  <h2>Event Sourcing</h2>
-  <p>Writes are never applied directly to SQLite. They follow this path:</p>
+  <h2>WAL-First Event Sourcing</h2>
+  <p>
+    EntDB is WAL-first: the WAL (Kafka, Kinesis, Pub/Sub, SQS, or S3) is the
+    source of truth. SQLite is a materialized view that can be rebuilt by
+    replaying events. <strong>Every</strong> mutation &mdash; including GDPR
+    deletes, ACL changes, and ownership transfers &mdash; is appended to the
+    WAL.
+  </p>
   <ol>
     <li><code>plan.commit()</code> &rarr; operations serialized as a transaction event</li>
-    <li>Event appended to WAL (Kafka, Kinesis, Pub/Sub, SQS, etc.)</li>
+    <li>Event appended to the WAL backend</li>
     <li>Server returns <code>Receipt</code> with <code>stream_position</code></li>
-    <li>Applier consumes WAL events, applies them to SQLite idempotently</li>
-    <li>Reads come from SQLite (eventually consistent, or use <code>after_offset</code> for immediate consistency)</li>
+    <li>The Applier consumes WAL events and applies them to per-tenant SQLite idempotently</li>
+    <li>Reads come from SQLite &mdash; the SDK auto-tracks offsets so reads after writes are consistent by default</li>
   </ol>
 
   <h2>Atomic Transactions (Plan)</h2>
-  <p>Multiple operations are batched into a single atomic transaction via the <code>Plan</code> builder:</p>
-  <pre is:raw><code>plan = db.atomic("acme", "user:alice")
-plan.create(Task, {"title": "New Task"}, as_="task")
-plan.create(Comment, {"body": "First comment"}, as_="comment")
-plan.edge_create(HasComment, from_="$task.id", to="$comment.id")
+  <p>
+    Multiple operations are batched into a single atomic transaction via the
+    <code>Plan</code> builder. <code>plan.create()</code> accepts proto
+    messages directly.
+  </p>
+  <pre is:raw><code>import schema_pb2
+from entdb_sdk import Actor
+
+scope = db.tenant("acme").actor(Actor.user("alice"))
+plan = scope.plan()
+plan.create(schema_pb2.Task(title="New Task"), as_="task")
+plan.create(schema_pb2.Comment(body="First comment"), as_="comment")
+plan.edge_create("HasComment", from_="$task.id", to="$comment.id")
 result = await plan.commit()
 # All three operations succeed or fail together</code></pre>
   <p>The <code>as_</code> parameter creates an alias for referencing the created node in subsequent operations (<code>$task.id</code>).</p>
 
   <h2>Read-after-Write Consistency</h2>
-  <p>By default, reads are eventually consistent (SQLite may lag behind the WAL). For immediate consistency after a write:</p>
+  <p>
+    The SDK automatically tracks the last observed stream offset per tenant
+    (<code>db._last_offsets</code>) and forwards it on subsequent reads, so
+    you get read-after-write by default. For explicit control:
+  </p>
   <pre is:raw><code># Option 1: Wait during commit
 result = await plan.commit(wait_applied=True)
 
-# Option 2: Wait on specific read
-task = await db.get(Task, node_id, "acme", "user:alice",
-                    after_offset=result.receipt.stream_position)</code></pre>
+# Option 2: Wait on a specific read
+task = await scope.get(Task, node_id,
+                       after_offset=result.receipt.stream_position)</code></pre>
 
   <h2>Schema Registry</h2>
   <p>Type definitions are registered in a <code>SchemaRegistry</code>. The registry generates a fingerprint (SHA-256 hash) used for:</p>

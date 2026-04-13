@@ -28,9 +28,8 @@ How to change safely:
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -65,8 +64,11 @@ class AuthContext:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-class AuthInterceptor(grpc.ServerInterceptor):
-    """gRPC interceptor that validates auth on every request.
+class AuthInterceptor(grpc.aio.ServerInterceptor):
+    """Async gRPC interceptor that validates auth on every request.
+
+    Inherits from :class:`grpc.aio.ServerInterceptor` so it can run natively
+    on the async gRPC server without bridging sync/async per request.
 
     Supports three auth methods (checked in order):
         1. Bearer token (OAuth/OIDC JWT) -- ``Authorization: Bearer <jwt>``
@@ -96,21 +98,25 @@ class AuthInterceptor(grpc.ServerInterceptor):
         self._api_keys = api_keys
         self._sessions = sessions
 
-    def intercept_service(
+    async def intercept_service(
         self,
-        continuation: Callable,
+        continuation: Callable[[grpc.HandlerCallDetails], Awaitable[grpc.RpcMethodHandler | None]],
         handler_call_details: grpc.HandlerCallDetails,
     ) -> grpc.RpcMethodHandler | None:
-        """Intercept incoming gRPC calls and validate authentication."""
+        """Intercept incoming gRPC calls and validate authentication.
+
+        This is a native async interceptor: no thread pool, no nested event
+        loop. The request is authenticated via a direct ``await`` on
+        :meth:`authenticate`.
+        """
         method = handler_call_details.method
         if method in self.UNAUTHENTICATED_METHODS:
-            return continuation(handler_call_details)
+            return await continuation(handler_call_details)
 
         metadata = dict(handler_call_details.invocation_metadata or [])
 
-        # Run async authenticate in a sync context
         try:
-            auth_ctx = self._run_authenticate(metadata)
+            auth_ctx = await self.authenticate(metadata)
         except (AuthenticationError, ApiKeyError, SessionError) as exc:
             logger.warning("Auth failed for %s: %s", method, exc)
             return _create_abort_handler(
@@ -129,22 +135,7 @@ class AuthInterceptor(grpc.ServerInterceptor):
             auth_ctx.method,
             auth_ctx.identity,
         )
-        return continuation(handler_call_details)
-
-    def _run_authenticate(self, metadata: dict) -> AuthContext | None:
-        """Run the async authenticate method, handling the event loop."""
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                return pool.submit(asyncio.run, self.authenticate(metadata)).result()
-        else:
-            return asyncio.run(self.authenticate(metadata))
+        return await continuation(handler_call_details)
 
     async def authenticate(self, metadata: dict) -> AuthContext | None:
         """Authenticate a request from its gRPC metadata.
@@ -209,9 +200,13 @@ class AuthInterceptor(grpc.ServerInterceptor):
 
 
 def _create_abort_handler(code: grpc.StatusCode, message: str) -> grpc.RpcMethodHandler:
-    """Create a handler that immediately aborts with the given status."""
+    """Create a handler that immediately aborts with the given status.
 
-    def _abort_unary_unary(request, context):
-        context.abort(code, message)
+    The abort callable is ``async`` because this interceptor runs inside an
+    async gRPC server (``grpc.aio``).
+    """
+
+    async def _abort_unary_unary(request, context):
+        await context.abort(code, message)
 
     return grpc.unary_unary_rpc_method_handler(_abort_unary_unary)

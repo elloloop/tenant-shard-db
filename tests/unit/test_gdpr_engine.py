@@ -612,7 +612,6 @@ def _make_servicer(canonical_store, global_store, registry):
     servicer = EntDBServicer(
         wal=wal,
         canonical_store=canonical_store,
-        mailbox_store=MagicMock(),
         schema_registry=registry,
         global_store=global_store,
     )

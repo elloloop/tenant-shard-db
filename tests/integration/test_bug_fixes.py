@@ -28,7 +28,6 @@ from dbaas.entdb_server.apply.canonical_store import (
     CanonicalStore,
     TenantNotFoundError,
 )
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 # ---------------------------------------------------------------------------
@@ -67,21 +66,19 @@ async def _make_applier(
     *,
     batch_size: int = 1,
     fanout: bool = False,
-) -> tuple[Applier, CanonicalStore, MailboxStore, InMemoryWalStream]:
+) -> tuple[Applier, CanonicalStore, InMemoryWalStream]:
     """Build an Applier wired to real SQLite stores."""
     wal = InMemoryWalStream(num_partitions=1)
     await wal.connect()
     store = CanonicalStore(data_dir=str(tmp_path / "canonical"), wal_mode=True)
-    mbox = MailboxStore(data_dir=str(tmp_path / "mailbox"), wal_mode=True)
     applier = Applier(
         wal=wal,
         canonical_store=store,
-        mailbox_store=mbox,
         topic="test-wal",
         batch_size=batch_size,
         fanout_config=MailboxFanoutConfig(enabled=fanout),
     )
-    return applier, store, mbox, wal
+    return applier, store, wal
 
 
 # =========================================================================
@@ -96,7 +93,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_check_and_record_atomic(self, tmp_path):
         """Apply an event, verify recorded. Apply again, verify skipped."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="atomic-1",
@@ -116,7 +113,7 @@ class TestAtomicIdempotency:
     async def test_concurrent_same_event_only_one_applies(self, tmp_path):
         """Two concurrent tasks applying the same event: only one
         should create the node."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="dup-race",
@@ -150,7 +147,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_survives_crash_simulation(self, tmp_path):
         """If ops fail mid-way the idempotency key must NOT be recorded."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # First create the node so the second event will hit a duplicate
         await applier.apply_event(
@@ -192,7 +189,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_across_restart(self, tmp_path):
         """Apply event, recreate applier, replay same event -- skip."""
-        applier1, store, mbox, wal = await _make_applier(tmp_path)
+        applier1, store, wal = await _make_applier(tmp_path)
         event = _make_event(
             idempotency_key="restart-key",
             ops=[
@@ -207,7 +204,6 @@ class TestAtomicIdempotency:
         applier2 = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             fanout_config=MailboxFanoutConfig(enabled=False),
         )
@@ -218,7 +214,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_different_tenants_independent(self, tmp_path):
         """Same idempotency key in different tenants must both apply."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         key = "shared-key"
         ev_a = _make_event(
@@ -248,7 +244,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_key_stored_with_stream_pos(self, tmp_path):
         """After apply, verify stream_pos is stored in applied_events."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="pos-key",
@@ -269,7 +265,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_1000_events_no_duplicates(self, tmp_path):
         """Apply 1000 events, replay all, verify zero new applications."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         events = []
         for i in range(1000):
@@ -303,7 +299,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_with_batch_mode(self, tmp_path):
         """With batch_size > 1, idempotency works per-event."""
-        applier, store, _, _ = await _make_applier(tmp_path, batch_size=10)
+        applier, store, _ = await _make_applier(tmp_path, batch_size=10)
 
         # Pre-apply one event
         pre_event = _make_event(
@@ -340,7 +336,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_partial_batch_idempotency(self, tmp_path):
         """First 5 events new, last 5 already applied. Only 5 new."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Pre-apply last 5
         for i in range(5, 10):
@@ -381,7 +377,7 @@ class TestAtomicIdempotency:
     @pytest.mark.asyncio
     async def test_idempotency_key_empty_string(self, tmp_path):
         """Empty idempotency key should still work."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="",
@@ -414,7 +410,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_all_events_applied(self, tmp_path):
         """Send 50 events via applier, verify all 50 nodes created."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         for i in range(50):
             ev = _make_event(
@@ -437,7 +433,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_preserves_ordering(self, tmp_path):
         """Events with sequential data retain correct values."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         for i in range(20):
             ev = _make_event(
@@ -461,7 +457,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_multi_tenant(self, tmp_path):
         """Events for 3 tenants, verify correct tenant isolation."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         tenants = ["iso-a", "iso-b", "iso-c"]
         for t in tenants:
@@ -493,7 +489,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_mixed_operations(self, tmp_path):
         """Batch with create, update, delete, create_edge."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Create two nodes
         ev1 = _make_event(
@@ -578,12 +574,12 @@ class TestBatchApplierIntegrity:
         ]
 
         # Single mode
-        applier_s, store_s, _, _ = await _make_applier(tmp_path / "single", batch_size=1)
+        applier_s, store_s, _ = await _make_applier(tmp_path / "single", batch_size=1)
         for ev in events:
             await applier_s.apply_event(ev)
 
         # Batch mode
-        applier_b, store_b, _, _ = await _make_applier(tmp_path / "batch", batch_size=50)
+        applier_b, store_b, _ = await _make_applier(tmp_path / "batch", batch_size=50)
         for ev in events:
             await applier_b.apply_event(ev)
 
@@ -602,7 +598,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_with_aliases(self, tmp_path):
         """Events using 'as' aliases within same event resolve correctly."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="alias-ev",
@@ -636,7 +632,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_empty_events_no_crash(self, tmp_path):
         """Event with empty ops list does not crash."""
-        applier, _, _, _ = await _make_applier(tmp_path)
+        applier, _, _ = await _make_applier(tmp_path)
 
         event = _make_event(idempotency_key="empty-ops", ops=[])
         result = await applier.apply_event(event)
@@ -645,7 +641,7 @@ class TestBatchApplierIntegrity:
     @pytest.mark.asyncio
     async def test_batch_single_event_batch(self, tmp_path):
         """Batch size larger than available events still works."""
-        applier, store, _, _ = await _make_applier(tmp_path, batch_size=100)
+        applier, store, _ = await _make_applier(tmp_path, batch_size=100)
 
         for i in range(3):
             ev = _make_event(
@@ -698,7 +694,7 @@ class TestBatchApplierIntegrity:
         ]
 
         # Single mode
-        applier_s, _, _, _ = await _make_applier(tmp_path / "perf_single", batch_size=1)
+        applier_s, _, _ = await _make_applier(tmp_path / "perf_single", batch_size=1)
         t0 = time.monotonic()
         for ev in events_s:
             await applier_s.apply_event(ev)
@@ -706,7 +702,7 @@ class TestBatchApplierIntegrity:
 
         # Batch mode -- apply_event is always single-event, so we use
         # batch_transaction on the store directly to simulate batching.
-        _, store_b, _, _ = await _make_applier(tmp_path / "perf_batch", batch_size=50)
+        _, store_b, _ = await _make_applier(tmp_path / "perf_batch", batch_size=50)
         await store_b.initialize_tenant("t1")
         t0 = time.monotonic()
         batch_sz = 50
@@ -856,7 +852,7 @@ class TestPartialEventProtection:
     async def test_failed_op_doesnt_record_idempotency(self, tmp_path):
         """Event with valid create + invalid create (dup ID).
         Idempotency must NOT be recorded."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Setup: create a node
         setup = _make_event(
@@ -894,7 +890,7 @@ class TestPartialEventProtection:
     @pytest.mark.asyncio
     async def test_retry_after_partial_failure(self, tmp_path):
         """Event fails mid-way, retry after fixing -- all ops apply."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Create a conflicting node
         await applier.apply_event(
@@ -941,7 +937,7 @@ class TestPartialEventProtection:
     async def test_multi_op_all_or_nothing(self, tmp_path):
         """Event with 5 creates: if any fails, none should be in DB.
         Tests atomicity of the apply_event path."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Pre-create node that will cause duplicate on 5th op
         await applier.apply_event(
@@ -975,7 +971,7 @@ class TestPartialEventProtection:
     async def test_edge_creation_after_node_in_same_event(self, tmp_path):
         """Create node + create edge referencing it in same event.
         Must work atomically."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Pre-create target node for edge
         await applier.apply_event(
@@ -1021,7 +1017,7 @@ class TestPartialEventProtection:
     @pytest.mark.asyncio
     async def test_delete_then_create_same_id_in_batch(self, tmp_path):
         """Delete node then create with same ID in separate events."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Create original
         await applier.apply_event(

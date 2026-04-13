@@ -12,7 +12,6 @@ import tempfile
 
 from dbaas.entdb_server.apply.applier import Applier, TransactionEvent
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.schema.registry import SchemaRegistry
 from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
@@ -75,12 +74,10 @@ async def main():
         await wal.connect()
 
         canonical_store = CanonicalStore(data_dir, wal_mode=False)
-        mailbox_store = MailboxStore(data_dir)
 
         applier = Applier(
             wal=wal,
             canonical_store=canonical_store,
-            mailbox_store=mailbox_store,
             topic="entdb-wal",
             group_id="demo-applier",
         )
