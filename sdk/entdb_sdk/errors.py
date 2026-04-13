@@ -225,3 +225,47 @@ class TransactionError(EntDbError):
             details={"idempotency_key": idempotency_key},
         )
         self.idempotency_key = idempotency_key
+
+
+class RateLimitError(EntDbError):
+    """Request was rejected because a rate limit or quota was exceeded.
+
+    The server returns this with gRPC ``RESOURCE_EXHAUSTED`` status and
+    a ``retry-after`` trailing metadata field (seconds). The SDK parses
+    both and surfaces a typed error so applications can back off
+    cleanly.
+
+    This error type is shared across all three rate-limit layers:
+
+    - **Per-tenant monthly quota** — ``retry_after_ms`` is the number
+      of milliseconds until the next calendar-month period starts.
+    - **Per-tenant burst (token bucket)** — ``retry_after_ms`` is the
+      time until the bucket refills enough for one more request.
+    - **Per-user abuse protection** — ``retry_after_ms`` is the time
+      until the per-user bucket has capacity.
+
+    Applications typically catch this, log, back off for
+    ``retry_after_ms``, and retry. The ``DbClient`` can be configured
+    with ``auto_retry_on_throttle=True`` to do this transparently.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        retry_after_ms: int | None = None,
+        limit: int | None = None,
+        used: int | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            code="RATE_LIMITED",
+            details={
+                "retry_after_ms": retry_after_ms,
+                "limit": limit,
+                "used": used,
+            },
+        )
+        self.retry_after_ms = retry_after_ms
+        self.limit = limit
+        self.used = used
