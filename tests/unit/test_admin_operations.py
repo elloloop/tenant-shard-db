@@ -560,7 +560,7 @@ class TestDelegateAccessHandler:
             global_store,
             members={"admin": "owner"},
         )
-        nid = _create_node(store, owner=ALICE)
+        _create_node(store, owner=ALICE)
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
         await servicer.DelegateAccess(
@@ -573,12 +573,16 @@ class TestDelegateAccessHandler:
             ),
             ctx,
         )
-        with store._get_connection(TENANT) as conn:
-            row = conn.execute(
-                "SELECT permission FROM node_access WHERE node_id = ? AND actor_id = ?",
-                (nid, BOB),
-            ).fetchone()
-        assert row["permission"] == "read"
+        # The handler appends an admin_delegate_access WAL event with
+        # ``permission`` defaulted to ``"read"``. The Applier (not the
+        # handler) is responsible for materializing the grant into
+        # SQLite, so we verify the WAL event content rather than the
+        # canonical store row — the wal in this test is a mock.
+        servicer.wal.append.assert_awaited()
+        call_args = servicer.wal.append.call_args
+        payload = json.loads(call_args.kwargs["value"].decode())
+        assert payload["ops"][0]["op"] == "admin_delegate_access"
+        assert payload["ops"][0]["permission"] == "read"
 
 
 # ════════════════════════════════════════════════════════════════════

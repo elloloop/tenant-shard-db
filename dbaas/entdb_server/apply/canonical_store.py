@@ -534,40 +534,44 @@ class CanonicalStore:
         # Ensure directory exists
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Reuse cached connection
         cache_key = str(db_path)
-        if cache_key not in self._connections:
-            # Open with encryption if configured
-            if self.encryption_config.enabled:
-                tenant_key = derive_tenant_key(self.encryption_config.master_key, tenant_id)
-                conn = open_encrypted_connection(
-                    str(db_path),
-                    tenant_key,
-                    timeout=self.busy_timeout_ms / 1000.0,
-                )
-            else:
-                conn = sqlite3.connect(
-                    str(db_path),
-                    timeout=self.busy_timeout_ms / 1000.0,
-                    isolation_level=None,  # Autocommit by default, explicit transactions
-                    check_same_thread=False,
-                )
-            conn.row_factory = sqlite3.Row
 
-            # Configure connection — only once per cached connection
-            conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
-            conn.execute(f"PRAGMA cache_size = {self.cache_size_pages}")
-            if self.wal_mode:
-                conn.execute("PRAGMA journal_mode = WAL")
-            conn.execute("PRAGMA synchronous = NORMAL")
-            conn.execute("PRAGMA foreign_keys = ON")
-
-            self._connections[cache_key] = conn
-
-        # Acquire per-tenant lock to serialise same-tenant operations
+        # Acquire per-tenant lock BEFORE the cache check so that the
+        # "look up or open" critical section is atomic.  Without this,
+        # two threads racing on the same uncached tenant could each open
+        # a fresh sqlite3 connection and one would be silently
+        # overwritten in ``self._connections`` — leaking the orphan FD.
         lock = self._get_tenant_lock(tenant_id)
         lock.acquire()
         try:
+            if cache_key not in self._connections:
+                # Open with encryption if configured
+                if self.encryption_config.enabled:
+                    tenant_key = derive_tenant_key(self.encryption_config.master_key, tenant_id)
+                    conn = open_encrypted_connection(
+                        str(db_path),
+                        tenant_key,
+                        timeout=self.busy_timeout_ms / 1000.0,
+                    )
+                else:
+                    conn = sqlite3.connect(
+                        str(db_path),
+                        timeout=self.busy_timeout_ms / 1000.0,
+                        isolation_level=None,  # Autocommit by default, explicit transactions
+                        check_same_thread=False,
+                    )
+                conn.row_factory = sqlite3.Row
+
+                # Configure connection — only once per cached connection
+                conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
+                conn.execute(f"PRAGMA cache_size = {self.cache_size_pages}")
+                if self.wal_mode:
+                    conn.execute("PRAGMA journal_mode = WAL")
+                conn.execute("PRAGMA synchronous = NORMAL")
+                conn.execute("PRAGMA foreign_keys = ON")
+
+                self._connections[cache_key] = conn
+
             yield self._connections[cache_key]
         finally:
             lock.release()
