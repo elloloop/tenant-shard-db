@@ -187,6 +187,131 @@ result, err := plan.Commit(ctx)</code></pre>
 nodes, err := client.Query(ctx, "acme", "user:alice", 1, map[string]any{"status": "todo"})
 plan := client.NewPlan("acme", "user:alice")</code></pre>
 
+  <h2>Storage Modes</h2>
+  <p>
+    Every node has an immutable <code>StorageMode</code> chosen at creation
+    time. The mode determines which physical SQLite file the node lives in.
+    Storage mode is <strong>immutable</strong> &mdash; a node cannot be moved
+    between files after creation.
+  </p>
+  <table>
+    <tr><th>Mode</th><th>Location</th><th>Use case</th></tr>
+    <tr><td><code>StorageModeTenant</code> (default)</td><td><code>tenant.db</code></td><td>Shared, ACL-controlled team data</td></tr>
+    <tr><td><code>StorageModeUserMailbox</code></td><td><code>&#123;tenant&#125;/user_&#123;user_id&#125;.db</code></td><td>Inherently private per-user data (notifications, drafts)</td></tr>
+    <tr><td><code>StorageModePublic</code></td><td><code>public.db</code></td><td>Cross-tenant shared content (templates, reference data)</td></tr>
+  </table>
+  <pre is:raw><code>plan := alice.Plan()
+
+// Default — goes to tenant.db
+plan.Create(101, map[string]any{"title": "Team task"})
+
+// Per-user mailbox — never shared, lives in user_bob.db
+plan.CreateInMailbox(102, "bob", map[string]any{
+    "subject": "Personal reminder",
+})
+
+// Public — readable across tenants (requires PLATFORM_ADMIN)
+plan.CreateInPublic(201, map[string]any{
+    "name": "Weekly Retrospective Template",
+})
+
+_, err := plan.Commit(ctx)</code></pre>
+  <p>
+    <strong>Edge invariant:</strong> edges may only point from more-private to
+    equal-or-less-private storage. Allowed: <code>mailbox &rarr; tenant</code>,
+    <code>tenant &rarr; public</code>. Forbidden: <code>tenant &rarr; mailbox</code>,
+    <code>public &rarr; tenant</code>. The server rejects forbidden edges at
+    write time.
+  </p>
+
+  <h2>Unique Keys</h2>
+  <p>
+    Declare a node type with one or more <code>keys</code> and the server
+    enforces uniqueness on them. The same field doubles as a fast secondary
+    lookup index. The client computes the unique value; the server enforces it.
+  </p>
+  <pre is:raw><code>// schema.proto
+message User {
+  option (entdb.node) = {
+    type_id: 101
+    keys: [
+      { name: "email", required: true }
+      { name: "external_id", required: false }
+    ]
+  };
+  string email = 1;
+  string name = 2;
+  string external_id = 3;
+}</code></pre>
+  <pre is:raw><code>plan := alice.Plan()
+plan.CreateWithKeys(101,
+    map[string]any{
+        "email":       "alice@example.com",
+        "name":        "Alice",
+        "external_id": "ext-42",
+    },
+    map[string]string{
+        "email":       "alice@example.com",
+        "external_id": "ext-42",
+    },
+)
+
+result, err := plan.Commit(ctx)
+if err != nil {
+    var dup *entdb.UniqueConstraintError
+    if errors.As(err, &dup) {
+        log.Printf("user already exists: %s = %q",
+            dup.KeyName, dup.KeyValue)
+    }
+}</code></pre>
+  <p>Look up by key &mdash; no <code>node_id</code> required:</p>
+  <pre is:raw><code>node, err := alice.GetByKey(ctx, 101, "email", "alice@example.com")
+if node == nil {
+    log.Println("not found")
+} else {
+    log.Printf("found user node %s", node.NodeID)
+}</code></pre>
+  <p>
+    <code>GetByKey</code> runs the same ACL check as <code>Get</code> &mdash;
+    actors without read permission see <code>PERMISSION_DENIED</code>, not
+    <code>NOT_FOUND</code>.
+  </p>
+  <p>
+    <strong>Two-phase enforcement.</strong> Pre-validate at the gRPC ingress
+    catches 99% of duplicates without a WAL round-trip. Authoritative validate
+    inside the Applier's transaction handles the race window. Both fire
+    <code>ALREADY_EXISTS</code> on the wire, which the SDK converts to
+    <code>*UniqueConstraintError</code>.
+  </p>
+
+  <h2>Quotas and Rate Limits</h2>
+  <p>
+    Three layers &mdash; each fires <code>RESOURCE_EXHAUSTED</code> with a
+    <code>Retry-After</code> trailer. The SDK surfaces all three as
+    <code>*RateLimitError</code>.
+  </p>
+  <table>
+    <tr><th>Layer</th><th>What</th><th>When</th></tr>
+    <tr><td>Monthly write quota</td><td>Billing enforcement, durable counters</td><td>Plan-tier overuse</td></tr>
+    <tr><td>Per-tenant token bucket</td><td>Noisy-neighbor / QoS protection</td><td>One tenant hogging the box</td></tr>
+    <tr><td>Per-user token bucket</td><td>Credential abuse protection</td><td>Compromised key, runaway script</td></tr>
+  </table>
+  <pre is:raw><code>result, err := plan.Commit(ctx)
+if err != nil {
+    var rl *entdb.RateLimitError
+    if errors.As(err, &rl) {
+        log.Printf("rate limited: retry after %d ms", rl.RetryAfterMs)
+        time.Sleep(time.Duration(rl.RetryAfterMs) * time.Millisecond)
+    }
+}</code></pre>
+  <p>Fetch current quota state for a dashboard:</p>
+  <pre is:raw><code>quota, err := client.GetTenantQuota(ctx, "acme")
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("used %d/%d writes this period (resets at %d)",
+    quota.WritesUsed, quota.MaxWritesPerMonth, quota.PeriodEndMs)</code></pre>
+
   <h2>Error Handling</h2>
   <p>
     The SDK returns typed errors that embed <code>EntDBError</code>. Use
@@ -199,6 +324,8 @@ _, err := client.Get(ctx, "acme", "user:alice", 1, "missing")
 var notFound *entdb.NotFoundError
 var denied *entdb.AccessDeniedError
 var connErr *entdb.ConnectionError
+var dupErr *entdb.UniqueConstraintError
+var rlErr *entdb.RateLimitError
 
 switch {
 case errors.As(err, &notFound):
@@ -208,6 +335,11 @@ case errors.As(err, &denied):
         denied.Actor, denied.RequiredPermission, denied.ResourceID)
 case errors.As(err, &connErr):
     log.Printf("cannot reach %s: %s", connErr.Address, connErr.Message)
+case errors.As(err, &dupErr):
+    log.Printf("duplicate %s=%q on type %d",
+        dupErr.KeyName, dupErr.KeyValue, dupErr.TypeID)
+case errors.As(err, &rlErr):
+    log.Printf("rate limited, retry after %d ms", rlErr.RetryAfterMs)
 }</code></pre>
 
   <h3>Error Types</h3>
@@ -219,6 +351,8 @@ case errors.As(err, &connErr):
     <tr><td><code>AccessDeniedError</code></td><td>ACCESS_DENIED</td><td>Actor lacks the required permission</td></tr>
     <tr><td><code>TransactionError</code></td><td>TRANSACTION_ERROR</td><td>Atomic commit failed</td></tr>
     <tr><td><code>SchemaError</code></td><td>SCHEMA_ERROR</td><td>Schema fingerprint mismatch</td></tr>
+    <tr><td><code>UniqueConstraintError</code></td><td>ALREADY_EXISTS</td><td>Declared unique key collision. Carries <code>TenantID</code>, <code>TypeID</code>, <code>KeyName</code>, <code>KeyValue</code>.</td></tr>
+    <tr><td><code>RateLimitError</code></td><td>RESOURCE_EXHAUSTED</td><td>Quota or rate limit exceeded. Carries <code>RetryAfterMs</code>, <code>Limit</code>, <code>Used</code>.</td></tr>
   </table>
 
   <h2>Full Example</h2>
