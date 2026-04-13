@@ -552,9 +552,46 @@ message ListMailboxUsersResponse {
 
 // ACL and filter types
 
+// Universal, built-in capabilities. Mirror of
+// ``entdb.CoreCapability`` in entdb_options.proto — kept here so that
+// server ACL wire messages do not depend on the user options import.
+enum CoreCapability {
+    CORE_CAP_UNSPECIFIED = 0;
+    CORE_CAP_READ = 1;
+    CORE_CAP_COMMENT = 2;
+    CORE_CAP_EDIT = 3;
+    CORE_CAP_DELETE = 4;
+    CORE_CAP_ADMIN = 5;
+}
+
 message AclEntry {
+    // Deprecated name field (kept for wire compatibility during
+    // migration). Format: ``user:<id>`` / ``group:<id>`` /
+    // ``service:<id>`` / ``tenant:<id>``.
     string principal = 1;
-    string permission = 2;
+
+    // Deprecated string permission (``read`` / ``write`` / ``admin``
+    // / ``deny``). New clients should populate ``core_caps`` /
+    // ``ext_cap_ids`` instead.
+    string permission = 2 [deprecated = true];
+
+    // Grantee — equivalent to ``principal`` but using the naming
+    // from the 2026-04-13 ACL decision. If both are set,
+    // ``grantee`` wins.
+    string grantee = 3;
+
+    // The node type whose capability space ``ext_cap_ids`` refers to.
+    // For purely ``core_caps``-only grants this may be 0.
+    int32 type_id = 4;
+
+    // Universal capabilities (``CoreCapability`` values).
+    repeated CoreCapability core_caps = 5;
+
+    // Type-specific extension capability enum values.
+    repeated int32 ext_cap_ids = 6;
+
+    // Optional expiry (unix millis).
+    int64 expires_at = 7;
 }
 
 message FieldFilter {
@@ -605,10 +642,22 @@ message GetConnectedNodesResponse {
 message ShareNodeRequest {
     RequestContext context = 1;
     string node_id = 2;
+    // Grantee principal — ``user:<id>`` / ``group:<id>`` /
+    // ``service:<id>`` / ``tenant:<id>``. The plain ``<id>`` form is
+    // normalised to ``user:<id>`` by the server.
     string actor_id = 3;
-    string permission = 4;
+    // Deprecated string permission. Clients should populate
+    // ``core_caps`` / ``ext_cap_ids`` instead.
+    string permission = 4 [deprecated = true];
     string actor_type = 5;
     int64 expires_at = 6;
+
+    // Typed grant fields (2026-04-13 ACL decision). When set, the
+    // server persists these verbatim. When empty, the server derives
+    // them from ``permission`` for backwards compatibility.
+    int32 type_id = 7;
+    repeated CoreCapability core_caps = 8;
+    repeated int32 ext_cap_ids = 9;
 }
 
 message ShareNodeResponse {

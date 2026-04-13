@@ -30,6 +30,7 @@ async def handle_transfer_user_content(
     from_user: str,
     to_user: str,
     actor: str,
+    topic: str = "entdb-wal",
 ) -> dict[str, Any]:
     """Transfer all content owned by *from_user* to *to_user* in a tenant.
 
@@ -54,13 +55,61 @@ async def handle_transfer_user_content(
             }
         ],
     }
-    await wal.append(key=tenant_id, value=json.dumps(event).encode())
+    await wal.append(topic=topic, key=tenant_id, value=json.dumps(event).encode())
 
     return {
         "tenant_id": tenant_id,
         "from_user": from_user,
         "to_user": to_user,
         "membership_created": gs_result["membership_created"],
+        "wal_event": "appended",
+    }
+
+
+async def handle_delegate_access(
+    global_store: GlobalStore,
+    wal: WalStream,
+    tenant_id: str,
+    from_user: str,
+    to_user: str,
+    permission: str,
+    expires_at: int | None,
+    actor: str,
+    topic: str = "entdb-wal",
+) -> dict[str, Any]:
+    """Grant *to_user* time-bound access to all nodes owned by *from_user*.
+
+    The access grant is appended to the WAL as an ``admin_delegate_access``
+    event and applied by the Applier. This guarantees that the new ACL
+    rows survive a full WAL rebuild — a direct ``canonical_store`` write
+    from the gRPC handler would be silently lost on replay because
+    SQLite is a materialized view, not the source of truth.
+    """
+    import json
+
+    event = {
+        "tenant_id": tenant_id,
+        "actor": actor,
+        "idempotency_key": f"admin-delegate-{uuid.uuid4()}",
+        "ts_ms": int(time.time() * 1000),
+        "ops": [
+            {
+                "op": "admin_delegate_access",
+                "from_user": from_user,
+                "to_user": to_user,
+                "permission": permission,
+                "expires_at": expires_at,
+            }
+        ],
+    }
+    await wal.append(topic=topic, key=tenant_id, value=json.dumps(event).encode())
+
+    return {
+        "tenant_id": tenant_id,
+        "from_user": from_user,
+        "to_user": to_user,
+        "permission": permission,
+        "expires_at": expires_at,
         "wal_event": "appended",
     }
 
@@ -96,6 +145,7 @@ async def handle_revoke_user_access(
     tenant_id: str,
     user_id: str,
     actor: str,
+    topic: str = "entdb-wal",
 ) -> dict[str, Any]:
     """Immediately terminate a user's access to a tenant.
 
@@ -118,7 +168,7 @@ async def handle_revoke_user_access(
             }
         ],
     }
-    await wal.append(key=tenant_id, value=json.dumps(event).encode())
+    await wal.append(topic=topic, key=tenant_id, value=json.dumps(event).encode())
 
     return {
         "tenant_id": tenant_id,

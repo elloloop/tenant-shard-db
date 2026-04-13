@@ -28,6 +28,7 @@ How to change safely:
 
 from __future__ import annotations
 
+import contextvars
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -40,6 +41,77 @@ from .oauth_validator import AuthenticationError, OAuthValidator
 from .session_manager import SessionError, SessionManager
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Trusted identity propagation
+#
+# The interceptor publishes the verified caller identity into a ContextVar so
+# downstream gRPC handlers can perform authorization based on the identity
+# established by AuthInterceptor — *not* on the ``actor`` field of the
+# untrusted client request payload. Reading ``request.actor`` for authz is a
+# privilege escalation: a malicious client can authenticate as themselves and
+# still claim ``actor: "system:admin"`` in the message body.
+#
+# Handlers should call :func:`get_current_identity` (or
+# :func:`get_authoritative_actor`) to obtain the trusted caller id.
+# ---------------------------------------------------------------------------
+
+_current_identity: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "entdb_auth_identity", default=None
+)
+
+
+def get_current_identity() -> str | None:
+    """Return the verified caller identity for the current request, or None.
+
+    Populated by :class:`AuthInterceptor` after a successful
+    ``authenticate()`` call. ``None`` outside of an authenticated request
+    (e.g. unit tests that bypass the interceptor, or servers running with
+    auth disabled).
+    """
+    return _current_identity.get()
+
+
+def set_current_identity(identity: str | None) -> contextvars.Token:
+    """Set the trusted identity for the current context.
+
+    Returns a token suitable for :meth:`contextvars.ContextVar.reset`.
+    Intended for use by the interceptor and by tests that need to simulate
+    an authenticated request.
+    """
+    return _current_identity.set(identity)
+
+
+def reset_current_identity(token: contextvars.Token) -> None:
+    """Reset the trusted identity using a token from :func:`set_current_identity`."""
+    _current_identity.reset(token)
+
+
+def get_authoritative_actor(request_actor: str) -> str:
+    """Return the actor string that should be used for authorization.
+
+    If the interceptor has populated a trusted identity for this request,
+    the trusted value (normalized to a ``user:<id>`` actor string when the
+    raw identity does not already carry an actor prefix) is returned.
+    Otherwise the caller's request payload is used as a fallback for
+    no-auth deployments and for unit tests that bypass the interceptor.
+
+    The trusted identity ALWAYS wins when present, even if ``request_actor``
+    claims a different (or more privileged) actor — this is the fix for
+    the privilege-escalation bug.
+    """
+    trusted = get_current_identity()
+    if trusted is None:
+        return request_actor
+    if (
+        trusted.startswith("user:")
+        or trusted.startswith("system:")
+        or trusted.startswith("admin:")
+        or trusted == "__system__"
+    ):
+        return trusted
+    return f"user:{trusted}"
 
 
 @dataclass
@@ -135,7 +207,16 @@ class AuthInterceptor(grpc.aio.ServerInterceptor):
             auth_ctx.method,
             auth_ctx.identity,
         )
-        return await continuation(handler_call_details)
+
+        # Publish the verified identity into the request-scoped ContextVar
+        # so downstream handlers can authorize on a trusted value rather
+        # than the untrusted ``request.actor`` payload field. The token is
+        # always reset after the handler returns to keep requests isolated.
+        token = _current_identity.set(auth_ctx.identity)
+        try:
+            return await continuation(handler_call_details)
+        finally:
+            _current_identity.reset(token)
 
     async def authenticate(self, metadata: dict) -> AuthContext | None:
         """Authenticate a request from its gRPC metadata.

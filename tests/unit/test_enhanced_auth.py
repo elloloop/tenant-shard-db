@@ -21,7 +21,14 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
 from dbaas.entdb_server.auth.api_key_manager import VALID_SCOPES, ApiKeyError, ApiKeyManager
-from dbaas.entdb_server.auth.auth_interceptor import AuthContext, AuthInterceptor
+from dbaas.entdb_server.auth.auth_interceptor import (
+    AuthContext,
+    AuthInterceptor,
+    get_authoritative_actor,
+    get_current_identity,
+    reset_current_identity,
+    set_current_identity,
+)
 from dbaas.entdb_server.auth.oauth_validator import AuthenticationError, OAuthValidator
 from dbaas.entdb_server.auth.session_manager import SessionError, SessionManager
 
@@ -695,6 +702,226 @@ class TestAuthContextDataclass:
         )
         assert ctx.method == "oauth"
         assert ctx.identity == "user-123"
+
+
+@pytest.mark.unit
+class TestAuthInterceptorIdentityPropagation:
+    """The interceptor publishes the verified identity into a ContextVar.
+
+    These tests cover the privilege-escalation fix: handlers must read
+    the trusted caller identity from the context — not from the
+    untrusted ``request.actor`` payload.
+    """
+
+    @pytest.mark.asyncio
+    async def test_continuation_sees_verified_identity(self):
+        mock_oauth = AsyncMock(spec=OAuthValidator)
+        mock_oauth.validate_token = AsyncMock(
+            return_value={"sub": "alice", "iss": "issuer", "aud": "aud"}
+        )
+        interceptor = AuthInterceptor(oauth=mock_oauth)
+
+        captured: dict[str, str | None] = {}
+
+        async def fake_continuation(_details):
+            captured["identity"] = get_current_identity()
+            return "ok"
+
+        details = MagicMock()
+        details.method = "/entdb.EntDBService/ExecuteAtomic"
+        details.invocation_metadata = [
+            ("authorization", "Bearer header.payload.signature"),
+        ]
+
+        result = await interceptor.intercept_service(fake_continuation, details)
+        assert result == "ok"
+        assert captured["identity"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_identity_reset_after_continuation(self):
+        """The ContextVar is reset to ``None`` after the handler returns."""
+        mock_oauth = AsyncMock(spec=OAuthValidator)
+        mock_oauth.validate_token = AsyncMock(
+            return_value={"sub": "alice", "iss": "issuer", "aud": "aud"}
+        )
+        interceptor = AuthInterceptor(oauth=mock_oauth)
+
+        async def fake_continuation(_details):
+            return "ok"
+
+        details = MagicMock()
+        details.method = "/entdb.EntDBService/ExecuteAtomic"
+        details.invocation_metadata = [
+            ("authorization", "Bearer header.payload.signature"),
+        ]
+
+        # Sanity: context is empty before
+        assert get_current_identity() is None
+        await interceptor.intercept_service(fake_continuation, details)
+        # And empty again after — request isolation
+        assert get_current_identity() is None
+
+    @pytest.mark.asyncio
+    async def test_identity_isolated_between_requests(self):
+        """Two consecutive requests must not see each other's identity."""
+        mock_oauth = AsyncMock(spec=OAuthValidator)
+
+        # First request authenticates as alice, second as bob
+        mock_oauth.validate_token = AsyncMock(
+            side_effect=[
+                {"sub": "alice", "iss": "i", "aud": "a"},
+                {"sub": "bob", "iss": "i", "aud": "a"},
+            ]
+        )
+        interceptor = AuthInterceptor(oauth=mock_oauth)
+
+        observed: list[str | None] = []
+
+        async def fake_continuation(_details):
+            observed.append(get_current_identity())
+            return "ok"
+
+        details = MagicMock()
+        details.method = "/entdb.EntDBService/ExecuteAtomic"
+        details.invocation_metadata = [
+            ("authorization", "Bearer header.payload.signature"),
+        ]
+
+        await interceptor.intercept_service(fake_continuation, details)
+        await interceptor.intercept_service(fake_continuation, details)
+        assert observed == ["alice", "bob"]
+        assert get_current_identity() is None
+
+    def test_get_authoritative_actor_prefers_trusted(self):
+        """Trusted identity always wins over an untrusted request actor."""
+        token = set_current_identity("alice")
+        try:
+            # Even if the client claims system:admin, the trusted "alice"
+            # identity must be returned (normalized to user:alice).
+            assert get_authoritative_actor("system:admin") == "user:alice"
+        finally:
+            reset_current_identity(token)
+        # And after reset, the request value falls back through.
+        assert get_authoritative_actor("system:admin") == "system:admin"
+
+    def test_get_authoritative_actor_preserves_actor_prefix(self):
+        """A trusted identity that already carries an actor prefix is kept as-is."""
+        token = set_current_identity("system:gdpr-worker")
+        try:
+            assert get_authoritative_actor("user:eve") == "system:gdpr-worker"
+        finally:
+            reset_current_identity(token)
+
+    def test_get_authoritative_actor_falls_back_when_unset(self):
+        assert get_current_identity() is None
+        assert get_authoritative_actor("user:bob") == "user:bob"
+
+
+@pytest.mark.unit
+class TestRequireAdminOrOwnerAuthz:
+    """``_require_admin_or_owner`` must trust the ContextVar over ``request.actor``."""
+
+    @pytest.mark.asyncio
+    async def test_trusts_context_identity_not_request_actor(self, tmp_path):
+        """A client claiming ``system:admin`` is downgraded to the trusted user."""
+        import tempfile
+
+        from dbaas.entdb_server.api.grpc_server import EntDBServicer
+        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from dbaas.entdb_server.global_store import GlobalStore
+
+        with tempfile.TemporaryDirectory() as gs_dir:
+            gs = GlobalStore(gs_dir)
+            try:
+                await gs.create_tenant("t1", "T1")
+                # eve is just a member, not admin
+                await gs.add_member("t1", "eve", role="member")
+
+                cs = CanonicalStore(data_dir=tmp_path)
+                with cs._get_connection("t1", create=True) as conn:
+                    cs._create_schema(conn)
+
+                wal = MagicMock()
+                wal.append = AsyncMock()
+                schema_registry = MagicMock()
+                servicer = EntDBServicer(
+                    wal=wal,
+                    canonical_store=cs,
+                    schema_registry=schema_registry,
+                    global_store=gs,
+                )
+
+                class _AbortError(BaseException):
+                    pass
+
+                class _Ctx:
+                    def __init__(self):
+                        self.code = None
+
+                    async def abort(self, code, message):
+                        self.code = code
+                        raise _AbortError(message)
+
+                # Trust eve (a member) — the request payload claims admin.
+                token = set_current_identity("eve")
+                try:
+                    ctx = _Ctx()
+                    raised = False
+                    try:
+                        await servicer._require_admin_or_owner("t1", "system:admin", ctx, "TestOp")
+                    except _AbortError:
+                        raised = True
+                    assert raised, "Expected PERMISSION_DENIED but call succeeded"
+                    assert ctx.code is grpc.StatusCode.PERMISSION_DENIED
+                finally:
+                    reset_current_identity(token)
+            finally:
+                gs.close()
+
+    @pytest.mark.asyncio
+    async def test_trusts_context_identity_for_admin(self, tmp_path):
+        """When the trusted identity is admin, the call passes."""
+        import tempfile
+
+        from dbaas.entdb_server.api.grpc_server import EntDBServicer
+        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from dbaas.entdb_server.global_store import GlobalStore
+
+        with tempfile.TemporaryDirectory() as gs_dir:
+            gs = GlobalStore(gs_dir)
+            try:
+                await gs.create_tenant("t1", "T1")
+                await gs.add_member("t1", "alice", role="admin")
+
+                cs = CanonicalStore(data_dir=tmp_path)
+                with cs._get_connection("t1", create=True) as conn:
+                    cs._create_schema(conn)
+
+                wal = MagicMock()
+                wal.append = AsyncMock()
+                schema_registry = MagicMock()
+                servicer = EntDBServicer(
+                    wal=wal,
+                    canonical_store=cs,
+                    schema_registry=schema_registry,
+                    global_store=gs,
+                )
+
+                class _Ctx:
+                    async def abort(self, code, message):
+                        raise AssertionError(f"unexpected abort: {code} {message}")
+
+                # Trust alice (admin). Request says nothing meaningful.
+                token = set_current_identity("alice")
+                try:
+                    trusted = await servicer._require_admin_or_owner(
+                        "t1", "user:eve", _Ctx(), "TestOp"
+                    )
+                    assert trusted == "user:alice"
+                finally:
+                    reset_current_identity(token)
+            finally:
+                gs.close()
 
 
 @pytest.mark.unit
