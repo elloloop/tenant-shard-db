@@ -18,7 +18,6 @@ from dbaas.entdb_server.apply.applier import (
     TransactionEvent,
 )
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.wal.base import WalConnectionError
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
@@ -79,14 +78,12 @@ def _make_event(
 def _build_applier(
     wal: InMemoryWalStream,
     store: CanonicalStore,
-    mbox: MailboxStore,
     batch_size: int = 1,
     topic: str = "test-wal",
 ) -> Applier:
     return Applier(
         wal=wal,
         canonical_store=store,
-        mailbox_store=mbox,
         topic=topic,
         fanout_config=MailboxFanoutConfig(enabled=False),
         batch_size=batch_size,
@@ -268,8 +265,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, batch_size=1)
+        applier = _build_applier(wal, store, batch_size=1)
 
         for i in range(10):
             event = _make_event("t1", f"b1-{i}", node_id=f"b1-{i}")
@@ -283,8 +279,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, batch_size=10)
+        applier = _build_applier(wal, store, batch_size=10)
 
         for i in range(20):
             event = _make_event("t1", f"b10-{i}", node_id=f"b10-{i}")
@@ -298,8 +293,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox, batch_size=50)
+        applier = _build_applier(wal, store, batch_size=50)
 
         for i in range(50):
             event = _make_event("t1", f"b50-{i}", node_id=f"b50-{i}")
@@ -313,8 +307,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event("t1", "exact", node_id="exact-node", payload={"val": 42})
         r = await applier.apply_event(event)
@@ -329,8 +322,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         # Create nodes with sequential payloads
         for i in range(10):
@@ -348,8 +340,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         # Create two nodes
         create_event = _make_event(
@@ -386,8 +377,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event("t1", "idem-key", node_id="idem-node")
         r1 = await applier.apply_event(event)
@@ -403,8 +393,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         for tid in ["ta", "tb", "tc"]:
             for i in range(3):
@@ -423,13 +412,11 @@ class TestBatchApplierCorrectness:
 
         # Single mode
         store1 = CanonicalStore(data_dir=str(tmp_path / "s1"), wal_mode=True)
-        mbox1 = MailboxStore(data_dir=str(tmp_path / "m1"), wal_mode=True)
-        applier1 = _build_applier(wal, store1, mbox1, batch_size=1)
+        applier1 = _build_applier(wal, store1, batch_size=1)
 
         # Batch mode
         store2 = CanonicalStore(data_dir=str(tmp_path / "s2"), wal_mode=True)
-        mbox2 = MailboxStore(data_dir=str(tmp_path / "m2"), wal_mode=True)
-        applier2 = _build_applier(wal, store2, mbox2, batch_size=10)
+        applier2 = _build_applier(wal, store2, batch_size=10)
 
         for i in range(15):
             event = _make_event("t1", f"cmp-{i}", node_id=f"cmp-{i}", payload={"i": i})
@@ -450,8 +437,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         for i in range(500):
             event = _make_event("t1", f"bulk-{i}", node_id=f"bulk-{i}")
@@ -465,8 +451,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = TransactionEvent(
             tenant_id="t1",
@@ -484,8 +469,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         big_payload = {f"field_{i}": "x" * 500 for i in range(20)}
         event = _make_event("t1", "big", node_id="big-node", payload=big_payload)
@@ -500,8 +484,7 @@ class TestBatchApplierCorrectness:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         create = _make_event("t1", "create-del", node_id="del-me")
         await applier.apply_event(create)
@@ -895,8 +878,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event(
             "t1",
@@ -920,8 +902,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event(
             "t1",
@@ -942,8 +923,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         create = _make_event(
             "t1",
@@ -973,8 +953,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event(
             "t1",
@@ -997,8 +976,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         # Create a small graph
         event = _make_event(
@@ -1023,8 +1001,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         for i in range(10):
             event = _make_event("t1", f"seq-{i}", node_id=f"seq-{i}")
@@ -1039,8 +1016,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event("t1", "empty-key", node_id="ek", payload={"": "value"})
         r = await applier.apply_event(event)
@@ -1053,8 +1029,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event("t1", "null-val", node_id="nv", payload={"a": None, "b": 1})
         r = await applier.apply_event(event)
@@ -1067,8 +1042,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event("t1", "list-val", node_id="lv", payload={"tags": ["a", "b", "c"]})
         r = await applier.apply_event(event)
@@ -1081,8 +1055,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event(
             "t1", "bool-val", node_id="bv", payload={"active": True, "deleted": False}
@@ -1098,8 +1071,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         event = _make_event("t1", "num-val", node_id="numv", payload={"int": 42, "float": 3.14})
         r = await applier.apply_event(event)
@@ -1113,8 +1085,7 @@ class TestApplierEdgeOperations:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mbox"), wal_mode=True)
-        applier = _build_applier(wal, store, mbox)
+        applier = _build_applier(wal, store)
 
         for tid in [1, 2, 3, 4, 5]:
             event = _make_event(

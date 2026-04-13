@@ -4,37 +4,153 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Python SDK">
   <h1>Python SDK Reference</h1>
-  <p>The Python SDK (<code>entdb-sdk</code>) provides a type-safe async client for EntDB.</p>
+  <p>
+    The Python SDK (<code>entdb-sdk</code>) is a type-safe async client for
+    EntDB. It is <strong>proto-first</strong> &mdash; you define your schema in
+    a <code>.proto</code> file, compile it with the standard
+    <code>protoc</code>, and register the generated module with the SDK. No
+    custom codegen.
+  </p>
 
   <h2>Installation</h2>
   <pre is:raw><code>pip install entdb-sdk</code></pre>
 
-  <h2>DbClient</h2>
+  <h2>Proto-First Workflow</h2>
+  <p>
+    Define your types once in a <code>.proto</code> file. Every message you
+    want to store as a node needs a stable <code>type_id</code> option, and
+    every field uses its protobuf field number as the on-disk
+    <code>field_id</code>.
+  </p>
+  <pre is:raw><code>// schema.proto
+syntax = "proto3";
+package myapp;
+
+import "entdb/options.proto";
+
+message Task {
+  option (entdb.type_id) = 1;
+
+  string title = 1;
+  string status = 2;   // "todo" | "in_progress" | "done"
+  int32 priority = 3;
+}
+
+message Comment {
+  option (entdb.type_id) = 3;
+  string body = 1;
+}</code></pre>
+
+  <p>Compile with the standard protoc &mdash; no EntDB-specific codegen.</p>
+  <pre is:raw><code>protoc --python_out=. schema.proto</code></pre>
+
+  <p>Register the generated module with the SDK:</p>
+  <pre is:raw><code>from entdb_sdk import DbClient, register_proto_schema
+import schema_pb2
+
+registry = register_proto_schema(schema_pb2)</code></pre>
+
+  <h2>TypedNode Dataclasses</h2>
+  <p>
+    For ergonomic access to node payloads, wrap proto messages in a
+    <code>TypedNode</code> dataclass. <code>to_payload()</code> and
+    <code>from_payload()</code> handle the conversion to and from the
+    field-id-keyed wire form.
+  </p>
+  <pre is:raw><code>from dataclasses import dataclass
+from entdb_sdk import TypedNode
+import schema_pb2
+
+@dataclass
+class Task(TypedNode[schema_pb2.Task]):
+    proto_cls = schema_pb2.Task
+
+task = Task(title="Ship v2", status="todo")
+payload = task.to_payload()     # {"1": "Ship v2", "2": "todo"}
+restored = Task.from_payload(payload)</code></pre>
+
+  <h2>Connecting</h2>
   <pre is:raw><code>from entdb_sdk import DbClient
 
-async with DbClient("localhost:50051", api_key="your-key") as db:
-    # All operations here</code></pre>
+async with DbClient(
+    "localhost:50051",
+    api_key="your-key",
+    secure=True,
+    registry=registry,
+) as db:
+    ...</code></pre>
 
   <h3>Constructor Options</h3>
   <table>
     <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
     <tr><td><code>address</code></td><td>str</td><td>&mdash;</td><td>Server address (host:port)</td></tr>
     <tr><td><code>secure</code></td><td>bool</td><td>False</td><td>Use TLS</td></tr>
-    <tr><td><code>api_key</code></td><td>str | None</td><td>None</td><td>API key for auth</td></tr>
+    <tr><td><code>api_key</code></td><td>str | None</td><td>None</td><td>Scoped API key for auth</td></tr>
     <tr><td><code>max_retries</code></td><td>int</td><td>3</td><td>Max retries on transient failures</td></tr>
-    <tr><td><code>registry</code></td><td>SchemaRegistry | None</td><td>None</td><td>Schema registry</td></tr>
+    <tr><td><code>registry</code></td><td>SchemaRegistry | None</td><td>None</td><td>Schema registry from <code>register_proto_schema()</code></td></tr>
   </table>
 
-  <h2>Write Operations</h2>
+  <h2>Typed Primitives</h2>
 
-  <h3>atomic() &rarr; Plan</h3>
-  <pre is:raw><code>plan = db.atomic(tenant_id="acme", actor="user:alice")
-plan.create(Task, {"title": "New"}, as_="t")
-plan.update(Task, node_id, {"status": "done"})
-plan.delete(Task, node_id)
-plan.edge_create(HasComment, from_="$t.id", to=comment_id)
-plan.edge_delete(HasComment, from_=task_id, to=comment_id)
+  <h3>Actor</h3>
+  <p>
+    An <code>Actor</code> is a typed principal identifier that replaces raw
+    <code>"user:bob"</code> strings throughout the SDK.
+  </p>
+  <pre is:raw><code>from entdb_sdk import Actor
+
+Actor.user("alice")         # user:alice
+Actor.group("admins")       # group:admins
+Actor.service("ingest-api") # service:ingest-api</code></pre>
+
+  <h3>Permission</h3>
+  <pre is:raw><code>from entdb_sdk import Permission
+
+Permission.READ
+Permission.WRITE
+Permission.ADMIN</code></pre>
+
+  <h3>ACLEntry</h3>
+  <pre is:raw><code>from entdb_sdk import ACLEntry, Actor, Permission
+
+entry = ACLEntry(
+    grantee=Actor.user("bob"),
+    permission=Permission.WRITE,
+)</code></pre>
+
+  <h2>Hierarchical Scope API</h2>
+  <p>
+    Bind tenant and actor once with <code>db.tenant(...).actor(...)</code>
+    instead of passing them on every call.
+  </p>
+  <pre is:raw><code>scope = db.tenant("acme").actor(Actor.user("alice"))
+
+task = await scope.get(Task, node_id)
+tasks = await scope.query(Task, filter={"status": "todo"}, limit=20)
+
+plan = scope.plan()
+plan.create(schema_pb2.Task(title="New", status="todo"))
 result = await plan.commit(wait_applied=True)</code></pre>
+
+  <h2>Plans (Atomic Transactions)</h2>
+  <p>
+    <code>Plan.create()</code> now accepts proto messages directly &mdash; the
+    SDK uses the registered schema to translate field names to field IDs at
+    the boundary.
+  </p>
+  <pre is:raw><code>import schema_pb2
+
+plan = db.tenant("acme").actor(Actor.user("alice")).plan()
+
+task_ref = plan.create(schema_pb2.Task(title="Ship v2", status="todo"), as_="t")
+comment_ref = plan.create(schema_pb2.Comment(body="Let's ship it"), as_="c")
+plan.edge_create(HasComment, from_="$t.id", to="$c.id")
+
+plan.update(Task, node_id, {"status": "done"})
+plan.delete(Task, old_id)
+
+result = await plan.commit(wait_applied=True)
+task_id = result.created_node_ids[0]</code></pre>
 
   <h3>CommitResult</h3>
   <table>
@@ -46,73 +162,82 @@ result = await plan.commit(wait_applied=True)</code></pre>
     <tr><td><code>error</code></td><td>str | None</td><td>Error message on failure</td></tr>
   </table>
 
-  <h2>Read Operations</h2>
-
-  <h3>get()</h3>
-  <pre is:raw><code>task = await db.get(Task, node_id, "acme", "user:alice")
-# Returns Node | None
-# task.payload["title"], task.created_at, task.owner_actor</code></pre>
-
-  <h3>get_many()</h3>
-  <pre is:raw><code>nodes, missing = await db.get_many(Task, [id1, id2, id3], "acme", "user:alice")
-# Returns (list[Node], list[str]) — found nodes + missing IDs</code></pre>
-
-  <h3>query()</h3>
-  <pre is:raw><code>tasks = await db.query(Task, "acme", "user:alice",
-    filter={"status": "todo"},
-    limit=20, offset=0,
-    order_by="created_at", descending=True)
-# Returns list[Node]</code></pre>
-
-  <h3>edges_out() / edges_in()</h3>
-  <pre is:raw><code>edges = await db.edges_out(task_id, "acme", "user:alice", edge_type=HasComment)
-# Returns list[Edge] — edge.to_node_id, edge.props, edge.created_at</code></pre>
-
-  <h3>connected()</h3>
-  <pre is:raw><code>comments = await db.connected(task_id, HasComment, "acme", "user:alice")
-# Returns list[Node] — actual node objects, not just edges
-# ACL is checked via the parent node (task), not per-comment</code></pre>
-
   <h2>ACL Operations</h2>
+  <pre is:raw><code>scope = db.tenant("acme").actor(Actor.user("alice"))
 
-  <h3>share()</h3>
-  <pre is:raw><code>await db.share(node_id, actor_id="user:bob", permission="write",
-               tenant_id="acme", granted_by="user:alice")</code></pre>
+# Share
+await scope.share(node_id, Actor.user("bob"), Permission.WRITE)
 
-  <h3>revoke()</h3>
-  <pre is:raw><code>await db.revoke(node_id, actor_id="user:bob", tenant_id="acme")</code></pre>
+# Revoke
+await scope.revoke(node_id, Actor.user("bob"))
 
-  <h3>shared_with_me()</h3>
-  <pre is:raw><code>nodes = await db.shared_with_me("user:alice", "acme", limit=50)</code></pre>
+# Shared with me
+nodes = await scope.shared_with_me(limit=50)
 
-  <h3>group_add() / group_remove()</h3>
-  <pre is:raw><code>await db.group_add("group:eng", "user:alice", "acme")
-await db.group_remove("group:eng", "user:alice", "acme")</code></pre>
+# Group membership
+await db.tenant("acme").group_add(Actor.group("eng"), Actor.user("alice"))
+await db.tenant("acme").group_remove(Actor.group("eng"), Actor.user("alice"))
 
-  <h3>transfer_ownership()</h3>
-  <pre is:raw><code>await db.transfer_ownership(node_id, "user:bob", "acme")</code></pre>
+# Ownership transfer
+await scope.transfer_ownership(node_id, Actor.user("bob"))</code></pre>
 
-  <h2>Consistency</h2>
+  <h2>Read-after-Write Consistency</h2>
+  <p>
+    The SDK automatically tracks the last observed stream offset per tenant
+    in <code>db._last_offsets</code> and forwards it on subsequent reads. You
+    usually do not need to manage offsets yourself.
+  </p>
+  <pre is:raw><code># Automatic — the SDK remembers the offset from the previous commit
+await plan.commit()
+task = await scope.get(Task, node_id)   # guaranteed to see the write
 
-  <h3>after_offset</h3>
-  <pre is:raw><code># Read with offset guarantee
+# Explicit control is still available
 result = await plan.commit()
-task = await db.get(Task, node_id, "acme", "user:alice",
-                    after_offset=result.receipt.stream_position)</code></pre>
+task = await scope.get(Task, node_id,
+                       after_offset=result.receipt.stream_position)
 
-  <h3>wait_for_offset()</h3>
-  <pre is:raw><code>await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)</code></pre>
+await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)</code></pre>
+
+  <h2>GDPR Operations</h2>
+  <p>
+    These operations are scoped by <code>user_id</code> (the global user
+    identifier, e.g. <code>"alice"</code>), not by
+    <code>tenant_principal</code>.
+  </p>
+  <pre is:raw><code># Soft delete with a grace window — cancellable
+await db.delete_user("alice", grace_period_days=30)
+await db.cancel_user_deletion("alice")
+
+# Export all of a user's data across all tenants (right of access / portability)
+export = await db.export_user_data("alice")
+
+# Freeze (suspend) a user — blocks writes without deleting data
+await db.freeze_user("alice", reason="legal hold")</code></pre>
+
+  <p>
+    Each of these calls appends an event to the WAL, so they show up in the
+    compliance audit trail. See
+    <a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a>
+    for details on Object Lock and crypto-shred.
+  </p>
 
   <h2>Error Handling</h2>
-  <pre is:raw><code>from entdb_sdk import ConnectionError, ValidationError, SchemaError, UnknownFieldError
+  <pre is:raw><code>from entdb_sdk import (
+    ConnectionError,
+    ValidationError,
+    SchemaError,
+    UnknownFieldError,
+    AccessDeniedError,
+    NotFoundError,
+)
 
 try:
-    plan.create(Task, {"unknown_field": "value"})
-except UnknownFieldError as e:
-    print(e)  # "Unknown field 'unknown_field' on Task. Did you mean: title?"
-
-try:
+    plan.create(schema_pb2.Task(title="x"))
     await plan.commit()
+except UnknownFieldError as e:
+    print(e)  # "Unknown field 'foo' on Task. Did you mean: title?"
+except AccessDeniedError as e:
+    print(e.actor, e.required_permission)
 except ConnectionError as e:
-    print(e.address)  # "localhost:50051"</code></pre>
+    print(e.address)</code></pre>
 </DocsLayout>

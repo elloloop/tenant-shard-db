@@ -82,15 +82,12 @@ def _make_servicer(global_store: GlobalStore | None) -> EntDBServicer:
     canonical_store.initialize_tenant = AsyncMock()
     canonical_store.wait_for_offset = AsyncMock(return_value=True)
 
-    mailbox_store = MagicMock()
-
     schema_registry = MagicMock()
     schema_registry.fingerprint = ""  # disable fingerprint check
 
     return EntDBServicer(
         wal=wal,
         canonical_store=canonical_store,
-        mailbox_store=mailbox_store,
         schema_registry=schema_registry,
         global_store=global_store,
     )

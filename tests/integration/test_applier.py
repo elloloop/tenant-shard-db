@@ -15,7 +15,6 @@ import pytest
 
 from dbaas.entdb_server.apply.applier import Applier, MailboxFanoutConfig, TransactionEvent
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.schema.registry import SchemaRegistry
 from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
@@ -87,17 +86,11 @@ class TestApplierIntegration:
         return CanonicalStore(data_dir, wal_mode=False)
 
     @pytest.fixture
-    def mailbox_store(self, data_dir):
-        """Create mailbox store."""
-        return MailboxStore(data_dir)
-
-    @pytest.fixture
-    async def applier(self, wal, canonical_store, mailbox_store, registry):
+    async def applier(self, wal, canonical_store, registry):
         """Create and start applier."""
         applier = Applier(
             wal=wal,
             canonical_store=canonical_store,
-            mailbox_store=mailbox_store,
             topic="entdb-wal",
             group_id="applier",
             fanout_config=MailboxFanoutConfig(

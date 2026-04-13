@@ -24,7 +24,6 @@ from dbaas.entdb_server.apply.applier import (
     TransactionEvent,
 )
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.archive.archiver import Archiver
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
@@ -64,21 +63,19 @@ async def _make_applier(
     *,
     batch_size: int = 1,
     fanout: bool = False,
-) -> tuple[Applier, CanonicalStore, MailboxStore, InMemoryWalStream]:
+) -> tuple[Applier, CanonicalStore, InMemoryWalStream]:
     """Build an Applier wired to real SQLite stores."""
     wal = InMemoryWalStream(num_partitions=1)
     await wal.connect()
     store = CanonicalStore(data_dir=str(tmp_path / "canonical"), wal_mode=True)
-    mbox = MailboxStore(data_dir=str(tmp_path / "mailbox"), wal_mode=True)
     applier = Applier(
         wal=wal,
         canonical_store=store,
-        mailbox_store=mbox,
         topic="test-wal",
         batch_size=batch_size,
         fanout_config=MailboxFanoutConfig(enabled=fanout),
     )
-    return applier, store, mbox, wal
+    return applier, store, wal
 
 
 def _make_archiver(**kwargs):
@@ -260,7 +257,7 @@ class TestReadAfterWrite:
     @pytest.mark.asyncio
     async def test_write_then_read_immediate(self, tmp_path):
         """Write a node, immediately read it -- must be visible."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="raw-1",
@@ -280,7 +277,7 @@ class TestReadAfterWrite:
     @pytest.mark.asyncio
     async def test_write_then_read_via_type_query(self, tmp_path):
         """After applying, get_nodes_by_type should include the new node."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="type-q-1",
@@ -298,7 +295,7 @@ class TestReadAfterWrite:
     @pytest.mark.asyncio
     async def test_idempotency_key_appears_after_apply(self, tmp_path):
         """After apply completes, check_idempotency returns True."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         key = "idem-check-key"
 
@@ -328,7 +325,7 @@ class TestReadAfterWrite:
     @pytest.mark.asyncio
     async def test_update_visible_after_apply(self, tmp_path):
         """Update a node via applier, immediately read the updated payload."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         # Create
         await applier.apply_event(
@@ -357,7 +354,7 @@ class TestReadAfterWrite:
     @pytest.mark.asyncio
     async def test_wait_applied_for_already_applied(self, tmp_path):
         """Re-applying an event returns instantly with skipped=True."""
-        applier, store, _, _ = await _make_applier(tmp_path)
+        applier, store, _ = await _make_applier(tmp_path)
 
         event = _make_event(
             idempotency_key="already-done",

@@ -2,8 +2,7 @@
 Apply module for EntDB - event application and materialization.
 
 This module handles:
-- Canonical tenant SQLite store (nodes, edges, applied_events)
-- Per-user mailbox SQLite store with FTS5
+- Canonical tenant SQLite store (nodes, edges, applied_events, notifications)
 - ACL and visibility management
 - Idempotent event application
 
@@ -25,13 +24,10 @@ How to change safely:
 from .acl import AccessDeniedError, AclManager, Principal
 from .applier import Applier, ApplierError
 from .canonical_store import CanonicalStore, TenantNotFoundError
-from .mailbox_store import MailboxItem, MailboxStore
 
 __all__ = [
     "CanonicalStore",
     "TenantNotFoundError",
-    "MailboxStore",
-    "MailboxItem",
     "AclManager",
     "Principal",
     "AccessDeniedError",

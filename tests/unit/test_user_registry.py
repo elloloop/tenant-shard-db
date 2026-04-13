@@ -41,7 +41,6 @@ def _build_servicer(global_store=None):
     return EntDBServicer(
         wal=AsyncMock(),
         canonical_store=AsyncMock(),
-        mailbox_store=AsyncMock(),
         schema_registry=registry,
         global_store=global_store,
     )

@@ -24,6 +24,10 @@ type Transport interface {
 	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error)
 	// Share grants permission on a node to another actor.
 	Share(ctx context.Context, tenantID, actor, nodeID, grantee, permission string) error
+	// GetEdgesFrom retrieves outgoing edges from a node.
+	GetEdgesFrom(ctx context.Context, tenantID, actor, fromNodeID string, edgeTypeID int) ([]*Edge, error)
+	// GetEdgesTo retrieves incoming edges to a node.
+	GetEdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error)
 }
 
 // grpcTransport is the production Transport backed by a gRPC connection.
@@ -83,6 +87,14 @@ func (t *grpcTransport) ExecuteAtomic(_ context.Context, _, _, _ string, _ []Ope
 
 func (t *grpcTransport) Share(_ context.Context, _, _, _, _, _ string) error {
 	return &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
+}
+
+func (t *grpcTransport) GetEdgesFrom(_ context.Context, _, _, _ string, _ int) ([]*Edge, error) {
+	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
+}
+
+func (t *grpcTransport) GetEdgesTo(_ context.Context, _, _, _ string, _ int) ([]*Edge, error) {
+	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
 }
 
 // DbClient is the main entry point for the EntDB Go SDK.
@@ -171,6 +183,16 @@ func (c *DbClient) Get(ctx context.Context, tenantID, actor string, typeID int, 
 // Query retrieves nodes matching a filter (flat API).
 func (c *DbClient) Query(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error) {
 	return c.transport.QueryNodes(ctx, tenantID, actor, typeID, filter)
+}
+
+// EdgesFrom retrieves outgoing edges from a node (flat API).
+func (c *DbClient) EdgesFrom(ctx context.Context, tenantID, actor, fromNodeID string, edgeTypeID int) ([]*Edge, error) {
+	return c.transport.GetEdgesFrom(ctx, tenantID, actor, fromNodeID, edgeTypeID)
+}
+
+// EdgesTo retrieves incoming edges to a node (flat API).
+func (c *DbClient) EdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error) {
+	return c.transport.GetEdgesTo(ctx, tenantID, actor, toNodeID, edgeTypeID)
 }
 
 // NewPlan creates a new Plan for batching operations atomically (flat API).

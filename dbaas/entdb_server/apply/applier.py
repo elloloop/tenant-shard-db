@@ -2,7 +2,7 @@
 Event applier for EntDB.
 
 The Applier consumes TransactionEvents from the WAL stream and applies
-them to the SQLite stores (canonical and mailbox). It ensures:
+them to the canonical per-tenant SQLite store. It ensures:
 - Idempotent processing (events are never applied twice)
 - Atomic application (all ops in an event succeed or fail together)
 - Ordered processing within each tenant
@@ -11,7 +11,7 @@ Invariants:
     - Events are processed in stream order
     - Idempotency is checked before any modifications
     - Failed events are logged but don't block processing
-    - Mailbox fanout happens after canonical store update
+    - Notification fanout happens after canonical store update
 
 How to change safely:
     - Add new operation types with backward-compatible handling
@@ -35,7 +35,6 @@ from ..schema.registry import get_registry
 from ..wal.base import StreamPos, StreamRecord, WalStream
 from .acl import AclManager, get_acl_manager
 from .canonical_store import CanonicalStore, Edge, Node
-from .mailbox_store import MailboxStore
 
 logger = logging.getLogger(__name__)
 
@@ -171,7 +170,7 @@ class Applier:
         Multiple instances can run for different tenants.
 
     Example:
-        >>> applier = Applier(wal, canonical_store, mailbox_store)
+        >>> applier = Applier(wal, canonical_store)
         >>> await applier.start()  # Runs until stopped
     """
 
@@ -179,7 +178,6 @@ class Applier:
         self,
         wal: WalStream,
         canonical_store: CanonicalStore,
-        mailbox_store: MailboxStore,
         topic: str = "entdb-wal",
         group_id: str = "entdb-applier",
         schema_fingerprint: str | None = None,
@@ -195,7 +193,6 @@ class Applier:
         Args:
             wal: WAL stream to consume from
             canonical_store: Tenant SQLite store
-            mailbox_store: Mailbox SQLite store
             topic: WAL topic name
             group_id: Consumer group ID
             schema_fingerprint: Expected schema fingerprint
@@ -205,7 +202,6 @@ class Applier:
         """
         self.wal = wal
         self.canonical_store = canonical_store
-        self.mailbox_store = mailbox_store
         self.topic = topic
         self.group_id = group_id
         self.schema_fingerprint = schema_fingerprint

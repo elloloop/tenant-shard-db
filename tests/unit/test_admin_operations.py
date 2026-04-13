@@ -119,14 +119,12 @@ def _make_servicer(canonical_store, global_store=None):
     pos.__str__ = MagicMock(return_value="0:0:0")
     wal.append = AsyncMock(return_value=pos)
 
-    mailbox_store = MagicMock()
     schema_registry = MagicMock()
     schema_registry.fingerprint = ""
 
     return EntDBServicer(
         wal=wal,
         canonical_store=canonical_store,
-        mailbox_store=mailbox_store,
         schema_registry=schema_registry,
         global_store=global_store,
     )

@@ -14,14 +14,19 @@ type mockTransport struct {
 	queryCalls    int
 	commitCalls   int
 
+	edgesFromCalls int
+	edgesToCalls   int
+
 	// Responses for stubbing
-	getNodeResp  *Node
-	getNodeErr   error
-	queryResp    []*Node
-	queryErr     error
-	commitResp   *CommitResult
-	commitErr    error
-	connectErr   error
+	getNodeResp   *Node
+	getNodeErr    error
+	queryResp     []*Node
+	queryErr      error
+	commitResp    *CommitResult
+	commitErr     error
+	connectErr    error
+	edgesFromResp []*Edge
+	edgesToResp   []*Edge
 }
 
 func (m *mockTransport) Connect(_ context.Context) error {
@@ -51,6 +56,16 @@ func (m *mockTransport) ExecuteAtomic(_ context.Context, _, _, _ string, _ []Ope
 
 func (m *mockTransport) Share(_ context.Context, _, _, _, _, _ string) error {
 	return nil
+}
+
+func (m *mockTransport) GetEdgesFrom(_ context.Context, _, _, _ string, _ int) ([]*Edge, error) {
+	m.edgesFromCalls++
+	return m.edgesFromResp, nil
+}
+
+func (m *mockTransport) GetEdgesTo(_ context.Context, _, _, _ string, _ int) ([]*Edge, error) {
+	m.edgesToCalls++
+	return m.edgesToResp, nil
 }
 
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
@@ -269,5 +284,73 @@ func TestClient_NewPlanWithKey(t *testing.T) {
 	plan := client.NewPlanWithKey("t1", "user:alice", "idem-key-1")
 	if plan.IdempotencyKey() != "idem-key-1" {
 		t.Errorf("expected idempotency key idem-key-1, got %s", plan.IdempotencyKey())
+	}
+}
+
+func TestClient_EdgesFrom_DelegatesToTransport(t *testing.T) {
+	expected := []*Edge{
+		{EdgeTypeID: 201, FromNodeID: "n1", ToNodeID: "n2"},
+		{EdgeTypeID: 201, FromNodeID: "n1", ToNodeID: "n3"},
+	}
+	mock := &mockTransport{edgesFromResp: expected}
+	client := newTestClient(t, mock)
+
+	edges, err := client.EdgesFrom(context.Background(), "t1", "user:alice", "n1", 201)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edges) != 2 {
+		t.Errorf("expected 2 edges, got %d", len(edges))
+	}
+	if mock.edgesFromCalls != 1 {
+		t.Errorf("expected 1 EdgesFrom call, got %d", mock.edgesFromCalls)
+	}
+}
+
+func TestClient_EdgesTo_DelegatesToTransport(t *testing.T) {
+	expected := []*Edge{
+		{EdgeTypeID: 201, FromNodeID: "n5", ToNodeID: "n1"},
+	}
+	mock := &mockTransport{edgesToResp: expected}
+	client := newTestClient(t, mock)
+
+	edges, err := client.EdgesTo(context.Background(), "t1", "user:alice", "n1", 201)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Errorf("expected 1 edge, got %d", len(edges))
+	}
+	if mock.edgesToCalls != 1 {
+		t.Errorf("expected 1 EdgesTo call, got %d", mock.edgesToCalls)
+	}
+}
+
+func TestScope_EdgesFromTo(t *testing.T) {
+	mock := &mockTransport{
+		edgesFromResp: []*Edge{{EdgeTypeID: 201, FromNodeID: "n1", ToNodeID: "n2"}},
+		edgesToResp:   []*Edge{{EdgeTypeID: 201, FromNodeID: "n5", ToNodeID: "n1"}},
+	}
+	client := newTestClient(t, mock)
+	scope := client.Tenant("acme").Actor(UserActor("alice"))
+
+	out, err := scope.EdgesFrom(context.Background(), "n1", 201)
+	if err != nil {
+		t.Fatalf("EdgesFrom: %v", err)
+	}
+	if len(out) != 1 || out[0].ToNodeID != "n2" {
+		t.Errorf("unexpected EdgesFrom result: %+v", out)
+	}
+
+	in, err := scope.EdgesTo(context.Background(), "n1", 201)
+	if err != nil {
+		t.Fatalf("EdgesTo: %v", err)
+	}
+	if len(in) != 1 || in[0].FromNodeID != "n5" {
+		t.Errorf("unexpected EdgesTo result: %+v", in)
+	}
+
+	if mock.edgesFromCalls != 1 || mock.edgesToCalls != 1 {
+		t.Errorf("expected 1 call each, got from=%d to=%d", mock.edgesFromCalls, mock.edgesToCalls)
 	}
 }

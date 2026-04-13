@@ -99,8 +99,6 @@ from .generated import (
     ListTenantsResponse,
     ListUsersRequest,
     ListUsersResponse,
-    MailboxItem,
-    MailboxSearchResult,
     Node,
     QueryNodesRequest,
     QueryNodesResponse,
@@ -178,7 +176,6 @@ class EntDBServicer(EntDBServiceServicer):
     Attributes:
         wal: WAL stream for durably writing events
         canonical_store: Tenant SQLite store for reads
-        mailbox_store: Per-user mailbox store
         schema_registry: Schema registry for validation
         global_store: GlobalStore for cross-tenant shared_index
     """
@@ -187,7 +184,6 @@ class EntDBServicer(EntDBServiceServicer):
         self,
         wal: Any,
         canonical_store: Any,
-        mailbox_store: Any,
         schema_registry: Any,
         topic: str = "entdb-wal",
         sharding: ShardingConfig | None = None,
@@ -198,7 +194,6 @@ class EntDBServicer(EntDBServiceServicer):
         Args:
             wal: WAL stream instance
             canonical_store: CanonicalStore instance
-            mailbox_store: MailboxStore instance
             schema_registry: SchemaRegistry instance
             topic: WAL topic name
             sharding: Sharding configuration for multi-node mode
@@ -206,7 +201,6 @@ class EntDBServicer(EntDBServiceServicer):
         """
         self.wal = wal
         self.canonical_store = canonical_store
-        self.mailbox_store = mailbox_store
         self.schema_registry = schema_registry
         self.topic = topic
         self._sharding = sharding
@@ -962,44 +956,18 @@ class EntDBServicer(EntDBServiceServicer):
         request: SearchMailboxRequest,
         context: grpc_aio.ServicerContext,
     ) -> SearchMailboxResponse:
-        """Search mailbox with full-text search."""
+        """Search mailbox (deprecated, returns empty).
+
+        The legacy per-user mailbox SQLite store has been removed. Fanout now
+        writes to the per-tenant ``notifications`` table in the canonical
+        store. This handler is retained for proto compatibility and returns
+        an empty result set.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
-            source_type_ids = list(request.source_type_ids) if request.source_type_ids else None
-            results = await self.mailbox_store.search(
-                request.context.tenant_id,
-                request.user_id,
-                request.query,
-                limit=request.limit or 20,
-                offset=request.offset or 0,
-                source_type_ids=source_type_ids,
-            )
-
-            proto_results = [
-                MailboxSearchResult(
-                    item=MailboxItem(
-                        item_id=r.item.item_id,
-                        ref_id=r.item.ref_id,
-                        source_type_id=r.item.source_type_id,
-                        source_node_id=r.item.source_node_id,
-                        thread_id=r.item.thread_id or "",
-                        ts=r.item.ts,
-                        state=_dict_to_struct(r.item.state),
-                        snippet=r.item.snippet or "",
-                        metadata=_dict_to_struct(r.item.metadata),
-                    ),
-                    rank=r.rank,
-                    highlights=r.highlights or "",
-                )
-                for r in results
-            ]
-
             record_grpc_request("SearchMailbox", "ok", time.perf_counter() - start)
-            return SearchMailboxResponse(
-                results=proto_results,
-                has_more=len(results) == (request.limit or 20),
-            )
+            return SearchMailboxResponse(results=[], has_more=False)
         except Exception as e:
             record_grpc_request("SearchMailbox", "error", time.perf_counter() - start)
             logger.error(f"SearchMailbox failed: {e}", exc_info=True)
@@ -1010,49 +978,18 @@ class EntDBServicer(EntDBServiceServicer):
         request: GetMailboxRequest,
         context: grpc_aio.ServicerContext,
     ) -> GetMailboxResponse:
-        """Get mailbox items for a user."""
+        """Get mailbox items for a user (deprecated, returns empty).
+
+        The legacy per-user mailbox SQLite store has been removed. Fanout now
+        writes to the per-tenant ``notifications`` table in the canonical
+        store. This handler is retained for proto compatibility and returns
+        an empty result set.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
-            source_type_id = request.source_type_id if request.source_type_id else None
-            thread_id = request.thread_id if request.thread_id else None
-
-            items = await self.mailbox_store.list_items(
-                request.context.tenant_id,
-                request.user_id,
-                limit=request.limit or 50,
-                offset=request.offset or 0,
-                source_type_id=source_type_id,
-                thread_id=thread_id,
-                unread_only=request.unread_only,
-            )
-
-            unread_count = await self.mailbox_store.get_unread_count(
-                request.context.tenant_id,
-                request.user_id,
-            )
-
-            proto_items = [
-                MailboxItem(
-                    item_id=item.item_id,
-                    ref_id=item.ref_id,
-                    source_type_id=item.source_type_id,
-                    source_node_id=item.source_node_id,
-                    thread_id=item.thread_id or "",
-                    ts=item.ts,
-                    state=_dict_to_struct(item.state),
-                    snippet=item.snippet or "",
-                    metadata=_dict_to_struct(item.metadata),
-                )
-                for item in items
-            ]
-
             record_grpc_request("GetMailbox", "ok", time.perf_counter() - start)
-            return GetMailboxResponse(
-                items=proto_items,
-                unread_count=unread_count,
-                has_more=len(items) == (request.limit or 50),
-            )
+            return GetMailboxResponse(items=[], unread_count=0, has_more=False)
         except Exception as e:
             record_grpc_request("GetMailbox", "error", time.perf_counter() - start)
             logger.error(f"GetMailbox failed: {e}", exc_info=True)
@@ -1120,14 +1057,14 @@ class EntDBServicer(EntDBServiceServicer):
         request: ListMailboxUsersRequest,
         context: grpc_aio.ServicerContext,
     ) -> ListMailboxUsersResponse:
-        """List mailbox users for a tenant."""
+        """List mailbox users for a tenant (deprecated, returns empty).
+
+        The legacy per-user mailbox SQLite store has been removed. This
+        handler is retained for proto compatibility and returns an empty
+        user list.
+        """
         await self._check_tenant(request.tenant_id, context)
-        try:
-            user_ids = self.mailbox_store.list_users(request.tenant_id)
-            return ListMailboxUsersResponse(user_ids=user_ids)
-        except Exception as e:
-            logger.error(f"ListMailboxUsers failed: {e}", exc_info=True)
-            return ListMailboxUsersResponse(user_ids=[])
+        return ListMailboxUsersResponse(user_ids=[])
 
     async def GetSchema(
         self,

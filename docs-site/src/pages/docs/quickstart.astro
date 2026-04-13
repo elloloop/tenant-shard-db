@@ -4,105 +4,121 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
 
 <DocsLayout title="Quick Start">
   <h1>Quick Start</h1>
-  <p>Build a task management system in 5 minutes.</p>
+  <p>Build a task management system in 5 minutes using the proto-first workflow.</p>
 
-  <h2>1. Define Your Schema</h2>
-  <p>Create <code>schema.py</code> in your project:</p>
-  <pre is:raw><code>from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
+  <h2>1. Define Your Schema in .proto</h2>
+  <p>
+    Create <code>schema.proto</code>. Every message that becomes a node gets a
+    stable <code>type_id</code>; every field uses its protobuf field number as
+    the on-disk <code>field_id</code>. Renames are free &mdash; only IDs are
+    load-bearing.
+  </p>
+  <pre is:raw><code>// schema.proto
+syntax = "proto3";
+package myapp;
 
-# Node types
-User = NodeTypeDef(type_id=1, name="User", fields=(
-    field(1, "email", "str", required=True),
-    field(2, "name", "str", required=True),
-))
+import "entdb/options.proto";
 
-Task = NodeTypeDef(type_id=2, name="Task", fields=(
-    field(1, "title", "str", required=True),
-    field(2, "status", "enum", enum_values=("todo", "in_progress", "done")),
-    field(3, "priority", "int", default=0),
-), acl_defaults=AclDefaults(tenant_visible=True))
+message User {
+  option (entdb.type_id) = 10;
+  string email = 1;
+  string name = 2;
+}
 
-Comment = NodeTypeDef(type_id=3, name="Comment", fields=(
-    field(1, "body", "str", required=True),
-), acl_defaults=AclDefaults(inherit=True))
+message Task {
+  option (entdb.type_id) = 1;
+  string title = 1;
+  string status = 2;    // "todo" | "in_progress" | "done"
+  int32 priority = 3;
+}
 
-# Edge types
-AssignedTo = EdgeTypeDef(edge_id=1, name="AssignedTo",
-    from_type=Task, to_type=User)
+message Comment {
+  option (entdb.type_id) = 3;
+  string body = 1;
+}</code></pre>
 
-HasComment = EdgeTypeDef(edge_id=2, name="HasComment",
-    from_type=Task, to_type=Comment,
-    propagate_share=True)  # comments inherit task ACL</code></pre>
+  <h2>2. Compile with protoc</h2>
+  <p>
+    Use the standard protobuf compiler &mdash; no EntDB-specific codegen.
+  </p>
+  <pre is:raw><code>protoc --python_out=. schema.proto
+# produces schema_pb2.py</code></pre>
 
-  <h2>2. Initialize Schema Baseline</h2>
-  <pre is:raw><code># Generate snapshot for CI compatibility checks
-entdb init
-# Creates .entdb/snapshot.json — commit this to git</code></pre>
-
-  <h2>3. Connect and Create Data</h2>
+  <h2>3. Register the Schema &amp; Connect</h2>
   <pre is:raw><code>import asyncio
-from entdb_sdk import DbClient
-from schema import Task, Comment, HasComment, AssignedTo, User
+from entdb_sdk import DbClient, Actor, Permission, register_proto_schema
+import schema_pb2
+
+registry = register_proto_schema(schema_pb2)
 
 async def main():
-    async with DbClient("localhost:50051") as db:
+    async with DbClient("localhost:50051", registry=registry) as db:
+        scope = db.tenant("acme").actor(Actor.user("alice"))
+
         # Create a task with a comment, atomically
-        plan = db.atomic("acme", "user:alice")
-        plan.create(Task, {"title": "Ship v2", "status": "todo"}, as_="task")
-        plan.create(Comment, {"body": "Let's ship it!"}, as_="comment")
-        plan.edge_create(HasComment, from_="$task.id", to="$comment.id")
+        plan = scope.plan()
+        plan.create(schema_pb2.Task(title="Ship v2", status="todo"), as_="task")
+        plan.create(schema_pb2.Comment(body="Let's ship it!"), as_="comment")
+        plan.edge_create("HasComment", from_="$task.id", to="$comment.id")
         result = await plan.commit(wait_applied=True)
 
         task_id = result.created_node_ids[0]
         print(f"Created task: {task_id}")
 
-        # Query tasks
-        tasks = await db.query(Task, "acme", "user:alice",
-                               filter={"status": "todo"}, limit=10)
+        # Query tasks — read-after-write is automatic
+        tasks = await scope.query(schema_pb2.Task,
+                                  filter={"status": "todo"}, limit=10)
         for t in tasks:
             print(f"  {t.node_id}: {t.payload['title']}")
 
 asyncio.run(main())</code></pre>
 
   <h2>4. Share a Task</h2>
+  <p>
+    Permissions use the <code>Permission</code> enum and actors are typed.
+    Edges marked <code>propagate_share=True</code> (e.g. <code>HasComment</code>)
+    mean the comment inherits the task's ACL automatically.
+  </p>
   <pre is:raw><code>async def share_task(db, task_id):
-    # Share with bob — comments are automatically shared
-    await db.share(task_id, actor_id="user:bob",
-                   permission="write", tenant_id="acme",
-                   granted_by="user:alice")
+    alice = db.tenant("acme").actor(Actor.user("alice"))
+    await alice.share(task_id, Actor.user("bob"), Permission.WRITE)
 
     # Bob can see the task and all its comments
-    comments = await db.connected(task_id, HasComment,
-                                   tenant_id="acme", actor="user:bob")
+    bob = db.tenant("acme").actor(Actor.user("bob"))
+    comments = await bob.connected(task_id, "HasComment")
     print(f"Bob sees {len(comments)} comments")</code></pre>
 
   <h2>5. Update Data</h2>
   <pre is:raw><code>async def update_task(db, task_id):
-    plan = db.atomic("acme", "user:alice")
-    plan.update(Task, task_id, {"status": "in_progress"})
+    scope = db.tenant("acme").actor(Actor.user("alice"))
+    plan = scope.plan()
+    plan.update(schema_pb2.Task, task_id, {"status": "in_progress"})
     await plan.commit()</code></pre>
 
-  <h2>6. Add Schema Field (Later)</h2>
-  <pre is:raw><code># Add a due_date field to Task (non-breaking change)
-Task = NodeTypeDef(type_id=2, name="Task", fields=(
-    field(1, "title", "str", required=True),
-    field(2, "status", "enum", enum_values=("todo", "in_progress", "done")),
-    field(3, "priority", "int", default=0),
-    field(4, "due_date", "timestamp"),  # NEW
-))
-
-# Validate in CI
-$ entdb check
+  <h2>6. Add a Field Later (Non-Breaking)</h2>
+  <p>
+    Add a new field in <code>schema.proto</code> with a fresh field number.
+    Because EntDB stores payloads keyed by <code>field_id</code>, you can
+    even rename existing fields freely.
+  </p>
+  <pre is:raw><code>message Task {
+  option (entdb.type_id) = 1;
+  string title = 1;
+  string status = 2;
+  int32 priority = 3;
+  int64 due_date = 4;   // NEW field — field_id 4
+}</code></pre>
+  <pre is:raw><code>$ protoc --python_out=. schema.proto
+$ entdb check         # validates compatibility vs the baseline snapshot
 Schema compatible: 1 non-breaking change (field added)
-
-# Update baseline
 $ entdb snapshot --update</code></pre>
 
   <h2>Next Steps</h2>
   <ul>
-    <li><a href="/tenant-shard-db/docs/concepts">Core Concepts</a> &mdash; understand nodes, edges, tenants, events</li>
-    <li><a href="/tenant-shard-db/docs/acl/overview">Access Control</a> &mdash; ACL inheritance, groups, deny rules</li>
-    <li><a href="/tenant-shard-db/docs/schema/evolution">Schema Evolution</a> &mdash; safely evolve your schema over time</li>
-    <li><a href="/tenant-shard-db/docs/deploy/docker">Deployment</a> &mdash; production setup with Kafka and S3</li>
+    <li><a href="/tenant-shard-db/docs/concepts">Core Concepts</a> &mdash; nodes, edges, tenants, events, WAL</li>
+    <li><a href="/tenant-shard-db/docs/sdk/python">Python SDK Reference</a></li>
+    <li><a href="/tenant-shard-db/docs/sdk/go">Go SDK Reference</a></li>
+    <li><a href="/tenant-shard-db/docs/acl/overview">Access Control</a> &mdash; ACL inheritance, groups, scoped API keys</li>
+    <li><a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a> &mdash; S3 Object Lock, GDPR, crypto-shred</li>
   </ul>
 </DocsLayout>

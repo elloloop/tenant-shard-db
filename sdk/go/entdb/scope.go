@@ -50,6 +50,16 @@ func (s *ActorScope) Share(ctx context.Context, nodeID string, grantee Actor, pe
 	return s.client.transport.Share(ctx, s.tenantID, s.actor.String(), nodeID, grantee.String(), string(perm))
 }
 
+// EdgesFrom retrieves outgoing edges from a node via this scope.
+func (s *ActorScope) EdgesFrom(ctx context.Context, fromNodeID string, edgeTypeID int) ([]*Edge, error) {
+	return s.client.EdgesFrom(ctx, s.tenantID, s.actor.String(), fromNodeID, edgeTypeID)
+}
+
+// EdgesTo retrieves incoming edges to a node via this scope.
+func (s *ActorScope) EdgesTo(ctx context.Context, toNodeID string, edgeTypeID int) ([]*Edge, error) {
+	return s.client.EdgesTo(ctx, s.tenantID, s.actor.String(), toNodeID, edgeTypeID)
+}
+
 // Plan creates a new Plan pre-bound to this scope's tenant and actor.
 func (s *ActorScope) Plan() *Plan {
 	return s.client.NewPlan(s.tenantID, s.actor.String())

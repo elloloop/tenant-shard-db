@@ -70,7 +70,6 @@ class TestCheckTenant:
         servicer = EntDBServicer(
             wal=MagicMock(),
             canonical_store=MagicMock(),
-            mailbox_store=MagicMock(),
             schema_registry=MagicMock(),
             sharding=sharding,
         )
@@ -98,7 +97,6 @@ class TestCheckTenant:
         servicer = EntDBServicer(
             wal=MagicMock(),
             canonical_store=MagicMock(),
-            mailbox_store=MagicMock(),
             schema_registry=MagicMock(),
             sharding=sharding,
         )
@@ -133,7 +131,6 @@ class TestHealthMultiNode:
         servicer = EntDBServicer(
             wal=wal,
             canonical_store=MagicMock(),
-            mailbox_store=MagicMock(),
             schema_registry=MagicMock(),
             sharding=sharding,
         )

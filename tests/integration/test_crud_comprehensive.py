@@ -32,7 +32,6 @@ from dbaas.entdb_server.apply.canonical_store import (
     CanonicalStore,
     TenantNotFoundError,
 )
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 
@@ -482,12 +481,10 @@ class TestApplierFullFlow:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mailbox"), wal_mode=True)
 
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             fanout_config=MailboxFanoutConfig(enabled=False),
         )
@@ -514,12 +511,10 @@ class TestApplierFullFlow:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mailbox"), wal_mode=True)
 
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             fanout_config=MailboxFanoutConfig(enabled=False),
         )
@@ -543,12 +538,10 @@ class TestApplierFullFlow:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mailbox"), wal_mode=True)
 
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             fanout_config=MailboxFanoutConfig(enabled=False),
         )
@@ -587,12 +580,10 @@ class TestApplierFullFlow:
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
         store = CanonicalStore(data_dir=str(tmp_path), wal_mode=True)
-        mbox = MailboxStore(data_dir=str(tmp_path / "mailbox"), wal_mode=True)
 
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="test-wal",
             assigned_tenants=frozenset({"allowed"}),
             fanout_config=MailboxFanoutConfig(enabled=False),

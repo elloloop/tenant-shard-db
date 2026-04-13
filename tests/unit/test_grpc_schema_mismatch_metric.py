@@ -31,7 +31,6 @@ def _build_servicer(server_fingerprint: str) -> EntDBServicer:
     return EntDBServicer(
         wal=AsyncMock(),
         canonical_store=AsyncMock(),
-        mailbox_store=AsyncMock(),
         schema_registry=registry,
     )
 

@@ -17,7 +17,6 @@ from dbaas.entdb_server.apply.applier import (
     MailboxFanoutConfig,
 )
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 
@@ -80,11 +79,9 @@ class TestBatchMultiPartitionCommit:
         await wal.append("t", key_b, _event_bytes("tenant-1", "ev-b", "node-b"))
 
         store = CanonicalStore(str(tmp_path))
-        mbox = MailboxStore(str(tmp_path))
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="t",
             fanout_config=MailboxFanoutConfig(enabled=False),
             batch_size=10,
@@ -152,11 +149,9 @@ class TestBatchSchemaFingerprintValidation:
         )
 
         store = CanonicalStore(str(tmp_path))
-        mbox = MailboxStore(str(tmp_path))
         applier = Applier(
             wal=wal,
             canonical_store=store,
-            mailbox_store=mbox,
             topic="t",
             schema_fingerprint="sha256:correct",
             fanout_config=MailboxFanoutConfig(enabled=False),

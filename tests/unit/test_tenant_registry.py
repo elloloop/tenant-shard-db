@@ -134,14 +134,12 @@ def _make_servicer(global_store=None):
     wal = MagicMock()
     canonical_store = MagicMock()
     canonical_store.initialize_tenant = AsyncMock()
-    mailbox_store = MagicMock()
     schema_registry = MagicMock()
     schema_registry.fingerprint = "test-fp"
 
     servicer = EntDBServicer(
         wal=wal,
         canonical_store=canonical_store,
-        mailbox_store=mailbox_store,
         schema_registry=schema_registry,
         global_store=global_store,
     )

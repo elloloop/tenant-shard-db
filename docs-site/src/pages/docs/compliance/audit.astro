@@ -1,0 +1,119 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Compliance & Audit">
+  <h1>Compliance &amp; Audit</h1>
+  <p>
+    EntDB's WAL-first architecture means every mutation &mdash; writes, ACL
+    changes, GDPR operations, ownership transfers &mdash; is appended to an
+    immutable event log. That event log <em>is</em> the audit trail. There
+    is no separate audit table to keep in sync.
+  </p>
+
+  <h2>S3 Object Lock (Tamper-Evident Audit)</h2>
+  <p>
+    For compliance regimes that require tamper-evident storage (SOC 2,
+    HIPAA, ISO 27001, 21 CFR Part 11), configure the S3 WAL backend with
+    <strong>Object Lock in COMPLIANCE mode</strong>. Once written, audit
+    events cannot be altered or deleted &mdash; not even by the account
+    root &mdash; until the retention period expires.
+  </p>
+  <pre is:raw><code># entdb-server config
+wal:
+  backend: s3
+  s3:
+    bucket: entdb-audit-prod
+    region: us-east-1
+    object_lock:
+      enabled: true
+      mode: COMPLIANCE       # or GOVERNANCE
+      retention_days: 2555   # 7 years</code></pre>
+
+  <p>
+    The bucket itself must be created with Object Lock enabled &mdash; it
+    cannot be turned on retroactively. Use a dedicated bucket for audit logs
+    separate from general application data.
+  </p>
+
+  <h2>Exporting the Audit Trail</h2>
+  <p>
+    Use <code>export_audit_trail()</code> on the server to produce a signed,
+    time-bounded export for auditors or incident response.
+  </p>
+  <pre is:raw><code>from dbaas.entdb_server.audit.compliance import export_audit_trail
+
+manifest = export_audit_trail(
+    tenant_id="acme",
+    start=datetime(2026, 1, 1),
+    end=datetime(2026, 3, 31),
+    output_path="/tmp/acme-q1-2026.jsonl.gz",
+)
+print(manifest.sha256, manifest.event_count)</code></pre>
+
+  <p>
+    The export contains every WAL event for the tenant in the window, plus a
+    SHA-256 manifest. Because the events come straight from Object
+    Lock-protected storage, the export is cryptographically trustworthy
+    without a separate hash chain.
+  </p>
+
+  <h2>Encryption at Rest</h2>
+  <p>
+    Each tenant has its own SQLite file; you can enable SQLCipher to
+    encrypt those files with a per-tenant Data Encryption Key (DEK). DEKs
+    are wrapped by a Key Encryption Key (KEK) managed by your KMS of
+    choice.
+  </p>
+  <pre is:raw><code>storage:
+  sqlite:
+    sqlcipher: true
+  kms:
+    provider: aws-kms        # or gcp-kms, vault, file
+    kek_arn: arn:aws:kms:us-east-1:123:key/...</code></pre>
+
+  <h2>Crypto-Shred</h2>
+  <p>
+    Because each tenant's data is encrypted with a distinct DEK, destroying
+    that DEK makes the tenant's on-disk data permanently unreadable &mdash;
+    even from backups. This is the cleanest way to honour
+    "right-to-erasure" for an entire tenant.
+  </p>
+  <pre is:raw><code># Server-side API — requires admin credentials
+await global_store.crypto_shred_tenant("acme", reason="contract terminated")</code></pre>
+
+  <p>
+    Crypto-shred is itself recorded in the WAL, so the event that a tenant
+    was shredded (and when, by whom, and why) remains in the Object
+    Lock-protected audit trail even after the data itself is gone.
+  </p>
+
+  <h2>Authentication &amp; Authorization</h2>
+  <p>
+    Beyond ACL, EntDB supports:
+  </p>
+  <ul>
+    <li><strong>OAuth 2.0 / OIDC</strong> &mdash; delegate authentication to an external IdP (Okta, Auth0, Cognito, Google, Microsoft Entra ID).</li>
+    <li><strong>Scoped API keys</strong> &mdash; long-lived keys with explicit tenant, actor, and permission scopes. Keys are hashed at rest and rotate without service disruption.</li>
+    <li><strong>Session management</strong> &mdash; short-lived session tokens with idle and absolute timeouts, logged to the WAL on create, refresh, and revoke.</li>
+  </ul>
+
+  <h2>What's in the Audit Trail</h2>
+  <table>
+    <tr><th>Event</th><th>Captures</th></tr>
+    <tr><td>Node create/update/delete</td><td>actor, tenant, before/after payload, timestamp</td></tr>
+    <tr><td>Edge create/delete</td><td>actor, endpoints, edge type, timestamp</td></tr>
+    <tr><td>ACL share/revoke</td><td>grantor, grantee, permission, resource, timestamp</td></tr>
+    <tr><td>Ownership transfer</td><td>old owner, new owner, node, timestamp</td></tr>
+    <tr><td>GDPR delete/freeze/export</td><td>user_id, reason, grace window, timestamp</td></tr>
+    <tr><td>Tenant crypto-shred</td><td>tenant, reason, actor, timestamp</td></tr>
+    <tr><td>API key create/revoke</td><td>scope, actor, timestamp</td></tr>
+    <tr><td>Session create/refresh/revoke</td><td>user, client, timestamp</td></tr>
+  </table>
+
+  <h2>Related</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/compliance/gdpr">GDPR Operations</a></li>
+    <li><a href="/tenant-shard-db/docs/deploy/wal">WAL Backends</a></li>
+  </ul>
+</DocsLayout>
