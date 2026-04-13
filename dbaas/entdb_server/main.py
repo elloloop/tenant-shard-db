@@ -41,6 +41,7 @@ from .api.grpc_server import EntDBServicer
 from .apply import Applier, CanonicalStore
 from .archive import Archiver
 from .config import ServerConfig, WalBackend
+from .global_store import GlobalStore
 from .schema import freeze_registry, get_registry
 from .snapshot import Snapshotter
 from .wal import WalStream, create_wal_stream
@@ -117,6 +118,7 @@ class Server:
         # Components (initialized in start())
         self.wal: WalStream | None = None
         self.canonical_store: CanonicalStore | None = None
+        self.global_store: GlobalStore | None = None
         self.servicer: EntDBServicer | None = None
         self.grpc_server: GrpcServer | None = None
         self.applier: Applier | None = None
@@ -236,6 +238,24 @@ class Server:
                 cache_size_pages=self.config.storage.cache_size_pages,
             )
 
+            # Global store for cross-tenant metadata (users, tenants,
+            # memberships, quotas). Required for the QuotaInterceptor
+            # and for the Applier's post-apply usage-increment hook.
+            try:
+                self.global_store = GlobalStore(
+                    data_dir=str(data_dir),
+                    wal_mode=self.config.storage.wal_mode,
+                    busy_timeout_ms=self.config.storage.busy_timeout_ms,
+                    encryption_config=self.config.encryption,
+                )
+                logger.info("Global store initialised at %s", data_dir)
+            except Exception as exc:
+                # The server can still run without a global store (no
+                # auth, no quotas), so fall back rather than refusing
+                # to start. Tests intentionally exercise this path.
+                logger.warning("Global store initialisation failed: %s", exc)
+                self.global_store = None
+
             # Log warning for local mode
             if self.config.wal_backend == WalBackend.LOCAL:
                 logger.warning(
@@ -268,6 +288,7 @@ class Server:
                 schema_registry=registry,
                 topic=topic,
                 sharding=self.config.sharding,
+                global_store=self.global_store,
             )
 
             # Start gRPC server
@@ -282,6 +303,7 @@ class Server:
                 auth_api_keys=self.config.grpc.auth_api_keys,
                 tls_cert_file=self.config.grpc.tls_cert_file,
                 tls_key_file=self.config.grpc.tls_key_file,
+                global_store=self.global_store,
             )
             await self.grpc_server.start()
 
@@ -322,6 +344,7 @@ class Server:
                 if self.config.wal_backend == WalBackend.KAFKA
                 else 100,
                 assigned_tenants=self.config.sharding.assigned_tenants,
+                global_store=self.global_store,
             )
             applier_task = asyncio.create_task(self.applier.start())
             self._tasks.append(applier_task)
@@ -409,6 +432,16 @@ class Server:
 
         if self.wal:
             await self.wal.close()
+
+        # Use getattr so Server instances built via ``__new__`` (e.g. in
+        # tests that exercise partial-startup paths) do not crash when
+        # the attribute is missing.
+        global_store = getattr(self, "global_store", None)
+        if global_store:
+            try:
+                global_store.close()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("global store close failed", exc_info=True)
 
         self._running = False
         logger.info("EntDB server stopped")

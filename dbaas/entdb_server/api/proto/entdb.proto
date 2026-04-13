@@ -116,6 +116,9 @@ service EntDBService {
     rpc ExportUserData(ExportUserDataRequest) returns (ExportUserDataResponse);
     rpc FreezeUser(FreezeUserRequest) returns (FreezeUserResponse);
     rpc CancelUserDeletion(CancelUserDeletionRequest) returns (CancelUserDeletionResponse);
+
+    // Quota dashboard (ADR: docs/decisions/quotas.md)
+    rpc GetTenantQuota(GetTenantQuotaRequest) returns (GetTenantQuotaResponse);
 }
 
 // Common message types
@@ -971,4 +974,29 @@ message CancelUserDeletionRequest {
 message CancelUserDeletionResponse {
     bool success = 1;
     string error = 2;
+}
+
+// Quota dashboard messages (ADR: docs/decisions/quotas.md)
+message GetTenantQuotaRequest {
+    // Caller actor (used for admin-or-owner authorization).
+    string actor = 1;
+    // Tenant whose quota config + usage should be returned.
+    string tenant_id = 2;
+}
+
+message GetTenantQuotaResponse {
+    string tenant_id = 1;
+    // Phase 1 — monthly write quota.
+    int64 max_writes_per_month = 2;
+    int64 writes_used = 3;
+    int64 period_start_ms = 4;
+    int64 period_end_ms = 5;
+    // Phase 2 — per-tenant token bucket.
+    int32 max_rps_sustained = 6;
+    int32 max_rps_burst = 7;
+    // Phase 3 — per-user token bucket.
+    int32 max_rps_per_user_sustained = 8;
+    int32 max_rps_per_user_burst = 9;
+    // Whether monthly overage is hard-rejected (true) or soft-logged (false).
+    bool hard_enforce = 10;
 }

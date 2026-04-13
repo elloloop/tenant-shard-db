@@ -435,7 +435,7 @@ class Applier:
             await self.canonical_store.initialize_tenant(tenant_id)
 
         loop = asyncio.get_running_loop()
-        applied_count, skipped_count = await loop.run_in_executor(
+        applied_count, skipped_count, applied_ops_count = await loop.run_in_executor(
             self.canonical_store._executor,
             self._sync_apply_tenant_batch_body,
             tenant_id,
@@ -450,16 +450,23 @@ class Applier:
                 await self.canonical_store.update_applied_offset(
                     tenant_id, str(last_record.position)
                 )
+            # Phase 1 quota: bump the durable write counter once per
+            # batch, covering every op across every event that
+            # actually committed. Fire-and-forget.
+            await self._increment_usage_safe(tenant_id, applied_ops_count)
             logger.debug(
                 "Batch applied",
                 extra={
                     "tenant_id": tenant_id,
                     "applied": applied_count,
                     "skipped": skipped_count,
+                    "ops": applied_ops_count,
                 },
             )
 
-    def _sync_apply_tenant_batch_body(self, tenant_id: str, items: list[tuple]) -> tuple[int, int]:
+    def _sync_apply_tenant_batch_body(
+        self, tenant_id: str, items: list[tuple]
+    ) -> tuple[int, int, int]:
         """Synchronous body of a tenant batch apply.
 
         Runs entirely inside a worker thread. Opens the
@@ -467,10 +474,16 @@ class Applier:
         every event in the batch in a single SQLite transaction.
 
         Returns:
-            (applied_count, skipped_count)
+            (applied_count, skipped_count, applied_ops_count)
+
+            ``applied_ops_count`` is the total number of ops across
+            events that actually committed (used for the post-apply
+            usage-increment hook). Skipped / duplicate events are
+            excluded so billing counters do not double-count replays.
         """
         applied_count = 0
         skipped_count = 0
+        applied_ops_count = 0
 
         with self.canonical_store.batch_transaction(tenant_id) as conn:
             for record, data in items:
@@ -496,6 +509,7 @@ class Applier:
                 # Apply operations
                 event = TransactionEvent.from_dict(data, record.position)
                 self._node_alias_map.clear()
+                applied_ops_count += len(event.ops)
 
                 for op in event.ops:
                     op_type = op.get("op")
@@ -613,7 +627,7 @@ class Applier:
                 )
                 applied_count += 1
 
-        return applied_count, skipped_count
+        return applied_count, skipped_count, applied_ops_count
 
     def _sync_apply_event_body(
         self, event: TransactionEvent
@@ -836,6 +850,27 @@ class Applier:
         self._running = False
         logger.info("Stopping applier")
 
+    async def _increment_usage_safe(self, tenant_id: str, n_ops: int) -> None:
+        """Post-apply usage-counter bump for Phase 1 quotas.
+
+        Called after a successful ``ExecuteAtomic`` apply (both the
+        single-event and tenant-batch paths). This MUST be
+        fire-and-forget: a failure here cannot be allowed to block the
+        apply path or affect the return value of ``apply_event`` /
+        ``_apply_tenant_batch``. Billing drift is preferable to a write
+        outage, per ``docs/decisions/quotas.md``.
+        """
+        if self.global_store is None or n_ops <= 0:
+            return
+        try:
+            await self.global_store.increment_usage(tenant_id, n_ops)
+        except Exception:
+            logger.warning(
+                "usage increment failed for %s",
+                tenant_id,
+                exc_info=True,
+            )
+
     async def apply_event(self, event: TransactionEvent) -> ApplyResult:
         """Apply a single transaction event atomically.
 
@@ -881,6 +916,12 @@ class Applier:
             # Shared index cleanup for deleted nodes
             for del_nid in deleted_node_ids:
                 await self._update_shared_index_on_delete(tenant_id, del_nid)
+
+            # Phase 1 quota: bump the durable write counter after the
+            # apply transaction commits. Fire-and-forget — a failure here
+            # must NEVER block the apply path (billing drift is
+            # preferable to write outage, per ADR quotas.md).
+            await self._increment_usage_safe(tenant_id, len(event.ops))
 
             return ApplyResult(
                 success=True,

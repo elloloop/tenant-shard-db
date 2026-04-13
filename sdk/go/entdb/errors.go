@@ -1,7 +1,14 @@
 // Package entdb provides a Go client SDK for the EntDB multi-tenant graph database.
 package entdb
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
+)
 
 // EntDBError is the base error type for all EntDB SDK errors.
 type EntDBError struct {
@@ -117,6 +124,83 @@ func NewTransactionError(message, idempotencyKey string) *TransactionError {
 		},
 		IdempotencyKey: idempotencyKey,
 	}
+}
+
+// RateLimitError indicates the caller was throttled by one of the three
+// quota layers (monthly write quota, per-tenant RPS, per-user RPS). It
+// mirrors the Python SDK's RateLimitError so callers can write a single
+// handler that covers all three phases of the rate-limit model frozen in
+// docs/decisions/quotas.md.
+//
+// The server sends:
+//   - gRPC status code RESOURCE_EXHAUSTED
+//   - a "retry-after" trailing metadata entry (seconds, decimal string)
+//   - a human-readable status message
+//
+// Callers should treat a non-zero RetryAfterMs as a hint — the underlying
+// reason may be a burst-RPS throttle (sub-second wait) or a monthly quota
+// exhaustion (wait until the next calendar month). The typical retry
+// strategy is exponential backoff capped at RetryAfterMs.
+type RateLimitError struct {
+	EntDBError
+	// RetryAfterMs is the server-suggested wait in milliseconds before
+	// retrying. Zero when the server did not provide one.
+	RetryAfterMs int64
+	// Limit is the quota limit that was hit (monthly writes, or RPS).
+	// Zero when the server did not surface a numeric limit.
+	Limit int64
+	// Used is the consumed amount in the current period. Zero when the
+	// server did not surface a numeric usage count.
+	Used int64
+}
+
+// Error implements the error interface.
+func (e *RateLimitError) Error() string {
+	msg := e.Message
+	if msg == "" {
+		msg = "rate limit exceeded"
+	}
+	if e.RetryAfterMs > 0 {
+		return fmt.Sprintf("entdb %s: %s (retry after %dms)", e.Code, msg, e.RetryAfterMs)
+	}
+	return fmt.Sprintf("entdb %s: %s", e.Code, msg)
+}
+
+// NewRateLimitError constructs a RateLimitError with the given message
+// and server-suggested retry window (in milliseconds).
+func NewRateLimitError(message string, retryAfterMs int64) *RateLimitError {
+	return &RateLimitError{
+		EntDBError: EntDBError{
+			Message: message,
+			Code:    "RATE_LIMITED",
+			Details: map[string]any{"retry_after_ms": retryAfterMs},
+		},
+		RetryAfterMs: retryAfterMs,
+	}
+}
+
+// parseRateLimitFromStatus converts a gRPC status + trailing metadata
+// pair into a RateLimitError when the status code is RESOURCE_EXHAUSTED.
+// Returns nil for other status codes so callers can chain-check their
+// error mapping. The "retry-after" metadata key is parsed as a decimal
+// integer number of seconds (matching the server's QuotaInterceptor)
+// and exposed on the error as milliseconds so the Go SDK's retry
+// backoff math can stay in a single unit.
+func parseRateLimitFromStatus(err error, trailer metadata.MD) *RateLimitError {
+	if err == nil {
+		return nil
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.ResourceExhausted {
+		return nil
+	}
+	var retryAfterMs int64
+	if values := trailer.Get("retry-after"); len(values) > 0 {
+		if secs, parseErr := strconv.ParseInt(values[0], 10, 64); parseErr == nil && secs >= 0 {
+			retryAfterMs = secs * 1000
+		}
+	}
+	return NewRateLimitError(st.Message(), retryAfterMs)
 }
 
 // SchemaError indicates a schema-related problem.
