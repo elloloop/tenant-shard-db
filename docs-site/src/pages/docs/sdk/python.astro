@@ -198,6 +198,122 @@ task = await scope.get(Task, node_id,
 
 await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)</code></pre>
 
+  <h2>Storage Modes</h2>
+  <p>
+    Every node has an immutable <code>storage_mode</code> chosen at create
+    time. The mode determines which physical SQLite file the node lives in
+    and is <strong>immutable</strong> &mdash; nodes cannot be moved between
+    files after creation.
+  </p>
+  <table>
+    <tr><th>Mode</th><th>Location</th><th>Use case</th></tr>
+    <tr><td><code>StorageMode.TENANT</code> (default)</td><td><code>tenant.db</code></td><td>Shared, ACL-controlled team data</td></tr>
+    <tr><td><code>StorageMode.USER_MAILBOX</code></td><td><code>&#123;tenant&#125;/user_&#123;user_id&#125;.db</code></td><td>Per-user private data (notifications, drafts)</td></tr>
+    <tr><td><code>StorageMode.PUBLIC</code></td><td><code>public.db</code></td><td>Cross-tenant content (templates, reference data)</td></tr>
+  </table>
+  <pre is:raw><code>plan = db.tenant("acme").actor(Actor.user("alice")).plan()
+
+# Default — tenant.db
+plan.create(schema_pb2.Task(title="Team task"))
+
+# Per-user mailbox — lives in user_bob.db
+plan.create_in_mailbox(
+    schema_pb2.Notification(subject="Personal reminder"),
+    user_id="bob",
+)
+
+# Public — readable across tenants (requires PLATFORM_ADMIN)
+plan.create_in_public(
+    schema_pb2.Template(name="Weekly Retrospective"),
+)
+
+await plan.commit()</code></pre>
+  <p>
+    <strong>Edge invariant:</strong> edges may only point from more-private to
+    equal-or-less-private storage. Forbidden: <code>tenant &rarr; mailbox</code>,
+    <code>public &rarr; tenant</code>. The server rejects violating edges at
+    write time.
+  </p>
+
+  <h2>Unique Keys</h2>
+  <p>
+    Declare a node type with one or more <code>keys</code> and the server
+    enforces uniqueness on them. The same declaration doubles as a fast
+    secondary lookup index.
+  </p>
+  <pre is:raw><code>// schema.proto
+message User {
+  option (entdb.node) = {
+    type_id: 101
+    keys: [
+      { name: "email", required: true }
+      { name: "external_id", required: false }
+    ]
+  };
+  string email = 1;
+  string name = 2;
+  string external_id = 3;
+}</code></pre>
+  <pre is:raw><code>from entdb_sdk import UniqueConstraintError
+
+plan = db.tenant("acme").actor(Actor.user("alice")).plan()
+
+try:
+    plan.create(
+        schema_pb2.User(
+            email="alice@example.com",
+            name="Alice",
+            external_id="ext-42",
+        ),
+        keys={
+            "email": "alice@example.com",
+            "external_id": "ext-42",
+        },
+    )
+    await plan.commit()
+except UniqueConstraintError as e:
+    print(f"duplicate {e.key_name}={e.key_value!r} on type {e.type_id}")</code></pre>
+  <p>Look up a node by key &mdash; no <code>node_id</code> required:</p>
+  <pre is:raw><code>scope = db.tenant("acme").actor(Actor.user("alice"))
+user = await scope.get_by_key(User, "email", "alice@example.com")
+if user is None:
+    print("not found")</code></pre>
+  <p>
+    <code>get_by_key</code> runs the same ACL check as <code>get</code>.
+    Actors without read permission see <code>AccessDeniedError</code>, not
+    <code>NotFoundError</code>.
+  </p>
+  <p>
+    <strong>Two-phase enforcement.</strong> The gRPC servicer pre-validates
+    at request ingress for fast feedback. The Applier re-validates inside the
+    same transaction that writes the node row, so races between concurrent
+    creates are impossible.
+  </p>
+
+  <h2>Quotas and Rate Limits</h2>
+  <p>
+    EntDB enforces three independent rate-limit layers; each raises
+    <code>RateLimitError</code> on breach with a <code>retry_after_ms</code>
+    field populated from the server's <code>Retry-After</code> trailer.
+  </p>
+  <table>
+    <tr><th>Layer</th><th>What</th><th>When</th></tr>
+    <tr><td>Monthly write quota</td><td>Billing enforcement, durable counters</td><td>Plan-tier overuse</td></tr>
+    <tr><td>Per-tenant token bucket</td><td>Noisy-neighbor / QoS protection</td><td>One tenant hogging the box</td></tr>
+    <tr><td>Per-user token bucket</td><td>Credential abuse protection</td><td>Compromised key, runaway script</td></tr>
+  </table>
+  <pre is:raw><code>from entdb_sdk import RateLimitError
+
+try:
+    await plan.commit()
+except RateLimitError as e:
+    print(f"rate limited, retry in {e.retry_after_ms} ms "
+          f"(used {e.used}/{e.limit})")
+    await asyncio.sleep(e.retry_after_ms / 1000)</code></pre>
+  <p>Fetch quota state for a dashboard:</p>
+  <pre is:raw><code>quota = await db.get_tenant_quota("acme")
+print(f"{quota.writes_used}/{quota.max_writes_per_month} writes this period")</code></pre>
+
   <h2>GDPR Operations</h2>
   <p>
     These operations are scoped by <code>user_id</code> (the global user
@@ -229,6 +345,8 @@ await db.freeze_user("alice", reason="legal hold")</code></pre>
     UnknownFieldError,
     AccessDeniedError,
     NotFoundError,
+    UniqueConstraintError,
+    RateLimitError,
 )
 
 try:
@@ -238,6 +356,10 @@ except UnknownFieldError as e:
     print(e)  # "Unknown field 'foo' on Task. Did you mean: title?"
 except AccessDeniedError as e:
     print(e.actor, e.required_permission)
+except UniqueConstraintError as e:
+    print(f"duplicate {e.key_name}={e.key_value!r}")
+except RateLimitError as e:
+    print(f"retry in {e.retry_after_ms} ms")
 except ConnectionError as e:
     print(e.address)</code></pre>
 </DocsLayout>

@@ -253,6 +253,8 @@ if err != nil {
     var valErr *entdb.ValidationError
     var accessErr *entdb.AccessDeniedError
     var txErr *entdb.TransactionError
+    var dupErr *entdb.UniqueConstraintError
+    var rlErr *entdb.RateLimitError
 
     switch {
     case errors.As(err, &valErr):
@@ -261,6 +263,11 @@ if err != nil {
         log.Printf("access denied for %s on %s", accessErr.Actor, accessErr.ResourceID)
     case errors.As(err, &txErr):
         log.Printf("transaction conflict (key=%s)", txErr.IdempotencyKey)
+    case errors.As(err, &dupErr):
+        log.Printf("duplicate %s = %q on type %d",
+            dupErr.KeyName, dupErr.KeyValue, dupErr.TypeID)
+    case errors.As(err, &rlErr):
+        log.Printf("rate limited, retry after %d ms", rlErr.RetryAfterMs)
     default:
         log.Printf("unexpected: %v", err)
     }
@@ -277,6 +284,141 @@ Error types:
 | `AccessDeniedError` | ACL denied the operation |
 | `TransactionError` | Idempotency conflict or atomic commit failure |
 | `SchemaError` | Schema fingerprint mismatch (stale client) |
+| `UniqueConstraintError` | A node with this `(type_id, key_name, key_value)` already exists. Carries `TenantID`, `TypeID`, `KeyName`, `KeyValue`. |
+| `RateLimitError` | Quota or rate-limit exceeded. Carries `RetryAfterMs`, `Limit`, `Used`. Same shape across all three rate-limit layers (monthly quota / per-tenant token bucket / per-user token bucket). |
+
+## Storage Modes
+
+Every node has an immutable `StorageMode` chosen at creation time. The mode determines which physical SQLite file the node lives in:
+
+| Mode | Location | Use case |
+|---|---|---|
+| `StorageModeTenant` (default) | `tenant.db` | Shared, ACL-controlled team data |
+| `StorageModeUserMailbox` | `{tenant}/user_{user_id}.db` | Inherently private per-user data (notifications, drafts, personal notes) |
+| `StorageModePublic` | `public.db` | Cross-tenant shared content (templates, reference data) |
+
+**Storage mode is immutable.** Once set, a node cannot be moved between files. Choose carefully at create time.
+
+```go
+plan := alice.Plan()
+
+// Default — goes to tenant.db
+plan.Create(101, map[string]any{"title": "Team task", "status": "todo"})
+
+// Per-user mailbox — never shared
+plan.CreateInMailbox(102, "bob", map[string]any{
+    "subject": "Personal reminder",
+    "body":    "Don't forget the demo on Friday",
+})
+
+// Public — readable by any tenant (requires PLATFORM_ADMIN)
+plan.CreateInPublic(201, map[string]any{
+    "name": "Weekly Retrospective Template",
+    "schema": "...",
+})
+
+result, err := plan.Commit(ctx)
+```
+
+**Edge invariant:** edges may only point from more-private to equal-or-less-private storage. Allowed: `mailbox → tenant`, `tenant → public`. Forbidden: `tenant → mailbox`, `public → tenant`. The server rejects forbidden edges at write time.
+
+## Unique Keys
+
+Declare a node type with one or more `keys` and the server enforces uniqueness on them. The same field doubles as a fast secondary lookup index. **The client computes the unique value, the server enforces it.**
+
+```proto
+message User {
+  option (entdb.node) = {
+    type_id: 101
+    keys: [
+      { name: "email", required: true }
+      { name: "external_id", required: false }
+    ]
+  };
+  string email = 1;
+  string name = 2;
+  string external_id = 3;
+}
+```
+
+**Create with keys:**
+
+```go
+plan := alice.Plan()
+plan.CreateWithKeys(101,
+    map[string]any{
+        "email":       "alice@example.com",
+        "name":        "Alice",
+        "external_id": "ext-42",
+    },
+    map[string]string{
+        "email":       "alice@example.com",
+        "external_id": "ext-42",
+    },
+)
+
+result, err := plan.Commit(ctx)
+if err != nil {
+    var dup *entdb.UniqueConstraintError
+    if errors.As(err, &dup) {
+        log.Printf("user already exists: %s = %q on type %d",
+            dup.KeyName, dup.KeyValue, dup.TypeID)
+    }
+}
+```
+
+**Look up by key (no node_id needed):**
+
+```go
+node, err := alice.GetByKey(ctx, 101, "email", "alice@example.com")
+if err != nil {
+    log.Fatal(err)
+}
+if node == nil {
+    log.Println("not found")
+} else {
+    log.Printf("found user node %s", node.NodeID)
+}
+```
+
+`GetByKey` runs the same ACL check as `Get` — actors without read permission see `PERMISSION_DENIED`, not `NOT_FOUND`.
+
+**Two-phase enforcement.** Pre-validate at the gRPC ingress catches 99% of duplicates without a WAL round-trip. Authoritative validate inside the Applier's transaction handles the race window. Both fire `ALREADY_EXISTS` on the wire, which the SDK converts to `*UniqueConstraintError`.
+
+## Quotas and Rate Limits
+
+Three layers — each fires `RESOURCE_EXHAUSTED` with a `Retry-After` trailer. The SDK surfaces all three as `*RateLimitError`.
+
+| Layer | What | When |
+|---|---|---|
+| **Monthly write quota** | Billing enforcement, durable counters in global store | Plan-tier overuse |
+| **Per-tenant token bucket** | Noisy-neighbor / QoS protection | One tenant trying to hog the box |
+| **Per-user token bucket** | Credential abuse protection | Compromised key, runaway script |
+
+```go
+result, err := plan.Commit(ctx)
+if err != nil {
+    var rl *entdb.RateLimitError
+    if errors.As(err, &rl) {
+        log.Printf("rate limited: retry after %d ms", rl.RetryAfterMs)
+        time.Sleep(time.Duration(rl.RetryAfterMs) * time.Millisecond)
+        // optionally retry
+    }
+}
+```
+
+**Get current quota state for a dashboard:**
+
+```go
+quota, err := client.GetTenantQuota(ctx, "acme")
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("used %d/%d writes this period (resets at %d)",
+    quota.WritesUsed, quota.MaxWritesPerMonth, quota.PeriodEndMs)
+```
+
+The quota response carries every layer's limits and current state in one struct (`MaxWritesPerMonth`, `WritesUsed`, `MaxRPSSustained`, `MaxRPSBurst`, `MaxRPSPerUserSustained`, `MaxRPSPerUserBurst`, `HardEnforce`).
 
 ## Flat API
 
@@ -401,16 +543,23 @@ func main() {
 
 The Go SDK mirrors the Python SDK's API surface so teams with both can stay consistent:
 
-| Python                            | Go                                    |
-|-----------------------------------|---------------------------------------|
-| `db.tenant("t").actor("u:bob")`   | `client.Tenant("t").Actor(UserActor("bob"))` |
-| `Actor.user("bob")`               | `UserActor("bob")`                    |
-| `Permission.WRITE`                | `PermissionWrite`                     |
-| `ACLEntry(grantee=..., perm=...)` | `ACLEntry{Grantee: ..., Permission: ...}` |
-| `alice.get(Task, "t1")`           | `alice.Get(ctx, 101, "t1")`           |
-| `alice.query(Task, filter={...})` | `alice.Query(ctx, 101, map[string]any{...})` |
-| `alice.edges_out("t1", OnEdge)`   | `alice.EdgesFrom(ctx, "t1", 201)`     |
-| `alice.plan().create(task)`       | `plan := alice.Plan(); plan.Create(101, data)` |
+| Python                                  | Go                                                |
+|-----------------------------------------|---------------------------------------------------|
+| `db.tenant("t").actor("u:bob")`         | `client.Tenant("t").Actor(UserActor("bob"))`      |
+| `Actor.user("bob")`                     | `UserActor("bob")`                                |
+| `Permission.WRITE`                      | `PermissionWrite`                                 |
+| `ACLEntry(grantee=..., perm=...)`       | `ACLEntry{Grantee: ..., Permission: ...}`         |
+| `alice.get(Task, "t1")`                 | `alice.Get(ctx, 101, "t1")`                       |
+| `alice.query(Task, filter={...})`       | `alice.Query(ctx, 101, map[string]any{...})`      |
+| `alice.edges_out("t1", OnEdge)`         | `alice.EdgesFrom(ctx, "t1", 201)`                 |
+| `alice.plan().create(task)`             | `plan := alice.Plan(); plan.Create(101, data)`    |
+| `plan.create_in_mailbox(node, "bob")`   | `plan.CreateInMailbox(101, "bob", data)`          |
+| `plan.create_in_public(node)`           | `plan.CreateInPublic(201, data)`                  |
+| `plan.create(node, keys={"email": ...})`| `plan.CreateWithKeys(101, data, keys)`            |
+| `alice.get_by_key(User, "email", e)`    | `alice.GetByKey(ctx, 101, "email", e)`            |
+| `client.get_tenant_quota("t")`          | `client.GetTenantQuota(ctx, "t")`                 |
+| `RateLimitError`                        | `*RateLimitError`                                 |
+| `UniqueConstraintError`                 | `*UniqueConstraintError`                          |
 
 ## Links
 
