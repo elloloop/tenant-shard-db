@@ -414,33 +414,86 @@ class Server:
             await self.stop()
             raise
 
+    # How long to wait for background tasks to drain after the
+    # cooperative .stop() flag is set, before falling back to cancel.
+    # 30s is enough for an in-flight Kafka poll (max ~1s) plus a
+    # large batch apply + offset commit, with headroom.
+    _GRACEFUL_STOP_TIMEOUT_S: float = 30.0
+
     async def stop(self) -> None:
         """Stop the server gracefully.
 
-        Cleans up all components that were initialised during start(),
-        even if start() failed partway through (partial startup).
+        Shutdown sequence (order matters for durability):
+
+        1. **Signal** every component with a cooperative ``stop()``
+           flag so their background loops exit at the next checkpoint.
+           The Applier in particular must finish its current batch
+           and commit the WAL offset before being torn down — if we
+           ``task.cancel()`` it mid-batch, events land in SQLite but
+           the offset doesn't commit to Kafka, and replaying from the
+           old offset on restart causes duplicate apply.
+        2. **Drain** the background tasks with a bounded timeout.
+           The Applier, archiver, and snapshotter all observe the
+           stop flag, finish their current work, and return cleanly
+           from their own coroutines. We ``gather()`` them to wait.
+        3. **Cancel** only the tasks that are still running after the
+           drain timeout. These are pathological — stuck in a poll
+           or a lock — and cannot be recovered gracefully. We cancel
+           them as the last resort, accepting the data-loss risk
+           rather than hanging the shutdown forever.
+        4. **Close** WAL / global store / canonical store resources.
+
+        Partial-startup paths (tests that build Server via
+        ``__new__`` or that fail in the middle of ``start()``) are
+        handled by ``getattr`` + None-checks throughout.
         """
         logger.info("Stopping EntDB server")
 
-        # Stop background tasks
-        for task in self._tasks:
-            task.cancel()
-
-        if self._tasks:
-            await asyncio.gather(*self._tasks, return_exceptions=True)
-
-        # Stop components
+        # 1. Signal cooperative stop on every component that has one.
+        #    This must happen BEFORE we touch ``self._tasks`` so the
+        #    loops observe the flag on their next iteration.
         if self.applier:
-            await self.applier.stop()
-
+            try:
+                await self.applier.stop()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("applier.stop() failed", exc_info=True)
         if self.archiver:
-            await self.archiver.stop()
-
+            try:
+                await self.archiver.stop()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("archiver.stop() failed", exc_info=True)
         if self.snapshotter:
-            await self.snapshotter.stop()
-
+            try:
+                await self.snapshotter.stop()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("snapshotter.stop() failed", exc_info=True)
         if self.grpc_server:
-            await self.grpc_server.stop()
+            # Stop accepting new RPCs now so in-flight requests drain.
+            try:
+                await self.grpc_server.stop()
+            except Exception:  # pragma: no cover - defensive
+                logger.warning("grpc_server.stop() failed", exc_info=True)
+
+        # 2. Drain background tasks with a bounded timeout. Tasks
+        #    like the Applier's main loop poll for WAL batches and
+        #    exit when their ``_running`` flag flips False.
+        if self._tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*self._tasks, return_exceptions=True),
+                    timeout=self._GRACEFUL_STOP_TIMEOUT_S,
+                )
+            except asyncio.TimeoutError:
+                # 3. Fallback: cancel anything that didn't drain in time.
+                stuck = [t for t in self._tasks if not t.done()]
+                logger.warning(
+                    "graceful shutdown timed out after %ss; cancelling %d stuck tasks",
+                    self._GRACEFUL_STOP_TIMEOUT_S,
+                    len(stuck),
+                )
+                for task in stuck:
+                    task.cancel()
+                await asyncio.gather(*self._tasks, return_exceptions=True)
 
         if hasattr(self, "_archiver_wal") and self._archiver_wal:
             await self._archiver_wal.close()
