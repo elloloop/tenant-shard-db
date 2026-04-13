@@ -14,6 +14,9 @@ One line per decision. Newest within each topic first. Rebuilt on each freeze.
 ### quotas
 - **2026-04-13** — [Three-layer rate limit model, implement Phase 1 (monthly quota) first](quotas.md#2026-04-13-three-layer-rate-limit-model-implement-phase-1-monthly-quota-first) — frozen
 
+### unique_keys
+- **2026-04-13** — [Client-asserted unique keys + secondary lookup keys via one `node_keys` table](unique_keys.md#2026-04-13-client-asserted-unique-keys--secondary-lookup-keys-via-one-node_keys-table) — frozen
+
 ---
 
 _Powered by the [`freeze-decision` skill](../../.claude/skills/freeze-decision/SKILL.md)._

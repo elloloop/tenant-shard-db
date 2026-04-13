@@ -125,6 +125,41 @@ def _compute_entry_hash(
     return hashlib.sha256(content.encode()).hexdigest()
 
 
+# Allowed characters in identifiers that flow into filesystem paths.
+# Matches ``[A-Za-z0-9_-]+``. Anything else (``.``, ``/``, ``!``, null
+# bytes, unicode combiners, etc.) is rejected outright rather than
+# silently stripped, so ``tenanta`` and ``tenant!a`` cannot collide.
+_FS_ID_ALLOWED = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+_FS_ID_MAX_LEN = 128
+
+
+def _validate_filesystem_id(value: str, *, field: str) -> None:
+    """Strict identifier validator for tenant / user ids that become paths.
+
+    Raises ``ValueError`` on any invalid input. The cost of a false
+    reject (an exotic id) is much smaller than the cost of a false
+    accept (two ids collapsing to the same file and leaking data).
+
+    Rules:
+        - must be a non-empty string
+        - length <= 128
+        - every character must be in ``[A-Za-z0-9_-]``
+    """
+    if not isinstance(value, str):
+        raise ValueError(f"Invalid {field}: must be a string, got {type(value).__name__}")
+    if not value:
+        raise ValueError(f"Invalid {field}: empty value")
+    if len(value) > _FS_ID_MAX_LEN:
+        raise ValueError(f"Invalid {field}: length exceeds {_FS_ID_MAX_LEN}")
+    bad = [c for c in value if c not in _FS_ID_ALLOWED]
+    if bad:
+        sample = "".join(sorted(set(bad)))[:8]
+        raise ValueError(
+            f"Invalid {field}: contains forbidden characters {sample!r}; "
+            "only [A-Za-z0-9_-] are allowed to prevent filesystem path collisions"
+        )
+
+
 class TenantNotFoundError(Exception):
     """Tenant database does not exist."""
 
@@ -373,6 +408,10 @@ class CanonicalStore:
         # Per-tenant locks to serialise same-tenant operations across threads.
         self._tenant_locks: dict[str, threading.Lock] = {}
         self._tenant_locks_guard = threading.Lock()
+        # Per-tenant async semaphores for fair-share protection in
+        # _run_sync. Keyed by (tenant_id, event_loop_id) to survive
+        # tests that spin up multiple loops against one store.
+        self._tenant_semaphores: dict[tuple[str, int], asyncio.Semaphore] = {}
         # Thread pool for SQLite I/O.  Each tenant has its own DB file so
         # concurrent writes to *different* tenants are safe; same-tenant
         # writes are serialised by the per-tenant lock above.
@@ -472,7 +511,25 @@ class CanonicalStore:
         return "read"
 
     async def _run_sync(self, fn: Callable, *args: Any) -> Any:
-        """Run a synchronous function in a dedicated thread to avoid blocking the event loop."""
+        """Run a synchronous function in the shared thread pool.
+
+        Fair-share protection
+        ---------------------
+        We serialize at the asyncio level per tenant BEFORE dispatching
+        to the thread pool. Without this, a single high-volume tenant
+        can claim all 32 worker threads simultaneously — each one
+        blocks on the per-tenant ``threading.Lock`` inside
+        ``_get_connection`` — starving every other tenant's requests.
+        A per-tenant ``asyncio.Semaphore(value=1)`` caps in-flight
+        async work to one task per tenant. Queued tasks wait at the
+        semaphore (not in the executor queue) so other tenants still
+        get worker threads.
+
+        The semaphore is only taken when we can identify a tenant id
+        from the first positional arg as a heuristic. Operations that
+        don't pass a tenant id (or run outside a running event loop)
+        fall through to the legacy direct-dispatch path.
+        """
         if _metrics_enabled():
             cache = CanonicalStore._op_type_cache
             op_type = cache.get(fn)
@@ -485,13 +542,79 @@ class CanonicalStore:
         except RuntimeError:
             # No running loop (e.g., pytest-xdist worker) — run directly
             return fn(*args)
-        return await loop.run_in_executor(self._executor, fn, *args)
+
+        tenant_id = self._resolve_tenant_id_for_fairness(fn, args)
+        if tenant_id is None:
+            return await loop.run_in_executor(self._executor, fn, *args)
+
+        sem = self._get_tenant_semaphore(tenant_id)
+        async with sem:
+            return await loop.run_in_executor(self._executor, fn, *args)
+
+    def _resolve_tenant_id_for_fairness(self, fn: Callable, args: tuple[Any, ...]) -> str | None:
+        """Best-effort tenant_id extraction for per-tenant fair-share.
+
+        Used only by the noisy-neighbor semaphore — returning ``None``
+        is always safe (just means no per-tenant cap), so the
+        heuristic can err on the side of skipping.
+
+        Most ``_sync_*`` helpers on this class take ``tenant_id`` as
+        their first positional argument. A few take a ``conn`` first,
+        but those typically run inside an already-held batch
+        transaction and do not re-enter ``_run_sync``.
+        """
+        if not args:
+            return None
+        first = args[0]
+        if not isinstance(first, str):
+            return None
+        # Cheap plausibility filter: our filesystem-id validator's
+        # alphabet is a strict subset of what a tenant id can be.
+        # Anything containing a path separator, sqlite3.Connection
+        # repr, or other unusual chars is clearly not an id.
+        if not first or len(first) > _FS_ID_MAX_LEN:
+            return None
+        for c in first:
+            if c not in _FS_ID_ALLOWED:
+                return None
+        return first
+
+    def _get_tenant_semaphore(self, tenant_id: str) -> asyncio.Semaphore:
+        """Return (creating if needed) the async semaphore for a tenant.
+
+        Value is 1: exactly one in-flight ``_run_sync`` call per
+        tenant at a time. Same-tenant queue depth is bounded only by
+        the caller's backpressure; once the semaphore releases, the
+        next waiter proceeds.
+
+        Bound to the current event loop. In the unlikely case that
+        ``_run_sync`` is called from multiple loops across the
+        lifetime of a single store (tests only), we keep one sem per
+        (tenant, loop) pair.
+        """
+        loop = asyncio.get_running_loop()
+        key = (tenant_id, id(loop))
+        sem = self._tenant_semaphores.get(key)
+        if sem is None:
+            with self._tenant_locks_guard:
+                sem = self._tenant_semaphores.get(key)
+                if sem is None:
+                    sem = asyncio.Semaphore(1)
+                    self._tenant_semaphores[key] = sem
+        return sem
 
     def _get_db_path(self, tenant_id: str) -> Path:
-        """Get database file path for a tenant."""
-        # Sanitize tenant_id to prevent path traversal
-        safe_id = "".join(c for c in tenant_id if c.isalnum() or c in "-_")
-        return self.data_dir / f"tenant_{safe_id}.db"
+        """Get database file path for a tenant.
+
+        Strict identifier validation: rejects any ``tenant_id`` that
+        contains characters outside ``[A-Za-z0-9_-]`` or is empty.
+        Silent normalization is forbidden because two different inputs
+        could collapse to the same safe id and therefore the same
+        database file — a cross-tenant data leak. See the
+        2026-04-13 security decision for the full rationale.
+        """
+        _validate_filesystem_id(tenant_id, field="tenant_id")
+        return self.data_dir / f"tenant_{tenant_id}.db"
 
     def _get_tenant_lock(self, tenant_id: str) -> threading.Lock:
         """Return (creating if needed) a per-tenant threading lock."""
@@ -598,17 +721,20 @@ class CanonicalStore:
     def _get_mailbox_db_path(self, tenant_id: str, user_id: str) -> Path:
         """Return the per-user mailbox SQLite path.
 
-        The path is ``{data_dir}/{tenant_id}/user_{user_id}.db`` with
-        both ``tenant_id`` and ``user_id`` sanitized to prevent path
-        traversal.
+        The path is ``{data_dir}/{tenant_id}/user_{user_id}.db``.
+        Both ``tenant_id`` and ``user_id`` are strictly validated —
+        any character outside ``[A-Za-z0-9_-]`` causes ``ValueError``.
+        Silent normalization is forbidden because two different inputs
+        could collapse to the same filesystem path and therefore the
+        same mailbox file. A leading ``user:`` principal prefix is
+        stripped for convenience and then the stripped id is validated.
         """
-        safe_tenant = "".join(c for c in tenant_id if c.isalnum() or c in "-_")
-        # Allow a leading ``user:`` principal form for convenience.
+        _validate_filesystem_id(tenant_id, field="tenant_id")
         raw_user = user_id
         if raw_user.startswith("user:"):
             raw_user = raw_user[5:]
-        safe_user = "".join(c for c in raw_user if c.isalnum() or c in "-_")
-        return self.data_dir / safe_tenant / f"user_{safe_user}.db"
+        _validate_filesystem_id(raw_user, field="user_id")
+        return self.data_dir / tenant_id / f"user_{raw_user}.db"
 
     def _get_public_db_path(self) -> Path:
         """Return the singleton public SQLite path."""

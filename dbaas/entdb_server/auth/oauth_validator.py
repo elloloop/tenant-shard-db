@@ -25,6 +25,7 @@ How to change safely:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -64,12 +65,23 @@ class OAuthValidator:
         audience: str,
         *,
         jwks_cache_ttl: int = 3600,
+        unknown_kid_negative_ttl: float = 60.0,
     ) -> None:
         self.issuer_url = issuer_url.rstrip("/")
         self.audience = audience
         self._jwks_cache_ttl = jwks_cache_ttl
+        self._unknown_kid_negative_ttl = unknown_kid_negative_ttl
         self._jwks_cache: dict[str, dict[str, Any]] = {}
         self._jwks_fetched_at: float = 0.0
+        # Dedup lock so concurrent cache misses don't trigger N
+        # simultaneous JWKS refetches — exactly one fetch in flight
+        # at a time, everyone else waits on its result.
+        self._fetch_lock: asyncio.Lock | None = None
+        # Negative cache for unknown kids: attacker-supplied random
+        # kids blow up to a cache miss + full JWKS fetch on every
+        # request without this. Short TTL so legitimate key rotations
+        # still work.
+        self._unknown_kid_cache: dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,10 +125,18 @@ class OAuthValidator:
         # 2. Resolve signing key
         key_data = self._get_cached_key(kid)
         if key_data is None:
-            # Cache miss — force refetch once
-            await self._fetch_jwks()
+            # Negative cache: reject known-unknown kids without
+            # triggering another JWKS fetch. Mitigates cache-miss
+            # amplification attacks.
+            if self._is_unknown_kid(kid):
+                raise AuthenticationError(f"No JWKS key found for kid '{kid}'")
+            # Cache miss — force a single deduped refetch. Concurrent
+            # callers for the same kid wait on one in-flight fetch
+            # instead of each firing their own network call.
+            await self._fetch_jwks_deduped()
             key_data = self._get_cached_key(kid)
             if key_data is None:
+                self._remember_unknown_kid(kid)
                 raise AuthenticationError(f"No JWKS key found for kid '{kid}'")
 
         public_key = self._construct_public_key(key_data, alg)
@@ -151,11 +171,59 @@ class OAuthValidator:
     # JWKS management
     # ------------------------------------------------------------------
 
+    def _is_unknown_kid(self, kid: str) -> bool:
+        """Return ``True`` if ``kid`` is in the negative cache and still fresh."""
+        expires_at = self._unknown_kid_cache.get(kid)
+        if expires_at is None:
+            return False
+        if time.time() >= expires_at:
+            # Expired: evict and miss so we refetch.
+            self._unknown_kid_cache.pop(kid, None)
+            return False
+        return True
+
+    def _remember_unknown_kid(self, kid: str) -> None:
+        """Remember that ``kid`` was not found in JWKS for a short TTL."""
+        if self._unknown_kid_negative_ttl <= 0:
+            return
+        self._unknown_kid_cache[kid] = time.time() + self._unknown_kid_negative_ttl
+        # Keep the negative cache bounded. 1024 entries cap is more
+        # than enough; any attacker hitting this limit is already
+        # failing the first-layer rate limit.
+        if len(self._unknown_kid_cache) > 1024:
+            # Drop the oldest ~25% by expiry time.
+            ordered = sorted(self._unknown_kid_cache.items(), key=lambda kv: kv[1])
+            keep_from = len(ordered) // 4
+            self._unknown_kid_cache = dict(ordered[keep_from:])
+
+    async def _fetch_jwks_deduped(self) -> dict[str, dict[str, Any]]:
+        """Run one JWKS fetch at a time across concurrent callers.
+
+        Without this, 1000 concurrent requests with fresh random
+        ``kid``s each trigger 1000 blocking HTTP round-trips, which is
+        both a DoS vector against the issuer and a thread-pool burner
+        on the EntDB server. The lock collapses them to a single
+        in-flight fetch whose result is shared.
+        """
+        if self._fetch_lock is None:
+            # Lazily created so the validator works in environments
+            # where no event loop exists at construction time (tests).
+            self._fetch_lock = asyncio.Lock()
+        async with self._fetch_lock:
+            # A previous waiter may already have refreshed the cache.
+            # Check before re-fetching.
+            if time.time() - self._jwks_fetched_at < 1.0:
+                return self._jwks_cache
+            return await self._fetch_jwks()
+
     async def _fetch_jwks(self) -> dict[str, dict[str, Any]]:
         """Fetch JWKS from ``{issuer_url}/.well-known/jwks.json`` with caching.
 
         Uses ``urllib`` from the standard library so no extra HTTP dependency
-        is required at import time.
+        is required at import time. The blocking ``urlopen`` call is
+        dispatched to the default executor so it does not starve the
+        asyncio event loop — without that, a burst of unknown-kid
+        requests is a one-shot DoS against the entire server.
 
         Returns:
             Mapping of ``kid`` -> JWK dict.
@@ -164,10 +232,18 @@ class OAuthValidator:
             AuthenticationError: If fetching or parsing fails.
         """
         uri = f"{self.issuer_url}/.well-known/jwks.json"
-        try:
+
+        def _do_fetch() -> dict:
             req = urllib.request.Request(uri, headers={"Accept": "application/json"})
             with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
-                data = json.loads(resp.read())
+                return json.loads(resp.read())
+
+        try:
+            loop = asyncio.get_running_loop()
+            data = await loop.run_in_executor(None, _do_fetch)
+        except RuntimeError:
+            # No running loop (sync test path) — call directly.
+            data = _do_fetch()
         except Exception as exc:
             raise AuthenticationError(f"Failed to fetch JWKS from {uri}: {exc}")
 
