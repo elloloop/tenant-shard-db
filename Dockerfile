@@ -83,7 +83,9 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pydantic>=2.5.0 \
     pydantic-settings>=2.0.0 \
     pyyaml>=6.0.0 \
-    aiofiles>=23.2.0
+    aiofiles>=23.2.0 \
+    PyJWT>=2.8.0 \
+    cryptography>=41.0.0
 
 # =============================================================================
 # Server stage - production image
