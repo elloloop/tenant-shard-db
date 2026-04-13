@@ -29,7 +29,6 @@ from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct
 from grpc import aio as grpc_aio
 
-from ..auth.auth_interceptor import get_authoritative_actor
 from ..metrics import record_grpc_request
 from ..schema.field_id_translation import (
     id_to_name_keys,
@@ -38,7 +37,6 @@ from ..schema.field_id_translation import (
     translate_payload_json_to_names,
 )
 from ..sharding import ShardingConfig
-from .admin_handlers import handle_delegate_access, handle_transfer_user_content
 from .generated import (
     AclEntry,
     ArchiveTenantRequest,
@@ -190,6 +188,7 @@ class EntDBServicer(EntDBServiceServicer):
         topic: str = "entdb-wal",
         sharding: ShardingConfig | None = None,
         global_store: Any | None = None,
+        capability_registry: Any | None = None,
     ) -> None:
         """Initialize the gRPC servicer.
 
@@ -200,6 +199,10 @@ class EntDBServicer(EntDBServiceServicer):
             topic: WAL topic name
             sharding: Sharding configuration for multi-node mode
             global_store: GlobalStore instance for user registry operations
+            capability_registry: Optional pre-built
+                ``CapabilityRegistry``. When ``None``, a default
+                (core-caps-only) registry is built from
+                ``schema_registry`` on first use.
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -207,6 +210,86 @@ class EntDBServicer(EntDBServiceServicer):
         self.topic = topic
         self._sharding = sharding
         self.global_store = global_store
+        self._capability_registry = capability_registry
+
+    @property
+    def capability_registry(self) -> Any:
+        """Lazy accessor for the typed-capability registry.
+
+        Built from ``self.schema_registry`` on first access so that
+        servers which construct ``EntDBServicer`` without explicitly
+        wiring a registry still get the default core-capability
+        behaviour. Tests and the production entrypoint can inject a
+        pre-built registry via the constructor.
+        """
+        if self._capability_registry is None:
+            from ..auth.capability_registry import build_registry_from_schema
+
+            self._capability_registry = build_registry_from_schema(self.schema_registry)
+        return self._capability_registry
+
+    async def _check_capability(
+        self,
+        tenant_id: str,
+        actor: Any,
+        node_id: str,
+        type_id: int,
+        op_name: str,
+        context: Any | None = None,
+        *,
+        field: str | None = None,
+        field_value: str | None = None,
+        child_type: str | None = None,
+    ) -> None:
+        """Raise PermissionError if ``actor`` lacks the required capability.
+
+        Looks up the required capability via the registry's
+        ``required_for_op``, fetches the actor's ACL grants from the
+        canonical store, and runs each grant through
+        ``CapabilityRegistry.check_grant`` honouring the implication
+        hierarchy.
+
+        System actors and tenant owners short-circuit the check.
+        """
+        if self._is_admin_or_system(actor if isinstance(actor, str) else str(actor)):
+            return
+        registry = self.capability_registry
+        required_core, required_ext = registry.required_for_op(
+            type_id,
+            op_name,
+            field=field,
+            field_value=field_value,
+            child_type=child_type,
+        )
+        if required_core is None and required_ext is None:
+            return
+        grants = await self.canonical_store.get_acl_grants(
+            tenant_id,
+            node_id,
+            actor,
+            include_cross_tenant=True,
+        )
+        for grant in grants:
+            # Deny rows with no positive caps block everything.
+            if (
+                grant.get("permission") == "deny"
+                and not grant.get("core_cap_ids")
+                and not grant.get("ext_cap_ids")
+            ):
+                raise PermissionError(f"Actor denied explicit access on node {node_id}")
+            if registry.check_grant(
+                grant.get("core_cap_ids", []),
+                grant.get("ext_cap_ids", []),
+                required_core,
+                required_ext,
+                grant.get("type_id") or type_id,
+            ):
+                return
+        raise PermissionError(
+            f"Actor {actor} lacks capability "
+            f"{required_core if required_core is not None else f'ext:{required_ext}'} "
+            f"on node {node_id}"
+        )
 
     async def _check_tenant(self, tenant_id: str, context) -> None:
         """Reject requests for tenants not owned by this node."""
@@ -1197,7 +1280,15 @@ class EntDBServicer(EntDBServiceServicer):
         request: ShareNodeRequest,
         context: grpc_aio.ServicerContext,
     ) -> ShareNodeResponse:
-        """Share a node with an actor."""
+        """Share a node with an actor.
+
+        Accepts the legacy ``permission`` string and the typed
+        ``core_caps`` / ``ext_cap_ids`` fields. When both are set the
+        typed fields win. When only the string is set, it is still
+        persisted so older consumers keep working, and the server
+        derives the typed caps via
+        ``CapabilityRegistry.legacy_permission_to_core_caps``.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
@@ -1211,6 +1302,26 @@ class EntDBServicer(EntDBServiceServicer):
             actor_id = request.actor_id
             permission = request.permission or "read"
             expires_at = request.expires_at if request.expires_at else None
+            type_id = int(request.type_id or 0)
+            core_caps: list[int] | None = (
+                [int(c) for c in request.core_caps] if request.core_caps else None
+            )
+            ext_cap_ids: list[int] | None = (
+                [int(e) for e in request.ext_cap_ids] if request.ext_cap_ids else None
+            )
+            # Authz: granting requires ADMIN on the target node.
+            try:
+                await self._check_capability(
+                    tenant_id,
+                    request.context.actor,
+                    request.node_id,
+                    type_id,
+                    "ShareNode",
+                    context,
+                )
+            except PermissionError as perm_err:
+                record_grpc_request("ShareNode", "denied", time.perf_counter() - start)
+                return ShareNodeResponse(success=False, error=str(perm_err))
             await self.canonical_store.share_node(
                 tenant_id=tenant_id,
                 node_id=request.node_id,
@@ -1219,6 +1330,9 @@ class EntDBServicer(EntDBServiceServicer):
                 granted_by=request.context.actor,
                 actor_type=request.actor_type or "user",
                 expires_at=expires_at,
+                type_id=type_id,
+                core_caps=core_caps,
+                ext_cap_ids=ext_cap_ids,
             )
             # Update cross-tenant shared_index
             if self.global_store:
@@ -1251,14 +1365,20 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
-            await self._check_tenant_access(
-                request.context.tenant_id,
-                request.context.actor,
-                context,
-                require_write=True,
-            )
             tenant_id = request.context.tenant_id
             actor_id = request.actor_id
+            try:
+                await self._check_capability(
+                    tenant_id,
+                    request.context.actor,
+                    request.node_id,
+                    0,
+                    "RevokeAccess",
+                    context,
+                )
+            except PermissionError as perm_err:
+                record_grpc_request("RevokeAccess", "denied", time.perf_counter() - start)
+                return RevokeAccessResponse(found=False, error=str(perm_err))
             found = await self.canonical_store.revoke_access(
                 tenant_id=tenant_id,
                 node_id=request.node_id,
@@ -1468,24 +1588,6 @@ class EntDBServicer(EntDBServiceServicer):
         """Check if actor is the user themselves or an admin/system."""
         return self._is_admin_or_system(actor) or actor == f"user:{user_id}" or actor == user_id
 
-    def _authz_actor(self, request_actor: str) -> str:
-        """Return the actor string trusted for authorization decisions.
-
-        Prefers the verified identity from :class:`AuthInterceptor`; falls
-        back to the request payload only when no interceptor is active
-        (no-auth deployments and unit tests). See
-        :func:`get_authoritative_actor`.
-        """
-        return get_authoritative_actor(request_actor)
-
-    def _authz_is_admin_or_system(self, request_actor: str) -> bool:
-        """``True`` if the *trusted* caller is admin/system."""
-        return self._is_admin_or_system(self._authz_actor(request_actor))
-
-    def _authz_is_self_or_admin(self, request_actor: str, user_id: str) -> bool:
-        """``True`` if the *trusted* caller is the user themselves or admin."""
-        return self._is_self_or_admin(self._authz_actor(request_actor), user_id)
-
     def _user_dict_to_proto(self, user: dict) -> UserInfo:
         """Convert a user dict to a UserInfo proto message."""
         return UserInfo(
@@ -1513,7 +1615,7 @@ class EntDBServicer(EntDBServiceServicer):
 
             if not request.actor:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
-            if not self._authz_is_admin_or_system(request.actor):
+            if not self._is_admin_or_system(request.actor):
                 await context.abort(
                     grpc.StatusCode.PERMISSION_DENIED,
                     "CreateUser requires admin or system actor",
@@ -1600,7 +1702,7 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
-            if not self._authz_is_self_or_admin(request.actor, request.user_id):
+            if not self._is_self_or_admin(request.actor, request.user_id):
                 await context.abort(
                     grpc.StatusCode.PERMISSION_DENIED,
                     "UpdateUser requires the user themselves or admin actor",
@@ -1802,8 +1904,8 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
 
             # Only owner or system can archive
-            actor_uid = self._actor_user_id(self._authz_actor(request.actor))
-            if not self._authz_is_admin_or_system(request.actor):
+            actor_uid = self._actor_user_id(request.actor)
+            if not self._is_admin_or_system(request.actor):
                 role = await self._get_member_role(request.tenant_id, actor_uid)
                 if role != "owner":
                     await context.abort(
@@ -1846,8 +1948,8 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
 
             # Enforce: only owner/admin can add members
-            actor_uid = self._actor_user_id(self._authz_actor(request.actor))
-            if not self._authz_is_admin_or_system(request.actor):
+            actor_uid = self._actor_user_id(request.actor)
+            if not self._is_admin_or_system(request.actor):
                 role = await self._get_member_role(request.tenant_id, actor_uid)
                 if role not in ("owner", "admin"):
                     await context.abort(
@@ -2004,8 +2106,8 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "new_role is required")
 
             # Enforce: only owner can change roles
-            actor_uid = self._actor_user_id(self._authz_actor(request.actor))
-            if not self._authz_is_admin_or_system(request.actor):
+            actor_uid = self._actor_user_id(request.actor)
+            if not self._is_admin_or_system(request.actor):
                 role = await self._get_member_role(request.tenant_id, actor_uid)
                 if role != "owner":
                     await context.abort(
@@ -2041,32 +2143,20 @@ class EntDBServicer(EntDBServiceServicer):
     ) -> str:
         """Abort unless the caller is admin/owner of the tenant (or system).
 
-        SECURITY: This helper authorizes against the **trusted** identity
-        published by :class:`AuthInterceptor` via the request-scoped
-        ContextVar (see :func:`get_authoritative_actor`). The ``actor``
-        argument from the client request payload is only used as a
-        fallback when no interceptor has run (no-auth deployments and
-        unit tests). When AuthInterceptor is active in production it
-        always populates the ContextVar, so a malicious client cannot
-        gain admin privileges by setting ``request.actor = "system:admin"``.
-
-        Admin operations require elevated privileges. System actors
-        (``system:*``, ``admin:*``, ``__system__``) bypass all checks.
-        Regular users must be owner or admin of the tenant.
-
-        Returns:
-            The authoritative actor string used for authorization. Handlers
-            should use this value (not ``request.actor``) when recording
-            audit metadata or appending WAL events.
+        The authoritative actor is the trusted identity populated by
+        :class:`AuthInterceptor`, not the ``actor`` field from the
+        client payload. A client claiming ``actor: "system:admin"`` while
+        authenticated as ``user:eve`` is downgraded to ``user:eve``.
+        Returns the trusted actor so callers can reuse it.
         """
+        from ..auth.auth_interceptor import get_authoritative_actor
+
         trusted_actor = get_authoritative_actor(actor)
         if not trusted_actor:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
         if self._is_admin_or_system(trusted_actor):
             return trusted_actor
         if self.global_store is None:
-            # Without a registry we cannot enforce role membership;
-            # reject non-system actors outright.
             await context.abort(
                 grpc.StatusCode.PERMISSION_DENIED,
                 f"{rpc_name} requires admin or owner role",
@@ -2103,6 +2193,8 @@ class EntDBServicer(EntDBServiceServicer):
             # ownership change survives a full WAL rebuild. Direct
             # canonical_store writes from this handler are forbidden by
             # the architecture invariant ("all writes go through the WAL").
+            from .admin_handlers import handle_transfer_user_content
+
             await handle_transfer_user_content(
                 self.global_store,
                 self.wal,
@@ -2112,8 +2204,6 @@ class EntDBServicer(EntDBServiceServicer):
                 actor=trusted_actor,
                 topic=self.topic,
             )
-            # Count the affected nodes for the response. This is a read-only
-            # query and does NOT mutate canonical_store.
             transferred = 0
             try:
                 with self.canonical_store._get_connection(request.tenant_id) as conn:
@@ -2124,14 +2214,10 @@ class EntDBServicer(EntDBServiceServicer):
                     if row is not None:
                         transferred = int(row["n"])
             except Exception:
-                # Best-effort count; the authoritative state is in the WAL.
                 pass
 
             record_grpc_request("TransferUserContent", "ok", time.perf_counter() - start)
-            return TransferUserContentResponse(
-                success=True,
-                transferred=transferred,
-            )
+            return TransferUserContentResponse(success=True, transferred=transferred)
         except Exception as e:
             record_grpc_request("TransferUserContent", "error", time.perf_counter() - start)
             if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
@@ -2164,6 +2250,8 @@ class EntDBServicer(EntDBServiceServicer):
             # WAL-first: append an admin_delegate_access event. Direct
             # canonical_store writes from this handler are forbidden by
             # the architecture invariant ("all writes go through the WAL").
+            from .admin_handlers import handle_delegate_access
+
             await handle_delegate_access(
                 self.global_store,
                 self.wal,
@@ -2175,7 +2263,6 @@ class EntDBServicer(EntDBServiceServicer):
                 actor=trusted_actor,
                 topic=self.topic,
             )
-            # Count the nodes that will be delegated for the response.
             delegated = 0
             try:
                 with self.canonical_store._get_connection(request.tenant_id) as conn:
@@ -2190,9 +2277,7 @@ class EntDBServicer(EntDBServiceServicer):
 
             record_grpc_request("DelegateAccess", "ok", time.perf_counter() - start)
             return DelegateAccessResponse(
-                success=True,
-                delegated=delegated,
-                expires_at=expires_at or 0,
+                success=True, delegated=delegated, expires_at=expires_at or 0
             )
         except Exception as e:
             record_grpc_request("DelegateAccess", "error", time.perf_counter() - start)
@@ -2337,7 +2422,7 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
-            if not self._authz_is_self_or_admin(request.actor, request.user_id):
+            if not self._is_self_or_admin(request.actor, request.user_id):
                 await context.abort(
                     grpc.StatusCode.PERMISSION_DENIED,
                     "DeleteUser requires the user themselves or an admin actor",
@@ -2390,7 +2475,7 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
-            if not self._authz_is_self_or_admin(request.actor, request.user_id):
+            if not self._is_self_or_admin(request.actor, request.user_id):
                 await context.abort(
                     grpc.StatusCode.PERMISSION_DENIED,
                     "CancelUserDeletion requires the user themselves or an admin actor",
@@ -2421,7 +2506,7 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
-            if not self._authz_is_self_or_admin(request.actor, request.user_id):
+            if not self._is_self_or_admin(request.actor, request.user_id):
                 await context.abort(
                     grpc.StatusCode.PERMISSION_DENIED,
                     "ExportUserData requires the user themselves or an admin actor",
@@ -2479,7 +2564,7 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
-            if not self._authz_is_self_or_admin(request.actor, request.user_id):
+            if not self._is_self_or_admin(request.actor, request.user_id):
                 await context.abort(
                     grpc.StatusCode.PERMISSION_DENIED,
                     "FreezeUser requires the user themselves or an admin actor",

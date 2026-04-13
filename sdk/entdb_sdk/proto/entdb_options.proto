@@ -39,6 +39,42 @@ enum SubjectExitPolicy {
     SUBJECT_EXIT_TO = 2;     // only when user is the target (to)
 }
 
+// Universal, built-in capabilities shipped with EntDB. These are
+// checked by the ACL engine for every typed operation. User-defined
+// extension capabilities live in per-type enums declared via the
+// ``extension_capability_enum`` NodeOpts field below.
+enum CoreCapability {
+    CORE_CAP_UNSPECIFIED = 0;
+    CORE_CAP_READ = 1;
+    CORE_CAP_COMMENT = 2;
+    CORE_CAP_EDIT = 3;
+    CORE_CAP_DELETE = 4;
+    CORE_CAP_ADMIN = 5;
+}
+
+// Mapping from a server op (optionally narrowed by field / field_value
+// / child_type) to the capability required to perform it on a given
+// node type. If ``required_core`` is set, ``required_ext`` must be 0
+// (unset) and vice versa.
+message CapabilityMapping {
+    string op = 1;                    // e.g. "UpdateNode", "CreateChild"
+    string field = 2;                 // optional field filter
+    string field_value = 3;           // optional field-value filter
+    string child_type = 4;            // optional child-type filter
+    CoreCapability required_core = 5; // one-of with required_ext
+    int32 required_ext = 6;           // enum value from extension_capability_enum
+}
+
+// Declares that holding ``core``/``ext`` implies all of the
+// capabilities listed in ``implies_core``/``implies_ext``. Merged with
+// the built-in ADMIN > EDIT > COMMENT > READ hierarchy.
+message CapabilityImplication {
+    CoreCapability core = 1;          // one-of with ext
+    int32 ext = 2;
+    repeated CoreCapability implies_core = 3;
+    repeated int32 implies_ext = 4;
+}
+
 // Node type configuration — applied to a message
 message NodeOpts {
     int32 type_id = 1;                    // stable numeric ID (required)
@@ -58,6 +94,24 @@ message NodeOpts {
     // Metadata
     string description = 10;
     bool deprecated = 11;
+
+    // Typed capability system (2026-04-13 ACL decision)
+    //
+    // Name of the user-defined extension enum (e.g. "TaskExtCapability")
+    // that declares per-type capabilities beyond the universal
+    // ``CoreCapability`` enum. Leave empty if the type only uses core
+    // capabilities.
+    string extension_capability_enum = 20;
+
+    // Explicit op → capability mappings. Overrides the server's
+    // default ``GetNode → READ`` / ``UpdateNode → EDIT`` table for
+    // this specific type. Field-level entries (e.g. ``UpdateNode`` on
+    // ``status``) take precedence over type-wide entries.
+    repeated CapabilityMapping capability_mappings = 21;
+
+    // Per-type implication hierarchy merged with the built-in
+    // ADMIN > EDIT > COMMENT > READ closure.
+    repeated CapabilityImplication capability_implications = 22;
 }
 
 // Edge type configuration — applied to a message representing an edge

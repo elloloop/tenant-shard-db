@@ -536,10 +536,10 @@ class CanonicalStore:
 
         cache_key = str(db_path)
 
-        # Acquire per-tenant lock BEFORE the cache check so that the
-        # "look up or open" critical section is atomic.  Without this,
-        # two threads racing on the same uncached tenant could each open
-        # a fresh sqlite3 connection and one would be silently
+        # Acquire per-tenant lock BEFORE the cache check so the
+        # "look up or open" critical section is atomic. Without this,
+        # two threads racing on an uncached tenant could each open a
+        # fresh sqlite3 connection and one would be silently
         # overwritten in ``self._connections`` — leaking the orphan FD.
         lock = self._get_tenant_lock(tenant_id)
         lock.acquire()
@@ -737,6 +737,30 @@ class CanonicalStore:
             INSERT OR IGNORE INTO schema_version (version, applied_at)
             VALUES (1, strftime('%s', 'now') * 1000);
         """)
+
+        # ------------------------------------------------------------------
+        # ACL v2.1 — typed capability columns (2026-04-13 decision).
+        #
+        # We extend the existing ``node_access`` table with typed
+        # capability columns. Pre-existing rows keep their legacy
+        # ``permission`` string; the applier/migration back-fills
+        # ``core_caps_json`` lazily on next write and via
+        # ``_migrate_permissions_to_capabilities``.
+        # ------------------------------------------------------------------
+        existing_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(node_access)").fetchall()
+        }
+        if "type_id" not in existing_cols:
+            conn.execute("ALTER TABLE node_access ADD COLUMN type_id INTEGER NOT NULL DEFAULT 0")
+        if "core_caps_json" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE node_access ADD COLUMN core_caps_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "ext_cap_ids_json" not in existing_cols:
+            conn.execute(
+                "ALTER TABLE node_access ADD COLUMN ext_cap_ids_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        conn.commit()
 
     def sync_type_metadata(
         self,
@@ -1930,15 +1954,40 @@ class CanonicalStore:
         granted_by: str,
         now: int,
         expires_at: int | None,
+        type_id: int = 0,
+        core_caps: list[int] | None = None,
+        ext_cap_ids: list[int] | None = None,
     ) -> None:
+        # Back-fill typed fields from the legacy permission string for
+        # callers that haven't migrated yet (tests, applier, etc.).
+        if core_caps is None:
+            from ..auth.capability_registry import CapabilityRegistry
+
+            core_caps = [
+                int(c) for c in CapabilityRegistry.legacy_permission_to_core_caps(permission)
+            ]
+        if ext_cap_ids is None:
+            ext_cap_ids = []
         with self._get_connection(tenant_id) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO node_access
-                (node_id, actor_id, actor_type, permission, granted_by, granted_at, expires_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (node_id, actor_id, actor_type, permission, granted_by,
+                 granted_at, expires_at, type_id, core_caps_json, ext_cap_ids_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (node_id, actor_id, actor_type, permission, granted_by, now, expires_at),
+                (
+                    node_id,
+                    actor_id,
+                    actor_type,
+                    permission,
+                    granted_by,
+                    now,
+                    expires_at,
+                    int(type_id or 0),
+                    json.dumps([int(c) for c in core_caps]),
+                    json.dumps([int(e) for e in ext_cap_ids]),
+                ),
             )
 
     async def share_node(
@@ -1951,9 +2000,26 @@ class CanonicalStore:
         *,
         actor_type: str = "user",
         expires_at: int | None = None,
+        type_id: int = 0,
+        core_caps: list[int] | None = None,
+        ext_cap_ids: list[int] | None = None,
     ) -> None:
-        """Grant direct access to a node."""
+        """Grant direct access to a node.
+
+        Typed grant fields (``type_id`` / ``core_caps`` / ``ext_cap_ids``)
+        are the authoritative representation. When ``core_caps`` is not
+        supplied the method derives it from the legacy ``permission``
+        string for backwards compatibility.
+        """
         now = int(time.time() * 1000)
+        from ..auth.capability_registry import CapabilityRegistry
+
+        effective_core = (
+            list(core_caps)
+            if core_caps
+            else [int(c) for c in CapabilityRegistry.legacy_permission_to_core_caps(permission)]
+        )
+        effective_ext = list(ext_cap_ids or [])
         await self._run_sync(
             self._sync_share_node,
             tenant_id,
@@ -1964,7 +2030,197 @@ class CanonicalStore:
             granted_by,
             now,
             expires_at,
+            type_id,
+            effective_core,
+            effective_ext,
         )
+
+    def _sync_migrate_permissions_to_capabilities(self, tenant_id: str) -> int:
+        """Back-fill ``core_caps_json`` on legacy ``node_access`` rows.
+
+        Runs once per tenant at startup. Rows that already have a
+        populated ``core_caps_json`` (non-empty JSON array) are left
+        alone. Legacy ``permission`` strings are mapped via
+        ``CapabilityRegistry.legacy_permission_to_core_caps``.
+
+        Returns the number of rows migrated.
+        """
+        from ..auth.capability_registry import CapabilityRegistry
+
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                """
+                SELECT node_id, actor_id, permission
+                FROM node_access
+                WHERE permission IS NOT NULL
+                  AND permission != ''
+                  AND (core_caps_json IS NULL OR core_caps_json = '[]' OR core_caps_json = '')
+                """
+            ).fetchall()
+            migrated = 0
+            for r in rows:
+                caps = CapabilityRegistry.legacy_permission_to_core_caps(r["permission"])
+                if not caps:
+                    continue
+                conn.execute(
+                    "UPDATE node_access SET core_caps_json = ? WHERE node_id = ? AND actor_id = ?",
+                    (
+                        json.dumps([int(c) for c in caps]),
+                        r["node_id"],
+                        r["actor_id"],
+                    ),
+                )
+                migrated += 1
+            conn.commit()
+            return migrated
+
+    async def migrate_permissions_to_capabilities(self, tenant_id: str) -> int:
+        """Public wrapper for the permission → capability back-fill."""
+        return await self._run_sync(
+            self._sync_migrate_permissions_to_capabilities,
+            tenant_id,
+        )
+
+    def _sync_get_acl_grants(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """Fetch all ACL grants for a node that match any of ``actor_ids``.
+
+        Returns dicts with integer/list fields ready for consumption by
+        ``CapabilityRegistry.check_grant``.
+        """
+        if not actor_ids:
+            return []
+        now = int(time.time() * 1000)
+        placeholders = ",".join("?" for _ in actor_ids)
+        with self._get_connection(tenant_id) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT node_id, actor_id, actor_type, permission,
+                       type_id, core_caps_json, ext_cap_ids_json,
+                       granted_by, granted_at, expires_at
+                FROM node_access
+                WHERE node_id = ?
+                  AND actor_id IN ({placeholders})
+                  AND (expires_at IS NULL OR expires_at > ?)
+                """,
+                (node_id, *actor_ids, now),
+            ).fetchall()
+            out: list[dict[str, Any]] = []
+            for r in rows:
+                try:
+                    core_caps = [int(c) for c in json.loads(r["core_caps_json"] or "[]")]
+                except (ValueError, TypeError):
+                    core_caps = []
+                try:
+                    ext_caps = [int(e) for e in json.loads(r["ext_cap_ids_json"] or "[]")]
+                except (ValueError, TypeError):
+                    ext_caps = []
+                out.append(
+                    {
+                        "node_id": r["node_id"],
+                        "grantee": r["actor_id"],
+                        "actor_type": r["actor_type"],
+                        "permission": r["permission"],
+                        "type_id": int(r["type_id"] or 0),
+                        "core_cap_ids": core_caps,
+                        "ext_cap_ids": ext_caps,
+                        "expires_at": r["expires_at"],
+                    }
+                )
+            return out
+
+    async def get_acl_grants(
+        self,
+        tenant_id: str,
+        node_id: str,
+        actor: Any,
+        *,
+        include_cross_tenant: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Return all ACL grants matching ``actor`` on ``node_id``.
+
+        Resolution order:
+
+        * Direct ``user:<id>`` principal
+        * Any ``group:<id>`` the actor is a member of (via
+          ``resolve_actor_groups``)
+        * Deny rows are included — callers are responsible for
+          honouring them.
+        * Cross-tenant ``tenant:<actor_tenant>`` grants when
+          ``include_cross_tenant`` is True and the actor carries a
+          ``tenant_id`` attribute (``Actor`` from ``entdb_sdk.actor``).
+        """
+        actor_ids = await self._resolve_actor_candidates(
+            tenant_id, actor, include_cross_tenant=include_cross_tenant
+        )
+        grants = await self._run_sync(
+            self._sync_get_acl_grants,
+            tenant_id,
+            node_id,
+            actor_ids,
+        )
+        # Lazily back-fill any rows that still lack typed caps so the
+        # hot path never has to do it again.
+        for g in grants:
+            if not g["core_cap_ids"] and g.get("permission"):
+                from ..auth.capability_registry import CapabilityRegistry
+
+                g["core_cap_ids"] = [
+                    int(c)
+                    for c in CapabilityRegistry.legacy_permission_to_core_caps(g["permission"])
+                ]
+        return grants
+
+    async def _resolve_actor_candidates(
+        self,
+        tenant_id: str,
+        actor: Any,
+        *,
+        include_cross_tenant: bool,
+    ) -> list[str]:
+        """Build the list of grantee principals that match ``actor``.
+
+        Accepts an ``Actor`` dataclass (``user_id`` / ``tenant_id``
+        attributes), a plain string principal (``user:alice``,
+        ``group:devs``, ``alice``), or a raw user id.
+        """
+        actor_tenant: str | None = None
+        if hasattr(actor, "user_id"):
+            user_id = actor.user_id
+            principal = f"user:{user_id}" if user_id else ""
+            actor_tenant = getattr(actor, "tenant_id", None)
+        elif isinstance(actor, str):
+            principal = actor if ":" in actor else f"user:{actor}"
+        else:
+            principal = str(actor)
+        expanded = await self.resolve_actor_groups(tenant_id, principal)
+        # Dedupe while preserving order.
+        seen: set[str] = set()
+        out: list[str] = []
+        for p in expanded:
+            if p not in seen:
+                out.append(p)
+                seen.add(p)
+        if include_cross_tenant:
+            # Tenant-scoped grant: ``tenant:<actor_tenant>`` satisfies
+            # a check when the actor belongs to that tenant.
+            if actor_tenant:
+                tenant_principal = f"tenant:{actor_tenant}"
+                if tenant_principal not in seen:
+                    out.append(tenant_principal)
+                    seen.add(tenant_principal)
+            # Fallback: also match tenant:<tenant_id> of the current
+            # tenant when the actor is a member (same-tenant typed
+            # grant).
+            same_tenant_principal = f"tenant:{tenant_id}"
+            if same_tenant_principal not in seen and principal.startswith("user:"):
+                out.append(same_tenant_principal)
+                seen.add(same_tenant_principal)
+        return out
 
     def _sync_revoke_access(
         self,
