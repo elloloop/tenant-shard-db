@@ -604,6 +604,22 @@ class EntDBServicer(EntDBServiceServicer):
                     internal_op["as"] = as_val
                 if create.fanout_to:
                     internal_op["fanout_to"] = list(create.fanout_to)
+                # Storage routing (2026-04-13 storage decision). The
+                # proto enum values map to the internal storage_mode
+                # string the Applier understands. Default / unspecified
+                # = TENANT.
+                _storage_mode_names = {
+                    0: "TENANT",
+                    1: "USER_MAILBOX",
+                    2: "PUBLIC",
+                }
+                sm_value = int(getattr(create, "storage_mode", 0) or 0)
+                sm_name = _storage_mode_names.get(sm_value, "TENANT")
+                if sm_name != "TENANT":
+                    internal_op["storage_mode"] = sm_name
+                tgt_user = getattr(create, "target_user_id", "") or ""
+                if tgt_user:
+                    internal_op["target_user_id"] = tgt_user
                 result.append(internal_op)
 
             elif op_type == "update_node":

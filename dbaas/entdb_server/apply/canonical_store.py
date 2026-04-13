@@ -583,6 +583,308 @@ class CanonicalStore:
                 conn.close()
         self._connections.clear()
 
+    # ── Storage routing: mailbox + public helpers (2026-04-13) ──────────
+    #
+    # Per the 2026-04-13 storage decision every node has an immutable
+    # storage mode. ``STORAGE_MODE_TENANT`` nodes live in
+    # ``tenant_<id>.db`` (reached via ``_get_connection``).
+    # ``STORAGE_MODE_USER_MAILBOX`` nodes live in
+    # ``{tenant_id}/user_{user_id}.db`` (reached via
+    # ``_get_mailbox_connection``). ``STORAGE_MODE_PUBLIC`` nodes live
+    # in the singleton ``public.db`` (reached via
+    # ``_get_public_connection``).  All three helpers reuse the same
+    # pooled-connection machinery.
+
+    def _get_mailbox_db_path(self, tenant_id: str, user_id: str) -> Path:
+        """Return the per-user mailbox SQLite path.
+
+        The path is ``{data_dir}/{tenant_id}/user_{user_id}.db`` with
+        both ``tenant_id`` and ``user_id`` sanitized to prevent path
+        traversal.
+        """
+        safe_tenant = "".join(c for c in tenant_id if c.isalnum() or c in "-_")
+        # Allow a leading ``user:`` principal form for convenience.
+        raw_user = user_id
+        if raw_user.startswith("user:"):
+            raw_user = raw_user[5:]
+        safe_user = "".join(c for c in raw_user if c.isalnum() or c in "-_")
+        return self.data_dir / safe_tenant / f"user_{safe_user}.db"
+
+    def _get_public_db_path(self) -> Path:
+        """Return the singleton public SQLite path."""
+        return self.data_dir / "public.db"
+
+    def _open_pooled_connection(
+        self, db_path: Path, create: bool, lock_key: str
+    ) -> sqlite3.Connection:
+        """Open-or-return a pooled SQLite connection for any db_path.
+
+        Shared helper used by the tenant / mailbox / public accessors.
+        Applies the same PRAGMAs and schema used for tenant files so
+        that mailbox + public DBs can host ``nodes``/``edges`` rows
+        identical to the tenant file.
+
+        The caller is expected to already hold ``self._tenant_locks``
+        for ``lock_key`` (or pass a unique synthetic key when no lock
+        is needed).
+        """
+        if not create and not db_path.exists():
+            raise TenantNotFoundError(f"Database not found: {db_path}")
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        cache_key = str(db_path)
+        if cache_key not in self._connections:
+            if self.encryption_config.enabled:
+                # Use lock_key as the key-derivation tag so each
+                # mailbox / public file has its own key.
+                tenant_key = derive_tenant_key(self.encryption_config.master_key, lock_key)
+                conn = open_encrypted_connection(
+                    str(db_path),
+                    tenant_key,
+                    timeout=self.busy_timeout_ms / 1000.0,
+                )
+            else:
+                conn = sqlite3.connect(
+                    str(db_path),
+                    timeout=self.busy_timeout_ms / 1000.0,
+                    isolation_level=None,
+                    check_same_thread=False,
+                )
+            conn.row_factory = sqlite3.Row
+            conn.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
+            conn.execute(f"PRAGMA cache_size = {self.cache_size_pages}")
+            if self.wal_mode:
+                conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA synchronous = NORMAL")
+            conn.execute("PRAGMA foreign_keys = ON")
+            # Reuse the tenant schema creator — the shape of
+            # ``nodes``/``edges``/``applied_events`` is identical.
+            self._create_schema(conn)
+            self._connections[cache_key] = conn
+        return self._connections[cache_key]
+
+    @contextmanager
+    def _get_mailbox_connection(
+        self, tenant_id: str, user_id: str, create: bool = False
+    ) -> Iterator[sqlite3.Connection]:
+        """Open a per-user mailbox connection.
+
+        Same pooling / locking semantics as ``_get_connection`` but the
+        underlying file is ``{data_dir}/{tenant_id}/user_{user_id}.db``.
+
+        Args:
+            tenant_id: Tenant identifier
+            user_id: Owning user id (accepts ``user:<id>`` or ``<id>``).
+            create: Create the database file + schema if missing.
+
+        Raises:
+            TenantNotFoundError: If ``create=False`` and the mailbox
+                file does not exist.
+        """
+        db_path = self._get_mailbox_db_path(tenant_id, user_id)
+        lock_key = f"mailbox::{tenant_id}::{user_id}"
+        lock = self._get_tenant_lock(lock_key)
+        lock.acquire()
+        try:
+            yield self._open_pooled_connection(db_path, create, lock_key)
+        finally:
+            lock.release()
+
+    @contextmanager
+    def _get_public_connection(self, create: bool = False) -> Iterator[sqlite3.Connection]:
+        """Open the singleton public SQLite connection.
+
+        Raises:
+            TenantNotFoundError: If ``create=False`` and ``public.db``
+                does not exist.
+        """
+        db_path = self._get_public_db_path()
+        lock_key = "public::singleton"
+        lock = self._get_tenant_lock(lock_key)
+        lock.acquire()
+        try:
+            yield self._open_pooled_connection(db_path, create, lock_key)
+        finally:
+            lock.release()
+
+    @contextmanager
+    def mailbox_batch_transaction(
+        self, tenant_id: str, user_id: str
+    ) -> Iterator[sqlite3.Connection]:
+        """Open a batch transaction on a per-user mailbox database.
+
+        Mirrors ``batch_transaction`` but targets the mailbox file for
+        ``(tenant_id, user_id)``. The mailbox file is created lazily on
+        first use.
+        """
+        with self._get_mailbox_connection(tenant_id, user_id, create=True) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    @contextmanager
+    def public_batch_transaction(self) -> Iterator[sqlite3.Connection]:
+        """Open a batch transaction on the singleton ``public.db``.
+
+        Mirrors ``batch_transaction`` but targets ``public.db``. The
+        file is created lazily on first use.
+        """
+        with self._get_public_connection(create=True) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
+    def _sync_delete_user_drafts(self, tenant_id: str, user_id: str) -> int:
+        """DELETE rows with ``status='draft'`` owned by ``user_id``.
+
+        Called by the GDPR pipeline so that tenant-stored drafts are
+        removed together with the per-user mailbox database. Returns
+        the number of rows deleted.
+        """
+        tenant_principal = user_id if user_id.startswith("user:") else f"user:{user_id}"
+        try:
+            with self._get_connection(tenant_id) as conn:
+                # Select owner-matching rows and filter drafts in
+                # Python. We cannot use ``json_extract('$.status')``
+                # directly because payloads are keyed by numeric
+                # ``field_id`` on disk (see decision doc), so a
+                # "status" lookup must scan each payload and check any
+                # field whose value equals ``"draft"``. For
+                # typical-sized tenants this is fast enough; for very
+                # large tenants the call runs inside the executor
+                # thread so it does not block the event loop.
+                rows = conn.execute(
+                    "SELECT node_id, payload_json FROM nodes "
+                    "WHERE tenant_id = ? AND owner_actor = ?",
+                    (tenant_id, tenant_principal),
+                ).fetchall()
+                to_delete: list[str] = []
+                for row in rows:
+                    node_id = row[0] if isinstance(row, tuple) else row["node_id"]
+                    payload_json = row[1] if isinstance(row, tuple) else row["payload_json"]
+                    try:
+                        payload = json.loads(payload_json or "{}")
+                    except Exception:
+                        continue
+                    if not isinstance(payload, dict):
+                        continue
+                    if any(v == "draft" for v in payload.values()):
+                        to_delete.append(node_id)
+                for nid in to_delete:
+                    conn.execute(
+                        "DELETE FROM edges WHERE tenant_id = ? "
+                        "AND (from_node_id = ? OR to_node_id = ?)",
+                        (tenant_id, nid, nid),
+                    )
+                    conn.execute(
+                        "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
+                        (tenant_id, nid),
+                    )
+                    conn.execute(
+                        "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                        (tenant_id, nid),
+                    )
+                return len(to_delete)
+        except TenantNotFoundError:
+            return 0
+
+    async def delete_user_drafts(self, tenant_id: str, user_id: str) -> int:
+        """Delete draft-status nodes owned by ``user_id`` in ``tenant_id``.
+
+        Returns the number of rows removed. Safe to call on tenants
+        that do not exist (returns 0).
+        """
+        return await self._run_sync(self._sync_delete_user_drafts, tenant_id, user_id)
+
+    def evict_mailbox_connection(self, tenant_id: str, user_id: str) -> bool:
+        """Close and forget a pooled mailbox connection.
+
+        Used by the GDPR worker before unlinking the file. Returns
+        ``True`` if a pooled connection was evicted.
+        """
+        db_path = self._get_mailbox_db_path(tenant_id, user_id)
+        cache_key = str(db_path)
+        conn = self._connections.pop(cache_key, None)
+        if conn is None:
+            return False
+        with contextlib.suppress(Exception):
+            conn.close()
+        return True
+
+    # ── Edge direction invariant (2026-04-13) ───────────────────────────
+    #
+    # Edges may only point from more-private to equal-or-less-private
+    # data. The hierarchy is ``USER_MAILBOX -> TENANT -> PUBLIC``. The
+    # following combinations are REJECTED:
+    #
+    #   TENANT               -> USER_MAILBOX
+    #   PUBLIC               -> USER_MAILBOX
+    #   PUBLIC               -> TENANT
+    #   USER_MAILBOX(u1)     -> USER_MAILBOX(u2)     (u1 != u2)
+    #
+    # Everything else (including same-mode edges) is allowed.
+
+    _STORAGE_HIERARCHY = {
+        "USER_MAILBOX": 0,
+        "TENANT": 1,
+        "PUBLIC": 2,
+    }
+
+    @classmethod
+    def _validate_edge_direction(
+        cls,
+        from_node_id: str,
+        to_node_id: str,
+        tenant_id: str,  # noqa: ARG003 — reserved for future cross-tenant validation
+        event_storage_map: dict[str, tuple[str, str | None]],
+    ) -> None:
+        """Enforce the ``USER_MAILBOX -> TENANT -> PUBLIC`` hierarchy.
+
+        Args:
+            from_node_id: Resolved source node id.
+            to_node_id: Resolved target node id.
+            tenant_id: Tenant owning the current event — used as the
+                default storage mode for nodes not declared in the
+                current event.
+            event_storage_map: ``{node_id: (storage_mode, user_id)}``
+                for nodes created in the current event. Entries not in
+                the map are assumed to live in the same storage mode as
+                the current event (i.e. ``TENANT`` by default).
+
+        Raises:
+            ValueError: If the edge direction violates the hierarchy.
+        """
+        from_mode, from_user = event_storage_map.get(from_node_id, ("TENANT", None))
+        to_mode, to_user = event_storage_map.get(to_node_id, ("TENANT", None))
+
+        f_rank = cls._STORAGE_HIERARCHY[from_mode]
+        t_rank = cls._STORAGE_HIERARCHY[to_mode]
+
+        # Basic hierarchy check: from_rank must be <= to_rank.
+        if f_rank > t_rank:
+            raise ValueError(
+                f"Edge direction violates storage hierarchy: "
+                f"{from_mode} -> {to_mode} (edges must point from "
+                f"more-private to equal-or-less-private data; allowed "
+                f"order is USER_MAILBOX -> TENANT -> PUBLIC)"
+            )
+
+        # Cross-user mailbox edges are always rejected.
+        if from_mode == "USER_MAILBOX" and to_mode == "USER_MAILBOX":
+            if from_user != to_user:
+                raise ValueError(
+                    f"Edge between different user mailboxes is not "
+                    f"allowed: USER_MAILBOX({from_user}) -> "
+                    f"USER_MAILBOX({to_user})"
+                )
+
     def _create_schema(self, conn: sqlite3.Connection) -> None:
         """Create database schema."""
         conn.executescript("""
