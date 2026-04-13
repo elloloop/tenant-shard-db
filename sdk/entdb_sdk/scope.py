@@ -141,6 +141,36 @@ class ActorScope:
             _resolve_node_type(node_type), node_id, self._tenant_id, self._actor, **kwargs
         )
 
+    async def get_by_key(
+        self,
+        node_type: type[TypedNode] | NodeTypeDef,
+        key_name: str,
+        key_value: str,
+        *,
+        after_offset: str | None = None,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> Node | None:
+        """Resolve a node via a declared unique/secondary key.
+
+        Implements the client-facing half of the 2026-04-13
+        unique_keys decision. Returns ``None`` if the key is
+        unknown, and raises a typed ``PermissionError`` / gRPC
+        ``PERMISSION_DENIED`` when the actor lacks
+        ``CORE_CAP_READ`` on the resolved node.
+        """
+        resolved_type = _resolve_node_type(node_type)
+        return await self._client.get_by_key(
+            resolved_type,
+            key_name,
+            key_value,
+            self._tenant_id,
+            self._actor,
+            after_offset=after_offset,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
     async def get_many(
         self,
         node_type: type[TypedNode] | NodeTypeDef,

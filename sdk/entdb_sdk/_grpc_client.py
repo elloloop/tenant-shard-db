@@ -45,6 +45,7 @@ from ._generated import (
     GetConnectedNodesRequest,
     GetEdgesRequest,
     GetMailboxRequest,
+    GetNodeByKeyRequest,
     GetNodeRequest,
     GetNodesRequest,
     GetReceiptStatusRequest,
@@ -405,6 +406,16 @@ class GrpcClient:
                 error=response.error if response.error else None,
             )
         except grpc.RpcError as e:
+            # Unique keys (2026-04-13): ``ALREADY_EXISTS`` from the
+            # server means a unique-key collision — surface it as a
+            # typed ``UniqueConstraintError`` so callers can catch it.
+            if getattr(e, "code", None) and e.code() == grpc.StatusCode.ALREADY_EXISTS:
+                from .errors import UniqueConstraintError
+
+                raise UniqueConstraintError(
+                    e.details() if hasattr(e, "details") else str(e),
+                    tenant_id=tenant_id,
+                ) from e
             return GrpcCommitResult(
                 success=False,
                 receipt=None,
@@ -454,6 +465,11 @@ class GrpcClient:
                     create_op.storage_mode = _sm_to_proto.get(sm, 0)
                 if create.get("target_user_id"):
                     create_op.target_user_id = create["target_user_id"]
+                # Unique keys (2026-04-13)
+                keys = create.get("keys")
+                if keys:
+                    for k_name, k_value in keys.items():
+                        create_op.keys[str(k_name)] = str(k_value)
                 proto_op.create_node.CopyFrom(create_op)
 
             elif "update_node" in op:
@@ -467,6 +483,11 @@ class GrpcClient:
                     update_op.patch.update(patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
+                # Unique keys (2026-04-13)
+                keys = update.get("keys")
+                if keys:
+                    for k_name, k_value in keys.items():
+                        update_op.keys[str(k_name)] = str(k_value)
                 proto_op.update_node.CopyFrom(update_op)
 
             elif "delete_node" in op:
@@ -648,6 +669,42 @@ class GrpcClient:
         if not response.found:
             return None
 
+        return _node_from_proto(response.node)
+
+    async def get_node_by_key(
+        self,
+        tenant_id: str,
+        actor: str,
+        type_id: int,
+        key_name: str,
+        key_value: str,
+        *,
+        after_offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> Node | None:
+        """Resolve a node via a declared unique/secondary key."""
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = GetNodeByKeyRequest(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=type_id,
+            key_name=key_name,
+            key_value=key_value,
+            after_offset=after_offset,
+        )
+
+        response = await self._retry(
+            stub.GetNodeByKey,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        if not response.found:
+            return None
         return _node_from_proto(response.node)
 
     async def get_nodes(

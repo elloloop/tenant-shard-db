@@ -196,6 +196,8 @@ class TestNodeOptsMessage:
             "extension_capability_enum",
             "capability_mappings",
             "capability_implications",
+            # Unique keys (2026-04-13 unique_keys decision).
+            "keys",
         }
         assert expected == field_names
 
