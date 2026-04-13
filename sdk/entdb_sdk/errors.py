@@ -227,6 +227,46 @@ class TransactionError(EntDbError):
         self.idempotency_key = idempotency_key
 
 
+class UniqueConstraintError(EntDbError):
+    """Raised when a write would violate a declared unique key.
+
+    Implements the client-facing side of the 2026-04-13 unique_keys
+    decision. The server surfaces duplicates via gRPC ``ALREADY_EXISTS``
+    (pre-validate fast-fail) or via a failed apply (authoritative
+    validate on race). Both paths are mapped into this typed error.
+
+    Attributes:
+        tenant_id: Tenant where the collision occurred.
+        type_id: Node type id.
+        key_name: The declared key name (e.g. ``"email"``).
+        key_value: The colliding value.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        tenant_id: str | None = None,
+        type_id: int | None = None,
+        key_name: str | None = None,
+        key_value: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            code="UNIQUE_CONSTRAINT",
+            details={
+                "tenant_id": tenant_id,
+                "type_id": type_id,
+                "key_name": key_name,
+                "key_value": key_value,
+            },
+        )
+        self.tenant_id = tenant_id
+        self.type_id = type_id
+        self.key_name = key_name
+        self.key_value = key_value
+
+
 class RateLimitError(EntDbError):
     """Request was rejected because a rate limit or quota was exceeded.
 

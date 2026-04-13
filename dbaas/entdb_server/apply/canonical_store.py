@@ -1161,6 +1161,23 @@ class CanonicalStore:
             CREATE INDEX IF NOT EXISTS idx_audit_actor
                 ON audit_log(actor_id, created_at DESC);
 
+            -- Node keys (unique keys / secondary lookup keys,
+            -- 2026-04-13 decision). Primary key enforces uniqueness
+            -- within (tenant_id, type_id, key_name). The idx_node_keys_by_node
+            -- index supports O(log n) cleanup on delete/update.
+            CREATE TABLE IF NOT EXISTS node_keys (
+                tenant_id  TEXT NOT NULL,
+                type_id    INTEGER NOT NULL,
+                node_id    TEXT NOT NULL,
+                key_name   TEXT NOT NULL,
+                key_value  TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (tenant_id, type_id, key_name, key_value)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_node_keys_by_node
+                ON node_keys(tenant_id, node_id);
+
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
             VALUES (1, strftime('%s', 'now') * 1000);
@@ -1668,6 +1685,12 @@ class CanonicalStore:
                     (tenant_id, node_id),
                 )
 
+                # Delete unique-key index rows (2026-04-13 unique keys)
+                conn.execute(
+                    "DELETE FROM node_keys WHERE tenant_id = ? AND node_id = ?",
+                    (tenant_id, node_id),
+                )
+
                 # Delete node
                 cursor = conn.execute(
                     "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
@@ -1680,6 +1703,166 @@ class CanonicalStore:
             except Exception:
                 conn.execute("ROLLBACK")
                 raise
+
+    # ── node_keys (unique keys / secondary lookup) ─────────────────────
+
+    def insert_node_keys(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        node_id: str,
+        keys: dict[str, str],
+        created_at: int,
+    ) -> None:
+        """Insert secondary unique-key rows for a node.
+
+        Called INSIDE an already-open transaction (``batch_transaction``
+        or ``_sync_apply_event_body``). Uses ``INSERT OR FAIL`` so a
+        collision surfaces as :class:`sqlite3.IntegrityError`, which
+        the applier turns into a :class:`UniqueConstraintError`.
+
+        Args:
+            conn: SQLite connection with an open transaction.
+            tenant_id: Tenant identifier.
+            type_id: Node type id.
+            node_id: Node identifier.
+            keys: Mapping ``key_name -> key_value``.
+            created_at: Insertion timestamp (unix ms).
+        """
+        if not keys:
+            return
+        for key_name, key_value in keys.items():
+            if key_name is None or key_value is None:
+                continue
+            conn.execute(
+                "INSERT OR FAIL INTO node_keys "
+                "(tenant_id, type_id, node_id, key_name, key_value, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (tenant_id, int(type_id), node_id, str(key_name), str(key_value), int(created_at)),
+            )
+
+    def delete_node_keys(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        node_id: str,
+    ) -> None:
+        """Delete all node_keys rows belonging to ``node_id``.
+
+        Called INSIDE an open transaction. Used by ``delete_node`` and by
+        ``update_node_keys`` when a keyed field changes.
+        """
+        conn.execute(
+            "DELETE FROM node_keys WHERE tenant_id = ? AND node_id = ?",
+            (tenant_id, node_id),
+        )
+
+    def update_node_keys(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        node_id: str,
+        new_keys: dict[str, str],
+        created_at: int,
+    ) -> None:
+        """Replace a node's secondary keys with ``new_keys``.
+
+        Deletes existing rows for the node and re-inserts the new set.
+        Raises :class:`sqlite3.IntegrityError` if any new value
+        collides with a key belonging to a different node.
+        """
+        self.delete_node_keys(conn, tenant_id, node_id)
+        self.insert_node_keys(conn, tenant_id, type_id, node_id, new_keys, created_at)
+
+    def _sync_get_node_by_key(
+        self,
+        tenant_id: str,
+        type_id: int,
+        key_name: str,
+        key_value: str,
+    ) -> str | None:
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                "SELECT node_id FROM node_keys "
+                "WHERE tenant_id = ? AND type_id = ? "
+                "AND key_name = ? AND key_value = ? LIMIT 1",
+                (tenant_id, int(type_id), str(key_name), str(key_value)),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return row[0] if isinstance(row, tuple) else row["node_id"]
+
+    async def get_node_by_key(
+        self,
+        tenant_id: str,
+        type_id: int,
+        key_name: str,
+        key_value: str,
+    ) -> str | None:
+        """Look up a node_id by its (type_id, key_name, key_value).
+
+        Returns ``None`` when the key is not registered.
+        """
+        return await self._run_sync(
+            self._sync_get_node_by_key, tenant_id, type_id, key_name, key_value
+        )
+
+    def _sync_check_key_exists(
+        self,
+        tenant_id: str,
+        type_id: int,
+        key_name: str,
+        key_value: str,
+        exclude_node_id: str | None,
+    ) -> bool:
+        with self._get_connection(tenant_id) as conn:
+            if exclude_node_id is None:
+                cursor = conn.execute(
+                    "SELECT 1 FROM node_keys "
+                    "WHERE tenant_id = ? AND type_id = ? "
+                    "AND key_name = ? AND key_value = ? LIMIT 1",
+                    (tenant_id, int(type_id), str(key_name), str(key_value)),
+                )
+            else:
+                cursor = conn.execute(
+                    "SELECT 1 FROM node_keys "
+                    "WHERE tenant_id = ? AND type_id = ? "
+                    "AND key_name = ? AND key_value = ? "
+                    "AND node_id <> ? LIMIT 1",
+                    (
+                        tenant_id,
+                        int(type_id),
+                        str(key_name),
+                        str(key_value),
+                        str(exclude_node_id),
+                    ),
+                )
+            return cursor.fetchone() is not None
+
+    async def check_key_exists(
+        self,
+        tenant_id: str,
+        type_id: int,
+        key_name: str,
+        key_value: str,
+        exclude_node_id: str | None = None,
+    ) -> bool:
+        """Return True when ``(type_id, key_name, key_value)`` already exists.
+
+        ``exclude_node_id`` lets ``update_node`` pre-validate without
+        colliding with the node's own existing row.
+        """
+        return await self._run_sync(
+            self._sync_check_key_exists,
+            tenant_id,
+            type_id,
+            key_name,
+            key_value,
+            exclude_node_id,
+        )
 
     async def delete_node(self, tenant_id: str, node_id: str) -> bool:
         """Delete a node and its edges.

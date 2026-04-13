@@ -121,6 +121,9 @@ from .entdb_pb2 import (
     # Quota dashboard
     GetTenantQuotaRequest,
     GetTenantQuotaResponse,
+    # Unique keys
+    GetNodeByKeyRequest,
+    GetNodeByKeyResponse,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -246,6 +249,9 @@ __all__ = [
     # Quota dashboard
     "GetTenantQuotaRequest",
     "GetTenantQuotaResponse",
+    # Unique keys
+    "GetNodeByKeyRequest",
+    "GetNodeByKeyResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",

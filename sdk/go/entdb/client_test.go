@@ -8,25 +8,28 @@ import (
 
 // mockTransport implements Transport for testing without a live gRPC server.
 type mockTransport struct {
-	connectCalled bool
-	closeCalled   bool
-	getNodeCalls  int
-	queryCalls    int
-	commitCalls   int
+	connectCalled     bool
+	closeCalled       bool
+	getNodeCalls      int
+	getNodeByKeyCalls int
+	queryCalls        int
+	commitCalls       int
 
 	edgesFromCalls int
 	edgesToCalls   int
 
 	// Responses for stubbing
-	getNodeResp   *Node
-	getNodeErr    error
-	queryResp     []*Node
-	queryErr      error
-	commitResp    *CommitResult
-	commitErr     error
-	connectErr    error
-	edgesFromResp []*Edge
-	edgesToResp   []*Edge
+	getNodeResp      *Node
+	getNodeErr       error
+	getNodeByKeyResp *Node
+	getNodeByKeyErr  error
+	queryResp        []*Node
+	queryErr         error
+	commitResp       *CommitResult
+	commitErr        error
+	connectErr       error
+	edgesFromResp    []*Edge
+	edgesToResp      []*Edge
 }
 
 func (m *mockTransport) Connect(_ context.Context) error {
@@ -42,6 +45,11 @@ func (m *mockTransport) Close() error {
 func (m *mockTransport) GetNode(_ context.Context, _, _ string, _ int, _ string) (*Node, error) {
 	m.getNodeCalls++
 	return m.getNodeResp, m.getNodeErr
+}
+
+func (m *mockTransport) GetNodeByKey(_ context.Context, _, _ string, _ int, _, _ string) (*Node, error) {
+	m.getNodeByKeyCalls++
+	return m.getNodeByKeyResp, m.getNodeByKeyErr
 }
 
 func (m *mockTransport) QueryNodes(_ context.Context, _, _ string, _ int, _ map[string]any) ([]*Node, error) {
