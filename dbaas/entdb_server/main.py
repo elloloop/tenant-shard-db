@@ -38,7 +38,7 @@ from pathlib import Path
 
 from .api import GrpcServer
 from .api.grpc_server import EntDBServicer
-from .apply import Applier, CanonicalStore, MailboxStore
+from .apply import Applier, CanonicalStore
 from .archive import Archiver
 from .config import ServerConfig, WalBackend
 from .schema import freeze_registry, get_registry
@@ -95,7 +95,6 @@ class Server:
         config: Server configuration
         wal: WAL stream instance
         canonical_store: Tenant SQLite store
-        mailbox_store: Per-user mailbox store
         servicer: gRPC service implementation
 
     Example:
@@ -118,7 +117,6 @@ class Server:
         # Components (initialized in start())
         self.wal: WalStream | None = None
         self.canonical_store: CanonicalStore | None = None
-        self.mailbox_store: MailboxStore | None = None
         self.servicer: EntDBServicer | None = None
         self.grpc_server: GrpcServer | None = None
         self.applier: Applier | None = None
@@ -210,8 +208,6 @@ class Server:
             # Ensure data directory exists
             data_dir = Path(self.config.storage.data_dir)
             data_dir.mkdir(parents=True, exist_ok=True)
-            mailbox_dir = data_dir / "mailboxes"
-            mailbox_dir.mkdir(parents=True, exist_ok=True)
 
             # Initialize schema registry
             registry = get_registry()
@@ -238,12 +234,6 @@ class Server:
                 wal_mode=self.config.storage.wal_mode,
                 busy_timeout_ms=self.config.storage.busy_timeout_ms,
                 cache_size_pages=self.config.storage.cache_size_pages,
-            )
-
-            self.mailbox_store = MailboxStore(
-                data_dir=str(mailbox_dir),
-                wal_mode=self.config.storage.wal_mode,
-                busy_timeout_ms=self.config.storage.busy_timeout_ms,
             )
 
             # Log warning for local mode
@@ -275,7 +265,6 @@ class Server:
             self.servicer = EntDBServicer(
                 wal=self.wal,
                 canonical_store=self.canonical_store,
-                mailbox_store=self.mailbox_store,
                 schema_registry=registry,
                 topic=topic,
                 sharding=self.config.sharding,
@@ -325,7 +314,6 @@ class Server:
             self.applier = Applier(
                 wal=self.wal,
                 canonical_store=self.canonical_store,
-                mailbox_store=self.mailbox_store,
                 topic=topic,
                 group_id=group_id,
                 schema_fingerprint=fingerprint,

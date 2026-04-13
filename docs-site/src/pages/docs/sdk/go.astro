@@ -1,0 +1,282 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+---
+
+<DocsLayout title="Go SDK">
+  <h1>Go SDK Reference</h1>
+  <p>
+    The Go SDK (<code>github.com/elloloop/tenant-shard-db/sdk/go/entdb</code>)
+    provides a typed, context-aware client for EntDB. It mirrors the Python
+    SDK's hierarchical scope API and uses typed primitives (<code>Actor</code>,
+    <code>Permission</code>, <code>ACLEntry</code>) instead of raw strings.
+  </p>
+
+  <h2>Installation</h2>
+  <pre is:raw><code>go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest</code></pre>
+
+  <p>Requires Go 1.21 or later. Import as:</p>
+  <pre is:raw><code>import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"</code></pre>
+
+  <h2>Connecting</h2>
+  <p>
+    Create a client with <code>entdb.NewClient</code>, then call
+    <code>Connect</code> to establish the underlying gRPC connection. Options
+    are passed as functional options.
+  </p>
+  <pre is:raw><code>package main
+
+import (
+    "context"
+    "log"
+    "time"
+
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+)
+
+func main() {
+    client, err := entdb.NewClient(
+        "localhost:50051",
+        entdb.WithSecure(),
+        entdb.WithAPIKey("your-api-key"),
+        entdb.WithMaxRetries(5),
+        entdb.WithTimeout(10*time.Second),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    ctx := context.Background()
+    if err := client.Connect(ctx); err != nil {
+        log.Fatal(err)
+    }
+}</code></pre>
+
+  <h3>Client Options</h3>
+  <table>
+    <tr><th>Option</th><th>Description</th><th>Default</th></tr>
+    <tr><td><code>WithSecure()</code></td><td>Enable TLS on the gRPC connection</td><td>insecure</td></tr>
+    <tr><td><code>WithAPIKey(key)</code></td><td>Scoped API key for authentication</td><td>none</td></tr>
+    <tr><td><code>WithMaxRetries(n)</code></td><td>Max retries for transient failures</td><td>3</td></tr>
+    <tr><td><code>WithTimeout(d)</code></td><td>Default per-RPC timeout</td><td>30s</td></tr>
+  </table>
+
+  <h2>Typed Primitives</h2>
+
+  <h3>Actor</h3>
+  <p>
+    An <code>Actor</code> is a typed principal identifier that replaces raw
+    <code>"user:bob"</code> strings. Construct actors with the provided
+    constructors.
+  </p>
+  <pre is:raw><code>alice := entdb.UserActor("alice")        // user:alice
+admins := entdb.GroupActor("admins")     // group:admins
+api := entdb.ServiceActor("ingest-api")  // service:ingest-api
+
+// Parse a wire-format string back into an Actor
+a, err := entdb.ParseActor("user:bob")
+_ = a.Kind() // "user"
+_ = a.ID()   // "bob"
+_ = a.String() // "user:bob"</code></pre>
+
+  <h3>Permission</h3>
+  <p>
+    <code>Permission</code> is an enum-like string type with the following
+    constants:
+  </p>
+  <pre is:raw><code>entdb.PermissionRead   // "read"
+entdb.PermissionWrite  // "write"
+entdb.PermissionAdmin  // "admin"</code></pre>
+
+  <h3>ACLEntry</h3>
+  <pre is:raw><code>entry := entdb.ACLEntry{
+    Grantee:    entdb.UserActor("bob"),
+    Permission: entdb.PermissionWrite,
+    ExpiresAt:  time.Now().Add(24*time.Hour).Unix(),
+}</code></pre>
+
+  <h2>Hierarchical Scope API</h2>
+  <p>
+    Instead of repeating <code>tenantID</code> and <code>actor</code> on every
+    call, bind them once with <code>client.Tenant(...).Actor(...)</code> to
+    get a fully-scoped handle.
+  </p>
+  <pre is:raw><code>scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+// Reads
+node, err := scope.Get(ctx, 1, "node-123")
+tasks, err := scope.Query(ctx, 1, map[string]any{"status": "todo"})
+
+// ACL
+err = scope.Share(ctx, "node-123", entdb.UserActor("bob"), entdb.PermissionWrite)
+
+// Plans created from this scope inherit the tenant + actor
+plan := scope.Plan()</code></pre>
+
+  <h2>Plans (Atomic Transactions)</h2>
+  <p>
+    A <code>Plan</code> accumulates mutation operations locally and sends them
+    to the server as a single atomic batch on <code>Commit</code>. Plans are
+    single-use &mdash; create a new one for the next batch.
+  </p>
+
+  <h3>Create, Update, Delete</h3>
+  <pre is:raw><code>plan := client.Tenant("acme").Actor(entdb.UserActor("alice")).Plan()
+
+// Create returns an alias that can be used as an edge endpoint
+taskAlias := plan.Create(1 /* Task.TypeID */, map[string]any{
+    "title":  "Ship v2",
+    "status": "todo",
+})
+
+// Create with explicit ACL
+_ = plan.CreateWithACL(1, map[string]any{"title": "Private"}, []entdb.ACLEntry{
+    {Grantee: entdb.UserActor("bob"), Permission: entdb.PermissionRead},
+})
+
+// Update and Delete take concrete node IDs
+plan.Update("node-123", 1 /* Task.TypeID */, map[string]any{"status": "done"})
+plan.Delete("node-456")
+
+result, err := plan.Commit(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("created: %v", result.CreatedNodeIDs)</code></pre>
+
+  <h3>Edges</h3>
+  <pre is:raw><code>plan := scope.Plan()
+
+commentAlias := plan.Create(3 /* Comment */, map[string]any{"body": "ok"})
+
+// Edges between concrete IDs
+plan.CreateEdge(2 /* HasComment */, "task-123", commentAlias)
+
+// Remove an edge
+plan.DeleteEdge(2, "task-123", "comment-456")
+
+_, err := plan.Commit(ctx)</code></pre>
+
+  <h3>Idempotency</h3>
+  <p>
+    To make a commit safely retryable, create the plan with an explicit
+    idempotency key. Replaying the same key returns the original receipt
+    instead of applying operations twice.
+  </p>
+  <pre is:raw><code>plan := client.NewPlanWithKey("acme", "user:alice", "req-2026-04-12-abc123")
+plan.Create(1, map[string]any{"title": "Idempotent"})
+result, err := plan.Commit(ctx)</code></pre>
+
+  <h3>CommitResult</h3>
+  <table>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+    <tr><td><code>Success</code></td><td>bool</td><td>Whether the commit succeeded</td></tr>
+    <tr><td><code>Receipt</code></td><td>*Receipt</td><td>Transaction receipt with <code>StreamPosition</code></td></tr>
+    <tr><td><code>CreatedNodeIDs</code></td><td>[]string</td><td>IDs of created nodes (in create order)</td></tr>
+    <tr><td><code>Applied</code></td><td>bool</td><td>Whether the event was applied to SQLite</td></tr>
+    <tr><td><code>Error</code></td><td>string</td><td>Error message on failure</td></tr>
+  </table>
+
+  <h2>Flat API</h2>
+  <p>
+    If you prefer not to use the scope helpers, the flat API on
+    <code>DbClient</code> takes <code>tenantID</code> and <code>actor</code>
+    explicitly on every call.
+  </p>
+  <pre is:raw><code>node, err := client.Get(ctx, "acme", "user:alice", 1, "node-123")
+nodes, err := client.Query(ctx, "acme", "user:alice", 1, map[string]any{"status": "todo"})
+plan := client.NewPlan("acme", "user:alice")</code></pre>
+
+  <h2>Error Handling</h2>
+  <p>
+    The SDK returns typed errors that embed <code>EntDBError</code>. Use
+    <code>errors.As</code> to match a specific kind.
+  </p>
+  <pre is:raw><code>import "errors"
+
+_, err := client.Get(ctx, "acme", "user:alice", 1, "missing")
+
+var notFound *entdb.NotFoundError
+var denied *entdb.AccessDeniedError
+var connErr *entdb.ConnectionError
+
+switch {
+case errors.As(err, &notFound):
+    log.Printf("missing %s %s", notFound.ResourceType, notFound.ResourceID)
+case errors.As(err, &denied):
+    log.Printf("actor %s needs %s on %s",
+        denied.Actor, denied.RequiredPermission, denied.ResourceID)
+case errors.As(err, &connErr):
+    log.Printf("cannot reach %s: %s", connErr.Address, connErr.Message)
+}</code></pre>
+
+  <h3>Error Types</h3>
+  <table>
+    <tr><th>Type</th><th>Code</th><th>When</th></tr>
+    <tr><td><code>ConnectionError</code></td><td>CONNECTION_ERROR</td><td>Transport-level failure</td></tr>
+    <tr><td><code>ValidationError</code></td><td>VALIDATION_ERROR</td><td>Payload does not match the schema</td></tr>
+    <tr><td><code>NotFoundError</code></td><td>NOT_FOUND</td><td>Node or edge does not exist</td></tr>
+    <tr><td><code>AccessDeniedError</code></td><td>ACCESS_DENIED</td><td>Actor lacks the required permission</td></tr>
+    <tr><td><code>TransactionError</code></td><td>TRANSACTION_ERROR</td><td>Atomic commit failed</td></tr>
+    <tr><td><code>SchemaError</code></td><td>SCHEMA_ERROR</td><td>Schema fingerprint mismatch</td></tr>
+  </table>
+
+  <h2>Full Example</h2>
+  <pre is:raw><code>package main
+
+import (
+    "context"
+    "log"
+
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+)
+
+const (
+    TaskTypeID       = 1
+    CommentTypeID    = 3
+    HasCommentEdgeID = 2
+)
+
+func main() {
+    client, err := entdb.NewClient("localhost:50051", entdb.WithAPIKey("key"))
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    ctx := context.Background()
+    if err := client.Connect(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+    plan := scope.Plan()
+    task := plan.Create(TaskTypeID, map[string]any{
+        "title":  "Ship v2",
+        "status": "todo",
+    })
+    comment := plan.Create(CommentTypeID, map[string]any{"body": "Let's ship it"})
+    plan.CreateEdge(HasCommentEdgeID, task, comment)
+
+    result, err := plan.Commit(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("created: %v (applied=%v)", result.CreatedNodeIDs, result.Applied)
+
+    // Share the task with bob — propagate_share=true on HasComment means
+    // bob can see the comment too.
+    if err := scope.Share(ctx, result.CreatedNodeIDs[0],
+        entdb.UserActor("bob"), entdb.PermissionWrite); err != nil {
+        log.Fatal(err)
+    }
+}</code></pre>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/acl/overview">ACL Overview</a> &mdash; how permissions, inheritance and groups work</li>
+    <li><a href="/tenant-shard-db/docs/crud/consistency">Read-after-Write</a> &mdash; consistency guarantees and offsets</li>
+    <li><a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a> &mdash; S3 Object Lock and audit exports</li>
+  </ul>
+</DocsLayout>

@@ -1,15 +1,15 @@
 """
-Unit tests for applier fanout migration.
+Unit tests for applier fanout.
 
 Verifies that _fanout_node writes notifications to the canonical store's
-per-tenant SQLite (notifications table) instead of the legacy mailbox_store.
+per-tenant SQLite (notifications table).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,7 +18,6 @@ from dbaas.entdb_server.apply.applier import (
     MailboxFanoutConfig,
 )
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore, Node
-from dbaas.entdb_server.apply.mailbox_store import MailboxStore
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 
@@ -49,18 +48,16 @@ def _make_node(
 
 
 async def _make_applier(tmp_path, tenant_id: str = "t1") -> Applier:
-    """Build an Applier wired to real canonical store and real mailbox store.
+    """Build an Applier wired to a real canonical store.
 
     Initializes the tenant database so tables exist before tests run.
     """
     wal = InMemoryWalStream(num_partitions=1)
     store = CanonicalStore(str(tmp_path / "canonical"))
-    mbox = MailboxStore(str(tmp_path / "mailbox"))
     await store.initialize_tenant(tenant_id)
     applier = Applier(
         wal=wal,
         canonical_store=store,
-        mailbox_store=mbox,
         topic="t",
         fanout_config=MailboxFanoutConfig(enabled=True),
     )
@@ -87,22 +84,6 @@ class TestFanoutWritesToCanonicalStore:
         assert notifications[0]["node_id"] == "node-1"
         assert notifications[0]["user_id"] == "user:alice"
 
-        applier.canonical_store.close_all()
-
-    @pytest.mark.asyncio
-    async def test_fanout_does_not_call_mailbox_store(self, tmp_path):
-        """After migration, mailbox_store.add_item must NOT be called."""
-        applier = await _make_applier(tmp_path)
-        applier.mailbox_store = MagicMock(spec=MailboxStore)
-        applier.mailbox_store.add_item = AsyncMock()
-
-        event = FakeEvent(tenant_id="t1")
-        node = _make_node(acl=[{"principal": "user:bob"}])
-        op: dict[str, Any] = {"op": "create_node"}
-
-        await applier._fanout_node(event, node, op)
-
-        applier.mailbox_store.add_item.assert_not_called()
         applier.canonical_store.close_all()
 
     @pytest.mark.asyncio
