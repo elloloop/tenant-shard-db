@@ -126,17 +126,24 @@ class TestBatchMultiPartitionCommit:
 
 
 @pytest.mark.unit
-class TestBatchSchemaFingerprintValidation:
-    """_apply_tenant_batch must reject events with mismatched schema fingerprints,
-    matching the behavior of apply_event()."""
+class TestBatchSchemaFingerprintIsNotEnforcedOnReplay:
+    """The Applier must NOT reject events with a stale schema_fingerprint.
+
+    The WAL is an immutable historical log. Events that were valid when
+    written must still be applied on replay — otherwise a schema redeploy
+    would cause historical events to be silently dropped, breaking
+    rebuild-from-WAL and causing divergent replicas.
+
+    schema_fingerprint is only enforced on the WRITE path (gRPC boundary),
+    where it rejects stale clients.
+    """
 
     @pytest.mark.asyncio
-    async def test_mismatched_schema_skipped_in_batch(self, tmp_path):
-        """Events with wrong schema_fingerprint are skipped in batch mode."""
+    async def test_mismatched_schema_still_applied_in_batch(self, tmp_path):
+        """Historical events with a different schema_fingerprint must be applied."""
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
 
-        # Append two events: one with correct fingerprint, one with wrong
         await wal.append(
             "t",
             "k",
@@ -145,7 +152,12 @@ class TestBatchSchemaFingerprintValidation:
         await wal.append(
             "t",
             "k",
-            _event_bytes("tenant-1", "ev-bad", "node-bad", schema_fingerprint="sha256:wrong"),
+            _event_bytes(
+                "tenant-1",
+                "ev-historical",
+                "node-historical",
+                schema_fingerprint="sha256:old",
+            ),
         )
 
         store = CanonicalStore(str(tmp_path))
@@ -161,18 +173,18 @@ class TestBatchSchemaFingerprintValidation:
         records = await wal.poll_batch("t", "grp", max_records=10, timeout_ms=50)
         assert len(records) == 2
 
-        # Group by tenant
         items = [(r, r.value_json()) for r in records]
         await applier._apply_tenant_batch("tenant-1", items)
 
-        # Only the good node should exist
         good_node = await store.get_node("tenant-1", "node-good")
-        assert good_node is not None, "Good-schema node should have been applied"
+        assert good_node is not None, "Current-schema node should have been applied"
 
-        bad_node = await store.get_node("tenant-1", "node-bad")
-        assert bad_node is None, "Bad-schema node should have been skipped"
+        historical_node = await store.get_node("tenant-1", "node-historical")
+        assert historical_node is not None, (
+            "Historical event with a different fingerprint must still be applied — "
+            "otherwise a rebuild-from-WAL would silently drop data."
+        )
 
-        # Error count should reflect the skipped event
-        assert applier._error_count == 1
+        assert applier._error_count == 0
 
         store.close_all()

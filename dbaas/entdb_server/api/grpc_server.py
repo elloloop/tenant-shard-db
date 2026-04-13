@@ -188,6 +188,7 @@ class EntDBServicer(EntDBServiceServicer):
         topic: str = "entdb-wal",
         sharding: ShardingConfig | None = None,
         global_store: Any | None = None,
+        capability_registry: Any | None = None,
     ) -> None:
         """Initialize the gRPC servicer.
 
@@ -198,6 +199,10 @@ class EntDBServicer(EntDBServiceServicer):
             topic: WAL topic name
             sharding: Sharding configuration for multi-node mode
             global_store: GlobalStore instance for user registry operations
+            capability_registry: Optional pre-built
+                ``CapabilityRegistry``. When ``None``, a default
+                (core-caps-only) registry is built from
+                ``schema_registry`` on first use.
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -205,6 +210,86 @@ class EntDBServicer(EntDBServiceServicer):
         self.topic = topic
         self._sharding = sharding
         self.global_store = global_store
+        self._capability_registry = capability_registry
+
+    @property
+    def capability_registry(self) -> Any:
+        """Lazy accessor for the typed-capability registry.
+
+        Built from ``self.schema_registry`` on first access so that
+        servers which construct ``EntDBServicer`` without explicitly
+        wiring a registry still get the default core-capability
+        behaviour. Tests and the production entrypoint can inject a
+        pre-built registry via the constructor.
+        """
+        if self._capability_registry is None:
+            from ..auth.capability_registry import build_registry_from_schema
+
+            self._capability_registry = build_registry_from_schema(self.schema_registry)
+        return self._capability_registry
+
+    async def _check_capability(
+        self,
+        tenant_id: str,
+        actor: Any,
+        node_id: str,
+        type_id: int,
+        op_name: str,
+        context: Any | None = None,
+        *,
+        field: str | None = None,
+        field_value: str | None = None,
+        child_type: str | None = None,
+    ) -> None:
+        """Raise PermissionError if ``actor`` lacks the required capability.
+
+        Looks up the required capability via the registry's
+        ``required_for_op``, fetches the actor's ACL grants from the
+        canonical store, and runs each grant through
+        ``CapabilityRegistry.check_grant`` honouring the implication
+        hierarchy.
+
+        System actors and tenant owners short-circuit the check.
+        """
+        if self._is_admin_or_system(actor if isinstance(actor, str) else str(actor)):
+            return
+        registry = self.capability_registry
+        required_core, required_ext = registry.required_for_op(
+            type_id,
+            op_name,
+            field=field,
+            field_value=field_value,
+            child_type=child_type,
+        )
+        if required_core is None and required_ext is None:
+            return
+        grants = await self.canonical_store.get_acl_grants(
+            tenant_id,
+            node_id,
+            actor,
+            include_cross_tenant=True,
+        )
+        for grant in grants:
+            # Deny rows with no positive caps block everything.
+            if (
+                grant.get("permission") == "deny"
+                and not grant.get("core_cap_ids")
+                and not grant.get("ext_cap_ids")
+            ):
+                raise PermissionError(f"Actor denied explicit access on node {node_id}")
+            if registry.check_grant(
+                grant.get("core_cap_ids", []),
+                grant.get("ext_cap_ids", []),
+                required_core,
+                required_ext,
+                grant.get("type_id") or type_id,
+            ):
+                return
+        raise PermissionError(
+            f"Actor {actor} lacks capability "
+            f"{required_core if required_core is not None else f'ext:{required_ext}'} "
+            f"on node {node_id}"
+        )
 
     async def _check_tenant(self, tenant_id: str, context) -> None:
         """Reject requests for tenants not owned by this node."""
@@ -1195,14 +1280,48 @@ class EntDBServicer(EntDBServiceServicer):
         request: ShareNodeRequest,
         context: grpc_aio.ServicerContext,
     ) -> ShareNodeResponse:
-        """Share a node with an actor."""
+        """Share a node with an actor.
+
+        Accepts the legacy ``permission`` string and the typed
+        ``core_caps`` / ``ext_cap_ids`` fields. When both are set the
+        typed fields win. When only the string is set, it is still
+        persisted so older consumers keep working, and the server
+        derives the typed caps via
+        ``CapabilityRegistry.legacy_permission_to_core_caps``.
+        """
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            await self._check_tenant_access(
+                request.context.tenant_id,
+                request.context.actor,
+                context,
+                require_write=True,
+            )
             tenant_id = request.context.tenant_id
             actor_id = request.actor_id
             permission = request.permission or "read"
             expires_at = request.expires_at if request.expires_at else None
+            type_id = int(request.type_id or 0)
+            core_caps: list[int] | None = (
+                [int(c) for c in request.core_caps] if request.core_caps else None
+            )
+            ext_cap_ids: list[int] | None = (
+                [int(e) for e in request.ext_cap_ids] if request.ext_cap_ids else None
+            )
+            # Authz: granting requires ADMIN on the target node.
+            try:
+                await self._check_capability(
+                    tenant_id,
+                    request.context.actor,
+                    request.node_id,
+                    type_id,
+                    "ShareNode",
+                    context,
+                )
+            except PermissionError as perm_err:
+                record_grpc_request("ShareNode", "denied", time.perf_counter() - start)
+                return ShareNodeResponse(success=False, error=str(perm_err))
             await self.canonical_store.share_node(
                 tenant_id=tenant_id,
                 node_id=request.node_id,
@@ -1211,6 +1330,9 @@ class EntDBServicer(EntDBServiceServicer):
                 granted_by=request.context.actor,
                 actor_type=request.actor_type or "user",
                 expires_at=expires_at,
+                type_id=type_id,
+                core_caps=core_caps,
+                ext_cap_ids=ext_cap_ids,
             )
             # Update cross-tenant shared_index
             if self.global_store:
@@ -1245,6 +1367,18 @@ class EntDBServicer(EntDBServiceServicer):
             await self._check_tenant(request.context.tenant_id, context)
             tenant_id = request.context.tenant_id
             actor_id = request.actor_id
+            try:
+                await self._check_capability(
+                    tenant_id,
+                    request.context.actor,
+                    request.node_id,
+                    0,
+                    "RevokeAccess",
+                    context,
+                )
+            except PermissionError as perm_err:
+                record_grpc_request("RevokeAccess", "denied", time.perf_counter() - start)
+                return RevokeAccessResponse(found=False, error=str(perm_err))
             found = await self.canonical_store.revoke_access(
                 tenant_id=tenant_id,
                 node_id=request.node_id,
@@ -2006,31 +2140,35 @@ class EntDBServicer(EntDBServiceServicer):
         actor: str,
         context: grpc_aio.ServicerContext,
         rpc_name: str,
-    ) -> None:
-        """Abort unless the actor is admin/owner of the tenant (or system).
+    ) -> str:
+        """Abort unless the caller is admin/owner of the tenant (or system).
 
-        Admin operations require elevated privileges. System actors
-        (``system:*``, ``admin:*``, ``__system__``) bypass all checks.
-        Regular users must be owner or admin of the tenant.
+        The authoritative actor is the trusted identity populated by
+        :class:`AuthInterceptor`, not the ``actor`` field from the
+        client payload. A client claiming ``actor: "system:admin"`` while
+        authenticated as ``user:eve`` is downgraded to ``user:eve``.
+        Returns the trusted actor so callers can reuse it.
         """
-        if not actor:
+        from ..auth.auth_interceptor import get_authoritative_actor
+
+        trusted_actor = get_authoritative_actor(actor)
+        if not trusted_actor:
             await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
-        if self._is_admin_or_system(actor):
-            return
+        if self._is_admin_or_system(trusted_actor):
+            return trusted_actor
         if self.global_store is None:
-            # Without a registry we cannot enforce role membership;
-            # reject non-system actors outright.
             await context.abort(
                 grpc.StatusCode.PERMISSION_DENIED,
                 f"{rpc_name} requires admin or owner role",
             )
-        actor_uid = self._actor_user_id(actor)
+        actor_uid = self._actor_user_id(trusted_actor)
         role = await self._get_member_role(tenant_id, actor_uid)
         if role not in ("owner", "admin"):
             await context.abort(
                 grpc.StatusCode.PERMISSION_DENIED,
                 f"{rpc_name} requires admin or owner role",
             )
+        return trusted_actor
 
     async def TransferUserContent(
         self,
@@ -2047,21 +2185,39 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "from_user is required")
             if not request.to_user:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_user is required")
-            await self._require_admin_or_owner(
+            trusted_actor = await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "TransferUserContent"
             )
 
-            result = await self.canonical_store.transfer_user_content(
+            # WAL-first: append an admin_transfer_content event so the
+            # ownership change survives a full WAL rebuild. Direct
+            # canonical_store writes from this handler are forbidden by
+            # the architecture invariant ("all writes go through the WAL").
+            from .admin_handlers import handle_transfer_user_content
+
+            await handle_transfer_user_content(
+                self.global_store,
+                self.wal,
                 tenant_id=request.tenant_id,
                 from_user=request.from_user,
                 to_user=request.to_user,
-                actor=request.actor,
+                actor=trusted_actor,
+                topic=self.topic,
             )
+            transferred = 0
+            try:
+                with self.canonical_store._get_connection(request.tenant_id) as conn:
+                    row = conn.execute(
+                        "SELECT COUNT(*) AS n FROM nodes WHERE tenant_id = ? AND owner_actor = ?",
+                        (request.tenant_id, request.from_user),
+                    ).fetchone()
+                    if row is not None:
+                        transferred = int(row["n"])
+            except Exception:
+                pass
+
             record_grpc_request("TransferUserContent", "ok", time.perf_counter() - start)
-            return TransferUserContentResponse(
-                success=True,
-                transferred=result["transferred"],
-            )
+            return TransferUserContentResponse(success=True, transferred=transferred)
         except Exception as e:
             record_grpc_request("TransferUserContent", "error", time.perf_counter() - start)
             if isinstance(e, grpc.RpcError) or "StatusCode" in type(e).__name__:
@@ -2084,25 +2240,44 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "from_user is required")
             if not request.to_user:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "to_user is required")
-            await self._require_admin_or_owner(
+            trusted_actor = await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "DelegateAccess"
             )
 
             permission = request.permission or "read"
             expires_at = request.expires_at if request.expires_at else None
-            result = await self.canonical_store.delegate_access(
+
+            # WAL-first: append an admin_delegate_access event. Direct
+            # canonical_store writes from this handler are forbidden by
+            # the architecture invariant ("all writes go through the WAL").
+            from .admin_handlers import handle_delegate_access
+
+            await handle_delegate_access(
+                self.global_store,
+                self.wal,
                 tenant_id=request.tenant_id,
                 from_user=request.from_user,
                 to_user=request.to_user,
                 permission=permission,
                 expires_at=expires_at,
-                actor=request.actor,
+                actor=trusted_actor,
+                topic=self.topic,
             )
+            delegated = 0
+            try:
+                with self.canonical_store._get_connection(request.tenant_id) as conn:
+                    row = conn.execute(
+                        "SELECT COUNT(*) AS n FROM nodes WHERE tenant_id = ? AND owner_actor = ?",
+                        (request.tenant_id, request.from_user),
+                    ).fetchone()
+                    if row is not None:
+                        delegated = int(row["n"])
+            except Exception:
+                pass
+
             record_grpc_request("DelegateAccess", "ok", time.perf_counter() - start)
             return DelegateAccessResponse(
-                success=True,
-                delegated=result["delegated"],
-                expires_at=result["expires_at"] or 0,
+                success=True, delegated=delegated, expires_at=expires_at or 0
             )
         except Exception as e:
             record_grpc_request("DelegateAccess", "error", time.perf_counter() - start)

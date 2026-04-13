@@ -187,6 +187,7 @@ class Applier:
         poll_timeout_ms: int = 100,
         assigned_tenants: frozenset[str] | None = None,
         global_store: GlobalStore | None = None,
+        halt_on_error: bool = True,
     ) -> None:
         """Initialize the applier.
 
@@ -199,6 +200,9 @@ class Applier:
             acl_manager: ACL manager instance
             fanout_config: Mailbox fanout configuration
             global_store: GlobalStore for cross-tenant shared_index
+            halt_on_error: If True (default, production), the applier halts
+                on any apply failure so the WAL offset is never advanced
+                past a failed event. Tests may opt out by passing False.
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -210,6 +214,7 @@ class Applier:
         self.batch_size = batch_size
         self.poll_timeout_ms = poll_timeout_ms
         self.global_store = global_store
+        self.halt_on_error = halt_on_error
 
         self._assigned_tenants = assigned_tenants or frozenset()
         self._skipped_count = 0
@@ -270,13 +275,31 @@ class Applier:
             result = await self._process_record(record)
             self._log_result(result)
 
+            # Bug fix: never commit the WAL offset for a failed event.
+            # On failure, halt the applier so the same offset is redelivered.
+            if not result.success:
+                logger.error(
+                    "Applier halting on failed event — WAL offset NOT advanced",
+                    extra={
+                        "tenant_id": result.event.tenant_id,
+                        "idempotency_key": result.event.idempotency_key,
+                        "error": result.error,
+                        "position": str(record.position) if record.position else None,
+                    },
+                )
+                if self.halt_on_error:
+                    self._running = False
+                    return
+                # halt_on_error=False: skip commit but continue processing.
+                continue
+
             # Notify offset waiters
-            if result.success and not result.skipped and record.position is not None:
+            if not result.skipped and record.position is not None:
                 await self.canonical_store.update_applied_offset(
                     result.event.tenant_id, str(record.position)
                 )
 
-            # Commit the position
+            # Commit the position (only on success)
             await self.wal.commit(record)
             self._last_position = record.position
 
@@ -319,6 +342,11 @@ class Applier:
                     logger.error(f"Error parsing record: {e}", exc_info=True)
                     self._error_count += 1
 
+            # Track which records failed so we can avoid committing
+            # any partition that contained a failed record.
+            failed_record_ids: set[int] = set()
+            halt_after_batch = False
+
             # Apply each tenant's batch in a single transaction
             for tenant_id, items in tenant_records.items():
                 try:
@@ -328,20 +356,56 @@ class Applier:
                         f"Error applying batch for {tenant_id}: {e}",
                         exc_info=True,
                     )
-                    # Fall back to individual processing
+                    # Fall back to individual processing. Halt at the
+                    # first failure so we don't advance past a bad event.
+                    fallback_failed = False
                     for record, _data in items:
+                        if fallback_failed:
+                            # Mark the rest of this tenant's records as
+                            # failed so their partitions are not committed.
+                            failed_record_ids.add(id(record))
+                            continue
                         result = await self._process_record(record)
                         self._log_result(result)
+                        if not result.success:
+                            fallback_failed = True
+                            failed_record_ids.add(id(record))
+                            logger.error(
+                                "Applier halting in fallback path — WAL offset NOT advanced",
+                                extra={
+                                    "tenant_id": tenant_id,
+                                    "idempotency_key": (result.event.idempotency_key),
+                                    "error": result.error,
+                                },
+                            )
+                            if self.halt_on_error:
+                                halt_after_batch = True
+                    if fallback_failed and self.halt_on_error:
+                        break
 
             # Commit the last record for EACH partition to avoid
             # re-delivering records from non-last partitions on next poll.
+            # CRITICAL: only commit a partition if EVERY record from that
+            # partition in this batch succeeded. If any record in a
+            # partition failed, skip that partition's commit so it is
+            # redelivered.
             if records:
+                # Collect failed partitions
+                failed_partitions: set[int] = set()
+                for record in records:
+                    if id(record) in failed_record_ids:
+                        failed_partitions.add(record.position.partition)
+
                 per_partition: dict[int, StreamRecord] = {}
                 for record in records:
-                    per_partition[record.position.partition] = record
+                    p = record.position.partition
+                    if p in failed_partitions:
+                        continue
+                    per_partition[p] = record
                 for record in per_partition.values():
                     await self.wal.commit(record)
-                self._last_position = records[-1].position
+                if per_partition:
+                    self._last_position = records[-1].position
 
                 if len(records) > 1:
                     logger.debug(
@@ -350,33 +414,73 @@ class Applier:
                             "batch_size": len(records),
                             "tenants": len(tenant_records),
                             "last_offset": records[-1].position.offset,
+                            "failed_partitions": sorted(failed_partitions),
                         },
                     )
 
+            if halt_after_batch:
+                logger.error("Applier halting after batch due to apply failures")
+                self._running = False
+                return
+
     async def _apply_tenant_batch(self, tenant_id: str, items: list[tuple]) -> None:
-        """Apply a batch of events for a single tenant in one transaction."""
-        # Ensure tenant exists
+        """Apply a batch of events for a single tenant in one transaction.
+
+        The synchronous SQLite work runs inside the canonical_store
+        ThreadPoolExecutor so the gRPC asyncio event loop is never
+        blocked by a long batch transaction.
+        """
+        # Ensure tenant exists (uses canonical_store's own thread-pool path)
         if not await self.canonical_store.tenant_exists(tenant_id):
             await self.canonical_store.initialize_tenant(tenant_id)
 
+        loop = asyncio.get_running_loop()
+        applied_count, skipped_count = await loop.run_in_executor(
+            self.canonical_store._executor,
+            self._sync_apply_tenant_batch_body,
+            tenant_id,
+            items,
+        )
+
+        self._processed_count += applied_count
+        if applied_count > 0:
+            # Notify offset waiters with the latest stream position
+            last_record = items[-1][0]
+            if last_record.position is not None:
+                await self.canonical_store.update_applied_offset(
+                    tenant_id, str(last_record.position)
+                )
+            logger.debug(
+                "Batch applied",
+                extra={
+                    "tenant_id": tenant_id,
+                    "applied": applied_count,
+                    "skipped": skipped_count,
+                },
+            )
+
+    def _sync_apply_tenant_batch_body(self, tenant_id: str, items: list[tuple]) -> tuple[int, int]:
+        """Synchronous body of a tenant batch apply.
+
+        Runs entirely inside a worker thread. Opens the
+        ``batch_transaction`` context manager and executes every op for
+        every event in the batch in a single SQLite transaction.
+
+        Returns:
+            (applied_count, skipped_count)
+        """
         applied_count = 0
         skipped_count = 0
 
         with self.canonical_store.batch_transaction(tenant_id) as conn:
             for record, data in items:
-                # Check schema fingerprint (same guard as apply_event)
-                if self.schema_fingerprint and data.get("schema_fingerprint"):
-                    if data["schema_fingerprint"] != self.schema_fingerprint:
-                        logger.warning(
-                            "Schema mismatch in batch, skipping event",
-                            extra={
-                                "tenant_id": tenant_id,
-                                "expected": self.schema_fingerprint,
-                                "got": data["schema_fingerprint"],
-                            },
-                        )
-                        self._error_count += 1
-                        continue
+                # NOTE: We intentionally do NOT reject events with a
+                # stale schema_fingerprint here. The WAL is an immutable
+                # historical log: older events were valid when written
+                # and must still be applied on replay (e.g. during a
+                # full read-model rebuild after a schema deploy).
+                # schema_fingerprint is only enforced on the WRITE path
+                # at the gRPC boundary to reject stale clients.
 
                 idempotency_key = data.get("idempotency_key", "")
 
@@ -509,22 +613,188 @@ class Applier:
                 )
                 applied_count += 1
 
-        self._processed_count += applied_count
-        if applied_count > 0:
-            # Notify offset waiters with the latest stream position
-            last_record = items[-1][0]
-            if last_record.position is not None:
-                await self.canonical_store.update_applied_offset(
-                    tenant_id, str(last_record.position)
-                )
-            logger.debug(
-                "Batch applied",
-                extra={
-                    "tenant_id": tenant_id,
-                    "applied": applied_count,
-                    "skipped": skipped_count,
-                },
+        return applied_count, skipped_count
+
+    def _sync_apply_event_body(
+        self, event: TransactionEvent
+    ) -> tuple[bool, list[str], list[tuple], list[str]]:
+        """Synchronous body of ``apply_event``.
+
+        Runs entirely inside a worker thread. Opens the
+        ``batch_transaction`` and applies every op in a single SQLite
+        transaction. Returns ``(skipped, created_nodes, created_edges,
+        deleted_node_ids)``. Raises on failure so the async wrapper can
+        catch and turn it into a failed ``ApplyResult``.
+        """
+        created_nodes: list[str] = []
+        created_edges: list[tuple] = []
+        deleted_node_ids: list[str] = []
+        self._node_alias_map.clear()
+        tenant_id = event.tenant_id
+
+        with self.canonical_store.batch_transaction(tenant_id) as conn:
+            # Check idempotency within the transaction
+            cursor = conn.execute(
+                "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
+                (tenant_id, event.idempotency_key),
             )
+            if cursor.fetchone():
+                # Already applied — empty COMMIT is harmless.
+                return (True, [], [], [])
+
+            for op in event.ops:
+                op_type = op.get("op")
+
+                if op_type == "create_node":
+                    node = self.canonical_store.create_node_raw(
+                        conn,
+                        tenant_id=tenant_id,
+                        type_id=op["type_id"],
+                        payload=op.get("data", {}),
+                        owner_actor=event.actor,
+                        node_id=op.get("id"),
+                        acl=op.get("acl", []),
+                        created_at=event.ts_ms,
+                    )
+                    created_nodes.append(node.node_id)
+                    self._log_data_policy(op["type_id"])
+                    alias = op.get("as")
+                    if alias:
+                        self._node_alias_map[alias] = node.node_id
+
+                elif op_type == "update_node":
+                    node_id = self._resolve_ref(op.get("id", ""))
+                    patch = op.get("patch", {})
+                    cursor = conn.execute(
+                        "SELECT payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                        (tenant_id, node_id),
+                    )
+                    row = cursor.fetchone()
+                    if row:
+                        existing = json.loads(
+                            row[0] if isinstance(row, tuple) else row["payload_json"]
+                        )
+                        existing.update(patch)
+                        conn.execute(
+                            "UPDATE nodes SET payload_json = ?, updated_at = ? "
+                            "WHERE tenant_id = ? AND node_id = ?",
+                            (json.dumps(existing), event.ts_ms, tenant_id, node_id),
+                        )
+
+                elif op_type == "delete_node":
+                    node_id = self._resolve_ref(op.get("id", ""))
+                    conn.execute(
+                        "DELETE FROM edges WHERE tenant_id = ? "
+                        "AND (from_node_id = ? OR to_node_id = ?)",
+                        (tenant_id, node_id, node_id),
+                    )
+                    conn.execute(
+                        "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
+                        (tenant_id, node_id),
+                    )
+                    conn.execute(
+                        "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
+                        (tenant_id, node_id),
+                    )
+                    deleted_node_ids.append(node_id)
+
+                elif op_type == "create_edge":
+                    edge_type_id = op["edge_id"]
+                    from_ref = self._resolve_node_ref(op["from"])
+                    to_ref = self._resolve_node_ref(op["to"])
+                    props = op.get("props", {})
+                    propagates_acl = 1 if op.get("propagates_acl", False) else 0
+                    conn.execute(
+                        "INSERT OR REPLACE INTO edges "
+                        "(tenant_id, edge_type_id, from_node_id, to_node_id, "
+                        "props_json, propagates_acl, created_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            tenant_id,
+                            edge_type_id,
+                            from_ref,
+                            to_ref,
+                            json.dumps(props),
+                            propagates_acl,
+                            event.ts_ms,
+                        ),
+                    )
+                    # Create ACL inheritance pointer if edge propagates
+                    if propagates_acl:
+                        # Cycle detection: check if from_ref already
+                        # inherits from to_ref
+                        cycle = conn.execute(
+                            """
+                            WITH RECURSIVE chain(nid, depth) AS (
+                                SELECT ?, 0
+                                UNION ALL
+                                SELECT ai.inherit_from, c.depth + 1
+                                FROM acl_inherit ai
+                                JOIN chain c ON ai.node_id = c.nid
+                                WHERE c.depth < 10
+                            )
+                            SELECT 1 FROM chain WHERE nid = ? LIMIT 1
+                            """,
+                            (from_ref, to_ref),
+                        ).fetchone()
+                        if not cycle:
+                            conn.execute(
+                                "INSERT OR IGNORE INTO acl_inherit "
+                                "(node_id, inherit_from) VALUES (?, ?)",
+                                (to_ref, from_ref),
+                            )
+                    created_edges.append((edge_type_id, from_ref, to_ref))
+
+                elif op_type == "delete_edge":
+                    edge_type_id = op["edge_id"]
+                    from_ref = self._resolve_node_ref(op["from"])
+                    to_ref = self._resolve_node_ref(op["to"])
+                    conn.execute(
+                        "DELETE FROM edges WHERE tenant_id = ? "
+                        "AND edge_type_id = ? AND from_node_id = ? "
+                        "AND to_node_id = ?",
+                        (tenant_id, edge_type_id, from_ref, to_ref),
+                    )
+                    # Clean up ACL inheritance pointer
+                    conn.execute(
+                        "DELETE FROM acl_inherit WHERE node_id = ? AND inherit_from = ?",
+                        (to_ref, from_ref),
+                    )
+
+                elif op_type == "admin_transfer_content":
+                    from_user = op["from_user"]
+                    to_user = op["to_user"]
+                    conn.execute(
+                        "UPDATE nodes SET owner_actor = ?, updated_at = ? "
+                        "WHERE tenant_id = ? AND owner_actor = ?",
+                        (to_user, event.ts_ms, tenant_id, from_user),
+                    )
+
+                elif op_type == "admin_revoke_access":
+                    user_id = op["user_id"]
+                    conn.execute(
+                        "DELETE FROM node_visibility WHERE tenant_id = ? AND grantee = ?",
+                        (tenant_id, user_id),
+                    )
+
+                else:
+                    logger.warning(f"Unknown operation type: {op_type}")
+
+            # Record the event as applied — same transaction
+            stream_pos_str = str(event.stream_pos) if event.stream_pos else None
+            conn.execute(
+                "INSERT INTO applied_events "
+                "(tenant_id, idempotency_key, stream_pos, applied_at) "
+                "VALUES (?, ?, ?, ?)",
+                (
+                    tenant_id,
+                    event.idempotency_key,
+                    stream_pos_str,
+                    int(time.time() * 1000),
+                ),
+            )
+
+        return (False, created_nodes, created_edges, deleted_node_ids)
 
     def _log_result(self, result: ApplyResult) -> None:
         """Log the result of applying an event."""
@@ -583,187 +853,20 @@ class Applier:
         if not await self.canonical_store.tenant_exists(event.tenant_id):
             await self.canonical_store.initialize_tenant(event.tenant_id)
 
-        # Check schema fingerprint if required
-        if self.schema_fingerprint and event.schema_fingerprint:
-            if event.schema_fingerprint != self.schema_fingerprint:
-                return ApplyResult(
-                    success=False,
-                    event=event,
-                    error=f"Schema mismatch: expected {self.schema_fingerprint}, "
-                    f"got {event.schema_fingerprint}",
-                )
-
-        # Apply all operations atomically in a single transaction
+        # Apply all operations atomically in a single transaction.
+        # The synchronous SQLite work runs in the canonical_store
+        # ThreadPoolExecutor so we never block the gRPC event loop.
         try:
-            created_nodes: list[str] = []
-            created_edges: list[tuple] = []
-            deleted_node_ids: list[str] = []
-            self._node_alias_map.clear()
             tenant_id = event.tenant_id
+            loop = asyncio.get_running_loop()
+            skipped, created_nodes, created_edges, deleted_node_ids = await loop.run_in_executor(
+                self.canonical_store._executor,
+                self._sync_apply_event_body,
+                event,
+            )
 
-            with self.canonical_store.batch_transaction(tenant_id) as conn:
-                # Check idempotency within the transaction
-                cursor = conn.execute(
-                    "SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?",
-                    (tenant_id, event.idempotency_key),
-                )
-                if cursor.fetchone():
-                    # Already applied — rollback is automatic since we
-                    # haven't modified anything, but batch_transaction
-                    # will COMMIT the empty transaction (harmless).
-                    return ApplyResult(success=True, event=event, skipped=True)
-
-                for op in event.ops:
-                    op_type = op.get("op")
-
-                    if op_type == "create_node":
-                        node = self.canonical_store.create_node_raw(
-                            conn,
-                            tenant_id=tenant_id,
-                            type_id=op["type_id"],
-                            payload=op.get("data", {}),
-                            owner_actor=event.actor,
-                            node_id=op.get("id"),
-                            acl=op.get("acl", []),
-                            created_at=event.ts_ms,
-                        )
-                        created_nodes.append(node.node_id)
-                        self._log_data_policy(op["type_id"])
-                        alias = op.get("as")
-                        if alias:
-                            self._node_alias_map[alias] = node.node_id
-
-                    elif op_type == "update_node":
-                        node_id = self._resolve_ref(op.get("id", ""))
-                        patch = op.get("patch", {})
-                        cursor = conn.execute(
-                            "SELECT payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?",
-                            (tenant_id, node_id),
-                        )
-                        row = cursor.fetchone()
-                        if row:
-                            existing = json.loads(
-                                row[0] if isinstance(row, tuple) else row["payload_json"]
-                            )
-                            existing.update(patch)
-                            conn.execute(
-                                "UPDATE nodes SET payload_json = ?, updated_at = ? "
-                                "WHERE tenant_id = ? AND node_id = ?",
-                                (json.dumps(existing), event.ts_ms, tenant_id, node_id),
-                            )
-
-                    elif op_type == "delete_node":
-                        node_id = self._resolve_ref(op.get("id", ""))
-                        conn.execute(
-                            "DELETE FROM edges WHERE tenant_id = ? "
-                            "AND (from_node_id = ? OR to_node_id = ?)",
-                            (tenant_id, node_id, node_id),
-                        )
-                        conn.execute(
-                            "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
-                            (tenant_id, node_id),
-                        )
-                        conn.execute(
-                            "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
-                            (tenant_id, node_id),
-                        )
-                        deleted_node_ids.append(node_id)
-
-                    elif op_type == "create_edge":
-                        edge_type_id = op["edge_id"]
-                        from_ref = self._resolve_node_ref(op["from"])
-                        to_ref = self._resolve_node_ref(op["to"])
-                        props = op.get("props", {})
-                        propagates_acl = 1 if op.get("propagates_acl", False) else 0
-                        conn.execute(
-                            "INSERT OR REPLACE INTO edges "
-                            "(tenant_id, edge_type_id, from_node_id, to_node_id, "
-                            "props_json, propagates_acl, created_at) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (
-                                tenant_id,
-                                edge_type_id,
-                                from_ref,
-                                to_ref,
-                                json.dumps(props),
-                                propagates_acl,
-                                event.ts_ms,
-                            ),
-                        )
-                        # Create ACL inheritance pointer if edge propagates
-                        if propagates_acl:
-                            # Cycle detection: check if from_ref already
-                            # inherits from to_ref
-                            cycle = conn.execute(
-                                """
-                                WITH RECURSIVE chain(nid, depth) AS (
-                                    SELECT ?, 0
-                                    UNION ALL
-                                    SELECT ai.inherit_from, c.depth + 1
-                                    FROM acl_inherit ai
-                                    JOIN chain c ON ai.node_id = c.nid
-                                    WHERE c.depth < 10
-                                )
-                                SELECT 1 FROM chain WHERE nid = ? LIMIT 1
-                                """,
-                                (from_ref, to_ref),
-                            ).fetchone()
-                            if not cycle:
-                                conn.execute(
-                                    "INSERT OR IGNORE INTO acl_inherit "
-                                    "(node_id, inherit_from) VALUES (?, ?)",
-                                    (to_ref, from_ref),
-                                )
-                        created_edges.append((edge_type_id, from_ref, to_ref))
-
-                    elif op_type == "delete_edge":
-                        edge_type_id = op["edge_id"]
-                        from_ref = self._resolve_node_ref(op["from"])
-                        to_ref = self._resolve_node_ref(op["to"])
-                        conn.execute(
-                            "DELETE FROM edges WHERE tenant_id = ? "
-                            "AND edge_type_id = ? AND from_node_id = ? "
-                            "AND to_node_id = ?",
-                            (tenant_id, edge_type_id, from_ref, to_ref),
-                        )
-                        # Clean up ACL inheritance pointer
-                        conn.execute(
-                            "DELETE FROM acl_inherit WHERE node_id = ? AND inherit_from = ?",
-                            (to_ref, from_ref),
-                        )
-
-                    elif op_type == "admin_transfer_content":
-                        from_user = op["from_user"]
-                        to_user = op["to_user"]
-                        conn.execute(
-                            "UPDATE nodes SET owner_actor = ?, updated_at = ? "
-                            "WHERE tenant_id = ? AND owner_actor = ?",
-                            (to_user, event.ts_ms, tenant_id, from_user),
-                        )
-
-                    elif op_type == "admin_revoke_access":
-                        user_id = op["user_id"]
-                        conn.execute(
-                            "DELETE FROM node_visibility WHERE tenant_id = ? AND grantee = ?",
-                            (tenant_id, user_id),
-                        )
-
-                    else:
-                        logger.warning(f"Unknown operation type: {op_type}")
-
-                # Record the event as applied — same transaction
-                stream_pos_str = str(event.stream_pos) if event.stream_pos else None
-                conn.execute(
-                    "INSERT INTO applied_events "
-                    "(tenant_id, idempotency_key, stream_pos, applied_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (
-                        tenant_id,
-                        event.idempotency_key,
-                        stream_pos_str,
-                        int(time.time() * 1000),
-                    ),
-                )
+            if skipped:
+                return ApplyResult(success=True, event=event, skipped=True)
 
             # Mailbox fanout happens AFTER the transaction commits
             # (outside the batch_transaction context manager)

@@ -192,6 +192,10 @@ class TestNodeOptsMessage:
             "legal_basis",
             "description",
             "deprecated",
+            # Typed capability system (2026-04-13 ACL decision).
+            "extension_capability_enum",
+            "capability_mappings",
+            "capability_implications",
         }
         assert expected == field_names
 

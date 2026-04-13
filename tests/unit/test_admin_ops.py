@@ -6,13 +6,18 @@ Covers:
 - Legal holds: set, remove, query, is_under_legal_hold
 - revoke_user_access: membership removal + shared_index cleanup
 - Idempotency of all operations
+- WAL-first semantics for TransferUserContent and DelegateAccess
+  (Bug 3 in PR description): both gRPC handlers must append to the
+  WAL rather than writing directly to canonical_store.
 """
 
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -287,3 +292,172 @@ class TestRevokeUserAccessCanonicalStore:
 
         result = await store.revoke_user_access(TENANT, BOB, actor=ADMIN)
         assert result["revoked_groups"] == 2
+
+
+# ════════════════════════════════════════════════════════════════════
+# Bug 3: WAL-first wiring for TransferUserContent + DelegateAccess
+# ════════════════════════════════════════════════════════════════════
+#
+# Both gRPC handlers used to bypass the WAL by calling canonical_store
+# methods directly. These tests pin the new behavior:
+#
+# 1. TransferUserContent appends an ``admin_transfer_content`` event.
+# 2. DelegateAccess appends an ``admin_delegate_access`` event.
+# 3. Neither handler mutates canonical_store directly — the Applier is
+#    the only legitimate writer (verified by replacing canonical_store
+#    with a guard that records write attempts).
+
+
+class _RecordingCanonicalStore(CanonicalStore):
+    """CanonicalStore subclass that records mutating method calls.
+
+    Used to assert that the gRPC admin handlers do *not* call write
+    methods on the store directly — all mutations must go through the
+    WAL (and thence through the Applier).
+    """
+
+    def __init__(self, data_dir):
+        super().__init__(data_dir=data_dir)
+        self.write_calls: list[str] = []
+
+    async def transfer_user_content(self, *args, **kwargs):  # type: ignore[override]
+        self.write_calls.append("transfer_user_content")
+        return {"transferred": 0}
+
+    async def delegate_access(self, *args, **kwargs):  # type: ignore[override]
+        self.write_calls.append("delegate_access")
+        return {"delegated": 0, "expires_at": None}
+
+
+async def _setup_servicer_with_wal_spy(tmp_path, gs_dir):
+    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+
+    gs = GlobalStore(gs_dir)
+    await gs.create_tenant(TENANT, "T")
+    await gs.add_member(TENANT, "admin", role="owner")
+
+    cs = _RecordingCanonicalStore(data_dir=tmp_path)
+    with cs._get_connection(TENANT, create=True) as conn:
+        cs._create_schema(conn)
+    # Seed two nodes owned by alice so the count-by-query in the
+    # handler returns a non-zero number.
+    nid_a = str(uuid.uuid4())
+    nid_b = str(uuid.uuid4())
+    now = int(time.time() * 1000)
+    cs._sync_create_node(TENANT, 1, {}, ALICE, nid_a, [], now)
+    cs._sync_create_node(TENANT, 1, {}, ALICE, nid_b, [], now)
+
+    wal = MagicMock()
+    pos = MagicMock()
+    pos.__str__ = MagicMock(return_value="0:0:0")
+    wal.append = AsyncMock(return_value=pos)
+
+    schema_registry = MagicMock()
+    schema_registry.fingerprint = ""
+
+    servicer = EntDBServicer(
+        wal=wal,
+        canonical_store=cs,
+        schema_registry=schema_registry,
+        global_store=gs,
+    )
+    return servicer, cs, wal, gs
+
+
+class _FakeContext:
+    async def abort(self, code, message):
+        raise AssertionError(f"unexpected abort: {code} {message}")
+
+
+class TestAdminHandlersGoThroughWal:
+    async def test_transfer_user_content_appends_admin_transfer_event(self, tmp_path):
+        from dbaas.entdb_server.api.generated import TransferUserContentRequest
+
+        with tempfile.TemporaryDirectory() as gs_dir:
+            servicer, cs, wal, gs = await _setup_servicer_with_wal_spy(tmp_path, gs_dir)
+            try:
+                resp = await servicer.TransferUserContent(
+                    TransferUserContentRequest(
+                        actor=ADMIN,
+                        tenant_id=TENANT,
+                        from_user=ALICE,
+                        to_user=BOB,
+                    ),
+                    _FakeContext(),
+                )
+                assert resp.success is True
+                # The handler must have appended exactly one WAL event
+                # whose op type is admin_transfer_content.
+                wal.append.assert_awaited_once()
+                payload_bytes = wal.append.call_args.kwargs["value"]
+                event = json.loads(payload_bytes.decode())
+                assert event["ops"][0]["op"] == "admin_transfer_content"
+                assert event["ops"][0]["from_user"] == ALICE
+                assert event["ops"][0]["to_user"] == BOB
+                # And the handler must NOT have mutated canonical_store
+                # directly — the WAL is the only source of truth.
+                assert "transfer_user_content" not in cs.write_calls
+                # The response counts nodes still owned by from_user
+                # at the time of the call (the Applier will materialize
+                # the rename later).
+                assert resp.transferred == 2
+            finally:
+                gs.close()
+
+    async def test_delegate_access_appends_admin_delegate_event(self, tmp_path):
+        from dbaas.entdb_server.api.generated import DelegateAccessRequest
+
+        with tempfile.TemporaryDirectory() as gs_dir:
+            servicer, cs, wal, gs = await _setup_servicer_with_wal_spy(tmp_path, gs_dir)
+            try:
+                expires = int(time.time() * 1000) + 3600_000
+                resp = await servicer.DelegateAccess(
+                    DelegateAccessRequest(
+                        actor=ADMIN,
+                        tenant_id=TENANT,
+                        from_user=ALICE,
+                        to_user=BOB,
+                        permission="write",
+                        expires_at=expires,
+                    ),
+                    _FakeContext(),
+                )
+                assert resp.success is True
+                wal.append.assert_awaited_once()
+                payload_bytes = wal.append.call_args.kwargs["value"]
+                event = json.loads(payload_bytes.decode())
+                op = event["ops"][0]
+                assert op["op"] == "admin_delegate_access"
+                assert op["from_user"] == ALICE
+                assert op["to_user"] == BOB
+                assert op["permission"] == "write"
+                assert op["expires_at"] == expires
+                # Direct delegate_access must NOT have been called.
+                assert "delegate_access" not in cs.write_calls
+                assert resp.delegated == 2
+                assert resp.expires_at == expires
+            finally:
+                gs.close()
+
+    async def test_delegate_access_default_permission_is_read(self, tmp_path):
+        from dbaas.entdb_server.api.generated import DelegateAccessRequest
+
+        with tempfile.TemporaryDirectory() as gs_dir:
+            servicer, cs, wal, gs = await _setup_servicer_with_wal_spy(tmp_path, gs_dir)
+            try:
+                resp = await servicer.DelegateAccess(
+                    DelegateAccessRequest(
+                        actor=ADMIN,
+                        tenant_id=TENANT,
+                        from_user=ALICE,
+                        to_user=BOB,
+                        # permission omitted
+                    ),
+                    _FakeContext(),
+                )
+                assert resp.success is True
+                wal.append.assert_awaited_once()
+                event = json.loads(wal.append.call_args.kwargs["value"].decode())
+                assert event["ops"][0]["permission"] == "read"
+            finally:
+                gs.close()
