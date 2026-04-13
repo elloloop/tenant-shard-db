@@ -178,6 +178,28 @@ message Operation {
     }
 }
 
+// Storage mode for a node (2026-04-13 storage decision).
+//
+// Storage mode is chosen at creation time and is IMMUTABLE. It cannot
+// be changed by ``update_node``. The server enforces the
+// ``USER_MAILBOX -> TENANT -> PUBLIC`` privacy hierarchy on edges —
+// more-private data can reference less-private data, never the
+// reverse.
+enum StorageMode {
+    // Default — node lives in the tenant SQLite file (tenant_<id>.db)
+    // and is sharable via ACL within the tenant.
+    STORAGE_MODE_TENANT = 0;
+
+    // Node lives in a per-user SQLite file
+    // ({tenant_id}/user_{user_id}.db) and is private to exactly one
+    // user. Requires ``target_user_id`` to be set at creation.
+    STORAGE_MODE_USER_MAILBOX = 1;
+
+    // Node lives in the singleton public.db and is readable by any
+    // tenant.
+    STORAGE_MODE_PUBLIC = 2;
+}
+
 message CreateNodeOp {
     // Node type ID (required)
     int32 type_id = 1;
@@ -200,6 +222,15 @@ message CreateNodeOp {
 
     // ACL entries
     repeated AclEntry acl = 8;
+
+    // Storage mode for this node — immutable after creation
+    // (2026-04-13 storage decision).
+    StorageMode storage_mode = 9;
+
+    // Owning user id for ``STORAGE_MODE_USER_MAILBOX`` nodes. Required
+    // when ``storage_mode == STORAGE_MODE_USER_MAILBOX``; ignored for
+    // other modes.
+    string target_user_id = 10;
 }
 
 message UpdateNodeOp {

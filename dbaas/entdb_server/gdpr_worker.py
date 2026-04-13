@@ -175,3 +175,52 @@ class GdprDeletionWorker:
             "tenants_processed": per_tenant,
             "deleted_tenants": deleted_tenants,
         }
+
+    async def _delete_user_mailbox(self, tenant_id: str, user_id: str) -> bool:
+        """Evict and delete a user's per-user mailbox SQLite file.
+
+        This is the GDPR companion to
+        :meth:`CanonicalStore.delete_tenant_database`. It:
+
+        - evicts the pooled mailbox connection (closes the FD),
+        - unlinks the ``user_<id>.db`` file plus its WAL / SHM sidecars,
+        - deletes any tenant-stored drafts owned by the user.
+
+        Args:
+            tenant_id: Tenant owning the mailbox.
+            user_id: Raw user id (``alice`` or ``user:alice``).
+
+        Returns:
+            True if the mailbox file existed and was removed.
+        """
+        store = self.canonical_store
+        # Always evict the pooled conn first so no thread is mid-write
+        # when we unlink the file.
+        try:
+            store.evict_mailbox_connection(tenant_id, user_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed to evict mailbox connection for %s/%s", tenant_id, user_id)
+
+        db_path = store._get_mailbox_db_path(tenant_id, user_id)
+        removed = False
+        if db_path.exists():
+            try:
+                db_path.unlink()
+                removed = True
+            except FileNotFoundError:  # pragma: no cover
+                pass
+        for suffix in ("-wal", "-shm"):
+            sidecar = db_path.with_name(db_path.name + suffix)
+            if sidecar.exists():
+                try:
+                    sidecar.unlink()
+                except FileNotFoundError:  # pragma: no cover
+                    pass
+
+        # Also delete any tenant-stored drafts owned by the user.
+        try:
+            await store.delete_user_drafts(tenant_id, user_id)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed to delete drafts for %s/%s", tenant_id, user_id)
+
+        return removed

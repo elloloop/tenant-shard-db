@@ -259,6 +259,98 @@ class Plan:
         self._operations.append(op)
         return self
 
+    def create_in_mailbox(
+        self,
+        target_user: str,
+        node_or_type: Any,
+        data: dict[str, Any] | None = None,
+        *,
+        acl: list[ACLEntry] | list[dict[str, str]] | None = None,
+        as_: str | None = None,
+        **kwargs: Any,
+    ) -> Plan:
+        """Create a node in the target user's private mailbox database.
+
+        The node is stored in ``{data_dir}/{tenant_id}/user_{target_user}.db``
+        and is private to exactly one user.
+
+        **Storage mode is immutable.** A node created with
+        ``create_in_mailbox`` can never be moved to ``tenant.db`` or
+        ``public.db`` — if you might ever share this data, use
+        :meth:`create` with an ACL instead. See the 2026-04-13 storage
+        decision for the rationale.
+
+        Args:
+            target_user: The owning user id (plain ``alice`` or
+                ``user:alice``). This user's mailbox database is
+                created lazily on first write.
+            node_or_type: Same semantics as :meth:`create`.
+            data: Payload dict (if ``node_or_type`` is a ``NodeTypeDef``).
+            acl: Optional ACL entries. Note that mailbox nodes are
+                private by construction; ACLs are recorded for audit
+                but the file itself is not readable by other users.
+            as_: Alias for referencing this node in subsequent ops.
+
+        Returns:
+            Self for chaining.
+        """
+        self._ensure_not_committed()
+        self.create(
+            node_or_type,
+            data,
+            acl=acl,
+            as_=as_,
+            **kwargs,
+        )
+        # Attach storage routing metadata to the last op.
+        last = self._operations[-1]["create_node"]
+        last["storage_mode"] = "USER_MAILBOX"
+        last["target_user_id"] = target_user
+        return self
+
+    def create_in_public(
+        self,
+        node_or_type: Any,
+        data: dict[str, Any] | None = None,
+        *,
+        acl: list[ACLEntry] | list[dict[str, str]] | None = None,
+        as_: str | None = None,
+        **kwargs: Any,
+    ) -> Plan:
+        """Create a node in the singleton ``public.db``.
+
+        The node is readable by any tenant (cross-tenant read). Use
+        this for data that is universally visible (blog posts, public
+        product listings, open datasets, etc.).
+
+        **Storage mode is immutable.** A node created with
+        ``create_in_public`` can never be moved into a tenant or
+        mailbox file. If you might ever need to restrict visibility,
+        use :meth:`create` with an explicit ACL instead. See the
+        2026-04-13 storage decision.
+
+        Args:
+            node_or_type: Same semantics as :meth:`create`.
+            data: Payload dict (if ``node_or_type`` is a ``NodeTypeDef``).
+            acl: Optional ACL entries. Public nodes are world-readable
+                so ACLs are typically empty.
+            as_: Alias for referencing this node in subsequent ops.
+
+        Returns:
+            Self for chaining.
+        """
+        self._ensure_not_committed()
+        self.create(
+            node_or_type,
+            data,
+            acl=acl,
+            as_=as_,
+            **kwargs,
+        )
+        last = self._operations[-1]["create_node"]
+        last["storage_mode"] = "PUBLIC"
+        return self
+
     def update(
         self,
         node_type: NodeTypeDef,
