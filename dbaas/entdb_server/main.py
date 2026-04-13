@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import signal
 import sys
 from pathlib import Path
@@ -239,22 +240,36 @@ class Server:
             )
 
             # Global store for cross-tenant metadata (users, tenants,
-            # memberships, quotas). Required for the QuotaInterceptor
-            # and for the Applier's post-apply usage-increment hook.
-            try:
-                self.global_store = GlobalStore(
-                    data_dir=str(data_dir),
-                    wal_mode=self.config.storage.wal_mode,
-                    busy_timeout_ms=self.config.storage.busy_timeout_ms,
-                    encryption_config=self.config.encryption,
-                )
-                logger.info("Global store initialised at %s", data_dir)
-            except Exception as exc:
-                # The server can still run without a global store (no
-                # auth, no quotas), so fall back rather than refusing
-                # to start. Tests intentionally exercise this path.
-                logger.warning("Global store initialisation failed: %s", exc)
+            # memberships, quotas). Required for the QuotaInterceptor,
+            # the tenant-access check, and the Applier's post-apply
+            # usage-increment hook.
+            #
+            # Only instantiated when auth or quotas are actually enabled
+            # on this deployment. The no-auth / no-quota path (E2E,
+            # dev-mode, tests) leaves global_store as None so existing
+            # code paths that check ``if self.global_store is None`` to
+            # bypass tenant-existence checks keep working.
+            enable_global_store = (
+                self.config.grpc.auth_enabled or os.getenv("ENTDB_QUOTAS_ENABLED") == "true"
+            )
+            if enable_global_store:
+                try:
+                    self.global_store = GlobalStore(
+                        data_dir=str(data_dir),
+                        wal_mode=self.config.storage.wal_mode,
+                        busy_timeout_ms=self.config.storage.busy_timeout_ms,
+                        encryption_config=self.config.encryption,
+                    )
+                    logger.info("Global store initialised at %s", data_dir)
+                except Exception as exc:
+                    logger.warning("Global store initialisation failed: %s", exc)
+                    self.global_store = None
+            else:
                 self.global_store = None
+                logger.info(
+                    "Global store disabled (auth+quotas off). Set auth_enabled=true or "
+                    "ENTDB_QUOTAS_ENABLED=true to enable."
+                )
 
             # Log warning for local mode
             if self.config.wal_backend == WalBackend.LOCAL:
