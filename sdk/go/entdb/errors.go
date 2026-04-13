@@ -203,6 +203,86 @@ func parseRateLimitFromStatus(err error, trailer metadata.MD) *RateLimitError {
 	return NewRateLimitError(st.Message(), retryAfterMs)
 }
 
+// UniqueConstraintError indicates that a create/update operation
+// violated a declared unique key (2026-04-13 unique_keys decision).
+// The server surfaces this via gRPC ALREADY_EXISTS, with a status
+// message identifying the colliding key. parseUniqueConstraintFromStatus
+// turns those responses into a typed error so callers can write
+//
+//	if uce, ok := err.(*entdb.UniqueConstraintError); ok {
+//	    // fetch the existing node via scope.GetByKey(...)
+//	}
+type UniqueConstraintError struct {
+	EntDBError
+	TenantID string
+	TypeID   int
+	KeyName  string
+	KeyValue string
+}
+
+// NewUniqueConstraintError builds a typed UniqueConstraintError from
+// the colliding-key coordinates. The message is set from the
+// arguments so callers can log it directly.
+func NewUniqueConstraintError(tenantID string, typeID int, keyName, keyValue string) *UniqueConstraintError {
+	msg := fmt.Sprintf(
+		"unique key violation: tenant=%s type_id=%d key=%s=%q already exists",
+		tenantID, typeID, keyName, keyValue,
+	)
+	return &UniqueConstraintError{
+		EntDBError: EntDBError{
+			Message: msg,
+			Code:    "UNIQUE_CONSTRAINT",
+			Details: map[string]any{
+				"tenant_id": tenantID,
+				"type_id":   typeID,
+				"key_name":  keyName,
+				"key_value": keyValue,
+			},
+		},
+		TenantID: tenantID,
+		TypeID:   typeID,
+		KeyName:  keyName,
+		KeyValue: keyValue,
+	}
+}
+
+// Error implements the error interface. It prefers the server-provided
+// status message when one is available, falling back to the typed
+// coordinates so the message remains informative.
+func (e *UniqueConstraintError) Error() string {
+	if e.Message != "" {
+		return fmt.Sprintf("entdb %s: %s", e.Code, e.Message)
+	}
+	return fmt.Sprintf(
+		"entdb %s: tenant=%s type_id=%d key=%s=%q already exists",
+		e.Code, e.TenantID, e.TypeID, e.KeyName, e.KeyValue,
+	)
+}
+
+// parseUniqueConstraintFromStatus converts a gRPC status into a
+// typed UniqueConstraintError when the status code is ALREADY_EXISTS.
+// Returns nil for other status codes so callers can chain-check
+// their error mapping. The server's status message is preserved on
+// the typed error so logs stay useful.
+func parseUniqueConstraintFromStatus(err error, tenantID string) *UniqueConstraintError {
+	if err == nil {
+		return nil
+	}
+	st, ok := status.FromError(err)
+	if !ok || st.Code() != codes.AlreadyExists {
+		return nil
+	}
+	uce := &UniqueConstraintError{
+		EntDBError: EntDBError{
+			Message: st.Message(),
+			Code:    "UNIQUE_CONSTRAINT",
+			Details: map[string]any{"tenant_id": tenantID},
+		},
+		TenantID: tenantID,
+	}
+	return uce
+}
+
 // SchemaError indicates a schema-related problem.
 type SchemaError struct {
 	EntDBError

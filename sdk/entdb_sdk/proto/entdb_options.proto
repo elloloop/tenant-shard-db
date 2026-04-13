@@ -65,6 +65,20 @@ message CapabilityMapping {
     int32 required_ext = 6;           // enum value from extension_capability_enum
 }
 
+// A single unique/secondary-lookup key declared on a node type
+// (2026-04-13 unique_keys decision). Each declared key is enforced
+// as unique within ``(tenant_id, type_id, key_name)`` by the
+// applier and is searchable via the ``GetNodeByKey`` RPC.
+message NodeKeySpec {
+    // Logical key name (e.g. "email", "external_id"). Must be
+    // stable — renaming is schema evolution, not a free operation.
+    string name = 1;
+
+    // If true, ``create_node`` must carry a value for this key or
+    // the server rejects the op with ``INVALID_ARGUMENT``.
+    bool required = 2;
+}
+
 // Declares that holding ``core``/``ext`` implies all of the
 // capabilities listed in ``implies_core``/``implies_ext``. Merged with
 // the built-in ADMIN > EDIT > COMMENT > READ hierarchy.
@@ -112,6 +126,12 @@ message NodeOpts {
     // Per-type implication hierarchy merged with the built-in
     // ADMIN > EDIT > COMMENT > READ closure.
     repeated CapabilityImplication capability_implications = 22;
+
+    // Unique keys / secondary lookup keys (2026-04-13 unique_keys
+    // decision). Each declared key is enforced as unique within
+    // ``(tenant_id, type_id, key_name)`` and is searchable via
+    // ``GetNodeByKey``.
+    repeated NodeKeySpec keys = 23;
 }
 
 // Edge type configuration — applied to a message representing an edge
