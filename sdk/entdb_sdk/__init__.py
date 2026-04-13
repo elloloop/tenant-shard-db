@@ -40,6 +40,7 @@ from .codegen import register_proto_schema
 from .errors import (
     ConnectionError,
     EntDbError,
+    RateLimitError,
     SchemaError,
     UnknownFieldError,
     ValidationError,
@@ -103,4 +104,5 @@ __all__ = [
     "ValidationError",
     "SchemaError",
     "UnknownFieldError",
+    "RateLimitError",
 ]

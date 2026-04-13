@@ -65,6 +65,7 @@ Table schema:
 from __future__ import annotations
 
 import asyncio
+import datetime as _dt
 import logging
 import sqlite3
 import time
@@ -76,6 +77,14 @@ from typing import Any
 
 from .config import EncryptionConfig
 from .encryption import derive_global_key, open_encrypted_connection
+
+
+def _calendar_month_start_ms() -> int:
+    """Unix millisecond timestamp of the start of the current UTC month."""
+    now = _dt.datetime.now(tz=_dt.timezone.utc)
+    start = _dt.datetime(now.year, now.month, 1, tzinfo=_dt.timezone.utc)
+    return int(start.timestamp() * 1000)
+
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +234,20 @@ class GlobalStore:
                 reason      TEXT NOT NULL,
                 created_at  INTEGER NOT NULL,
                 PRIMARY KEY (tenant_id, held_by)
+            );
+
+            CREATE TABLE IF NOT EXISTS tenant_quotas (
+                tenant_id            TEXT PRIMARY KEY,
+                max_writes_per_month INTEGER NOT NULL DEFAULT 0,
+                hard_enforce         INTEGER NOT NULL DEFAULT 0,
+                updated_at           INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tenant_usage (
+                tenant_id       TEXT PRIMARY KEY,
+                period_start_ms INTEGER NOT NULL,
+                writes_count    INTEGER NOT NULL DEFAULT 0,
+                updated_at      INTEGER NOT NULL
             );
             """
         )
@@ -1020,4 +1043,184 @@ class GlobalStore:
             "user_id": user_id,
             "membership_removed": membership_removed,
             "shared_removed": shared_removed,
+        }
+
+    # ── Quotas (Phase 1: monthly writes) ─────────────────────────────────
+
+    async def set_quota_config(
+        self,
+        tenant_id: str,
+        max_writes_per_month: int = 0,
+        hard_enforce: bool = False,
+    ) -> dict:
+        """Set or replace the quota config for a tenant.
+
+        Args:
+            tenant_id: Tenant identifier.
+            max_writes_per_month: Monthly write cap. ``0`` means unlimited.
+            hard_enforce: If ``True``, requests over the cap are rejected
+                with ``RESOURCE_EXHAUSTED``. If ``False`` (default), they
+                are logged and allowed (overage billing territory).
+
+        Returns:
+            The stored config as a dict.
+        """
+        return await self._run_sync(
+            self._sync_set_quota_config,
+            tenant_id,
+            max_writes_per_month,
+            hard_enforce,
+        )
+
+    def _sync_set_quota_config(
+        self, tenant_id: str, max_writes_per_month: int, hard_enforce: bool
+    ) -> dict:
+        now = self._now()
+        with self._get_connection() as conn:
+            conn.execute(
+                """INSERT INTO tenant_quotas
+                       (tenant_id, max_writes_per_month, hard_enforce, updated_at)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(tenant_id) DO UPDATE SET
+                       max_writes_per_month = excluded.max_writes_per_month,
+                       hard_enforce = excluded.hard_enforce,
+                       updated_at = excluded.updated_at""",
+                (tenant_id, max_writes_per_month, 1 if hard_enforce else 0, now),
+            )
+        return {
+            "tenant_id": tenant_id,
+            "max_writes_per_month": max_writes_per_month,
+            "hard_enforce": hard_enforce,
+            "updated_at": now,
+        }
+
+    async def get_quota_config(self, tenant_id: str) -> dict | None:
+        """Return the tenant's quota config, or ``None`` if none is set.
+
+        A missing config is equivalent to "unlimited" — the interceptor
+        treats None as no-op.
+        """
+        return await self._run_sync(self._sync_get_quota_config, tenant_id)
+
+    def _sync_get_quota_config(self, tenant_id: str) -> dict | None:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM tenant_quotas WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "tenant_id": row["tenant_id"],
+            "max_writes_per_month": row["max_writes_per_month"],
+            "hard_enforce": bool(row["hard_enforce"]),
+            "updated_at": row["updated_at"],
+        }
+
+    async def get_usage(self, tenant_id: str) -> dict:
+        """Return the current-period usage for a tenant.
+
+        If no row exists, a zero-initialized usage with the current
+        calendar-month period_start is returned (but not persisted).
+        Callers should treat a missing row as "new tenant, unused".
+        """
+        return await self._run_sync(self._sync_get_usage, tenant_id)
+
+    def _sync_get_usage(self, tenant_id: str) -> dict:
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM tenant_usage WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchone()
+        if row is None:
+            return {
+                "tenant_id": tenant_id,
+                "period_start_ms": _calendar_month_start_ms(),
+                "writes_count": 0,
+                "updated_at": 0,
+            }
+        return {
+            "tenant_id": row["tenant_id"],
+            "period_start_ms": row["period_start_ms"],
+            "writes_count": row["writes_count"],
+            "updated_at": row["updated_at"],
+        }
+
+    async def increment_usage(self, tenant_id: str, n_writes: int) -> dict:
+        """Increment a tenant's write counter by ``n_writes``.
+
+        Called by the Applier after a successful ``ExecuteAtomic`` commit.
+        Automatically resets the counter and advances ``period_start_ms``
+        if the calendar month has rolled over since the last increment.
+
+        This is fire-and-forget for the Applier — errors are logged by
+        the caller, not raised.
+        """
+        return await self._run_sync(self._sync_increment_usage, tenant_id, n_writes)
+
+    def _sync_increment_usage(self, tenant_id: str, n_writes: int) -> dict:
+        if n_writes <= 0:
+            return self._sync_get_usage(tenant_id)
+        now = self._now()
+        period_start = _calendar_month_start_ms()
+        with self._get_connection() as conn:
+            row = conn.execute(
+                "SELECT period_start_ms, writes_count FROM tenant_usage WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """INSERT INTO tenant_usage
+                           (tenant_id, period_start_ms, writes_count, updated_at)
+                       VALUES (?, ?, ?, ?)""",
+                    (tenant_id, period_start, n_writes, now),
+                )
+                return {
+                    "tenant_id": tenant_id,
+                    "period_start_ms": period_start,
+                    "writes_count": n_writes,
+                    "updated_at": now,
+                }
+            # If the period has rolled over, reset the counter.
+            if row["period_start_ms"] < period_start:
+                new_count = n_writes
+            else:
+                new_count = row["writes_count"] + n_writes
+                period_start = row["period_start_ms"]
+            conn.execute(
+                """UPDATE tenant_usage
+                   SET period_start_ms = ?, writes_count = ?, updated_at = ?
+                   WHERE tenant_id = ?""",
+                (period_start, new_count, now, tenant_id),
+            )
+        return {
+            "tenant_id": tenant_id,
+            "period_start_ms": period_start,
+            "writes_count": new_count,
+            "updated_at": now,
+        }
+
+    async def reset_period(self, tenant_id: str) -> dict:
+        """Force a period reset for a tenant. Used by tests and ops."""
+        return await self._run_sync(self._sync_reset_period, tenant_id)
+
+    def _sync_reset_period(self, tenant_id: str) -> dict:
+        now = self._now()
+        period_start = _calendar_month_start_ms()
+        with self._get_connection() as conn:
+            conn.execute(
+                """INSERT INTO tenant_usage
+                       (tenant_id, period_start_ms, writes_count, updated_at)
+                   VALUES (?, ?, 0, ?)
+                   ON CONFLICT(tenant_id) DO UPDATE SET
+                       period_start_ms = excluded.period_start_ms,
+                       writes_count = 0,
+                       updated_at = excluded.updated_at""",
+                (tenant_id, period_start, now),
+            )
+        return {
+            "tenant_id": tenant_id,
+            "period_start_ms": period_start,
+            "writes_count": 0,
+            "updated_at": now,
         }
