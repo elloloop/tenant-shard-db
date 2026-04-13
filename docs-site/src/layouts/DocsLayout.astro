@@ -1,6 +1,16 @@
 ---
 import "../styles/global.css";
-import DocsShell from "../components/DocsShell.tsx";
+import {
+  AppShell,
+  AppShellHeader,
+  AppShellSidebar,
+  AppShellMain,
+  AppShellContent,
+  AppShellMobileNav,
+  AppShellOverlay,
+  ThemeScript,
+  ThemeToggle,
+} from "@refraction-ui/astro";
 
 interface Props {
   title: string;
@@ -9,20 +19,68 @@ interface Props {
 const { title } = Astro.props;
 const currentPath = Astro.url.pathname;
 
-// Inline theme script to prevent flash of wrong theme
-const themeScript = `
-(function(){
-  try {
-    var m = localStorage.getItem('rfr-theme');
-    var s = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    var t = m === 'dark' || (m !== 'light' && s) ? 'dark' : 'light';
-    var d = document.documentElement;
-    d.classList.remove('light','dark');
-    d.classList.add(t);
-    d.style.colorScheme = t;
-  } catch(e){}
-})()
-`;
+const navLinks = [
+  { label: "Docs", href: "/tenant-shard-db/" },
+  { label: "GitHub", href: "https://github.com/elloloop/tenant-shard-db" },
+  { label: "PyPI", href: "https://pypi.org/project/entdb-sdk/" },
+];
+
+const sidebarSections = [
+  {
+    title: "Getting Started",
+    items: [
+      { label: "Introduction", href: "/tenant-shard-db/" },
+      { label: "Installation", href: "/tenant-shard-db/docs/installation" },
+      { label: "Quick Start", href: "/tenant-shard-db/docs/quickstart" },
+      { label: "Core Concepts", href: "/tenant-shard-db/docs/concepts" },
+    ],
+  },
+  {
+    title: "Setup",
+    items: [
+      { label: "Define Schema (.proto)", href: "/tenant-shard-db/docs/setup/schema" },
+      { label: "CI Integration", href: "/tenant-shard-db/docs/setup/ci" },
+      { label: "Schema CLI", href: "/tenant-shard-db/docs/schema/cli" },
+      { label: "Schema Evolution", href: "/tenant-shard-db/docs/schema/evolution" },
+    ],
+  },
+  {
+    title: "Data & ACL",
+    items: [
+      { label: "Read-after-Write", href: "/tenant-shard-db/docs/crud/consistency" },
+      { label: "ACL Overview", href: "/tenant-shard-db/docs/acl/overview" },
+    ],
+  },
+  {
+    title: "Common Patterns",
+    items: [
+      { label: "Task Management", href: "/tenant-shard-db/docs/patterns/tasks" },
+      { label: "Family App", href: "/tenant-shard-db/docs/patterns/family" },
+      { label: "Learning Platform", href: "/tenant-shard-db/docs/patterns/learning" },
+    ],
+  },
+  {
+    title: "SDK Reference",
+    items: [
+      { label: "Python SDK", href: "/tenant-shard-db/docs/sdk/python" },
+      { label: "Go SDK", href: "/tenant-shard-db/docs/sdk/go" },
+    ],
+  },
+  {
+    title: "Compliance",
+    items: [
+      { label: "Audit & Object Lock", href: "/tenant-shard-db/docs/compliance/audit" },
+      { label: "GDPR", href: "/tenant-shard-db/docs/compliance/gdpr" },
+    ],
+  },
+  {
+    title: "Deployment",
+    items: [{ label: "WAL Backends", href: "/tenant-shard-db/docs/deploy/wal" }],
+  },
+];
+
+const isActive = (href: string) =>
+  currentPath === href || currentPath === href + "/";
 ---
 
 <!doctype html>
@@ -31,12 +89,84 @@ const themeScript = `
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{title} — EntDB Documentation</title>
-    <meta name="description" content="EntDB — Multi-tenant graph database with event sourcing, ACL inheritance, and built-in GDPR compliance." />
-    <script is:inline set:html={themeScript} />
+    <meta
+      name="description"
+      content="EntDB — Multi-tenant graph database with event sourcing, ACL inheritance, and built-in GDPR compliance."
+    />
+    <ThemeScript />
   </head>
   <body class="bg-background text-foreground antialiased">
-    <DocsShell client:load currentPath={currentPath}>
-      <slot />
-    </DocsShell>
+    <AppShell mobileBreakpoint={768} tabletBreakpoint={1024}>
+      <AppShellHeader>
+        <div
+          class="flex h-14 items-center gap-6 border-b border-border bg-background px-4 md:px-6"
+        >
+          <AppShellMobileNav />
+          <a
+            href="/tenant-shard-db/"
+            class="flex items-center gap-2 font-bold"
+          >
+            <div
+              class="h-6 w-6 rounded-md bg-gradient-to-br from-primary to-primary/60"
+            >
+            </div>
+            <span class="text-primary">EntDB</span>
+            <span class="text-foreground">Docs</span>
+          </a>
+          <nav class="hidden items-center gap-5 md:flex">
+            {
+              navLinks.map((link) => (
+                <a
+                  href={link.href}
+                  class="text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {link.label}
+                </a>
+              ))
+            }
+          </nav>
+          <div class="ml-auto flex items-center gap-3">
+            <ThemeToggle variant="segmented" />
+          </div>
+        </div>
+      </AppShellHeader>
+
+      <AppShellSidebar>
+        <nav class="flex flex-col gap-1 overflow-y-auto p-4">
+          {
+            sidebarSections.map((section) => (
+              <div class="mb-4">
+                <div class="mb-2 px-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  {section.title}
+                </div>
+                {section.items.map((item) => (
+                  <a
+                    href={item.href}
+                    class:list={[
+                      "block rounded-md px-3 py-1.5 text-sm transition-colors",
+                      isActive(item.href)
+                        ? "bg-primary/10 font-medium text-primary"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    ]}
+                  >
+                    {item.label}
+                  </a>
+                ))}
+              </div>
+            ))
+          }
+        </nav>
+      </AppShellSidebar>
+
+      <AppShellMain>
+        <AppShellContent>
+          <article class="prose mx-auto max-w-3xl px-4 py-10 md:px-8">
+            <slot />
+          </article>
+        </AppShellContent>
+      </AppShellMain>
+
+      <AppShellOverlay />
+    </AppShell>
   </body>
 </html>
