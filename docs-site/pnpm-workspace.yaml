@@ -1,2 +1,0 @@
-patchedDependencies:
-  '@refraction-ui/astro@0.4.5': patches/@refraction-ui__astro@0.4.5.patch
