@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -98,6 +99,47 @@ def _struct_to_dict(s):
 def _acl_proto_to_list(acl_entries):
     """Convert repeated AclEntry to list of dicts."""
     return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
+
+
+_UNIQUE_DETAIL_RE = re.compile(
+    r"type_id=(?P<type_id>\d+)\s+field_id=(?P<field_id>\d+)\s+value=(?P<value>.+?)\s+already exists",
+    re.IGNORECASE,
+)
+
+
+def _parse_unique_constraint_detail(detail: str) -> tuple[int | None, int | None, Any]:
+    """Parse the server's ALREADY_EXISTS detail string into structured fields.
+
+    The server emits unique-constraint failures using a stable format
+    (see ``dbaas/entdb_server/api/grpc_server.py``)::
+
+        Unique constraint violation: type_id=<int> field_id=<int>
+        value=<repr> already exists
+
+    The trailing ``value`` is a Python ``repr`` of a scalar, so for
+    strings it comes through quoted (``'alice@example.com'``) and for
+    numbers / bools / None it is the bare literal. We parse with
+    ``ast.literal_eval`` so the typed error carries the original
+    Python value, not a stringified one. If the format does not match
+    (e.g. a server change the SDK doesn't know about), we return
+    ``(None, None, None)`` and let the caller fall back to the raw
+    detail message.
+    """
+    if not detail:
+        return None, None, None
+    m = _UNIQUE_DETAIL_RE.search(detail)
+    if not m:
+        return None, None, None
+    type_id = int(m.group("type_id"))
+    field_id = int(m.group("field_id"))
+    raw_value = m.group("value").strip()
+    try:
+        import ast
+
+        parsed_value: Any = ast.literal_eval(raw_value)
+    except (ValueError, SyntaxError):
+        parsed_value = raw_value
+    return type_id, field_id, parsed_value
 
 
 logger = logging.getLogger(__name__)
@@ -406,15 +448,28 @@ class GrpcClient:
                 error=response.error if response.error else None,
             )
         except grpc.RpcError as e:
-            # Unique keys (2026-04-13): ``ALREADY_EXISTS`` from the
-            # server means a unique-key collision — surface it as a
-            # typed ``UniqueConstraintError`` so callers can catch it.
+            # SDK v0.3 (2026-04-14): ``ALREADY_EXISTS`` from the
+            # server means a unique-field collision — parse the
+            # structured error string the server emits and surface
+            # it as a typed ``UniqueConstraintError``. The server
+            # message format (set in dbaas/entdb_server/api/grpc_server.py)
+            # is::
+            #
+            #     Unique constraint violation: type_id=<int>
+            #     field_id=<int> value=<repr> already exists
             if getattr(e, "code", None) and e.code() == grpc.StatusCode.ALREADY_EXISTS:
                 from .errors import UniqueConstraintError
 
+                detail = e.details() if hasattr(e, "details") else str(e)
+                type_id_parsed, field_id_parsed, value_parsed = _parse_unique_constraint_detail(
+                    detail
+                )
                 raise UniqueConstraintError(
-                    e.details() if hasattr(e, "details") else str(e),
+                    detail,
                     tenant_id=tenant_id,
+                    type_id=type_id_parsed,
+                    field_id=field_id_parsed,
+                    value=value_parsed,
                 ) from e
             return GrpcCommitResult(
                 success=False,
@@ -465,11 +520,10 @@ class GrpcClient:
                     create_op.storage_mode = _sm_to_proto.get(sm, 0)
                 if create.get("target_user_id"):
                     create_op.target_user_id = create["target_user_id"]
-                # Unique keys (2026-04-13)
-                keys = create.get("keys")
-                if keys:
-                    for k_name, k_value in keys.items():
-                        create_op.keys[str(k_name)] = str(k_value)
+                # 2026-04-14 SDK v0.3 — the wire-level ``keys`` map is
+                # retired. Unique values travel inside the regular
+                # payload and are enforced by the server-side unique
+                # expression index on the declared proto field.
                 proto_op.create_node.CopyFrom(create_op)
 
             elif "update_node" in op:
@@ -483,11 +537,7 @@ class GrpcClient:
                     update_op.patch.update(patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
-                # Unique keys (2026-04-13)
-                keys = update.get("keys")
-                if keys:
-                    for k_name, k_value in keys.items():
-                        update_op.keys[str(k_name)] = str(k_value)
+                # 2026-04-14 SDK v0.3 — see CreateNodeOp note above.
                 proto_op.update_node.CopyFrom(update_op)
 
             elif "delete_node" in op:
@@ -676,23 +726,44 @@ class GrpcClient:
         tenant_id: str,
         actor: str,
         type_id: int,
-        key_name: str,
-        key_value: str,
+        field_id: int,
+        value: Any,
         *,
         after_offset: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> Node | None:
-        """Resolve a node via a declared unique/secondary key."""
+        """Resolve a node via a declared unique field.
+
+        Per the 2026-04-14 SDK v0.3 decision the unique-key lookup is
+        expressed as a ``(type_id, field_id, value)`` triple; the
+        scalar value is packed into a ``google.protobuf.Value`` on the
+        wire so ints, floats, strings, and bools all round-trip.
+        """
+        from google.protobuf.struct_pb2 import Value
+
         stub = self._ensure_connected()
         metadata = self._build_metadata()
+
+        value_msg = Value()
+        if value is None:
+            value_msg.null_value = 0
+        elif isinstance(value, bool):
+            value_msg.bool_value = value
+        elif isinstance(value, (int, float)):
+            value_msg.number_value = float(value)
+        elif isinstance(value, str):
+            value_msg.string_value = value
+        else:
+            # Fallback: JSON-encode into a string for complex shapes.
+            value_msg.string_value = json.dumps(value)
 
         request = GetNodeByKeyRequest(
             tenant_id=tenant_id,
             actor=actor,
             type_id=type_id,
-            key_name=key_name,
-            key_value=key_value,
+            field_id=int(field_id),
+            value=value_msg,
             after_offset=after_offset,
         )
 

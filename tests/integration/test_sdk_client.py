@@ -2,131 +2,103 @@
 Integration tests for SDK client data types and plan builder.
 
 Tests cover:
-- Plan building
+- Plan building (SDK v0.3 single-shape API: proto messages everywhere)
 - Node and edge data classes
 """
 
+from unittest.mock import MagicMock
+
 import pytest
 
+from sdk.entdb_sdk import register_proto_schema
 from sdk.entdb_sdk.client import Edge, Node, Plan
-from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
+from sdk.entdb_sdk.registry import get_registry, reset_registry
+from tests._test_schemas import test_schema_pb2 as ts
 
 
-def make_field(id: int, name: str, kind_str: str, **kwargs) -> FieldDef:
-    """Helper to create field definitions."""
-    kind_map = {
-        "str": FieldKind.STRING,
-        "int": FieldKind.INTEGER,
-        "bool": FieldKind.BOOLEAN,
-    }
-    return FieldDef(field_id=id, name=name, kind=kind_map.get(kind_str, FieldKind.STRING), **kwargs)
+@pytest.fixture(autouse=True)
+def _registered_schema():
+    """Register the v0.3 test_schema for the duration of each test."""
+    reset_registry()
+    register_proto_schema(ts)
+    yield
+    reset_registry()
 
 
-@pytest.fixture
-def user_type():
-    """User type definition."""
-    return NodeTypeDef(
-        type_id=1,
-        name="User",
-        fields=(
-            make_field(1, "email", "str", required=True),
-            make_field(2, "name", "str"),
-        ),
-    )
-
-
-@pytest.fixture
-def task_type():
-    """Task type definition."""
-    return NodeTypeDef(
-        type_id=2,
-        name="Task",
-        fields=(
-            make_field(1, "title", "str"),
-            make_field(2, "done", "bool"),
-        ),
-    )
-
-
-@pytest.fixture
-def edge_type():
-    """AssignedTo edge type."""
-    return EdgeTypeDef(
-        edge_id=100,
-        name="AssignedTo",
-        from_type=2,
-        to_type=1,
-    )
+def _mock_client() -> MagicMock:
+    client = MagicMock()
+    client.registry = get_registry()
+    return client
 
 
 class TestPlanBuilder:
-    """Tests for Plan builder."""
+    """Tests for Plan builder using SDK v0.3 proto-message single-shape API."""
 
-    def test_plan_create_node(self, user_type):
-        """Plan can create nodes."""
-        from unittest.mock import MagicMock
-
-        client = MagicMock()
+    def test_plan_create_node(self):
+        """Plan can create nodes from a proto message."""
+        client = _mock_client()
         plan = Plan(client, tenant_id="t1", actor="user:alice")
 
-        plan.create(user_type, {"email": "test@example.com", "name": "Test User"}, as_="user1")
+        plan.create(
+            ts.Product(sku="WIDGET-1", name="Widget", price_cents=100),
+            as_="product1",
+        )
 
         assert len(plan._operations) == 1
         assert "create_node" in plan._operations[0]
+        assert plan._operations[0]["create_node"]["type_id"] == 9001
+        assert plan._operations[0]["create_node"]["as"] == "product1"
 
-    def test_plan_multiple_operations(self, user_type, task_type, edge_type):
-        """Plan can have multiple operations."""
-        from unittest.mock import MagicMock
-
-        client = MagicMock()
+    def test_plan_multiple_operations(self):
+        """Plan can hold multiple operations."""
+        client = _mock_client()
         plan = Plan(client, tenant_id="t1", actor="user:alice")
 
-        plan.create(user_type, {"email": "a@b.com", "name": "A"}, as_="user1")
-        plan.create(task_type, {"title": "Task 1", "done": False}, as_="task1")
+        plan.create(ts.Product(sku="p1", name="A"), as_="p1")
+        plan.create(ts.Category(slug="cat-1", name="One"), as_="c1")
 
         assert len(plan._operations) == 2
 
-    def test_plan_update_node(self, user_type):
-        """Plan can update nodes."""
-        from unittest.mock import MagicMock
-
-        client = MagicMock()
+    def test_plan_update_node(self):
+        """Plan can update nodes — only the set fields become the patch."""
+        client = _mock_client()
         plan = Plan(client, tenant_id="t1", actor="user:alice")
 
-        plan.update(user_type, "node_123", {"name": "Updated Name"})
+        plan.update("node_123", ts.Product(name="Updated Name"))
 
         assert len(plan._operations) == 1
-        assert "update_node" in plan._operations[0]
+        op = plan._operations[0]
+        assert "update_node" in op
+        assert op["update_node"]["type_id"] == 9001
+        assert op["update_node"]["id"] == "node_123"
+        assert op["update_node"]["patch"] == {"name": "Updated Name"}
 
-    def test_plan_delete_node(self, user_type):
-        """Plan can delete nodes."""
-        from unittest.mock import MagicMock
-
-        client = MagicMock()
+    def test_plan_delete_node(self):
+        """Plan can delete nodes — type witness is the proto class."""
+        client = _mock_client()
         plan = Plan(client, tenant_id="t1", actor="user:alice")
 
-        plan.delete(user_type, "node_123")
+        plan.delete(ts.Product, "node_123")
 
         assert len(plan._operations) == 1
-        assert "delete_node" in plan._operations[0]
+        op = plan._operations[0]
+        assert "delete_node" in op
+        assert op["delete_node"]["type_id"] == 9001
+        assert op["delete_node"]["id"] == "node_123"
 
-    def test_plan_generates_idempotency_key(self, user_type):
-        """Plan generates idempotency key if not provided."""
-        from unittest.mock import MagicMock
-
-        client = MagicMock()
+    def test_plan_generates_idempotency_key(self):
+        """Plan generates an idempotency key if not provided."""
+        client = _mock_client()
         plan = Plan(client, tenant_id="t1", actor="user:alice")
 
-        plan.create(user_type, {"email": "test@example.com"})
+        plan.create(ts.Product(sku="p1", name="X"))
 
         assert plan._idempotency_key is not None
         assert len(plan._idempotency_key) > 0
 
-    def test_plan_uses_provided_idempotency_key(self, user_type):
-        """Plan uses provided idempotency key."""
-        from unittest.mock import MagicMock
-
-        client = MagicMock()
+    def test_plan_uses_provided_idempotency_key(self):
+        """Plan uses the caller-provided idempotency key when given."""
+        client = _mock_client()
         plan = Plan(client, tenant_id="t1", actor="user:alice", idempotency_key="my-key")
 
         assert plan._idempotency_key == "my-key"

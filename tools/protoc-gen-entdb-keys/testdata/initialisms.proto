@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package initialisms;
+
+import "entdb_options.proto";
+
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/initialisms";
+
+message Customer {
+  option (entdb.node) = { type_id: 400 };
+
+  string sku = 1 [(entdb.field).unique = true];
+  string external_id = 2 [(entdb.field).unique = true];
+  string api_key = 3 [(entdb.field).unique = true];
+  string http_url = 4 [(entdb.field).unique = true];
+  string order_number = 5 [(entdb.field).unique = true];
+  string customer_uuid = 6 [(entdb.field).unique = true];
+}

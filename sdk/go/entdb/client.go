@@ -6,11 +6,17 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// Transport is the interface for the gRPC transport layer.
-// This allows testing without a live server and decouples the SDK
-// logic from the generated proto stubs.
+// Transport is the low-level interface between the SDK and the
+// gRPC layer. It is intentionally NOT part of the public single-
+// shape API — user code goes through the typed [Scope] / [Plan]
+// surface, which reaches the transport through internal calls.
+//
+// Transport methods take bare ints (“typeID“) and raw field ids
+// because they sit below the proto-descriptor boundary; every
+// public entry point above this layer is typed end-to-end.
 type Transport interface {
 	// Connect establishes the connection to the server.
 	Connect(ctx context.Context) error
@@ -18,9 +24,13 @@ type Transport interface {
 	Close() error
 	// GetNode retrieves a single node.
 	GetNode(ctx context.Context, tenantID, actor string, typeID int, nodeID string) (*Node, error)
-	// GetNodeByKey resolves a node via a declared unique /
-	// secondary lookup key (2026-04-13 unique_keys decision).
-	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID int, keyName, keyValue string) (*Node, error)
+	// GetNodeByKey resolves a node via a declared unique key.
+	//
+	// The signature matches the 2026-04-14 SDK v0.3 gRPC contract:
+	// ``(type_id, field_id, value)``, with ``value`` carried as a
+	// ``google.protobuf.Value`` so one RPC shape handles string,
+	// int, float, and bool unique keys.
+	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value *structpb.Value) (*Node, error)
 	// QueryNodes retrieves nodes matching a filter.
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
@@ -47,7 +57,7 @@ func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
 	}
 }
 
-func (t *grpcTransport) Connect(ctx context.Context) error {
+func (t *grpcTransport) Connect(_ context.Context) error {
 	var creds credentials.TransportCredentials
 	if t.config.secure {
 		creds = credentials.NewTLS(nil)
@@ -79,10 +89,8 @@ func (t *grpcTransport) GetNode(_ context.Context, _, _ string, _ int, _ string)
 	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
 }
 
-func (t *grpcTransport) GetNodeByKey(_ context.Context, _, _ string, _ int, _, _ string) (*Node, error) {
-	// Requires generated proto stubs to implement. Stays stubbed
-	// in lockstep with GetNode so the real wiring lands in one PR
-	// when the Go proto stubs are generated.
+func (t *grpcTransport) GetNodeByKey(_ context.Context, _, _ string, _, _ int32, _ *structpb.Value) (*Node, error) {
+	// Requires generated proto stubs to implement.
 	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
 }
 
@@ -109,8 +117,19 @@ func (t *grpcTransport) GetEdgesTo(_ context.Context, _, _, _ string, _ int) ([]
 
 // DbClient is the main entry point for the EntDB Go SDK.
 //
-// It manages a gRPC connection and provides both a flat API (with explicit
-// tenant/actor parameters) and a hierarchical scope API.
+// DbClient owns the gRPC transport and hands out [TenantScope] /
+// [Scope] handles for typed access. It deliberately does NOT expose
+// a flat “Get(tenantID, actor, typeID, nodeID)“ API — every
+// user-facing read or write goes through a typed scope so that
+// type_id and field_id only appear inside the SDK, never in user
+// code.
+//
+//	client, _ := entdb.NewClient("localhost:50051",
+//	    entdb.WithSecure(), entdb.WithAPIKey("sk-..."))
+//	defer client.Close()
+//	_ = client.Connect(ctx)
+//	scope := client.Tenant("acme").Actor(entdb.UserActor("bob"))
+//	product, err := entdb.Get[*shop.Product](ctx, scope, "node-42")
 type DbClient struct {
 	address   string
 	config    clientConfig
@@ -120,11 +139,6 @@ type DbClient struct {
 // NewClient creates a new DbClient targeting the given server address.
 //
 // The client is not connected until Connect is called.
-//
-//	client, err := entdb.NewClient("localhost:50051", entdb.WithSecure(), entdb.WithAPIKey("key"))
-//	if err != nil { ... }
-//	defer client.Close()
-//	if err := client.Connect(ctx); err != nil { ... }
 func NewClient(address string, opts ...ClientOption) (*DbClient, error) {
 	if address == "" {
 		return nil, NewConnectionError("address must not be empty", "")
@@ -144,7 +158,9 @@ func NewClient(address string, opts ...ClientOption) (*DbClient, error) {
 	}, nil
 }
 
-// newClientWithTransport creates a DbClient using a custom Transport (for testing).
+// newClientWithTransport creates a DbClient using a custom
+// Transport (for testing — see the fake transport in
+// v3_shape_test.go).
 func newClientWithTransport(address string, transport Transport, opts ...ClientOption) *DbClient {
 	cfg := defaultConfig()
 	for _, opt := range opts {
@@ -173,11 +189,10 @@ func (c *DbClient) Address() string { return c.address }
 // Config returns a copy of the client configuration (for inspection/testing).
 func (c *DbClient) Config() clientConfig { return c.config }
 
-// Tenant returns a TenantScope for the given tenant, allowing callers to
-// chain .Actor(actor) to get a fully-scoped handle.
+// Tenant returns a TenantScope for the given tenant.
 //
 //	scope := client.Tenant("acme").Actor(entdb.UserActor("bob"))
-//	node, err := scope.Get(ctx, 1, "node-123")
+//	product, err := entdb.Get[*shop.Product](ctx, scope, "node-42")
 func (c *DbClient) Tenant(tenantID string) *TenantScope {
 	return &TenantScope{
 		client:   c,
@@ -185,27 +200,7 @@ func (c *DbClient) Tenant(tenantID string) *TenantScope {
 	}
 }
 
-// Get retrieves a single node by type and ID (flat API).
-func (c *DbClient) Get(ctx context.Context, tenantID, actor string, typeID int, nodeID string) (*Node, error) {
-	return c.transport.GetNode(ctx, tenantID, actor, typeID, nodeID)
-}
-
-// Query retrieves nodes matching a filter (flat API).
-func (c *DbClient) Query(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error) {
-	return c.transport.QueryNodes(ctx, tenantID, actor, typeID, filter)
-}
-
-// EdgesFrom retrieves outgoing edges from a node (flat API).
-func (c *DbClient) EdgesFrom(ctx context.Context, tenantID, actor, fromNodeID string, edgeTypeID int) ([]*Edge, error) {
-	return c.transport.GetEdgesFrom(ctx, tenantID, actor, fromNodeID, edgeTypeID)
-}
-
-// EdgesTo retrieves incoming edges to a node (flat API).
-func (c *DbClient) EdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error) {
-	return c.transport.GetEdgesTo(ctx, tenantID, actor, toNodeID, edgeTypeID)
-}
-
-// NewPlan creates a new Plan for batching operations atomically (flat API).
+// NewPlan creates a new Plan for batching operations atomically.
 func (c *DbClient) NewPlan(tenantID, actor string) *Plan {
 	return newPlan(c.transport, tenantID, actor, "")
 }

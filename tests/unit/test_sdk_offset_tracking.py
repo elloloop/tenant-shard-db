@@ -20,9 +20,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from sdk.entdb_sdk import register_proto_schema
 from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt, Node
 from sdk.entdb_sdk.client import _UNSET, DbClient
+from sdk.entdb_sdk.registry import get_registry, reset_registry
 from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
+from tests._test_schemas import test_schema_pb2 as ts
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -85,11 +88,26 @@ def _fail_result() -> GrpcCommitResult:
     )
 
 
+@pytest.fixture(autouse=True)
+def _register_test_schema():
+    """Register the v0.3 test_schema for every test in this module.
+
+    The SDK ``Plan.create`` path needs the schema registry to know
+    about the proto type at write time so that payloads can be
+    validated. Reset between tests so we don't leak state.
+    """
+    reset_registry()
+    register_proto_schema(ts)
+    yield
+    reset_registry()
+
+
 @pytest.fixture
 def client():
     """Create a DbClient with mocked gRPC transport."""
     c = DbClient("localhost:50051")
     c._connected = True
+    c.registry = get_registry()
 
     # Mock all gRPC methods we test against
     c._grpc = AsyncMock()
@@ -112,7 +130,7 @@ def client():
 class TestCommitStoresOffset:
     async def test_commit_stores_stream_position(self, client):
         plan = client.atomic("t1", "user:1")
-        plan.create(TASK, {"title": "x"})
+        plan.create(ts.Product(sku="x", name="x"))
         await plan.commit()
 
         assert client._last_offsets["t1"] == "pos_42"
@@ -120,14 +138,14 @@ class TestCommitStoresOffset:
     async def test_commit_stores_different_positions(self, client):
         client._grpc.execute_atomic = AsyncMock(return_value=_success_result("t1", "pos_100"))
         plan = client.atomic("t1", "user:1")
-        plan.create(TASK, {"title": "x"})
+        plan.create(ts.Product(sku="x", name="x"))
         await plan.commit()
         assert client._last_offsets["t1"] == "pos_100"
 
     async def test_failed_commit_does_not_store_offset(self, client):
         client._grpc.execute_atomic = AsyncMock(return_value=_fail_result())
         plan = client.atomic("t1", "user:1")
-        plan.create(TASK, {"title": "x"})
+        plan.create(ts.Product(sku="x", name="x"))
         await plan.commit()
 
         assert "t1" not in client._last_offsets
@@ -147,7 +165,7 @@ class TestCommitStoresOffset:
             )
         )
         plan = client.atomic("t1", "user:1")
-        plan.create(TASK, {"title": "x"})
+        plan.create(ts.Product(sku="x", name="x"))
         await plan.commit()
 
         assert "t1" not in client._last_offsets
@@ -284,11 +302,11 @@ class TestMultiTenantTracking:
         )
 
         plan1 = client.atomic("t1", "user:1")
-        plan1.create(TASK, {"title": "a"})
+        plan1.create(ts.Product(sku="a", name="a"))
         await plan1.commit()
 
         plan2 = client.atomic("t2", "user:1")
-        plan2.create(TASK, {"title": "b"})
+        plan2.create(ts.Product(sku="b", name="b"))
         await plan2.commit()
 
         assert client._last_offsets["t1"] == "pos_10"
@@ -345,7 +363,7 @@ class TestEndToEndFlow:
     async def test_commit_then_get_uses_offset(self, client):
         """Full flow: commit stores offset, subsequent get uses it."""
         plan = client.atomic("t1", "user:1")
-        plan.create(TASK, {"title": "x"})
+        plan.create(ts.Product(sku="x", name="x"))
         result = await plan.commit()
 
         assert result.success
@@ -365,12 +383,12 @@ class TestEndToEndFlow:
         )
 
         plan1 = client.atomic("t1", "user:1")
-        plan1.create(TASK, {"title": "a"})
+        plan1.create(ts.Product(sku="a", name="a"))
         await plan1.commit()
         assert client._last_offsets["t1"] == "pos_10"
 
         plan2 = client.atomic("t1", "user:1")
-        plan2.create(TASK, {"title": "b"})
+        plan2.create(ts.Product(sku="b", name="b"))
         await plan2.commit()
         assert client._last_offsets["t1"] == "pos_20"
 

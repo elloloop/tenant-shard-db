@@ -33,7 +33,6 @@ from ..metrics import record_grpc_request
 from ..schema.field_id_translation import (
     id_to_name_keys,
     name_to_id_keys,
-    translate_filter_name_to_id,
     translate_payload_json_to_names,
 )
 from ..sharding import ShardingConfig
@@ -498,54 +497,47 @@ class EntDBServicer(EntDBServiceServicer):
                         error_code="SCHEMA_MISMATCH",
                     )
 
-            # Convert operations to internal format
+            # Convert operations to internal format. Unique-key
+            # enforcement is authoritative at apply time via unique
+            # expression indexes (2026-04-14 SDK v0.3 decision). We
+            # still run a best-effort fast-fail pre-check so that the
+            # common "obvious duplicate" case gets an
+            # ``ALREADY_EXISTS`` without a WAL round trip; races are
+            # caught by the index itself at apply time.
             ops = self._convert_operations(request.operations)
 
-            # Unique keys (2026-04-13) — fast-fail pre-validate.
-            # For every create/update op carrying a ``keys`` map we
-            # check the canonical store for a pre-existing row. This
-            # handles the 99% case without a WAL round-trip. The
-            # applier still runs an authoritative check inside its
-            # transaction so races are race-safe.
             for op in ops:
-                op_kind = op.get("op")
-                op_keys = op.get("keys") or {}
-                if not op_keys:
+                if op.get("op") != "create_node":
                     continue
-                if op_kind == "create_node":
-                    for k_name, k_value in op_keys.items():
-                        if await self.canonical_store.check_key_exists(
-                            ctx.tenant_id,
-                            int(op.get("type_id", 0)),
-                            str(k_name),
-                            str(k_value),
-                        ):
-                            record_grpc_request(
-                                "ExecuteAtomic", "error", time.perf_counter() - start
-                            )
-                            await context.abort(
-                                grpc.StatusCode.ALREADY_EXISTS,
-                                f"Unique key already exists: type_id={op.get('type_id')} "
-                                f"key={k_name}={k_value!r}",
-                            )
-                elif op_kind == "update_node":
-                    node_id = op.get("id", "")
-                    for k_name, k_value in op_keys.items():
-                        if await self.canonical_store.check_key_exists(
-                            ctx.tenant_id,
-                            int(op.get("type_id", 0)),
-                            str(k_name),
-                            str(k_value),
-                            exclude_node_id=node_id,
-                        ):
-                            record_grpc_request(
-                                "ExecuteAtomic", "error", time.perf_counter() - start
-                            )
-                            await context.abort(
-                                grpc.StatusCode.ALREADY_EXISTS,
-                                f"Unique key already exists: type_id={op.get('type_id')} "
-                                f"key={k_name}={k_value!r}",
-                            )
+                type_id_int = int(op.get("type_id", 0) or 0)
+                if not type_id_int:
+                    continue
+                get_unique = getattr(self.schema_registry, "get_unique_field_ids", None)
+                if not callable(get_unique):
+                    continue
+                try:
+                    unique_fids = get_unique(type_id_int)
+                except Exception:
+                    unique_fids = []
+                # Normalise to a concrete list — MagicMock returns a
+                # Mock object when called which fails ``if not`` below.
+                if not isinstance(unique_fids, (list, tuple)) or not unique_fids:
+                    continue
+                data = op.get("data") or {}
+                for fid in unique_fids:
+                    value = data.get(str(fid))
+                    if value is None:
+                        continue
+                    existing = await self.canonical_store.get_node_by_key(
+                        ctx.tenant_id, type_id_int, fid, value
+                    )
+                    if existing is not None:
+                        record_grpc_request("ExecuteAtomic", "error", time.perf_counter() - start)
+                        await context.abort(
+                            grpc.StatusCode.ALREADY_EXISTS,
+                            f"Unique constraint violation: type_id={type_id_int} "
+                            f"field_id={fid} value={value!r} already exists",
+                        )
 
             # Tenant role + status enforcement.
             # ExecuteAtomic is always a write. The status check is finer
@@ -668,12 +660,6 @@ class EntDBServicer(EntDBServiceServicer):
                 tgt_user = getattr(create, "target_user_id", "") or ""
                 if tgt_user:
                     internal_op["target_user_id"] = tgt_user
-                # Unique keys (2026-04-13). ``keys`` is a proto
-                # ``map<string, string>`` so we copy it into a plain
-                # dict for the internal op format.
-                create_keys = getattr(create, "keys", None)
-                if create_keys:
-                    internal_op["keys"] = {str(k): str(v) for k, v in create_keys.items()}
                 result.append(internal_op)
 
             elif op_type == "update_node":
@@ -686,9 +672,6 @@ class EntDBServicer(EntDBServiceServicer):
                     "id": update.id,
                     "patch": patch,
                 }
-                update_keys = getattr(update, "keys", None)
-                if update_keys:
-                    update_internal["keys"] = {str(k): str(v) for k, v in update_keys.items()}
                 result.append(update_internal)
 
             elif op_type == "delete_node":
@@ -882,44 +865,45 @@ class EntDBServicer(EntDBServiceServicer):
         request: GetNodeByKeyRequest,
         context: grpc_aio.ServicerContext,
     ) -> GetNodeByKeyResponse:
-        """Resolve a node by its declared unique key.
+        """Resolve a node by its declared unique field.
 
-        Implements the 2026-04-13 unique_keys decision. The handler:
+        Implements the 2026-04-14 SDK v0.3 decision. The handler:
 
-        1. Authenticates the tenant and actor via ``_check_tenant_access``.
-        2. Resolves ``(type_id, key_name, key_value)`` to a ``node_id``
-           via the canonical store.
-        3. Delegates to the same ``GetNode`` path so capability /
-           cross-tenant ACL checks run identically. Actors without
-           ``CORE_CAP_READ`` on the resolved node get
-           ``PERMISSION_DENIED``, never a silent ``found=False``.
+        1. Verifies the tenant exists.
+        2. Resolves ``(type_id, field_id, value)`` to a node_id via
+           the unique expression index on
+           ``json_extract(payload_json, '$."<field_id>"')``.
+        3. Delegates to the same ``GetNode`` path so ACL, cross-tenant,
+           and capability checks run identically — actors without
+           ``CORE_CAP_READ`` get ``PERMISSION_DENIED`` instead of a
+           silent ``found=False``.
         """
         start = time.perf_counter()
         try:
-            # Resolve the key → node_id. Tenant existence is checked
-            # inside the delegated ``GetNode`` call below so we share
-            # one code path for ACL, cross-tenant grants, and
-            # capability lookup.
             await self._check_tenant(request.tenant_id, context)
 
-            # Read-after-write wait is optional.
             if request.after_offset:
                 await self._wait_for_offset(request.tenant_id, str(request.after_offset), 30.0)
 
-            node_id = await self.canonical_store.get_node_by_key(
+            # ``request.value`` is a ``google.protobuf.Value`` so it
+            # reaches us already typed. ``MessageToDict`` unwraps it
+            # to the underlying Python scalar (str/int/float/bool).
+            raw_value = (
+                json_format.MessageToDict(request.value) if request.HasField("value") else None
+            )
+
+            node = await self.canonical_store.get_node_by_key(
                 request.tenant_id,
                 int(request.type_id),
-                request.key_name,
-                request.key_value,
+                int(request.field_id),
+                raw_value,
             )
-            if not node_id:
+            if node is None:
                 record_grpc_request("GetNodeByKey", "ok", time.perf_counter() - start)
                 return GetNodeByKeyResponse(found=False)
 
             # Delegate to GetNode so ACL / cross-tenant / capability
-            # checks are identical (see the 2026-04-13 unique_keys
-            # decision — ``PERMISSION_DENIED`` is the honest answer
-            # when the actor lacks ``CORE_CAP_READ`` on the node).
+            # checks stay centralised.
             from .generated import RequestContext as _RequestContext
 
             get_req = GetNodeRequest(
@@ -928,7 +912,7 @@ class EntDBServicer(EntDBServiceServicer):
                     actor=request.actor,
                 ),
                 type_id=int(request.type_id),
-                node_id=node_id,
+                node_id=node.node_id,
             )
             inner = await self.GetNode(get_req, context)
             record_grpc_request("GetNodeByKey", "ok", time.perf_counter() - start)
@@ -1043,11 +1027,12 @@ class EntDBServicer(EntDBServiceServicer):
 
             filter_dict = None
             if request.filters:
+                # Filter is kept name-keyed here — the new operator
+                # translator inside ``canonical_store.query_nodes``
+                # resolves field names to ids via the schema registry
+                # so MongoDB-style operators (``$and``, ``$gt``, ...)
+                # can also be wired through this path.
                 filter_dict = {f.field: json_format.MessageToDict(f.value) for f in request.filters}
-                # Ingress: translate name-keyed filter to id-keyed (issue #104)
-                filter_dict = translate_filter_name_to_id(
-                    filter_dict, request.type_id, self.schema_registry
-                )
 
             nodes = await self.canonical_store.query_nodes(
                 tenant_id=request.context.tenant_id,
@@ -1057,6 +1042,7 @@ class EntDBServicer(EntDBServiceServicer):
                 offset=request.offset or 0,
                 order_by=request.order_by or "created_at",
                 descending=request.descending,
+                schema_registry=self.schema_registry,
             )
 
             # Cross-tenant: filter to only accessible nodes

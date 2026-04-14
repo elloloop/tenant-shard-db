@@ -184,6 +184,7 @@ class FieldDef:
     deprecated: bool = False
     description: str = ""
     pii: bool = False
+    unique: bool = False
 
     def __post_init__(self) -> None:
         """Validate field definition."""
@@ -283,6 +284,8 @@ class FieldDef:
             result["description"] = self.description
         if self.pii:
             result["pii"] = True
+        if self.unique:
+            result["unique"] = True
         return result
 
     @classmethod
@@ -301,6 +304,7 @@ class FieldDef:
             deprecated=data.get("deprecated", False),
             description=data.get("description", ""),
             pii=data.get("pii", False),
+            unique=data.get("unique", False),
         )
 
 
@@ -318,6 +322,7 @@ def field(
     deprecated: bool = False,
     description: str = "",
     pii: bool = False,
+    unique: bool = False,
 ) -> FieldDef:
     """Convenience function to create a FieldDef.
 
@@ -360,6 +365,7 @@ def field(
         deprecated=deprecated,
         description=description,
         pii=pii,
+        unique=unique,
     )
 
 

@@ -1,0 +1,47 @@
+// Test schema for SDK v0.3 single-shape API tests.
+//
+// Defines a few node + edge types with a unique field so that
+// every code path of the v0.3 surface (Plan.create / .update /
+// .delete, Scope.get_by_key) can be exercised end-to-end.
+
+syntax = "proto3";
+
+package entdb.test;
+
+import "entdb_options.proto";
+
+// --- Node types ---
+
+message Product {
+    option (entdb.node) = {
+        type_id: 9001
+        description: "Test product type with a unique sku"
+    };
+
+    string sku         = 1 [(entdb.field) = { unique: true }];
+    string name        = 2 [(entdb.field) = { searchable: true }];
+    int64  price_cents = 3 [(entdb.field) = { kind: "int" }];
+    string status      = 4 [(entdb.field) = { enum_values: "draft,active,archived", default_value: "draft" }];
+}
+
+message Category {
+    option (entdb.node) = {
+        type_id: 9002
+        description: "Test category type"
+    };
+
+    string slug = 1 [(entdb.field) = { unique: true }];
+    string name = 2;
+}
+
+// --- Edge types ---
+
+message BelongsTo {
+    option (entdb.edge) = {
+        edge_id: 9101
+        name: "belongs_to"
+        description: "Product belongs to category"
+    };
+
+    int64 weight = 1 [(entdb.field) = { kind: "int" }];
+}

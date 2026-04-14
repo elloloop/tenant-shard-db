@@ -1,17 +1,23 @@
 """
-Unit tests for the unique-keys / secondary-lookup-keys feature
-(2026-04-13 unique_keys decision).
+Unit tests for the unique-field / GetNodeByKey feature
+(2026-04-14 SDK v0.3 decision, supersedes the 2026-04-13 ``node_keys``
+table design).
 
-Covers four layers:
+Covers three layers:
 
-1. CanonicalStore / applier — per-tenant ``node_keys`` table writes,
-   cascade cleanup on delete, collision detection, cross-tenant
-   isolation, and mailbox / public storage modes.
-2. gRPC servicer — pre-validate fast-fail via ``ALREADY_EXISTS`` and
-   the new ``GetNodeByKey`` handler.
-3. Python SDK — ``Plan.create(..., keys=...)``, ``scope.get_by_key``,
-   ``UniqueConstraintError``.
-4. Proto / schema registry — ``NodeOpts.keys`` round-trip.
+1. CanonicalStore / applier — lazy unique expression indexes,
+   duplicate rejection at apply time, lookup-by-key via the same
+   index, tenant isolation.
+2. gRPC servicer — ``ExecuteAtomic`` fast-fail pre-check,
+   ``GetNodeByKey`` handler with typed ``(field_id, value)`` request.
+3. Proto — ``CreateNodeOp`` no longer carries a ``keys`` map,
+   ``FieldOpts.unique`` round-trips, ``GetNodeByKeyRequest`` carries
+   ``field_id`` + ``google.protobuf.Value``.
+
+The old ``node_keys`` table / ``keys={"email": ...}`` argument / string
+``key_name`` lookup are all gone. The user-facing contract is: declare
+``(entdb.field).unique = true`` in proto, write the value via the
+regular payload, and look it up with ``(field_id, value)``.
 """
 
 from __future__ import annotations
@@ -21,7 +27,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import grpc
 import pytest
-from google.protobuf.struct_pb2 import Struct
+from google.protobuf.struct_pb2 import Struct, Value
 
 from dbaas.entdb_server.api.generated import (
     CreateNodeOp,
@@ -35,17 +41,56 @@ from dbaas.entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
     TransactionEvent,
+    UniqueConstraintError,
+    _parse_unique_index_name,
 )
 from dbaas.entdb_server.apply.canonical_store import CanonicalStore
 from dbaas.entdb_server.global_store import GlobalStore
+from dbaas.entdb_server.schema.registry import (
+    SchemaRegistry,
+    get_registry,
+    reset_registry,
+)
+from dbaas.entdb_server.schema.types import NodeTypeDef, field
 from dbaas.entdb_server.wal.memory import InMemoryWalStream
 
 TENANT = "tenant-uk-tests"
 ALICE = "user:alice"
 BOB = "user:bob"
+TYPE_USER = 101
+
+# Field ids that the tests use — these match the ``field`` calls in the
+# ``registered_schema`` fixture below.
+FIELD_EMAIL = 1
+FIELD_EXTERNAL_ID = 2
 
 
 # ── Fixtures ────────────────────────────────────────────────────────
+
+
+@pytest.fixture(autouse=True)
+def registered_schema():
+    """Register a ``User`` type with two unique fields for every test.
+
+    Autouse because every test in this module depends on the applier
+    being able to see the schema when it decides which indexes to
+    create. ``reset_registry`` keeps the global singleton from leaking
+    state between tests.
+    """
+    reset_registry()
+    reg = get_registry()
+    user = NodeTypeDef(
+        type_id=TYPE_USER,
+        name="User",
+        fields=(
+            field(FIELD_EMAIL, "email", "str", unique=True),
+            field(FIELD_EXTERNAL_ID, "external_id", "str", unique=True),
+            field(3, "name", "str"),
+        ),
+    )
+    reg.register_node_type(user)
+    yield reg
+    reset_registry()
 
 
 @pytest.fixture
@@ -92,47 +137,67 @@ async def _bootstrap_tenant(
             await gs.add_member(tenant_id, user_id, role=role)
 
 
-def _make_servicer(canonical_store, global_store=None):
+def _make_servicer(canonical_store, global_store=None, schema_registry=None):
     wal = MagicMock()
     pos = MagicMock()
     pos.__str__ = MagicMock(return_value="0:0:0")
     wal.append = AsyncMock(return_value=pos)
 
-    schema_registry = MagicMock()
-    schema_registry.fingerprint = ""
+    # Default to the real registry so ``get_unique_field_ids`` works
+    # for the gRPC pre-check path.
+    reg = schema_registry if schema_registry is not None else get_registry()
+    # Tests don't freeze the registry, so expose a blank fingerprint
+    # attribute on a wrapper object to satisfy the servicer contract.
+    reg_view: SchemaRegistry | MagicMock
+    if hasattr(reg, "fingerprint"):
+        reg_view = reg
+    else:
+        reg_view = MagicMock()
+        reg_view.fingerprint = ""
+    # Callers that pass a real ``SchemaRegistry`` need a fingerprint
+    # attribute that doesn't blow up the schema check.
+    if getattr(reg_view, "fingerprint", None) is None:
+        try:
+            reg_view._fingerprint = ""  # type: ignore[attr-defined]
+        except Exception:
+            pass
 
     return EntDBServicer(
         wal=wal,
         canonical_store=canonical_store,
-        schema_registry=schema_registry,
+        schema_registry=reg_view,
         global_store=global_store,
     )
 
 
-def _create_event(
-    tenant_id: str,
+def _make_create_event(
     idempotency_key: str,
     *,
-    type_id: int = 101,
-    node_id: str | None = None,
-    data: dict | None = None,
-    keys: dict[str, str] | None = None,
+    node_id: str,
+    payload: dict[str, str | int],
+    tenant_id: str = TENANT,
+    type_id: int = TYPE_USER,
     actor: str = ALICE,
 ) -> TransactionEvent:
-    op: dict = {
-        "op": "create_node",
-        "type_id": type_id,
-        "id": node_id or f"n-{idempotency_key}",
-        "data": data or {"k": idempotency_key},
-    }
-    if keys:
-        op["keys"] = keys
+    """Build a ``create_node`` event with id-keyed payload.
+
+    The applier stores payloads keyed by ``field_id`` so the caller
+    passes a ready-made id-keyed dict (``{"1": "alice@example.com"}``)
+    to avoid coupling the tests to the ingress translator.
+    """
     return TransactionEvent.from_dict(
         {
             "tenant_id": tenant_id,
             "actor": actor,
             "idempotency_key": idempotency_key,
-            "ops": [op],
+            "ops": [
+                {
+                    "op": "create_node",
+                    "type_id": type_id,
+                    "id": node_id,
+                    "data": payload,
+                }
+            ],
         }
     )
 
@@ -149,340 +214,407 @@ async def _make_applier(store) -> Applier:
 
 
 # ════════════════════════════════════════════════════════════════════
-# 1-12. Applier / canonical store
+# 1. Applier / canonical store — lazy unique index + enforcement
 # ════════════════════════════════════════════════════════════════════
 
 
-class TestApplierUniqueKeys:
+class TestApplierUniqueFieldEnforcement:
     @pytest.mark.asyncio
-    async def test_create_node_with_keys_inserts_node_keys_row(self, store):
+    async def test_first_create_succeeds_and_lookup_works(self, store):
         applier = await _make_applier(store)
-        event = _create_event(
-            TENANT,
+        event = _make_create_event(
             "ev-1",
             node_id="alice",
-            keys={"email": "alice@example.com"},
+            payload={str(FIELD_EMAIL): "alice@example.com"},
         )
         result = await applier.apply_event(event)
         assert result.success
 
-        resolved = await store.get_node_by_key(TENANT, 101, "email", "alice@example.com")
-        assert resolved == "alice"
+        node = await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "alice@example.com")
+        assert node is not None
+        assert node.node_id == "alice"
 
     @pytest.mark.asyncio
-    async def test_create_duplicate_key_raises_unique_constraint(self, store):
+    async def test_duplicate_create_raises_unique_constraint(self, store):
         applier = await _make_applier(store)
-        ev1 = _create_event(
-            TENANT,
-            "ev-a",
-            node_id="alice",
-            keys={"email": "alice@example.com"},
+        r1 = await applier.apply_event(
+            _make_create_event(
+                "ev-a", node_id="alice", payload={str(FIELD_EMAIL): "alice@example.com"}
+            )
         )
-        ev2 = _create_event(
-            TENANT,
-            "ev-b",
-            node_id="bob",
-            keys={"email": "alice@example.com"},
-        )
-        r1 = await applier.apply_event(ev1)
         assert r1.success
 
-        r2 = await applier.apply_event(ev2)
+        r2 = await applier.apply_event(
+            _make_create_event(
+                "ev-b", node_id="bob", payload={str(FIELD_EMAIL): "alice@example.com"}
+            )
+        )
         assert not r2.success
-        assert "UNIQUE" in r2.error.upper() or "unique" in r2.error.lower()
+        assert "unique" in (r2.error or "").lower()
 
     @pytest.mark.asyncio
-    async def test_duplicate_key_transaction_rolled_back(self, store):
-        """A failed key insert must also roll back the node row."""
+    async def test_duplicate_create_rolls_back_node(self, store):
+        """A failed create must not leave a half-written ``nodes`` row."""
         applier = await _make_applier(store)
-        ev1 = _create_event(
-            TENANT,
-            "ev-a",
-            node_id="alice",
-            keys={"email": "alice@example.com"},
+        await applier.apply_event(
+            _make_create_event(
+                "ev-a", node_id="alice", payload={str(FIELD_EMAIL): "alice@example.com"}
+            )
         )
-        ev2 = _create_event(
-            TENANT,
-            "ev-b",
-            node_id="bob-dup",
-            keys={"email": "alice@example.com"},
+        r2 = await applier.apply_event(
+            _make_create_event(
+                "ev-b", node_id="bob-dup", payload={str(FIELD_EMAIL): "alice@example.com"}
+            )
         )
-        await applier.apply_event(ev1)
-        r2 = await applier.apply_event(ev2)
         assert not r2.success
 
-        # bob-dup must not be present — the IntegrityError rolled
-        # the whole batch_transaction back.
         leftover = await store.get_node(TENANT, "bob-dup")
         assert leftover is None
 
     @pytest.mark.asyncio
-    async def test_update_node_replaces_keys(self, store):
-        applier = await _make_applier(store)
-        ev1 = _create_event(
-            TENANT,
-            "ev-a",
-            node_id="alice",
-            keys={"email": "alice@example.com"},
-        )
-        r1 = await applier.apply_event(ev1)
-        assert r1.success
-
-        update_event = TransactionEvent.from_dict(
-            {
-                "tenant_id": TENANT,
-                "actor": ALICE,
-                "idempotency_key": "ev-upd",
-                "ops": [
-                    {
-                        "op": "update_node",
-                        "type_id": 101,
-                        "id": "alice",
-                        "patch": {},
-                        "keys": {"email": "alice2@example.com"},
-                    }
-                ],
-            }
-        )
-        r2 = await applier.apply_event(update_event)
-        assert r2.success
-
-        assert (await store.get_node_by_key(TENANT, 101, "email", "alice@example.com")) is None
-        assert (await store.get_node_by_key(TENANT, 101, "email", "alice2@example.com")) == "alice"
-
-    @pytest.mark.asyncio
-    async def test_update_with_colliding_key_fails_and_keeps_old(self, store):
+    async def test_update_to_colliding_value_fails(self, store):
         applier = await _make_applier(store)
         await applier.apply_event(
-            _create_event(TENANT, "ev-a", node_id="alice", keys={"email": "alice@example.com"})
-        )
-        await applier.apply_event(
-            _create_event(TENANT, "ev-b", node_id="bob", keys={"email": "bob@example.com"})
-        )
-
-        update_event = TransactionEvent.from_dict(
-            {
-                "tenant_id": TENANT,
-                "actor": ALICE,
-                "idempotency_key": "ev-upd",
-                "ops": [
-                    {
-                        "op": "update_node",
-                        "type_id": 101,
-                        "id": "bob",
-                        "patch": {},
-                        "keys": {"email": "alice@example.com"},  # colliding
-                    }
-                ],
-            }
-        )
-        r = await applier.apply_event(update_event)
-        assert not r.success
-        # bob still holds the original key
-        assert (await store.get_node_by_key(TENANT, 101, "email", "bob@example.com")) == "bob"
-
-    @pytest.mark.asyncio
-    async def test_delete_node_cascades_node_keys(self, store):
-        applier = await _make_applier(store)
-        await applier.apply_event(
-            _create_event(
-                TENANT,
-                "ev-a",
-                node_id="alice",
-                keys={"email": "alice@example.com", "external_id": "ext-42"},
+            _make_create_event(
+                "ev-a", node_id="alice", payload={str(FIELD_EMAIL): "alice@example.com"}
             )
         )
-        assert (await store.get_node_by_key(TENANT, 101, "email", "alice@example.com")) == "alice"
+        await applier.apply_event(
+            _make_create_event("ev-b", node_id="bob", payload={str(FIELD_EMAIL): "bob@example.com"})
+        )
 
-        delete_event = TransactionEvent.from_dict(
+        update = TransactionEvent.from_dict(
+            {
+                "tenant_id": TENANT,
+                "actor": ALICE,
+                "idempotency_key": "ev-upd",
+                "ops": [
+                    {
+                        "op": "update_node",
+                        "type_id": TYPE_USER,
+                        "id": "bob",
+                        "patch": {str(FIELD_EMAIL): "alice@example.com"},
+                    }
+                ],
+            }
+        )
+        r = await applier.apply_event(update)
+        assert not r.success
+
+        # Bob keeps his original value, alice is untouched.
+        alice = await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "alice@example.com")
+        assert alice is not None
+        assert alice.node_id == "alice"
+        bob = await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "bob@example.com")
+        assert bob is not None
+        assert bob.node_id == "bob"
+
+    @pytest.mark.asyncio
+    async def test_update_to_new_value_frees_old(self, store):
+        """Changing a unique field must let its old value be reused."""
+        applier = await _make_applier(store)
+        await applier.apply_event(
+            _make_create_event(
+                "ev-a", node_id="alice", payload={str(FIELD_EMAIL): "old@example.com"}
+            )
+        )
+        update = TransactionEvent.from_dict(
+            {
+                "tenant_id": TENANT,
+                "actor": ALICE,
+                "idempotency_key": "ev-upd",
+                "ops": [
+                    {
+                        "op": "update_node",
+                        "type_id": TYPE_USER,
+                        "id": "alice",
+                        "patch": {str(FIELD_EMAIL): "new@example.com"},
+                    }
+                ],
+            }
+        )
+        assert (await applier.apply_event(update)).success
+
+        # Reuse the freed value on a brand-new node — must succeed.
+        reuse = await applier.apply_event(
+            _make_create_event(
+                "ev-r", node_id="charlie", payload={str(FIELD_EMAIL): "old@example.com"}
+            )
+        )
+        assert reuse.success
+
+        charlie = await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "old@example.com")
+        assert charlie is not None
+        assert charlie.node_id == "charlie"
+
+    @pytest.mark.asyncio
+    async def test_delete_frees_value_for_reuse(self, store):
+        applier = await _make_applier(store)
+        await applier.apply_event(
+            _make_create_event("ev-a", node_id="alice", payload={str(FIELD_EMAIL): "a@example.com"})
+        )
+        delete = TransactionEvent.from_dict(
             {
                 "tenant_id": TENANT,
                 "actor": ALICE,
                 "idempotency_key": "ev-del",
-                "ops": [{"op": "delete_node", "type_id": 101, "id": "alice"}],
+                "ops": [{"op": "delete_node", "type_id": TYPE_USER, "id": "alice"}],
             }
         )
-        rd = await applier.apply_event(delete_event)
-        assert rd.success
+        assert (await applier.apply_event(delete)).success
 
-        assert (await store.get_node_by_key(TENANT, 101, "email", "alice@example.com")) is None
-        assert (await store.get_node_by_key(TENANT, 101, "external_id", "ext-42")) is None
+        # Value must be free.
+        assert await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "a@example.com") is None
+
+        r = await applier.apply_event(
+            _make_create_event(
+                "ev-b", node_id="second", payload={str(FIELD_EMAIL): "a@example.com"}
+            )
+        )
+        assert r.success
 
     @pytest.mark.asyncio
-    async def test_get_node_by_key_unknown_key_is_none(self, store):
-        assert (await store.get_node_by_key(TENANT, 101, "email", "nobody@example.com")) is None
+    async def test_get_node_by_key_unknown_value(self, store):
+        assert (
+            await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "nobody@example.com")
+            is None
+        )
 
     @pytest.mark.asyncio
-    async def test_get_node_by_key_is_tenant_scoped(self, store, tmp_path):
+    async def test_get_node_by_key_is_tenant_scoped(self, store):
         other = "tenant-other"
         with store._get_connection(other, create=True) as conn:
             store._create_schema(conn)
         applier = await _make_applier(store)
-        # Same key value, different tenants → independent.
+
+        # Same value, different tenants.
         await applier.apply_event(
-            _create_event(
-                TENANT,
+            _make_create_event(
                 "ev-a",
                 node_id="alice",
-                keys={"email": "alice@example.com"},
+                payload={str(FIELD_EMAIL): "same@example.com"},
             )
         )
         await applier.apply_event(
-            _create_event(
-                other,
+            _make_create_event(
                 "ev-b",
                 node_id="bob",
-                keys={"email": "alice@example.com"},
+                payload={str(FIELD_EMAIL): "same@example.com"},
+                tenant_id=other,
             )
         )
-        assert (await store.get_node_by_key(TENANT, 101, "email", "alice@example.com")) == "alice"
-        assert (await store.get_node_by_key(other, 101, "email", "alice@example.com")) == "bob"
+
+        n1 = await store.get_node_by_key(TENANT, TYPE_USER, FIELD_EMAIL, "same@example.com")
+        n2 = await store.get_node_by_key(other, TYPE_USER, FIELD_EMAIL, "same@example.com")
+        assert n1 is not None and n1.node_id == "alice"
+        assert n2 is not None and n2.node_id == "bob"
 
     @pytest.mark.asyncio
-    async def test_multiple_keys_per_node(self, store):
+    async def test_multiple_unique_fields_enforced_independently(self, store):
         applier = await _make_applier(store)
-        r = await applier.apply_event(
-            _create_event(
-                TENANT,
+        await applier.apply_event(
+            _make_create_event(
                 "ev-a",
                 node_id="alice",
-                keys={"email": "alice@example.com", "external_id": "ext-42"},
+                payload={
+                    str(FIELD_EMAIL): "alice@example.com",
+                    str(FIELD_EXTERNAL_ID): "ext-42",
+                },
             )
         )
-        assert r.success
-        assert (await store.get_node_by_key(TENANT, 101, "email", "alice@example.com")) == "alice"
-        assert (await store.get_node_by_key(TENANT, 101, "external_id", "ext-42")) == "alice"
+        # Collision on ``email``.
+        r_email = await applier.apply_event(
+            _make_create_event(
+                "ev-b",
+                node_id="bob",
+                payload={
+                    str(FIELD_EMAIL): "alice@example.com",
+                    str(FIELD_EXTERNAL_ID): "ext-1",
+                },
+            )
+        )
+        assert not r_email.success
+        # Collision on ``external_id``.
+        r_ext = await applier.apply_event(
+            _make_create_event(
+                "ev-c",
+                node_id="carol",
+                payload={
+                    str(FIELD_EMAIL): "carol@example.com",
+                    str(FIELD_EXTERNAL_ID): "ext-42",
+                },
+            )
+        )
+        assert not r_ext.success
+        # A brand-new row with both values distinct succeeds.
+        r_ok = await applier.apply_event(
+            _make_create_event(
+                "ev-d",
+                node_id="dave",
+                payload={
+                    str(FIELD_EMAIL): "dave@example.com",
+                    str(FIELD_EXTERNAL_ID): "ext-7",
+                },
+            )
+        )
+        assert r_ok.success
 
     @pytest.mark.asyncio
-    async def test_keys_work_in_user_mailbox_storage(self, store):
+    async def test_concurrent_creates_one_wins(self, store):
+        """Race semantics — the applier is the single serialiser."""
         applier = await _make_applier(store)
-        event = TransactionEvent.from_dict(
-            {
-                "tenant_id": TENANT,
-                "actor": ALICE,
-                "idempotency_key": "ev-mbx",
-                "ops": [
-                    {
-                        "op": "create_node",
-                        "type_id": 101,
-                        "id": "private-1",
-                        "data": {"k": "v"},
-                        "storage_mode": "USER_MAILBOX",
-                        "target_user_id": "alice",
-                        "keys": {"token": "t-private"},
-                    }
-                ],
-            }
+        ev1 = _make_create_event(
+            "ev-r1", node_id="n1", payload={str(FIELD_EMAIL): "race@example.com"}
         )
-        r = await applier.apply_event(event)
-        assert r.success
-        # Mailbox nodes live in the mailbox file — verify the
-        # node_keys row was materialised inside that physical DB.
-        with store._get_mailbox_connection(TENANT, "alice") as conn:
-            row = conn.execute(
-                "SELECT node_id FROM node_keys "
-                "WHERE type_id = ? AND key_name = ? AND key_value = ?",
-                (101, "token", "t-private"),
-            ).fetchone()
-        assert row is not None
-        assert (row[0] if isinstance(row, tuple) else row["node_id"]) == "private-1"
-
-    @pytest.mark.asyncio
-    async def test_keys_work_in_public_storage(self, store):
-        applier = await _make_applier(store)
-        event = TransactionEvent.from_dict(
-            {
-                "tenant_id": TENANT,
-                "actor": ALICE,
-                "idempotency_key": "ev-pub",
-                "ops": [
-                    {
-                        "op": "create_node",
-                        "type_id": 101,
-                        "id": "pub-1",
-                        "data": {"k": "v"},
-                        "storage_mode": "PUBLIC",
-                        "keys": {"slug": "hello-world"},
-                    }
-                ],
-            }
+        ev2 = _make_create_event(
+            "ev-r2", node_id="n2", payload={str(FIELD_EMAIL): "race@example.com"}
         )
-        r = await applier.apply_event(event)
-        assert r.success
-        with store._get_public_connection() as conn:
-            row = conn.execute(
-                "SELECT node_id FROM node_keys "
-                "WHERE type_id = ? AND key_name = ? AND key_value = ?",
-                (101, "slug", "hello-world"),
-            ).fetchone()
-        assert row is not None
-        assert (row[0] if isinstance(row, tuple) else row["node_id"]) == "pub-1"
+        r1 = await applier.apply_event(ev1)
+        r2 = await applier.apply_event(ev2)
+        assert (r1.success, r2.success) in ((True, False), (False, True))
 
 
 # ════════════════════════════════════════════════════════════════════
-# 13-17. gRPC server — pre-validate + GetNodeByKey handler
+# 2. Lazy unique-index creation caching
 # ════════════════════════════════════════════════════════════════════
 
 
-class TestUniqueKeysGrpcHandlers:
-    @pytest.mark.asyncio
-    async def test_execute_atomic_duplicate_key_returns_already_exists(self, store, global_store):
-        await _bootstrap_tenant(global_store, members={"alice": "owner"})
-        # Pre-seed: directly insert the key row so pre-validate trips.
+class TestLazyIndexCreation:
+    def test_first_call_creates_index(self, store):
         with store._get_connection(TENANT) as conn:
-            conn.execute(
-                "INSERT INTO node_keys (tenant_id, type_id, node_id, "
-                "key_name, key_value, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (TENANT, 101, "preexisting", "email", "alice@example.com", 0),
+            store._ensure_unique_indexes(conn, TENANT, TYPE_USER, [FIELD_EMAIL])
+            rows = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_unique_t%'"
+            ).fetchall()
+        names = {r[0] if isinstance(r, tuple) else r["name"] for r in rows}
+        assert f"idx_unique_t{TYPE_USER}_f{FIELD_EMAIL}" in names
+
+    def test_second_call_is_noop_via_cache(self, store):
+        """``_ensure_unique_indexes`` only issues DDL once per process.
+
+        Verified by wrapping the connection in a small spy that
+        records every ``execute`` call — the second invocation must
+        not issue a ``CREATE UNIQUE INDEX`` statement.
+        """
+        with store._get_connection(TENANT) as conn:
+            store._ensure_unique_indexes(conn, TENANT, TYPE_USER, [FIELD_EMAIL])
+            assert store._unique_index_cache, "expected cache entry after first call"
+
+            executed: list[str] = []
+
+            class _SpyConn:
+                def __init__(self, wrapped):
+                    self._wrapped = wrapped
+
+                def execute(self, sql, *args, **kwargs):
+                    executed.append(sql)
+                    return self._wrapped.execute(sql, *args, **kwargs)
+
+            spy = _SpyConn(conn)
+            store._ensure_unique_indexes(spy, TENANT, TYPE_USER, [FIELD_EMAIL])
+        assert not any("CREATE UNIQUE INDEX" in s.upper() for s in executed), (
+            f"second call should be a cache hit, but issued: {executed}"
+        )
+
+    def test_restart_safe_via_if_not_exists(self, store):
+        """Restarting the process clears the cache but the CREATE
+        INDEX IF NOT EXISTS is idempotent, so the applier can re-run
+        without error."""
+        with store._get_connection(TENANT) as conn:
+            store._ensure_unique_indexes(conn, TENANT, TYPE_USER, [FIELD_EMAIL])
+
+        # Simulate restart: blow away the process-local cache.
+        store._unique_index_cache.clear()
+
+        with store._get_connection(TENANT) as conn:
+            # Must not raise — the DDL tolerates the existing index.
+            store._ensure_unique_indexes(conn, TENANT, TYPE_USER, [FIELD_EMAIL])
+            rows = conn.execute(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = ?",
+                (f"idx_unique_t{TYPE_USER}_f{FIELD_EMAIL}",),
+            ).fetchone()
+        count = rows[0] if isinstance(rows, tuple) else rows["COUNT(*)"]
+        assert count == 1
+
+
+# ════════════════════════════════════════════════════════════════════
+# 3. Error parsing + typed UniqueConstraintError
+# ════════════════════════════════════════════════════════════════════
+
+
+class TestUniqueConstraintError:
+    def test_parse_index_name_from_integrity_message(self):
+        msg = "UNIQUE constraint failed: index 'idx_unique_t201_f1'"
+        assert _parse_unique_index_name(msg) == (201, 1)
+
+    def test_parse_unrelated_message_returns_none(self):
+        assert _parse_unique_index_name("some other error") is None
+
+    def test_error_carries_structured_fields(self):
+        err = UniqueConstraintError("t1", 101, 1, "alice@example.com")
+        assert err.tenant_id == "t1"
+        assert err.type_id == 101
+        assert err.field_id == 1
+        assert err.value == "alice@example.com"
+
+
+# ════════════════════════════════════════════════════════════════════
+# 4. gRPC surface — ExecuteAtomic pre-check + GetNodeByKey
+# ════════════════════════════════════════════════════════════════════
+
+
+class TestGrpcUniqueFieldHandlers:
+    @pytest.mark.asyncio
+    async def test_execute_atomic_duplicate_returns_already_exists(self, store, global_store):
+        await _bootstrap_tenant(global_store, members={"alice": "owner"})
+
+        applier = await _make_applier(store)
+        await applier.apply_event(
+            _make_create_event(
+                "ev-seed",
+                node_id="preexisting",
+                payload={str(FIELD_EMAIL): "alice@example.com"},
             )
-            conn.commit()
+        )
 
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
 
-        create_op = CreateNodeOp(type_id=101, id="alice", data=Struct())
-        create_op.keys["email"] = "alice@example.com"
+        struct = Struct()
+        struct.update({"email": "alice@example.com"})
+        create_op = CreateNodeOp(type_id=TYPE_USER, id="alice", data=struct)
         req = ExecuteAtomicRequest(
             context=RequestContext(tenant_id=TENANT, actor=ALICE),
             idempotency_key="k-dup",
             operations=[Operation(create_node=create_op)],
         )
+
         with pytest.raises(_AbortError):
             await servicer.ExecuteAtomic(req, ctx)
         assert ctx.abort_code == grpc.StatusCode.ALREADY_EXISTS
 
     @pytest.mark.asyncio
-    async def test_race_applier_catches_integrity_error(self, store):
-        """Two creates with the same key — one wins, the other fails
-        at apply time even if pre-validate passed."""
-        applier = await _make_applier(store)
-        ev1 = _create_event(TENANT, "ev-r1", node_id="n1", keys={"sku": "ABC-1"})
-        ev2 = _create_event(TENANT, "ev-r2", node_id="n2", keys={"sku": "ABC-1"})
-        r1 = await applier.apply_event(ev1)
-        r2 = await applier.apply_event(ev2)
-        # One wins, one loses — exactly one success.
-        assert (r1.success, r2.success) in ((True, False), (False, True))
-
-    @pytest.mark.asyncio
     async def test_get_node_by_key_returns_node(self, store, global_store):
         await _bootstrap_tenant(global_store, members={"alice": "owner"})
-        # Insert a node directly and its key row.
-        now = 1_700_000_000_000
-        node = store._sync_create_node(TENANT, 101, {"name": "Alice"}, ALICE, "alice", [], now)
-        assert node.node_id == "alice"
-        with store._get_connection(TENANT) as conn:
-            store.insert_node_keys(conn, TENANT, 101, "alice", {"email": "alice@example.com"}, now)
-            conn.commit()
+        applier = await _make_applier(store)
+        await applier.apply_event(
+            _make_create_event(
+                "ev-a",
+                node_id="alice",
+                payload={str(FIELD_EMAIL): "alice@example.com"},
+            )
+        )
 
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
+        value = Value(string_value="alice@example.com")
         resp = await servicer.GetNodeByKey(
             GetNodeByKeyRequest(
                 tenant_id=TENANT,
                 actor=ALICE,
-                type_id=101,
-                key_name="email",
-                key_value="alice@example.com",
+                type_id=TYPE_USER,
+                field_id=FIELD_EMAIL,
+                value=value,
             ),
             ctx,
         )
@@ -498,27 +630,25 @@ class TestUniqueKeysGrpcHandlers:
             GetNodeByKeyRequest(
                 tenant_id=TENANT,
                 actor=ALICE,
-                type_id=101,
-                key_name="email",
-                key_value="nobody@example.com",
+                type_id=TYPE_USER,
+                field_id=FIELD_EMAIL,
+                value=Value(string_value="nobody@example.com"),
             ),
             ctx,
         )
         assert resp.found is False
 
     @pytest.mark.asyncio
-    async def test_get_node_by_key_enforces_tenant_check(self, store, global_store):
-        """An unknown tenant still returns found=False (handler does
-        not leak anything about whether the key exists or not)."""
+    async def test_get_node_by_key_unknown_tenant(self, store, global_store):
         servicer = _make_servicer(store, global_store)
         ctx = _FakeContext()
         resp = await servicer.GetNodeByKey(
             GetNodeByKeyRequest(
                 tenant_id="tenant-does-not-exist",
                 actor=ALICE,
-                type_id=101,
-                key_name="email",
-                key_value="x@y.z",
+                type_id=TYPE_USER,
+                field_id=FIELD_EMAIL,
+                value=Value(string_value="x@y.z"),
             ),
             ctx,
         )
@@ -526,113 +656,51 @@ class TestUniqueKeysGrpcHandlers:
 
 
 # ════════════════════════════════════════════════════════════════════
-# 18-21. Python SDK — Plan / scope / errors
+# 5. Proto round-trip — retired ``keys`` gone, FieldOpts.unique lives
 # ════════════════════════════════════════════════════════════════════
 
 
-class TestSdkUniqueKeys:
-    def test_plan_create_keys_are_serialized(self):
-        from entdb_sdk.client import Plan
-        from entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
-
-        client = MagicMock()
-        client.registry = None
-
-        plan = Plan(client=client, tenant_id="t", actor="user:a")
-        node_type = NodeTypeDef(
-            type_id=101,
-            name="User",
-            fields=(FieldDef(field_id=1, name="email", kind=FieldKind.STRING),),
-        )
-        plan.create(node_type, {"email": "a@x.z"}, keys={"email": "a@x.z"})
-        op = plan._operations[0]["create_node"]
-        assert op["keys"] == {"email": "a@x.z"}
-
-    def test_plan_update_keys_are_serialized(self):
-        from entdb_sdk.client import Plan
-        from entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
-
-        client = MagicMock()
-        plan = Plan(client=client, tenant_id="t", actor="user:a")
-        node_type = NodeTypeDef(
-            type_id=101,
-            name="User",
-            fields=(FieldDef(field_id=1, name="email", kind=FieldKind.STRING),),
-        )
-        plan.update(node_type, "n1", {"email": "b@x.z"}, keys={"email": "b@x.z"})
-        op = plan._operations[0]["update_node"]
-        assert op["keys"] == {"email": "b@x.z"}
-
-    def test_unique_constraint_error_carries_fields(self):
-        from entdb_sdk.errors import UniqueConstraintError
-
-        err = UniqueConstraintError(
-            "collision",
-            tenant_id="t1",
-            type_id=101,
-            key_name="email",
-            key_value="a@x.z",
-        )
-        assert err.tenant_id == "t1"
-        assert err.type_id == 101
-        assert err.key_name == "email"
-        assert err.key_value == "a@x.z"
-        assert err.code == "UNIQUE_CONSTRAINT"
-        assert err.details["key_name"] == "email"
-
-    def test_unique_constraint_error_is_entdb_error(self):
-        from entdb_sdk.errors import EntDbError, UniqueConstraintError
-
-        err = UniqueConstraintError("x", tenant_id="t")
-        assert isinstance(err, EntDbError)
-
-    def test_unique_constraint_error_exported_from_init(self):
-        import entdb_sdk
-
-        assert hasattr(entdb_sdk, "UniqueConstraintError")
-        assert "UniqueConstraintError" in entdb_sdk.__all__
-
-
-# ════════════════════════════════════════════════════════════════════
-# 22. Proto / schema — NodeOpts.keys round-trip
-# ════════════════════════════════════════════════════════════════════
-
-
-class TestProtoNodeKeySpec:
-    def test_node_key_spec_round_trip(self):
-        from entdb_sdk._generated import entdb_options_pb2
+class TestProtoSurface:
+    def test_node_opts_has_no_keys_field(self):
+        from sdk.entdb_sdk._generated import entdb_options_pb2
 
         opts = entdb_options_pb2.NodeOpts()
-        opts.type_id = 101
-        spec = opts.keys.add()
-        spec.name = "email"
-        spec.required = True
-        spec2 = opts.keys.add()
-        spec2.name = "external_id"
-        spec2.required = False
+        assert not hasattr(opts, "keys") or not callable(getattr(opts, "keys", None))
+        # Explicit: the underlying descriptor should not expose a
+        # ``keys`` field (it was reserved) and also should not have
+        # ``NodeKeySpec`` defined anywhere in the options module.
+        field_names = {f.name for f in opts.DESCRIPTOR.fields}
+        assert "keys" not in field_names
+        assert not hasattr(entdb_options_pb2, "NodeKeySpec")
 
+    def test_field_opts_has_unique_flag(self):
+        from sdk.entdb_sdk._generated import entdb_options_pb2
+
+        opts = entdb_options_pb2.FieldOpts()
+        opts.unique = True
         wire = opts.SerializeToString()
-        round = entdb_options_pb2.NodeOpts()
-        round.ParseFromString(wire)
-        assert len(round.keys) == 2
-        assert round.keys[0].name == "email"
-        assert round.keys[0].required is True
-        assert round.keys[1].name == "external_id"
-        assert round.keys[1].required is False
+        round_ = entdb_options_pb2.FieldOpts()
+        round_.ParseFromString(wire)
+        assert round_.unique is True
 
-    def test_create_node_op_keys_round_trip(self):
-        from dbaas.entdb_server.api.generated import CreateNodeOp
+    def test_create_node_op_has_no_keys_field(self):
+        op = CreateNodeOp(type_id=TYPE_USER, id="n1")
+        field_names = {f.name for f in op.DESCRIPTOR.fields}
+        assert "keys" not in field_names
 
-        op = CreateNodeOp(type_id=101, id="n1")
-        op.keys["email"] = "alice@example.com"
-        op.keys["external_id"] = "ext-42"
-        wire = op.SerializeToString()
-        r = CreateNodeOp()
-        r.ParseFromString(wire)
-        assert dict(r.keys) == {
-            "email": "alice@example.com",
-            "external_id": "ext-42",
-        }
+    def test_get_node_by_key_request_uses_field_id_and_value(self):
+        req = GetNodeByKeyRequest(
+            tenant_id=TENANT,
+            actor=ALICE,
+            type_id=TYPE_USER,
+            field_id=FIELD_EMAIL,
+            value=Value(string_value="alice@example.com"),
+        )
+        wire = req.SerializeToString()
+        r2 = GetNodeByKeyRequest()
+        r2.ParseFromString(wire)
+        assert r2.field_id == FIELD_EMAIL
+        assert r2.value.string_value == "alice@example.com"
 
     def test_get_node_by_key_default_op_is_read(self):
         from dbaas.entdb_server.auth.capability_registry import (

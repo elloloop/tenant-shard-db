@@ -1,365 +1,725 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
+import Callout from "../../../components/Callout.astro";
+import { LinkCard, CardGrid } from "@refraction-ui/astro";
 ---
 
 <DocsLayout title="Python SDK">
   <h1>Python SDK Reference</h1>
   <p>
-    The Python SDK (<code>entdb-sdk</code>) is a type-safe async client for
-    EntDB. It is <strong>proto-first</strong> &mdash; you define your schema in
-    a <code>.proto</code> file, compile it with the standard
-    <code>protoc</code>, and register the generated module with the SDK. No
-    custom codegen.
+    The EntDB Python SDK (<code>entdb-sdk</code>) is an async, type-safe
+    client that exposes a <strong>single-shape API</strong>: there is
+    exactly one way to perform every operation. Nodes are created from
+    generated proto messages, unique-key lookups go through typed
+    <code>UniqueKey[T]</code> tokens emitted by the
+    <code>protoc-gen-entdb-keys</code> codegen plugin, and ACL /
+    storage / aliases / idempotency are all keyword arguments to the
+    same <code>plan.create</code>. Rename a proto field, regenerate,
+    and every stale call site becomes an
+    <code>AttributeError</code> at import time &mdash; no
+    production-only failures.
   </p>
 
-  <h2>Installation</h2>
+  <h2>Install</h2>
   <pre is:raw><code>pip install entdb-sdk</code></pre>
-
-  <h2>Proto-First Workflow</h2>
   <p>
-    Define your types once in a <code>.proto</code> file. Every message you
-    want to store as a node needs a stable <code>type_id</code> option, and
-    every field uses its protobuf field number as the on-disk
-    <code>field_id</code>.
+    Python 3.10+. The SDK depends on <code>grpcio</code>,
+    <code>protobuf</code>, and the standard
+    <code>google.protobuf</code> runtime shipped with your generated
+    proto bindings.
   </p>
+
+  <h2>Proto schema</h2>
+  <p>
+    The SDK is proto-first. Node types, edge types, and unique
+    constraints are all declared directly in your <code>.proto</code>
+    files. Every code sample on this page uses the same canonical
+    shop schema: a <code>Product</code> with a unique
+    <code>sku</code> and unique <code>barcode</code>, a
+    <code>Category</code> keyed by <code>slug</code>, and a
+    <code>BelongsTo</code> edge linking them.
+  </p>
+
   <pre is:raw><code>// schema.proto
 syntax = "proto3";
-package myapp;
+package shop;
 
-import "entdb/options.proto";
+import "entdb_options.proto";
 
-message Task {
-  option (entdb.type_id) = 1;
+message Product {
+  option (entdb.node) = &#123; type_id: 201 &#125;;
 
-  string title = 1;
-  string status = 2;   // "todo" | "in_progress" | "done"
-  int32 priority = 3;
+  string sku         = 1 [(entdb.field).unique = true];
+  string barcode     = 2 [(entdb.field).unique = true];
+  string name        = 3;
+  int32  price_cents = 4;
+  int32  stock       = 5;
 }
 
-message Comment {
-  option (entdb.type_id) = 3;
-  string body = 1;
+message Category {
+  option (entdb.node) = &#123; type_id: 202 &#125;;
+
+  string slug = 1 [(entdb.field).unique = true];
+  string name = 2;
+}
+
+message BelongsTo {
+  option (entdb.edge) = &#123; edge_id: 301 &#125;;
 }</code></pre>
 
-  <p>Compile with the standard protoc &mdash; no EntDB-specific codegen.</p>
-  <pre is:raw><code>protoc --python_out=. schema.proto</code></pre>
+  <p>Three things to notice:</p>
+  <ul>
+    <li>
+      <code>(entdb.node)</code> / <code>(entdb.edge)</code> declare the
+      message as an EntDB node or edge type and fix its numeric
+      <code>type_id</code> / <code>edge_id</code>. The SDK reads those
+      values off the descriptor &mdash; user code never types a
+      numeric id.
+    </li>
+    <li>
+      <code>(entdb.field).unique = true</code> declares a unique
+      constraint on the field. The server enforces uniqueness via a
+      SQLite expression index on the payload value &mdash; a
+      <code>Product</code> cannot be created or updated so that its
+      <code>sku</code> or <code>barcode</code> collides with an
+      existing row in the same tenant.
+    </li>
+    <li>
+      The proto field number is the on-disk <code>field_id</code>.
+      Renaming <code>sku</code> to <code>stock_keeping_unit</code>
+      does not touch the disk format; only the wire / Python names
+      change.
+    </li>
+  </ul>
 
-  <p>Register the generated module with the SDK:</p>
-  <pre is:raw><code>from entdb_sdk import DbClient, register_proto_schema
-import schema_pb2
-
-registry = register_proto_schema(schema_pb2)</code></pre>
-
-  <h2>TypedNode Dataclasses</h2>
+  <h2>Build step</h2>
   <p>
-    For ergonomic access to node payloads, wrap proto messages in a
-    <code>TypedNode</code> dataclass. <code>to_payload()</code> and
-    <code>from_payload()</code> handle the conversion to and from the
-    field-id-keyed wire form.
+    Generate Python proto bindings and the EntDB typed-key sidecar
+    from one <code>protoc</code> invocation. The
+    <code>protoc-gen-entdb-keys</code> plugin must be on
+    <code>PATH</code>; build it once from this repository:
   </p>
-  <pre is:raw><code>from dataclasses import dataclass
-from entdb_sdk import TypedNode
-import schema_pb2
 
-@dataclass
-class Task(TypedNode[schema_pb2.Task]):
-    proto_cls = schema_pb2.Task
+  <pre is:raw><code>cd tools/protoc-gen-entdb-keys
+make build       # produces bin/protoc-gen-entdb-keys
+make install     # copies into $GOBIN (which should be on PATH)</code></pre>
 
-task = Task(title="Ship v2", status="todo")
-payload = task.to_payload()     # {"1": "Ship v2", "2": "todo"}
-restored = Task.from_payload(payload)</code></pre>
+  <Callout type="info" title="Plugin on PATH">
+    If <code>protoc</code> cannot find <code>protoc-gen-entdb-keys</code>,
+    every <code>--entdb-keys_out</code> invocation fails with
+    <code>program not found</code>. After <code>make install</code>,
+    verify with <code>which protoc-gen-entdb-keys</code>. The plugin
+    is a standalone Go binary — no Python runtime involvement.
+  </Callout>
+
+  <pre is:raw><code>protoc \
+  --python_out=. \
+  --entdb-keys_out=. \
+  -I . -I path/to/entdb/proto \
+  schema.proto</code></pre>
+
+  <p><code>protoc</code> emits:</p>
+  <table>
+    <tr><th>File</th><th>Contents</th></tr>
+    <tr>
+      <td><code>schema_pb2.py</code></td>
+      <td>
+        Standard generated classes: <code>schema_pb2.Product</code>,
+        <code>schema_pb2.Category</code>,
+        <code>schema_pb2.BelongsTo</code>.
+      </td>
+    </tr>
+    <tr>
+      <td><code>schema_entdb.py</code></td>
+      <td>
+        EntDB typed <code>UniqueKey</code> tokens, one class per
+        message with unique fields.
+      </td>
+    </tr>
+  </table>
+
+  <p>The sidecar looks like this:</p>
+  <pre is:raw><code># Code generated by protoc-gen-entdb-keys. DO NOT EDIT.
+from entdb_sdk import UniqueKey
+
+class ProductKeys:
+    sku     = UniqueKey[str](type_id=201, field_id=1, name="sku")
+    barcode = UniqueKey[str](type_id=201, field_id=2, name="barcode")
+
+class CategoryKeys:
+    slug    = UniqueKey[str](type_id=202, field_id=1, name="slug")</code></pre>
+
+  <Callout type="warning" title="Typed tokens are the ONLY lookup form">
+    <code>UniqueKey</code> is the single canonical path for
+    unique-field lookups. There is no string form of
+    <code>get_by_key</code>. Rename <code>sku</code> to
+    <code>stock_keeping_unit</code> in proto, regenerate, and every
+    stale <code>ProductKeys.sku</code> reference is an
+    <code>AttributeError</code> at import time &mdash; you find out
+    at the first call site, not in production.
+  </Callout>
 
   <h2>Connecting</h2>
-  <pre is:raw><code>from entdb_sdk import DbClient
+  <pre is:raw><code>import asyncio
+from entdb_sdk import DbClient, register_proto_schema, Actor
 
-async with DbClient(
-    "localhost:50051",
-    api_key="your-key",
-    secure=True,
-    registry=registry,
-) as db:
-    ...</code></pre>
+import schema_pb2
+from schema_entdb import ProductKeys, CategoryKeys
 
-  <h3>Constructor Options</h3>
-  <table>
-    <tr><th>Parameter</th><th>Type</th><th>Default</th><th>Description</th></tr>
-    <tr><td><code>address</code></td><td>str</td><td>&mdash;</td><td>Server address (host:port)</td></tr>
-    <tr><td><code>secure</code></td><td>bool</td><td>False</td><td>Use TLS</td></tr>
-    <tr><td><code>api_key</code></td><td>str | None</td><td>None</td><td>Scoped API key for auth</td></tr>
-    <tr><td><code>max_retries</code></td><td>int</td><td>3</td><td>Max retries on transient failures</td></tr>
-    <tr><td><code>registry</code></td><td>SchemaRegistry | None</td><td>None</td><td>Schema registry from <code>register_proto_schema()</code></td></tr>
-  </table>
+async def main():
+    async with DbClient(
+        "api.example.com:443",
+        api_key="sk-prod-...",
+        secure=True,
+    ) as db:
+        # Register the generated proto module once per process.
+        register_proto_schema(schema_pb2)
 
-  <h2>Typed Primitives</h2>
+        # Bind tenant + actor once; every call from `alice` is short.
+        alice = db.tenant("acme").actor(Actor.user("alice"))
+        ...
 
-  <h3>Actor</h3>
+asyncio.run(main())</code></pre>
+
   <p>
-    An <code>Actor</code> is a typed principal identifier that replaces raw
-    <code>"user:bob"</code> strings throughout the SDK.
+    <code>DbClient</code> is an async context manager. Call
+    <code>register_proto_schema(schema_pb2)</code> once after entering
+    the context to populate the SDK's schema registry from the
+    generated module's <code>FileDescriptor</code>. The
+    <code>tenant(...).actor(...)</code> pair returns an
+    <code>ActorScope</code> that captures tenant + actor so every
+    read or write is short.
   </p>
-  <pre is:raw><code>from entdb_sdk import Actor
 
-Actor.user("alice")         # user:alice
-Actor.group("admins")       # group:admins
-Actor.service("ingest-api") # service:ingest-api</code></pre>
-
-  <h3>Permission</h3>
-  <pre is:raw><code>from entdb_sdk import Permission
-
-Permission.READ
-Permission.WRITE
-Permission.ADMIN</code></pre>
-
-  <h3>ACLEntry</h3>
-  <pre is:raw><code>from entdb_sdk import ACLEntry, Actor, Permission
-
-entry = ACLEntry(
-    grantee=Actor.user("bob"),
-    permission=Permission.WRITE,
-)</code></pre>
-
-  <h2>Hierarchical Scope API</h2>
+  <h2>Creating nodes</h2>
   <p>
-    Bind tenant and actor once with <code>db.tenant(...).actor(...)</code>
-    instead of passing them on every call.
+    <code>plan.create(msg, *, acl=None, storage=Tenant())</code> is
+    the only way to create a node. The proto message determines the
+    type (via its <code>(entdb.node)</code> option) and the payload
+    (only fields explicitly set on the message are sent).
   </p>
-  <pre is:raw><code>scope = db.tenant("acme").actor(Actor.user("alice"))
 
-task = await scope.get(Task, node_id)
-tasks = await scope.query(Task, filter={"status": "todo"}, limit=20)
+  <pre is:raw><code>from entdb_sdk import ACLEntry, Actor, Permission, Mailbox, Public
+import schema_pb2
 
-plan = scope.plan()
-plan.create(schema_pb2.Task(title="New", status="todo"))
-result = await plan.commit(wait_applied=True)</code></pre>
+plan = alice.plan()
 
-  <h2>Plans (Atomic Transactions)</h2>
-  <p>
-    <code>Plan.create()</code> now accepts proto messages directly &mdash; the
-    SDK uses the registered schema to translate field names to field IDs at
-    the boundary.
-  </p>
-  <pre is:raw><code>import schema_pb2
+# Default: tenant storage with the type's default ACL.
+plan.create(schema_pb2.Product(
+    sku="WIDGET-1",
+    barcode="0123456789012",
+    name="Widget",
+    price_cents=1999,
+    stock=50,
+))
 
-plan = db.tenant("acme").actor(Actor.user("alice")).plan()
-
-task_ref = plan.create(schema_pb2.Task(title="Ship v2", status="todo"), as_="t")
-comment_ref = plan.create(schema_pb2.Comment(body="Let's ship it"), as_="c")
-plan.edge_create(HasComment, from_="$t.id", to="$c.id")
-
-plan.update(Task, node_id, {"status": "done"})
-plan.delete(Task, old_id)
-
-result = await plan.commit(wait_applied=True)
-task_id = result.created_node_ids[0]</code></pre>
-
-  <h3>CommitResult</h3>
-  <table>
-    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
-    <tr><td><code>success</code></td><td>bool</td><td>Whether commit succeeded</td></tr>
-    <tr><td><code>receipt</code></td><td>Receipt</td><td>Transaction receipt with stream_position</td></tr>
-    <tr><td><code>created_node_ids</code></td><td>list[str]</td><td>IDs of created nodes (in order)</td></tr>
-    <tr><td><code>applied</code></td><td>bool</td><td>Whether event was applied (if wait_applied)</td></tr>
-    <tr><td><code>error</code></td><td>str | None</td><td>Error message on failure</td></tr>
-  </table>
-
-  <h2>ACL Operations</h2>
-  <pre is:raw><code>scope = db.tenant("acme").actor(Actor.user("alice"))
-
-# Share
-await scope.share(node_id, Actor.user("bob"), Permission.WRITE)
-
-# Revoke
-await scope.revoke(node_id, Actor.user("bob"))
-
-# Shared with me
-nodes = await scope.shared_with_me(limit=50)
-
-# Group membership
-await db.tenant("acme").group_add(Actor.group("eng"), Actor.user("alice"))
-await db.tenant("acme").group_remove(Actor.group("eng"), Actor.user("alice"))
-
-# Ownership transfer
-await scope.transfer_ownership(node_id, Actor.user("bob"))</code></pre>
-
-  <h2>Read-after-Write Consistency</h2>
-  <p>
-    The SDK automatically tracks the last observed stream offset per tenant
-    in <code>db._last_offsets</code> and forwards it on subsequent reads. You
-    usually do not need to manage offsets yourself.
-  </p>
-  <pre is:raw><code># Automatic — the SDK remembers the offset from the previous commit
-await plan.commit()
-task = await scope.get(Task, node_id)   # guaranteed to see the write
-
-# Explicit control is still available
-result = await plan.commit()
-task = await scope.get(Task, node_id,
-                       after_offset=result.receipt.stream_position)
-
-await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)</code></pre>
-
-  <h2>Storage Modes</h2>
-  <p>
-    Every node has an immutable <code>storage_mode</code> chosen at create
-    time. The mode determines which physical SQLite file the node lives in
-    and is <strong>immutable</strong> &mdash; nodes cannot be moved between
-    files after creation.
-  </p>
-  <table>
-    <tr><th>Mode</th><th>Location</th><th>Use case</th></tr>
-    <tr><td><code>StorageMode.TENANT</code> (default)</td><td><code>tenant.db</code></td><td>Shared, ACL-controlled team data</td></tr>
-    <tr><td><code>StorageMode.USER_MAILBOX</code></td><td><code>&#123;tenant&#125;/user_&#123;user_id&#125;.db</code></td><td>Per-user private data (notifications, drafts)</td></tr>
-    <tr><td><code>StorageMode.PUBLIC</code></td><td><code>public.db</code></td><td>Cross-tenant content (templates, reference data)</td></tr>
-  </table>
-  <pre is:raw><code>plan = db.tenant("acme").actor(Actor.user("alice")).plan()
-
-# Default — tenant.db
-plan.create(schema_pb2.Task(title="Team task"))
-
-# Per-user mailbox — lives in user_bob.db
-plan.create_in_mailbox(
-    schema_pb2.Notification(subject="Personal reminder"),
-    user_id="bob",
+# With an explicit ACL.
+plan.create(
+    schema_pb2.Product(sku="WIDGET-2", name="Widget Plus"),
+    acl=[
+        ACLEntry(grantee=str(Actor.user("bob")), permission=Permission.READ),
+        ACLEntry(grantee=str(Actor.group("merchants")), permission=Permission.WRITE),
+    ],
 )
 
-# Public — readable across tenants (requires PLATFORM_ADMIN)
-plan.create_in_public(
-    schema_pb2.Template(name="Weekly Retrospective"),
+# Private per-user mailbox.
+plan.create(
+    schema_pb2.Product(sku="WIDGET-3", name="Internal draft"),
+    storage=Mailbox(user_id="alice"),
+)
+
+# Cross-tenant public catalogue.
+plan.create(
+    schema_pb2.Product(sku="WIDGET-4", name="Reference SKU"),
+    storage=Public(),
 )
 
 await plan.commit()</code></pre>
-  <p>
-    <strong>Edge invariant:</strong> edges may only point from more-private to
-    equal-or-less-private storage. Forbidden: <code>tenant &rarr; mailbox</code>,
-    <code>public &rarr; tenant</code>. The server rejects violating edges at
-    write time.
-  </p>
 
-  <h2>Unique Keys</h2>
-  <p>
-    Declare a node type with one or more <code>keys</code> and the server
-    enforces uniqueness on them. The same declaration doubles as a fast
-    secondary lookup index.
-  </p>
-  <pre is:raw><code>// schema.proto
-message User {
-  option (entdb.node) = {
-    type_id: 101
-    keys: [
-      { name: "email", required: true }
-      { name: "external_id", required: false }
-    ]
-  };
-  string email = 1;
-  string name = 2;
-  string external_id = 3;
-}</code></pre>
-  <pre is:raw><code>from entdb_sdk import UniqueConstraintError
+  <h2>Looking up by id</h2>
+  <pre is:raw><code>import schema_pb2
 
-plan = db.tenant("acme").actor(Actor.user("alice")).plan()
-
-try:
-    plan.create(
-        schema_pb2.User(
-            email="alice@example.com",
-            name="Alice",
-            external_id="ext-42",
-        ),
-        keys={
-            "email": "alice@example.com",
-            "external_id": "ext-42",
-        },
-    )
-    await plan.commit()
-except UniqueConstraintError as e:
-    print(f"duplicate {e.key_name}={e.key_value!r} on type {e.type_id}")</code></pre>
-  <p>Look up a node by key &mdash; no <code>node_id</code> required:</p>
-  <pre is:raw><code>scope = db.tenant("acme").actor(Actor.user("alice"))
-user = await scope.get_by_key(User, "email", "alice@example.com")
-if user is None:
-    print("not found")</code></pre>
-  <p>
-    <code>get_by_key</code> runs the same ACL check as <code>get</code>.
-    Actors without read permission see <code>AccessDeniedError</code>, not
-    <code>NotFoundError</code>.
-  </p>
-  <p>
-    <strong>Two-phase enforcement.</strong> The gRPC servicer pre-validates
-    at request ingress for fast feedback. The Applier re-validates inside the
-    same transaction that writes the node row, so races between concurrent
-    creates are impossible.
-  </p>
-
-  <h2>Quotas and Rate Limits</h2>
-  <p>
-    EntDB enforces three independent rate-limit layers; each raises
-    <code>RateLimitError</code> on breach with a <code>retry_after_ms</code>
-    field populated from the server's <code>Retry-After</code> trailer.
-  </p>
-  <table>
-    <tr><th>Layer</th><th>What</th><th>When</th></tr>
-    <tr><td>Monthly write quota</td><td>Billing enforcement, durable counters</td><td>Plan-tier overuse</td></tr>
-    <tr><td>Per-tenant token bucket</td><td>Noisy-neighbor / QoS protection</td><td>One tenant hogging the box</td></tr>
-    <tr><td>Per-user token bucket</td><td>Credential abuse protection</td><td>Compromised key, runaway script</td></tr>
-  </table>
-  <pre is:raw><code>from entdb_sdk import RateLimitError
-
-try:
-    await plan.commit()
-except RateLimitError as e:
-    print(f"rate limited, retry in {e.retry_after_ms} ms "
-          f"(used {e.used}/{e.limit})")
-    await asyncio.sleep(e.retry_after_ms / 1000)</code></pre>
-  <p>Fetch quota state for a dashboard:</p>
-  <pre is:raw><code>quota = await db.get_tenant_quota("acme")
-print(f"{quota.writes_used}/{quota.max_writes_per_month} writes this period")</code></pre>
-
-  <h2>GDPR Operations</h2>
-  <p>
-    These operations are scoped by <code>user_id</code> (the global user
-    identifier, e.g. <code>"alice"</code>), not by
-    <code>tenant_principal</code>.
-  </p>
-  <pre is:raw><code># Soft delete with a grace window — cancellable
-await db.delete_user("alice", grace_period_days=30)
-await db.cancel_user_deletion("alice")
-
-# Export all of a user's data across all tenants (right of access / portability)
-export = await db.export_user_data("alice")
-
-# Freeze (suspend) a user — blocks writes without deleting data
-await db.freeze_user("alice", reason="legal hold")</code></pre>
+product = await alice.get(schema_pb2.Product, "node-42")
+if product is None:
+    print("not found")
+else:
+    print(product.node_id, product.payload)</code></pre>
 
   <p>
-    Each of these calls appends an event to the WAL, so they show up in the
-    compliance audit trail. See
-    <a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a>
-    for details on Object Lock and crypto-shred.
+    The first argument is the proto message <em>class</em>, used as
+    the type witness; the SDK reads the <code>type_id</code> from
+    its descriptor at call time.
   </p>
 
-  <h2>Error Handling</h2>
+  <h2>Looking up by unique key</h2>
+  <pre is:raw><code>from schema_entdb import ProductKeys
+
+product = await alice.get_by_key(ProductKeys.sku, "WIDGET-1")
+
+# Different unique field on the same type.
+by_barcode = await alice.get_by_key(ProductKeys.barcode, "0123456789012")
+
+# Type-checker error: ProductKeys.sku is UniqueKey[str], not int.
+# product = await alice.get_by_key(ProductKeys.sku, 12345)</code></pre>
+
+  <p>
+    The pitch: <strong>rename <code>sku</code> to
+    <code>stock_keeping_unit</code></strong> in proto, regenerate,
+    and <code>ProductKeys.sku</code> becomes
+    <code>ProductKeys.stock_keeping_unit</code> in the sidecar. Every
+    stale call site is an <code>AttributeError</code> the moment the
+    module imports &mdash; no stale string literals waiting to blow up
+    in production.
+  </p>
+
+  <h2>Querying with operators</h2>
+  <p>
+    <code>scope.query</code> takes a MongoDB-style filter dict. Field
+    names are <strong>proto field names</strong> (not field ids); the
+    server resolves them using the schema registry at the ingress
+    boundary.
+  </p>
+
+  <pre is:raw><code>import schema_pb2
+
+# price_cents >= 1000 AND stock in a set
+results = await alice.query(schema_pb2.Product, filter=&#123;
+    "price_cents": &#123;"$gte": 1000&#125;,
+    "stock":       &#123;"$in": [10, 25, 50]&#125;,
+&#125;)
+
+# name prefix match
+hits = await alice.query(schema_pb2.Product, filter=&#123;
+    "name": &#123;"$like": "Widget%"&#125;,
+&#125;)
+
+# top-level $or
+either = await alice.query(schema_pb2.Product, filter=&#123;
+    "$or": [
+        &#123;"price_cents": &#123;"$lt": 500&#125;&#125;,
+        &#123;"stock": 0&#125;,
+    ],
+&#125;)</code></pre>
+
+  <p>
+    Supported operators: <code>$eq</code> (default), <code>$ne</code>,
+    <code>$gt</code>, <code>$gte</code>, <code>$lt</code>,
+    <code>$lte</code>, <code>$in</code>, <code>$nin</code>,
+    <code>$like</code>, <code>$between</code>, plus top-level
+    <code>$and</code> and <code>$or</code>.
+  </p>
+
+  <h2>Updating</h2>
+  <p>
+    <code>plan.update(node_id, msg)</code> sends a partial patch.
+    <strong>Only fields explicitly set on the proto message become
+    the patch</strong>; unset fields are left untouched on the server:
+  </p>
+
+  <pre is:raw><code>plan = alice.plan()
+
+# Only price_cents is set → patch = &#123;"price_cents": 1499&#125;.
+plan.update("node-42", schema_pb2.Product(price_cents=1499))
+
+await plan.commit()</code></pre>
+
+  <p>
+    The type is read from the message's <code>(entdb.node)</code>
+    option, so there is no separate <code>type_id</code> argument. To
+    clear a scalar to its zero value, use a proto3 <code>optional</code>
+    field so the wire format can distinguish "unset" from "explicitly
+    zero".
+  </p>
+
+  <h2>Deleting</h2>
+  <pre is:raw><code>import schema_pb2
+
+plan = alice.plan()
+plan.delete(schema_pb2.Product, "node-42")
+await plan.commit()</code></pre>
+
+  <p>
+    <code>plan.delete</code> takes the proto message <em>class</em>
+    as the type witness, not an instance. The SDK resolves
+    <code>type_id</code> without guessing.
+  </p>
+
+  <h2>Edges</h2>
+  <pre is:raw><code>import schema_pb2
+
+plan = alice.plan()
+
+# Alias lets the edge reference a node created in the same plan.
+plan.create(schema_pb2.Category(slug="hand-tools", name="Hand tools"),
+            as_="hand-tools")
+
+plan.create(schema_pb2.Product(sku="HAMMER-01", name="Claw hammer"),
+            as_="hammer")
+
+# Link the product to the category.
+plan.edge_create(schema_pb2.BelongsTo, "$hammer", "$hand-tools")
+
+await plan.commit()
+
+# Later: unlink them.
+plan2 = alice.plan()
+plan2.edge_delete(schema_pb2.BelongsTo, "product-id-42", "category-id-9")
+await plan2.commit()</code></pre>
+
+  <p>
+    The <code>edge_id</code> is read from the edge message's
+    <code>(entdb.edge)</code> option. Aliases prefixed with
+    <code>$</code> refer to nodes created earlier in the same plan.
+  </p>
+
+  <h2>Atomic plans</h2>
+  <p>
+    A <code>plan</code> batches operations into a single atomic
+    commit. Either every op applies or none do &mdash; the WAL commit
+    is all-or-nothing:
+  </p>
+
+  <pre is:raw><code>plan = alice.plan()
+
+plan.create(schema_pb2.Product(
+    sku="HAMMER-01", barcode="0000000000017",
+    name="Claw hammer", price_cents=2499, stock=100,
+), as_="hammer")
+plan.create(schema_pb2.Product(
+    sku="WRENCH-01", barcode="0000000000024",
+    name="Adjustable wrench", price_cents=1799, stock=50,
+), as_="wrench")
+plan.update("old-product-id", schema_pb2.Product(stock=0))
+plan.delete(schema_pb2.Product, "discontinued-id")
+plan.edge_create(schema_pb2.BelongsTo, "$hammer", "category-hand-tools")
+plan.edge_create(schema_pb2.BelongsTo, "$wrench", "category-hand-tools")
+
+result = await plan.commit()
+print("created", result.created_node_ids)</code></pre>
+
+  <p>
+    A plan cannot be reused after <code>commit</code>; create a fresh
+    one for subsequent operations.
+  </p>
+
+  <h2>Idempotency keys</h2>
+  <pre is:raw><code>plan = alice.plan(idempotency_key="order-12345")
+plan.create(schema_pb2.Product(sku="LIMITED-ED-01", name="Limited Edition"))
+result = await plan.commit()</code></pre>
+
+  <p>
+    Retrying the same <code>idempotency_key</code> returns the same
+    <code>result</code> rather than creating duplicates. The server
+    short-circuits the second attempt and hands back the original
+    <code>created_node_ids</code>.
+  </p>
+
+  <h2>Error handling</h2>
+  <p>All SDK errors subclass <code>EntDbError</code>; match the typed variants:</p>
+
   <pre is:raw><code>from entdb_sdk import (
-    ConnectionError,
-    ValidationError,
-    SchemaError,
-    UnknownFieldError,
-    AccessDeniedError,
-    NotFoundError,
     UniqueConstraintError,
     RateLimitError,
+    AccessDeniedError,
+    ValidationError,
 )
 
 try:
-    plan.create(schema_pb2.Task(title="x"))
     await plan.commit()
-except UnknownFieldError as e:
-    print(e)  # "Unknown field 'foo' on Task. Did you mean: title?"
-except AccessDeniedError as e:
-    print(e.actor, e.required_permission)
 except UniqueConstraintError as e:
-    print(f"duplicate {e.key_name}={e.key_value!r}")
+    print(f"duplicate value for field_id={e.field_id}: {e.value!r}")
 except RateLimitError as e:
-    print(f"retry in {e.retry_after_ms} ms")
-except ConnectionError as e:
-    print(e.address)</code></pre>
+    print(f"rate limited, retry after {e.retry_after_ms} ms")
+    await asyncio.sleep(e.retry_after_ms / 1000)
+except AccessDeniedError as e:
+    print(f"access denied: {e.actor} on {e.resource_id}")
+except ValidationError as e:
+    print(f"validation failed: {e}")</code></pre>
+
+  <Callout type="info" title="Rate-limit retry hint">
+    <code>RateLimitError.retry_after_ms</code> is a server-side hint
+    honouring all three quota layers (monthly writes, per-tenant RPS,
+    per-user RPS). Treat it as the minimum wait; exponential backoff
+    capped at that value is the standard pattern.
+  </Callout>
+
+  <h2>Storage modes</h2>
+  <p>
+    Every node has an <strong>immutable</strong> storage mode chosen
+    at creation time. Pass the appropriate descriptor to
+    <code>storage=</code>:
+  </p>
+
+  <table>
+    <tr><th>Mode</th><th>Location</th><th>Use case</th></tr>
+    <tr>
+      <td><code>Tenant()</code> (default)</td>
+      <td><code>tenant.db</code></td>
+      <td>Shared, ACL-controlled team data</td>
+    </tr>
+    <tr>
+      <td><code>Mailbox(user_id=...)</code></td>
+      <td><code>user_&lt;user_id&gt;.db</code></td>
+      <td>Per-user private data &mdash; drafts, personal notes</td>
+    </tr>
+    <tr>
+      <td><code>Public()</code></td>
+      <td><code>public.db</code></td>
+      <td>Cross-tenant shared content &mdash; catalogues, templates</td>
+    </tr>
+  </table>
+
+  <Callout type="warning" title="Storage mode is immutable">
+    Once a node is written, it cannot be moved between files. Pick
+    deliberately at create time. Edges may only point from
+    more-private to equal-or-less-private storage
+    (<code>mailbox → tenant</code> is allowed;
+    <code>tenant → mailbox</code> is rejected at write time).
+  </Callout>
+
+  <h2>CLI</h2>
+  <p>
+    The <code>entdb</code> command handles proto schema workflows
+    (lint, compatibility check, init snapshot):
+  </p>
+  <pre is:raw><code>entdb lint schema.proto
+entdb init schema.proto            # freeze baseline in .entdb/snapshot.json
+entdb check schema.proto           # compare proto against baseline</code></pre>
+
+  <p>
+    For raw data access from the terminal (<code>get</code>,
+    <code>put</code>, <code>query</code>), use the Go CLI
+    (<code>entdb</code> installed from the Go SDK) with a compiled
+    <code>--proto-descriptor</code> descriptor set &mdash; it names
+    types by proto message name, not numeric <code>type_id</code>:
+  </p>
+  <pre is:raw><code>protoc --descriptor_set_out=schema.protoset schema.proto
+
+entdb get localhost:50051 \
+  --tenant=acme --actor=user:alice \
+  --proto-descriptor=schema.protoset \
+  --type=Product --node-id=node-42
+
+entdb query localhost:50051 \
+  --tenant=acme --actor=user:alice \
+  --proto-descriptor=schema.protoset \
+  --type=Product \
+  --filter='&#123;"price_cents":&#123;"$gte":1000&#125;&#125;'</code></pre>
+
+  <h2>Python ↔ Go parity</h2>
+  <p>
+    The Python and Go SDKs mirror each other operation for operation.
+    Teams running both can copy call shapes straight across:
+  </p>
+
+  <table>
+    <tr><th>Operation</th><th>Python</th><th>Go</th></tr>
+    <tr>
+      <td>Bind a scope</td>
+      <td><code>scope = db.tenant("acme").actor(Actor.user("alice"))</code></td>
+      <td><code>scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))</code></td>
+    </tr>
+    <tr>
+      <td>Start a plan</td>
+      <td><code>plan = scope.plan()</code></td>
+      <td><code>plan := scope.Plan()</code></td>
+    </tr>
+    <tr>
+      <td>Create a node</td>
+      <td><code>plan.create(schema_pb2.Product(sku="WIDGET-1"))</code></td>
+      <td><code>plan.Create(&amp;shop.Product&#123;Sku: "WIDGET-1"&#125;)</code></td>
+    </tr>
+    <tr>
+      <td>Create with ACL</td>
+      <td><code>plan.create(msg, acl=[...])</code></td>
+      <td><code>plan.Create(msg, entdb.WithACL(...))</code></td>
+    </tr>
+    <tr>
+      <td>Create in mailbox</td>
+      <td><code>plan.create(msg, storage=Mailbox("alice"))</code></td>
+      <td><code>plan.Create(msg, entdb.InMailbox("alice"))</code></td>
+    </tr>
+    <tr>
+      <td>Create in public</td>
+      <td><code>plan.create(msg, storage=Public())</code></td>
+      <td><code>plan.Create(msg, entdb.InPublic())</code></td>
+    </tr>
+    <tr>
+      <td>Update a node</td>
+      <td><code>plan.update("node-42", Product(price_cents=1499))</code></td>
+      <td><code>plan.Update("node-42", &amp;shop.Product&#123;PriceCents: 1499&#125;)</code></td>
+    </tr>
+    <tr>
+      <td>Delete a node</td>
+      <td><code>plan.delete(schema_pb2.Product, "node-42")</code></td>
+      <td><code>entdb.Delete[*shop.Product](plan, "node-42")</code></td>
+    </tr>
+    <tr>
+      <td>Create an edge</td>
+      <td><code>plan.edge_create(schema_pb2.BelongsTo, "a", "b")</code></td>
+      <td><code>entdb.EdgeCreate[*shop.BelongsTo](plan, "a", "b")</code></td>
+    </tr>
+    <tr>
+      <td>Delete an edge</td>
+      <td><code>plan.edge_delete(schema_pb2.BelongsTo, "a", "b")</code></td>
+      <td><code>entdb.EdgeDelete[*shop.BelongsTo](plan, "a", "b")</code></td>
+    </tr>
+    <tr>
+      <td>Get by id</td>
+      <td><code>await scope.get(schema_pb2.Product, "node-42")</code></td>
+      <td><code>entdb.Get[*shop.Product](ctx, scope, "node-42")</code></td>
+    </tr>
+    <tr>
+      <td>Get by unique key</td>
+      <td><code>await scope.get_by_key(ProductKeys.sku, "WIDGET-1")</code></td>
+      <td><code>entdb.GetByKey(ctx, scope, shop.ProductSKU, "WIDGET-1")</code></td>
+    </tr>
+    <tr>
+      <td>Query</td>
+      <td><code>await scope.query(schema_pb2.Product, filter=&#123;"price_cents": &#123;"$gte": 1000&#125;&#125;)</code></td>
+      <td><code>entdb.Query[*shop.Product](ctx, scope, map[string]any&#123;"price_cents": map[string]any&#123;"$gte": 1000&#125;&#125;)</code></td>
+    </tr>
+    <tr>
+      <td>Share</td>
+      <td><code>await scope.share("node-42", Actor.user("bob"), Permission.READ)</code></td>
+      <td><code>scope.Share(ctx, "node-42", entdb.UserActor("bob"), entdb.PermissionRead)</code></td>
+    </tr>
+    <tr>
+      <td>Commit</td>
+      <td><code>await plan.commit()</code></td>
+      <td><code>plan.Commit(ctx)</code></td>
+    </tr>
+    <tr>
+      <td>Idempotent plan</td>
+      <td><code>plan = scope.plan(idempotency_key="order-12345")</code></td>
+      <td><code>plan := scope.PlanWithKey("order-12345")</code></td>
+    </tr>
+  </table>
+
+  <h2>Full example</h2>
+  <p>
+    End-to-end: register the schema, connect, create, look up, query,
+    update, share, delete. This mirrors the SDK's shape test.
+  </p>
+
+  <pre is:raw><code>import asyncio
+from entdb_sdk import (
+    DbClient,
+    register_proto_schema,
+    Actor,
+    Permission,
+    UniqueConstraintError,
+    RateLimitError,
+)
+import schema_pb2
+from schema_entdb import ProductKeys
+
+async def main():
+    async with DbClient(
+        "api.example.com:443",
+        api_key="sk-prod-...",
+        secure=True,
+    ) as db:
+        register_proto_schema(schema_pb2)
+        alice = db.tenant("acme").actor(Actor.user("alice"))
+
+        # ── Seed a category and two products in one atomic plan ──
+        plan = alice.plan(idempotency_key="seed-hand-tools-v1")
+        plan.create(
+            schema_pb2.Category(slug="hand-tools", name="Hand tools"),
+            as_="hand-tools",
+        )
+        plan.create(
+            schema_pb2.Product(
+                sku="HAMMER-01", barcode="0000000000017",
+                name="Claw hammer", price_cents=2499, stock=100,
+            ),
+            as_="hammer",
+        )
+        plan.create(
+            schema_pb2.Product(
+                sku="WRENCH-01", barcode="0000000000024",
+                name="Adjustable wrench", price_cents=1799, stock=50,
+            ),
+            as_="wrench",
+        )
+        plan.edge_create(schema_pb2.BelongsTo, "$hammer", "$hand-tools")
+        plan.edge_create(schema_pb2.BelongsTo, "$wrench", "$hand-tools")
+
+        try:
+            result = await plan.commit()
+        except UniqueConstraintError as e:
+            print(f"duplicate SKU: {e.value!r}")
+            return
+
+        print(f"seeded {len(result.created_node_ids)} nodes")
+
+        # ── Look up by SKU (typed token) ─────────────────────────
+        hammer = await alice.get_by_key(ProductKeys.sku, "HAMMER-01")
+        print("found hammer", hammer.node_id)
+
+        # ── Query by filter ──────────────────────────────────────
+        affordable = await alice.query(
+            schema_pb2.Product,
+            filter=&#123;
+                "price_cents": &#123;"$lte": 2000&#125;,
+                "stock":       &#123;"$gt": 0&#125;,
+            &#125;,
+        )
+        print(f"affordable, in-stock: {len(affordable)}")
+
+        # ── Update — only price_cents gets patched ──────────────
+        upd = alice.plan()
+        upd.update(hammer.node_id, schema_pb2.Product(price_cents=2299))
+        await upd.commit()
+
+        # ── Share with Bob ───────────────────────────────────────
+        await alice.share(hammer.node_id, Actor.user("bob"), Permission.WRITE)
+
+        # ── Delete by class witness ─────────────────────────────
+        cleanup = alice.plan()
+        cleanup.delete(schema_pb2.Product, "discontinued-id")
+        await cleanup.commit()
+
+asyncio.run(main())</code></pre>
+
+  <h2>Related pages</h2>
+  <CardGrid class="not-prose grid grid-cols-1 gap-3 md:grid-cols-2">
+    <LinkCard
+      href="/tenant-shard-db/docs/quickstart"
+      class="block rounded-md border border-border p-4 no-underline transition-colors hover:bg-muted"
+    >
+      <strong class="block text-foreground">Quick start</strong>
+      <span class="text-sm text-muted-foreground"
+        >Install, point at a server, and run the first plan.</span
+      >
+    </LinkCard>
+    <LinkCard
+      href="/tenant-shard-db/docs/sdk/go"
+      class="block rounded-md border border-border p-4 no-underline transition-colors hover:bg-muted"
+    >
+      <strong class="block text-foreground">Go SDK</strong>
+      <span class="text-sm text-muted-foreground"
+        >Same single-shape API in Go. Symmetric with this page.</span
+      >
+    </LinkCard>
+    <LinkCard
+      href="/tenant-shard-db/docs/acl/overview"
+      class="block rounded-md border border-border p-4 no-underline transition-colors hover:bg-muted"
+    >
+      <strong class="block text-foreground">ACL overview</strong>
+      <span class="text-sm text-muted-foreground"
+        >How <code>acl=[...]</code> entries on create interact with type-default ACLs and inheritance.</span
+      >
+    </LinkCard>
+    <LinkCard
+      href="/tenant-shard-db/docs/compliance/audit"
+      class="block rounded-md border border-border p-4 no-underline transition-colors hover:bg-muted"
+    >
+      <strong class="block text-foreground">Audit &amp; Object Lock</strong>
+      <span class="text-sm text-muted-foreground"
+        >Every write lands on the WAL; exports replay the WAL into a tamper-evident S3 bundle.</span
+      >
+    </LinkCard>
+  </CardGrid>
 </DocsLayout>

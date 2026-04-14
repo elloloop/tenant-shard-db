@@ -81,6 +81,7 @@ from ..config import EncryptionConfig
 from ..encryption import derive_tenant_key, open_encrypted_connection
 from ..metrics import metrics_enabled as _metrics_enabled
 from ..metrics import record_sqlite_op as _record_sqlite_op
+from .query_filter import compile_query_filter
 
 logger = logging.getLogger(__name__)
 
@@ -426,6 +427,14 @@ class CanonicalStore:
         # Updated by the applier after each batch; read RPCs can wait on these.
         self._applied_offsets: dict[str, str] = {}
         self._offset_conditions: dict[str, asyncio.Condition] = {}
+
+        # Lazy unique-index creation cache (2026-04-14 SDK v0.3
+        # decision). Keyed by ``(db_path, type_id)`` — once a
+        # ``CREATE UNIQUE INDEX IF NOT EXISTS`` has been run for a
+        # given physical DB + type combination, subsequent writes
+        # skip the call. Cache is process-local; on restart the
+        # ``IF NOT EXISTS`` clause keeps it idempotent.
+        self._unique_index_cache: set[tuple[str, int]] = set()
 
     # ── offset tracking (read-after-write consistency) ──────────────────
 
@@ -1161,22 +1170,15 @@ class CanonicalStore:
             CREATE INDEX IF NOT EXISTS idx_audit_actor
                 ON audit_log(actor_id, created_at DESC);
 
-            -- Node keys (unique keys / secondary lookup keys,
-            -- 2026-04-13 decision). Primary key enforces uniqueness
-            -- within (tenant_id, type_id, key_name). The idx_node_keys_by_node
-            -- index supports O(log n) cleanup on delete/update.
-            CREATE TABLE IF NOT EXISTS node_keys (
-                tenant_id  TEXT NOT NULL,
-                type_id    INTEGER NOT NULL,
-                node_id    TEXT NOT NULL,
-                key_name   TEXT NOT NULL,
-                key_value  TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                PRIMARY KEY (tenant_id, type_id, key_name, key_value)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_node_keys_by_node
-                ON node_keys(tenant_id, node_id);
+            -- Unique-key enforcement (2026-04-14 SDK v0.3 decision)
+            -- lives in unique expression indexes created lazily on
+            -- first write of each type. There is no longer a
+            -- ``node_keys`` table: the ``nodes`` row is the source
+            -- of truth and an index of the form
+            --   CREATE UNIQUE INDEX idx_unique_t<type>_f<field>
+            --     ON nodes(tenant_id, json_extract(payload_json, '$."<field>"'))
+            --     WHERE type_id = <type>
+            -- enforces uniqueness without a parallel table.
 
             -- Record schema version
             INSERT OR IGNORE INTO schema_version (version, applied_at)
@@ -1685,13 +1687,9 @@ class CanonicalStore:
                     (tenant_id, node_id),
                 )
 
-                # Delete unique-key index rows (2026-04-13 unique keys)
-                conn.execute(
-                    "DELETE FROM node_keys WHERE tenant_id = ? AND node_id = ?",
-                    (tenant_id, node_id),
-                )
-
-                # Delete node
+                # Delete node. Unique-index rows are part of the
+                # ``nodes`` table itself under the 2026-04-14 SDK
+                # v0.3 design — no separate ``node_keys`` cascade.
                 cursor = conn.execute(
                     "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
                     (tenant_id, node_id),
@@ -1704,165 +1702,138 @@ class CanonicalStore:
                 conn.execute("ROLLBACK")
                 raise
 
-    # ── node_keys (unique keys / secondary lookup) ─────────────────────
+    # ── unique-key enforcement (expression indexes, 2026-04-14) ─────────
 
-    def insert_node_keys(
+    def _ensure_unique_indexes(
         self,
         conn: sqlite3.Connection,
         tenant_id: str,
         type_id: int,
-        node_id: str,
-        keys: dict[str, str],
-        created_at: int,
+        unique_field_ids: list[int],
     ) -> None:
-        """Insert secondary unique-key rows for a node.
+        """Lazily create unique expression indexes for ``type_id``.
 
-        Called INSIDE an already-open transaction (``batch_transaction``
-        or ``_sync_apply_event_body``). Uses ``INSERT OR FAIL`` so a
-        collision surfaces as :class:`sqlite3.IntegrityError`, which
-        the applier turns into a :class:`UniqueConstraintError`.
+        Runs once per ``(physical_db_path, type_id)`` for the life of
+        the process. Subsequent calls are no-ops via the in-memory
+        cache. The ``IF NOT EXISTS`` clause keeps it idempotent across
+        restarts without needing any persistent state.
+
+        Each unique field gets a partial unique index of the form::
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_t<type>_f<field>
+                ON nodes(tenant_id,
+                         json_extract(payload_json, '$."<field>"'))
+                WHERE type_id = <type>
+
+        The filter clause keeps the index small and type-scoped so a
+        second node type cannot collide on its own unique values.
+        ``tenant_id`` is part of the indexed tuple so tenants are
+        isolated even though they share the same physical file in the
+        public/mailbox stores.
+
+        The ``type_id`` and ``field_id`` values are constrained to
+        integers at the call site — they originate from the schema
+        registry, never from user input — so interpolating them into
+        the DDL is safe.
 
         Args:
-            conn: SQLite connection with an open transaction.
-            tenant_id: Tenant identifier.
-            type_id: Node type id.
-            node_id: Node identifier.
-            keys: Mapping ``key_name -> key_value``.
-            created_at: Insertion timestamp (unix ms).
+            conn: Open SQLite connection.
+            tenant_id: Tenant identifier (only used for cache keying;
+                the index itself covers every tenant on the physical
+                database).
+            type_id: Node type id whose indexes should exist.
+            unique_field_ids: Field ids declared ``unique`` on the
+                type's proto schema. An empty list is a no-op.
         """
-        if not keys:
+        if not unique_field_ids:
             return
-        for key_name, key_value in keys.items():
-            if key_name is None or key_value is None:
-                continue
+        # Cache key is the physical DB path rather than ``tenant_id``
+        # because mailbox and public stores multiplex multiple
+        # tenants onto one file — we want one ``CREATE INDEX`` per
+        # file per type, not per tenant per type.
+        try:
+            # ``conn`` has ``.execute('PRAGMA database_list')`` — the
+            # main DB filename is the third column of the first row.
+            row = conn.execute("PRAGMA database_list").fetchone()
+            if row is None:
+                db_path = f"tenant:{tenant_id}"
+            else:
+                db_path = row[2] if isinstance(row, tuple) else row["file"]
+                if not db_path:
+                    db_path = f"tenant:{tenant_id}"
+        except sqlite3.Error:
+            db_path = f"tenant:{tenant_id}"
+
+        cache_key = (db_path, int(type_id))
+        if cache_key in self._unique_index_cache:
+            return
+
+        int_type_id = int(type_id)
+        for fid_raw in unique_field_ids:
+            fid = int(fid_raw)
+            index_name = f"idx_unique_t{int_type_id}_f{fid}"
+            # ``fid`` is an int so ``$."{fid}"`` yields a literal
+            # path like ``$."1"``. Interpolation of ``int_type_id``
+            # and ``fid`` is safe — both are ints from the schema
+            # registry.
             conn.execute(
-                "INSERT OR FAIL INTO node_keys "
-                "(tenant_id, type_id, node_id, key_name, key_value, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (tenant_id, int(type_id), node_id, str(key_name), str(key_value), int(created_at)),
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} "
+                f"ON nodes(tenant_id, json_extract(payload_json, '$.\"{fid}\"')) "
+                f"WHERE type_id = {int_type_id}"
             )
-
-    def delete_node_keys(
-        self,
-        conn: sqlite3.Connection,
-        tenant_id: str,
-        node_id: str,
-    ) -> None:
-        """Delete all node_keys rows belonging to ``node_id``.
-
-        Called INSIDE an open transaction. Used by ``delete_node`` and by
-        ``update_node_keys`` when a keyed field changes.
-        """
-        conn.execute(
-            "DELETE FROM node_keys WHERE tenant_id = ? AND node_id = ?",
-            (tenant_id, node_id),
-        )
-
-    def update_node_keys(
-        self,
-        conn: sqlite3.Connection,
-        tenant_id: str,
-        type_id: int,
-        node_id: str,
-        new_keys: dict[str, str],
-        created_at: int,
-    ) -> None:
-        """Replace a node's secondary keys with ``new_keys``.
-
-        Deletes existing rows for the node and re-inserts the new set.
-        Raises :class:`sqlite3.IntegrityError` if any new value
-        collides with a key belonging to a different node.
-        """
-        self.delete_node_keys(conn, tenant_id, node_id)
-        self.insert_node_keys(conn, tenant_id, type_id, node_id, new_keys, created_at)
+        self._unique_index_cache.add(cache_key)
 
     def _sync_get_node_by_key(
         self,
         tenant_id: str,
         type_id: int,
-        key_name: str,
-        key_value: str,
-    ) -> str | None:
+        field_id: int,
+        value: Any,
+    ) -> Node | None:
+        """Look up a node via ``(type_id, field_id, value)``.
+
+        Uses the unique expression index created by
+        ``_ensure_unique_indexes`` when present. Returns ``None`` if
+        no matching row exists. Tenant isolation is enforced by the
+        ``tenant_id`` column in the WHERE clause — SQLite's planner
+        matches the indexed expression automatically so the lookup
+        is an index seek rather than a scan.
+        """
         with self._get_connection(tenant_id) as conn:
             cursor = conn.execute(
-                "SELECT node_id FROM node_keys "
+                "SELECT * FROM nodes "
                 "WHERE tenant_id = ? AND type_id = ? "
-                "AND key_name = ? AND key_value = ? LIMIT 1",
-                (tenant_id, int(type_id), str(key_name), str(key_value)),
+                f"AND json_extract(payload_json, '$.\"{int(field_id)}\"') = ? "
+                "LIMIT 1",
+                (tenant_id, int(type_id), value),
             )
             row = cursor.fetchone()
             if row is None:
                 return None
-            return row[0] if isinstance(row, tuple) else row["node_id"]
+            return Node.from_row(
+                tenant_id=row["tenant_id"],
+                node_id=row["node_id"],
+                type_id=row["type_id"],
+                payload_json=row["payload_json"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                owner_actor=row["owner_actor"],
+                acl_json=row["acl_blob"],
+            )
 
     async def get_node_by_key(
         self,
         tenant_id: str,
         type_id: int,
-        key_name: str,
-        key_value: str,
-    ) -> str | None:
-        """Look up a node_id by its (type_id, key_name, key_value).
+        field_id: int,
+        value: Any,
+    ) -> Node | None:
+        """Look up a node by its ``(type_id, field_id, value)`` unique key.
 
-        Returns ``None`` when the key is not registered.
+        Returns ``None`` if no node carries that value on the
+        indicated field.
         """
-        return await self._run_sync(
-            self._sync_get_node_by_key, tenant_id, type_id, key_name, key_value
-        )
-
-    def _sync_check_key_exists(
-        self,
-        tenant_id: str,
-        type_id: int,
-        key_name: str,
-        key_value: str,
-        exclude_node_id: str | None,
-    ) -> bool:
-        with self._get_connection(tenant_id) as conn:
-            if exclude_node_id is None:
-                cursor = conn.execute(
-                    "SELECT 1 FROM node_keys "
-                    "WHERE tenant_id = ? AND type_id = ? "
-                    "AND key_name = ? AND key_value = ? LIMIT 1",
-                    (tenant_id, int(type_id), str(key_name), str(key_value)),
-                )
-            else:
-                cursor = conn.execute(
-                    "SELECT 1 FROM node_keys "
-                    "WHERE tenant_id = ? AND type_id = ? "
-                    "AND key_name = ? AND key_value = ? "
-                    "AND node_id <> ? LIMIT 1",
-                    (
-                        tenant_id,
-                        int(type_id),
-                        str(key_name),
-                        str(key_value),
-                        str(exclude_node_id),
-                    ),
-                )
-            return cursor.fetchone() is not None
-
-    async def check_key_exists(
-        self,
-        tenant_id: str,
-        type_id: int,
-        key_name: str,
-        key_value: str,
-        exclude_node_id: str | None = None,
-    ) -> bool:
-        """Return True when ``(type_id, key_name, key_value)`` already exists.
-
-        ``exclude_node_id`` lets ``update_node`` pre-validate without
-        colliding with the node's own existing row.
-        """
-        return await self._run_sync(
-            self._sync_check_key_exists,
-            tenant_id,
-            type_id,
-            key_name,
-            key_value,
-            exclude_node_id,
-        )
+        return await self._run_sync(self._sync_get_node_by_key, tenant_id, type_id, field_id, value)
 
     async def delete_node(self, tenant_id: str, node_id: str) -> bool:
         """Delete a node and its edges.
@@ -1976,74 +1947,52 @@ class CanonicalStore:
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
+        schema_registry: Any | None = None,
     ) -> list[Node]:
-        """Query nodes with optional payload field filtering."""
+        """Query nodes with optional MongoDB-style payload filtering.
+
+        When ``filter_json`` is provided it is translated into a
+        parameterised SQL fragment via ``compile_query_filter``.
+        Field names come from the proto schema (via ``schema_registry``);
+        operator names come from a fixed allow-list — no user string
+        is ever interpolated into the SQL.
+        """
         with self._get_connection(tenant_id) as conn:
             order = "DESC" if descending else "ASC"
             valid_columns = {"created_at", "updated_at", "node_id", "type_id"}
             if order_by not in valid_columns:
                 order_by = "created_at"
 
+            base_where = ["tenant_id = ?", "type_id = ?"]
+            params: list[Any] = [tenant_id, type_id]
+
             if filter_json:
-                # Push equality filters into SQL via json_extract so SQLite
-                # does the heavy lifting instead of fetching all rows.
-                where_clauses = [
-                    "tenant_id = ?",
-                    "type_id = ?",
-                ]
-                params: list[Any] = [tenant_id, type_id]
+                frag_sql, frag_params = compile_query_filter(filter_json, type_id, schema_registry)
+                if frag_sql:
+                    base_where.append(frag_sql)
+                    params.extend(frag_params)
 
-                for key, value in filter_json.items():
-                    json_path = f'$."{key}"'
-                    if value is None:
-                        where_clauses.append("json_extract(payload_json, ?) IS NULL")
-                        params.append(json_path)
-                    else:
-                        where_clauses.append("json_extract(payload_json, ?) = ?")
-                        params.append(json_path)
-                        params.append(value)
+            where_sql = " AND ".join(base_where)
+            params.extend([limit, offset])
 
-                where_sql = " AND ".join(where_clauses)
-                params.extend([limit, offset])
-
-                cursor = conn.execute(
-                    f"SELECT * FROM nodes WHERE {where_sql} "
-                    f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
-                    params,
+            cursor = conn.execute(
+                f"SELECT * FROM nodes WHERE {where_sql} "
+                f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
+                params,
+            )
+            return [
+                Node.from_row(
+                    tenant_id=row["tenant_id"],
+                    node_id=row["node_id"],
+                    type_id=row["type_id"],
+                    payload_json=row["payload_json"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    owner_actor=row["owner_actor"],
+                    acl_json=row["acl_blob"],
                 )
-                return [
-                    Node.from_row(
-                        tenant_id=row["tenant_id"],
-                        node_id=row["node_id"],
-                        type_id=row["type_id"],
-                        payload_json=row["payload_json"],
-                        created_at=row["created_at"],
-                        updated_at=row["updated_at"],
-                        owner_actor=row["owner_actor"],
-                        acl_json=row["acl_blob"],
-                    )
-                    for row in cursor.fetchall()
-                ]
-            else:
-                # No filter -- use SQL LIMIT/OFFSET (efficient)
-                cursor = conn.execute(
-                    f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? "
-                    f"ORDER BY {order_by} {order} LIMIT ? OFFSET ?",
-                    (tenant_id, type_id, limit, offset),
-                )
-                return [
-                    Node.from_row(
-                        tenant_id=row["tenant_id"],
-                        node_id=row["node_id"],
-                        type_id=row["type_id"],
-                        payload_json=row["payload_json"],
-                        created_at=row["created_at"],
-                        updated_at=row["updated_at"],
-                        owner_actor=row["owner_actor"],
-                        acl_json=row["acl_blob"],
-                    )
-                    for row in cursor.fetchall()
-                ]
+                for row in cursor.fetchall()
+            ]
 
     async def query_nodes(
         self,
@@ -2054,8 +2003,9 @@ class CanonicalStore:
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
+        schema_registry: Any | None = None,
     ) -> list[Node]:
-        """Query nodes with optional payload filtering."""
+        """Query nodes with optional MongoDB-style payload filtering."""
         return await self._run_sync(
             self._sync_query_nodes,
             tenant_id,
@@ -2065,6 +2015,7 @@ class CanonicalStore:
             offset,
             order_by,
             descending,
+            schema_registry,
         )
 
     # ── create_edge ────────────────────────────────────────────────────

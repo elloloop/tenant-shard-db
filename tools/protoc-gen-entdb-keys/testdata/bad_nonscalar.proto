@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package badnonscalar;
+
+import "entdb_options.proto";
+
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/badnonscalar";
+
+message Inner {
+  string v = 1;
+}
+
+message BadMessageField {
+  option (entdb.node) = { type_id: 500 };
+
+  // A message-typed unique field — the plugin must reject this.
+  Inner inner = 1 [(entdb.field).unique = true];
+}

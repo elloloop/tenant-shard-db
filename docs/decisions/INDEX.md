@@ -15,7 +15,10 @@ One line per decision. Newest within each topic first. Rebuilt on each freeze.
 - **2026-04-13** — [Three-layer rate limit model, implement Phase 1 (monthly quota) first](quotas.md#2026-04-13-three-layer-rate-limit-model-implement-phase-1-monthly-quota-first) — frozen
 
 ### unique_keys
-- **2026-04-13** — [Client-asserted unique keys + secondary lookup keys via one `node_keys` table](unique_keys.md#2026-04-13-client-asserted-unique-keys--secondary-lookup-keys-via-one-node_keys-table) — frozen
+- **2026-04-13** — [Client-asserted unique keys + secondary lookup keys via one `node_keys` table](unique_keys.md#2026-04-13-client-asserted-unique-keys--secondary-lookup-keys-via-one-node_keys-table) — superseded by [sdk_api.md 2026-04-14](sdk_api.md#2026-04-14-single-shape-sdk-api-typed-unique-key-tokens-via-codegen-expression-index-unique-enforcement)
+
+### sdk
+- **2026-04-14** — [Single-shape SDK API, typed unique-key tokens via codegen, expression-index unique enforcement](sdk_api.md#2026-04-14-single-shape-sdk-api-typed-unique-key-tokens-via-codegen-expression-index-unique-enforcement) — frozen
 
 ---
 

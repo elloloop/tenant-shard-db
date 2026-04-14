@@ -1,21 +1,26 @@
 """
-EntDB Client for Python SDK.
+EntDB Client for Python SDK — single-shape v0.3 API.
 
 This module provides the main client interface:
 - DbClient: Connection to EntDB server
-- Plan: Atomic transaction builder
+- Plan: Atomic transaction builder (proto messages everywhere)
 - Receipt: Transaction receipt for status checking
 
-Example:
-    >>> async with DbClient("localhost:50051") as db:
-    ...     plan = db.atomic("tenant_1", "user:42")
-    ...     plan.create(Task, {"title": "My Task"})
-    ...     result = await plan.commit()
+Example::
+
+    async with DbClient("localhost:50051") as db:
+        plan = db.atomic("tenant_1", "user:42")
+        plan.create(schema_pb2.Task(title="My Task"))
+        result = await plan.commit()
 
 Invariants:
-    - All operations require tenant_id and actor
-    - Writes are batched and committed atomically
-    - Reads are independent of the transaction
+    - All operations require tenant_id and actor.
+    - ``Plan.create`` / ``Plan.update`` take a proto message; the
+      type id is read from the ``(entdb.node)`` option, the payload
+      from ``ListFields()``.
+    - ``Plan.delete`` / ``Plan.edge_create`` / ``Plan.edge_delete``
+      take the proto message *class* as the type witness.
+    - Writes are batched and committed atomically per ``commit()``.
 """
 
 from __future__ import annotations
@@ -41,6 +46,7 @@ from .errors import (
     UnknownFieldError,
     ValidationError,
 )
+from .keys import Mailbox, Public, Storage, Tenant, UniqueKey
 from .registry import SchemaRegistry, get_registry
 from .schema import EdgeTypeDef, NodeTypeDef
 from .scope import ActorScope, ScopedPlan, TenantScope
@@ -54,6 +60,93 @@ __all__ = ["Node", "Edge", "TenantScope", "ActorScope", "ScopedPlan"]
 logger = logging.getLogger(__name__)
 
 
+def _is_proto_message(obj: Any) -> bool:
+    """Return True if ``obj`` looks like a generated protobuf message."""
+    return hasattr(obj, "DESCRIPTOR") and hasattr(obj, "ListFields")
+
+
+def _is_proto_message_class(obj: Any) -> bool:
+    """Return True if ``obj`` is a generated protobuf message *class*."""
+    return isinstance(obj, type) and hasattr(obj, "DESCRIPTOR") and hasattr(obj, "ListFields")
+
+
+def _node_type_id_from_descriptor(descriptor: Any, *, kind: str = "node") -> int:
+    """Extract the numeric type_id from a proto message ``DESCRIPTOR``.
+
+    Reads the ``(entdb.node)`` (or ``(entdb.edge)``) option attached
+    to the message. Raises :class:`ValidationError` if the message
+    has no such annotation, since the SDK would have no way to route
+    the operation otherwise.
+    """
+    from ._generated import entdb_options_pb2
+
+    opts = descriptor.GetOptions()
+    if kind == "node":
+        if opts.HasExtension(entdb_options_pb2.node):
+            return int(opts.Extensions[entdb_options_pb2.node].type_id)
+        raise ValidationError(
+            f"Proto message {descriptor.name} has no (entdb.node) option",
+            errors=[f"{descriptor.name} missing (entdb.node) annotation"],
+        )
+    if opts.HasExtension(entdb_options_pb2.edge):
+        return int(opts.Extensions[entdb_options_pb2.edge].edge_id)
+    raise ValidationError(
+        f"Proto message {descriptor.name} has no (entdb.edge) option",
+        errors=[f"{descriptor.name} missing (entdb.edge) annotation"],
+    )
+
+
+def _proto_payload_from_set_fields(msg: Any) -> dict[str, Any]:
+    """Return a name-keyed payload dict containing only SET fields.
+
+    Uses ``ListFields()`` (which only yields explicitly-set fields)
+    so that ``Product(price_cents=1499)`` produces ``{"price_cents":
+    1499}`` and not the full set of scalar defaults. This is the
+    exact semantics we want for both create (only the fields the
+    caller intends to set are sent) and update (the patch is exactly
+    the set of fields present on the message). The wire-level
+    translation from field name to field id happens server-side via
+    the schema registry — see CLAUDE.md "Field IDs, not field names,
+    on disk".
+
+    We read scalars directly off the proto message rather than going
+    through ``MessageToDict`` so that 64-bit integers stay as Python
+    ``int`` instead of being coerced to a JSON-safe string (which
+    ``MessageToDict`` does for int64 / uint64 by default and which
+    would then trip the SDK's payload type-checker).
+    """
+    from google.protobuf.descriptor import FieldDescriptor
+    from google.protobuf.json_format import MessageToDict
+
+    out: dict[str, Any] = {}
+    for fd, value in msg.ListFields():
+        # Repeated fields and nested messages: defer to MessageToDict
+        # for JSON-friendly conversion, then take the right key.
+        is_message = fd.type == FieldDescriptor.TYPE_MESSAGE
+        is_repeated = fd.label == FieldDescriptor.LABEL_REPEATED
+        if is_message or is_repeated:
+            sub = MessageToDict(msg, preserving_proto_field_name=True)
+            if fd.name in sub:
+                out[fd.name] = sub[fd.name]
+            continue
+
+        # Scalars: take the raw Python value off the message.
+        # For bytes fields the proto runtime already gives us bytes;
+        # encode to base64 the same way MessageToDict would for
+        # consistency with the wire format.
+        if fd.type == FieldDescriptor.TYPE_BYTES:
+            import base64
+
+            out[fd.name] = (
+                base64.b64encode(value).decode("ascii")
+                if isinstance(value, (bytes, bytearray))
+                else value
+            )
+        else:
+            out[fd.name] = value
+    return out
+
+
 def _resolve_create_input(
     node_or_type: Any,
     data: dict[str, Any] | None,
@@ -65,27 +158,15 @@ def _resolve_create_input(
     Accepts proto messages, TypedNode instances, or NodeTypeDef + dict.
     """
     # Proto message — has DESCRIPTOR attribute from protoc output
-    if hasattr(node_or_type, "DESCRIPTOR") and hasattr(node_or_type, "ListFields"):
-        from google.protobuf.json_format import MessageToDict
-
-        desc = node_or_type.DESCRIPTOR
-        from ._generated import entdb_options_pb2
-
-        opts = desc.GetOptions()
-        if opts.HasExtension(entdb_options_pb2.node):
-            type_id = opts.Extensions[entdb_options_pb2.node].type_id
-        else:
-            raise ValidationError(
-                f"Proto message {desc.name} has no entdb.node option",
-                errors=[f"{desc.name} missing (entdb.node) annotation"],
-            )
+    if _is_proto_message(node_or_type):
+        type_id = _node_type_id_from_descriptor(node_or_type.DESCRIPTOR)
         node_type = registry.get_node_type(type_id)
         if node_type is None:
             raise ValidationError(
-                f"type_id {type_id} from {desc.name} not in registry",
+                f"type_id {type_id} from {node_or_type.DESCRIPTOR.name} not in registry",
                 errors=[f"type_id {type_id} not registered"],
             )
-        payload = MessageToDict(node_or_type, preserving_proto_field_name=True)
+        payload = _proto_payload_from_set_fields(node_or_type)
         payload.update(kwargs)
         return node_type, payload
 
@@ -162,16 +243,21 @@ class CommitResult:
 
 
 class Plan:
-    """Atomic transaction builder.
+    """Atomic transaction builder — single-shape v0.3 API.
 
-    A Plan collects operations to be executed atomically.
-    Operations are validated locally before sending to server.
+    A Plan collects operations to be executed atomically. Every
+    write method takes a proto message (``create`` / ``update``) or
+    a proto message class (``delete`` / ``edge_create`` /
+    ``edge_delete``) — there are no parallel ``*WithACL`` /
+    ``*InMailbox`` methods, no ``keys=`` parameter, and no
+    ``NodeTypeDef + dict`` shape. See ``docs/decisions/sdk_api.md``.
 
-    Example:
-        >>> plan = db.atomic("tenant_1", "user:42")
-        >>> plan.create(Task, {"title": "My Task"}, as_="t")
-        >>> plan.edge_create(AssignedTo, from_="$t.id", to={"type_id": 1, "id": "user:7"})
-        >>> result = await plan.commit()
+    Example::
+
+        plan = db.atomic("acme", "user:alice")
+        plan.create(schema_pb2.Product(sku="WIDGET-1", name="Widget"))
+        plan.edge_create(schema_pb2.BelongsTo, "$prod.id", "$cat.id")
+        await plan.commit()
     """
 
     def __init__(
@@ -208,28 +294,47 @@ class Plan:
 
     def create(
         self,
-        node_or_type: Any,
-        data: dict[str, Any] | None = None,
+        msg: Any,
         *,
         acl: list[ACLEntry] | list[dict[str, str]] | None = None,
+        storage: Storage | None = None,
         as_: str | None = None,
         fanout_to: list[str] | None = None,
-        keys: dict[str, str] | None = None,
-        **kwargs: Any,
     ) -> Plan:
-        """Add a create_node operation.
+        """Create a node from a proto message.
 
-        Accepts a proto message instance, a ``TypedNode`` instance,
-        or a ``NodeTypeDef`` + data dict.
+        This is the single-shape ``create`` per the 2026-04-14 SDK
+        v0.3 decision. The proto message determines the type
+        (read from its ``(entdb.node)`` option) and the payload
+        (read from the set fields via ``ListFields()``). The user
+        never types a ``type_id`` literal.
+
+        Args:
+            msg: A generated proto message instance whose descriptor
+                carries an ``(entdb.node)`` option. Only fields that
+                are explicitly set on the message are sent.
+            acl: Explicit ACL entries to attach to the new node.
+            storage: Storage descriptor (``Tenant()``, ``Mailbox(user_id=...)``,
+                or ``Public()``). Defaults to :class:`Tenant`.
+            as_: Local alias for referencing this node in subsequent
+                operations within the same plan (e.g. as an edge
+                endpoint).
+            fanout_to: Optional list of mailbox user ids to fan this
+                node out to.
 
         Returns:
-            Self for chaining
+            Self for chaining.
         """
         self._ensure_not_committed()
 
-        node_type, payload = _resolve_create_input(
-            node_or_type, data, self._client.registry, **kwargs
-        )
+        if not _is_proto_message(msg):
+            raise TypeError(
+                "Plan.create requires a proto message instance — "
+                f"got {type(msg).__name__}. Pass an instance like "
+                "schema_pb2.Product(sku='WIDGET-1', ...)."
+            )
+
+        node_type, payload = _resolve_create_input(msg, None, self._client.registry)
 
         is_valid, errors = node_type.validate_payload(payload)
         if not is_valid:
@@ -256,162 +361,111 @@ class Plan:
             op["create_node"]["as"] = as_
         if fanout_to:
             op["create_node"]["fanout_to"] = fanout_to
-        if keys:
-            op["create_node"]["keys"] = {str(k): str(v) for k, v in keys.items()}
+
+        # Storage routing — exactly one way to pick a storage mode.
+        # Defaults to Tenant() so omitting ``storage=`` is identical
+        # to the previous default behavior.
+        storage = storage or Tenant()
+        if isinstance(storage, Mailbox):
+            op["create_node"]["storage_mode"] = "USER_MAILBOX"
+            op["create_node"]["target_user_id"] = storage.user_id
+        elif isinstance(storage, Public):
+            op["create_node"]["storage_mode"] = "PUBLIC"
+        elif isinstance(storage, Tenant):
+            pass  # default — no extra routing fields
+        else:
+            raise TypeError(
+                f"storage must be Tenant(), Mailbox(user_id=...), or Public(); "
+                f"got {type(storage).__name__}"
+            )
 
         self._operations.append(op)
         return self
 
-    def create_in_mailbox(
-        self,
-        target_user: str,
-        node_or_type: Any,
-        data: dict[str, Any] | None = None,
-        *,
-        acl: list[ACLEntry] | list[dict[str, str]] | None = None,
-        as_: str | None = None,
-        **kwargs: Any,
-    ) -> Plan:
-        """Create a node in the target user's private mailbox database.
-
-        The node is stored in ``{data_dir}/{tenant_id}/user_{target_user}.db``
-        and is private to exactly one user.
-
-        **Storage mode is immutable.** A node created with
-        ``create_in_mailbox`` can never be moved to ``tenant.db`` or
-        ``public.db`` — if you might ever share this data, use
-        :meth:`create` with an ACL instead. See the 2026-04-13 storage
-        decision for the rationale.
-
-        Args:
-            target_user: The owning user id (plain ``alice`` or
-                ``user:alice``). This user's mailbox database is
-                created lazily on first write.
-            node_or_type: Same semantics as :meth:`create`.
-            data: Payload dict (if ``node_or_type`` is a ``NodeTypeDef``).
-            acl: Optional ACL entries. Note that mailbox nodes are
-                private by construction; ACLs are recorded for audit
-                but the file itself is not readable by other users.
-            as_: Alias for referencing this node in subsequent ops.
-
-        Returns:
-            Self for chaining.
-        """
-        self._ensure_not_committed()
-        self.create(
-            node_or_type,
-            data,
-            acl=acl,
-            as_=as_,
-            **kwargs,
-        )
-        # Attach storage routing metadata to the last op.
-        last = self._operations[-1]["create_node"]
-        last["storage_mode"] = "USER_MAILBOX"
-        last["target_user_id"] = target_user
-        return self
-
-    def create_in_public(
-        self,
-        node_or_type: Any,
-        data: dict[str, Any] | None = None,
-        *,
-        acl: list[ACLEntry] | list[dict[str, str]] | None = None,
-        as_: str | None = None,
-        **kwargs: Any,
-    ) -> Plan:
-        """Create a node in the singleton ``public.db``.
-
-        The node is readable by any tenant (cross-tenant read). Use
-        this for data that is universally visible (blog posts, public
-        product listings, open datasets, etc.).
-
-        **Storage mode is immutable.** A node created with
-        ``create_in_public`` can never be moved into a tenant or
-        mailbox file. If you might ever need to restrict visibility,
-        use :meth:`create` with an explicit ACL instead. See the
-        2026-04-13 storage decision.
-
-        Args:
-            node_or_type: Same semantics as :meth:`create`.
-            data: Payload dict (if ``node_or_type`` is a ``NodeTypeDef``).
-            acl: Optional ACL entries. Public nodes are world-readable
-                so ACLs are typically empty.
-            as_: Alias for referencing this node in subsequent ops.
-
-        Returns:
-            Self for chaining.
-        """
-        self._ensure_not_committed()
-        self.create(
-            node_or_type,
-            data,
-            acl=acl,
-            as_=as_,
-            **kwargs,
-        )
-        last = self._operations[-1]["create_node"]
-        last["storage_mode"] = "PUBLIC"
-        return self
-
     def update(
         self,
-        node_type: NodeTypeDef,
         node_id: str,
-        patch: dict[str, Any],
-        *,
-        field_mask: list[str] | None = None,
-        keys: dict[str, str] | None = None,
+        msg: Any,
     ) -> Plan:
-        """Add an update_node operation.
+        """Update a node from a proto message.
+
+        Per the 2026-04-14 SDK v0.3 decision, ``update`` takes only
+        the node id and a proto message. The type is read from the
+        message's ``(entdb.node)`` option; the patch is exactly the
+        set of fields explicitly set on the message (via
+        ``ListFields()``). Unset fields are not included, so
+
+            plan.update(node_id, Product(price_cents=1499))
+
+        sends ``{"price_cents": 1499}`` as the patch and leaves every
+        other field untouched.
 
         Args:
-            node_type: Type of node to update
-            node_id: ID of node to update
-            patch: Fields to update
-            field_mask: Optional explicit field mask
+            node_id: Id of the node to update.
+            msg: A proto message instance whose descriptor carries an
+                ``(entdb.node)`` option.
 
         Returns:
-            Self for chaining
+            Self for chaining.
         """
         self._ensure_not_committed()
+
+        if not _is_proto_message(msg):
+            raise TypeError(
+                "Plan.update requires a proto message instance — "
+                f"got {type(msg).__name__}. Pass an instance like "
+                "schema_pb2.Product(price_cents=1499)."
+            )
+
+        type_id = _node_type_id_from_descriptor(msg.DESCRIPTOR)
+        patch = _proto_payload_from_set_fields(msg)
 
         op: dict[str, Any] = {
             "update_node": {
-                "type_id": node_type.type_id,
+                "type_id": type_id,
                 "id": node_id,
                 "patch": patch,
             }
         }
-
-        if field_mask:
-            op["update_node"]["field_mask"] = field_mask
-        if keys:
-            op["update_node"]["keys"] = {str(k): str(v) for k, v in keys.items()}
 
         self._operations.append(op)
         return self
 
     def delete(
         self,
-        node_type: NodeTypeDef,
+        node_type: Any,
         node_id: str,
     ) -> Plan:
-        """Add a delete_node operation.
+        """Delete a node.
+
+        Per the 2026-04-14 SDK v0.3 decision, ``delete`` requires a
+        type witness — pass the proto message *class* (not an
+        instance) so the SDK can resolve ``type_id`` without
+        guessing.
 
         Args:
-            node_type: Type of node to delete
-            node_id: ID of node to delete
+            node_type: The proto message class (e.g.
+                ``schema_pb2.Product``) whose descriptor carries the
+                ``(entdb.node)`` option.
+            node_id: Id of the node to delete.
 
         Returns:
-            Self for chaining
+            Self for chaining.
         """
         self._ensure_not_committed()
 
+        if not _is_proto_message_class(node_type):
+            raise TypeError(
+                "Plan.delete requires a proto message class as the type "
+                f"witness — got {type(node_type).__name__}. Pass the class "
+                "itself, e.g. schema_pb2.Product."
+            )
+
+        type_id = _node_type_id_from_descriptor(node_type.DESCRIPTOR)
         self._operations.append(
             {
                 "delete_node": {
-                    "type_id": node_type.type_id,
+                    "type_id": type_id,
                     "id": node_id,
                 }
             }
@@ -420,35 +474,41 @@ class Plan:
 
     def edge_create(
         self,
-        edge_type: EdgeTypeDef,
-        from_: str | dict[str, Any],
-        to: str | dict[str, Any],
+        edge_type: Any,
+        from_id: str | dict[str, Any],
+        to_id: str | dict[str, Any],
+        *,
         props: dict[str, Any] | None = None,
     ) -> Plan:
-        """Add a create_edge operation.
+        """Create an edge.
+
+        Per the 2026-04-14 SDK v0.3 decision, ``edge_create`` takes
+        the proto message *class* (not an instance) marked with
+        ``(entdb.edge)``, then the source and target node ids.
 
         Args:
-            edge_type: Type of edge to create
-            from_: Source node (ID, alias ref, or typed ref)
-            to: Target node
-            props: Edge properties
+            edge_type: Proto class with an ``(entdb.edge)`` annotation.
+            from_id: Source node id (or alias ``"$alias"``).
+            to_id: Target node id.
+            props: Optional edge properties.
 
         Returns:
-            Self for chaining
+            Self for chaining.
         """
         self._ensure_not_committed()
 
-        # Validate props
-        if props:
-            is_valid, errors = edge_type.validate_props(props)
-            if not is_valid:
-                raise ValidationError("; ".join(errors), errors=errors)
+        if not _is_proto_message_class(edge_type):
+            raise TypeError(
+                f"Plan.edge_create requires a proto message class — got {type(edge_type).__name__}."
+            )
+
+        edge_id = _node_type_id_from_descriptor(edge_type.DESCRIPTOR, kind="edge")
 
         op: dict[str, Any] = {
             "create_edge": {
-                "edge_id": edge_type.edge_id,
-                "from": self._convert_ref(from_),
-                "to": self._convert_ref(to),
+                "edge_id": edge_id,
+                "from": self._convert_ref(from_id),
+                "to": self._convert_ref(to_id),
             }
         }
 
@@ -460,28 +520,34 @@ class Plan:
 
     def edge_delete(
         self,
-        edge_type: EdgeTypeDef,
-        from_: str | dict[str, Any],
-        to: str | dict[str, Any],
+        edge_type: Any,
+        from_id: str | dict[str, Any],
+        to_id: str | dict[str, Any],
     ) -> Plan:
-        """Add a delete_edge operation.
+        """Delete an edge.
 
         Args:
-            edge_type: Type of edge to delete
-            from_: Source node
-            to: Target node
+            edge_type: Proto class with an ``(entdb.edge)`` annotation.
+            from_id: Source node id.
+            to_id: Target node id.
 
         Returns:
-            Self for chaining
+            Self for chaining.
         """
         self._ensure_not_committed()
 
+        if not _is_proto_message_class(edge_type):
+            raise TypeError(
+                f"Plan.edge_delete requires a proto message class — got {type(edge_type).__name__}."
+            )
+
+        edge_id = _node_type_id_from_descriptor(edge_type.DESCRIPTOR, kind="edge")
         self._operations.append(
             {
                 "delete_edge": {
-                    "edge_id": edge_type.edge_id,
-                    "from": self._convert_ref(from_),
-                    "to": self._convert_ref(to),
+                    "edge_id": edge_id,
+                    "from": self._convert_ref(from_id),
+                    "to": self._convert_ref(to_id),
                 }
             }
         )
@@ -686,10 +752,11 @@ class DbClient:
         Returns:
             Plan builder
 
-        Example:
-            >>> plan = db.atomic("tenant_1", "user:42")
-            >>> plan.create(Task, {"title": "New Task"})
-            >>> await plan.commit()
+        Example::
+
+            plan = db.atomic("tenant_1", "user:42")
+            plan.create(schema_pb2.Task(title="New Task"))
+            await plan.commit()
         """
         self._ensure_connected()
         return Plan(self, tenant_id, actor, idempotency_key, trace_id=trace_id)
@@ -790,9 +857,8 @@ class DbClient:
 
     async def get_by_key(
         self,
-        node_type: NodeTypeDef,
-        key_name: str,
-        key_value: str,
+        key: UniqueKey[Any],
+        value: Any,
         tenant_id: str,
         actor: str,
         *,
@@ -800,12 +866,19 @@ class DbClient:
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
-        """Resolve a node via a declared unique/secondary key.
+        """Resolve a node via a typed unique-key token.
 
-        Implements the 2026-04-13 unique_keys decision. Returns
-        ``None`` if the key is unknown. Duplicates are impossible
-        by construction — the primary key on ``node_keys`` forbids
-        them.
+        Per the 2026-04-14 SDK v0.3 decision the only way to look up
+        a node by a unique field is via a :class:`UniqueKey` token
+        emitted by the ``protoc-gen-entdb-keys`` codegen plugin.
+        Stringly-typed lookups (passing a field name) are gone — see
+        ``docs/decisions/sdk_api.md`` for the rationale.
+
+        Args:
+            key: A :class:`UniqueKey` token from the generated
+                ``<schema>_entdb.py`` sidecar.
+            value: The scalar value to match. Type-checked against
+                ``UniqueKey[T]`` at the static-analysis layer.
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
@@ -816,12 +889,18 @@ class DbClient:
             except (TypeError, ValueError):
                 after_int = 0
 
+        if not isinstance(key, UniqueKey):
+            raise TypeError(
+                "get_by_key requires a UniqueKey token from the generated "
+                f"<schema>_entdb.py sidecar — got {type(key).__name__}."
+            )
+
         return await self._grpc.get_node_by_key(
             tenant_id=tenant_id,
             actor=actor,
-            type_id=node_type.type_id,
-            key_name=key_name,
-            key_value=key_value,
+            type_id=key.type_id,
+            field_id=key.field_id,
+            value=value,
             after_offset=after_int,
             trace_id=trace_id,
             timeout=timeout,

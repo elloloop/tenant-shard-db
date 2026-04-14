@@ -1,0 +1,29 @@
+// Minimal self-contained copy of the EntDB proto options used by
+// the protoc-gen-entdb-keys plugin tests. The real options file lives
+// at sdk/entdb_sdk/proto/entdb_options.proto — this copy exists only
+// so these tests do not depend on the server agent's branch. Field
+// numbers MUST match the real file.
+syntax = "proto3";
+
+package entdb;
+
+import "google/protobuf/descriptor.proto";
+
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/entdbopts";
+
+message NodeOpts {
+  int32 type_id = 1;
+}
+
+message FieldOpts {
+  int32 field_id = 1;
+  bool unique = 13;
+}
+
+extend google.protobuf.MessageOptions {
+  NodeOpts node = 50100;
+}
+
+extend google.protobuf.FieldOptions {
+  FieldOpts field = 50102;
+}
