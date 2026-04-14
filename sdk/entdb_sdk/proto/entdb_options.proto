@@ -65,20 +65,6 @@ message CapabilityMapping {
     int32 required_ext = 6;           // enum value from extension_capability_enum
 }
 
-// A single unique/secondary-lookup key declared on a node type
-// (2026-04-13 unique_keys decision). Each declared key is enforced
-// as unique within ``(tenant_id, type_id, key_name)`` by the
-// applier and is searchable via the ``GetNodeByKey`` RPC.
-message NodeKeySpec {
-    // Logical key name (e.g. "email", "external_id"). Must be
-    // stable — renaming is schema evolution, not a free operation.
-    string name = 1;
-
-    // If true, ``create_node`` must carry a value for this key or
-    // the server rejects the op with ``INVALID_ARGUMENT``.
-    bool required = 2;
-}
-
 // Declares that holding ``core``/``ext`` implies all of the
 // capabilities listed in ``implies_core``/``implies_ext``. Merged with
 // the built-in ADMIN > EDIT > COMMENT > READ hierarchy.
@@ -127,11 +113,13 @@ message NodeOpts {
     // ADMIN > EDIT > COMMENT > READ closure.
     repeated CapabilityImplication capability_implications = 22;
 
-    // Unique keys / secondary lookup keys (2026-04-13 unique_keys
-    // decision). Each declared key is enforced as unique within
-    // ``(tenant_id, type_id, key_name)`` and is searchable via
-    // ``GetNodeByKey``.
-    repeated NodeKeySpec keys = 23;
+    // Field 23 (``repeated NodeKeySpec keys``) is retired as of the
+    // 2026-04-14 SDK v0.3 decision. Unique constraints are now
+    // declared at the field site via ``(entdb.field).unique = true``
+    // and enforced server-side by a unique expression index on
+    // ``nodes(tenant_id, json_extract(payload_json, '$."<field_id>"'))``.
+    reserved 23;
+    reserved "keys";
 }
 
 // Edge type configuration — applied to a message representing an edge
@@ -176,6 +164,14 @@ message FieldOpts {
 
     // Explicit non-PII declaration (silences lint warning)
     bool pii_false = 12;                  // explicitly declared as NOT PII
+
+    // Unique constraint declaration (2026-04-14 SDK v0.3 decision).
+    // When ``true`` the server lazily creates a unique expression
+    // index on ``nodes(tenant_id, json_extract(payload_json,
+    // '$."<field_id>"'))`` (partial index ``WHERE type_id =
+    // <type_id>``) the first time a node of this type is written.
+    // Duplicate inserts surface as ``ALREADY_EXISTS``.
+    bool unique = 13;
 }
 
 // Extensions — attach EntDB options to standard proto descriptors

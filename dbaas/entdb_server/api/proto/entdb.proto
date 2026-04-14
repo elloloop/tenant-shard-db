@@ -235,13 +235,14 @@ message CreateNodeOp {
     // other modes.
     string target_user_id = 10;
 
-    // Unique keys / secondary lookup keys for this node
-    // (2026-04-13 unique_keys decision). Each entry is a
-    // ``(key_name, key_value)`` pair that the server enforces as
-    // unique within ``(tenant_id, type_id, key_name)``. Keys
-    // declared here are also indexed so clients can look the node
-    // up by ``GetNodeByKey`` instead of by ``node_id``.
-    map<string, string> keys = 11;
+    // Field 11 (``map<string, string> keys``) is retired as of the
+    // 2026-04-14 SDK v0.3 decision. Unique constraints are now
+    // declared at the proto field site with ``(entdb.field).unique =
+    // true`` and enforced server-side by a unique expression index
+    // on the JSON payload value; the client never has to hand over a
+    // parallel keys map.
+    reserved 11;
+    reserved "keys";
 }
 
 message UpdateNodeOp {
@@ -261,11 +262,13 @@ message UpdateNodeOp {
     // Patch payload as typed Struct
     google.protobuf.Struct patch = 5;
 
-    // Unique keys / secondary lookup keys
-    // (2026-04-13 unique_keys decision). When non-empty the server
-    // replaces the node's existing ``node_keys`` rows in the same
-    // transaction. Collisions surface as ``ALREADY_EXISTS``.
-    map<string, string> keys = 6;
+    // Field 6 (``map<string, string> keys``) is retired as of the
+    // 2026-04-14 SDK v0.3 decision. See CreateNodeOp.reserved 11 for
+    // the rationale — unique values are carried in the regular
+    // ``patch`` payload and enforced by the unique expression index
+    // on the referenced field id.
+    reserved 6;
+    reserved "keys";
 }
 
 message DeleteNodeOp {
@@ -1049,18 +1052,34 @@ message GetTenantQuotaResponse {
     bool hard_enforce = 10;
 }
 
-// Unique-key secondary lookup (2026-04-13 unique_keys decision)
+// Unique-key secondary lookup
+// (2026-04-14 SDK v0.3 decision, supersedes 2026-04-13 unique_keys).
+// ``field_id`` replaces the former ``key_name`` string — the key is
+// a proto field on the type, not a separate named slot. The server
+// runs the lookup against the unique expression index on
+// ``json_extract(payload_json, '$."<field_id>"')``.
 
 message GetNodeByKeyRequest {
     string tenant_id = 1;
     string actor = 2;
     int32 type_id = 3;
-    string key_name = 4;
-    string key_value = 5;
+    // Retired: used to be ``string key_name = 4`` / ``string
+    // key_value = 5``. Unique lookups are now expressed as a
+    // ``(field_id, value)`` pair.
+    reserved 4, 5;
+    reserved "key_name", "key_value";
     // Optional read-after-write wait — the server blocks until the
     // applier has caught up to ``after_offset`` before resolving the
     // key. Empty / zero means "read whatever is currently applied".
     int64 after_offset = 6;
+    // Field id of the unique key on the node type's proto schema
+    // (e.g. ``1`` for ``string email = 1 [(entdb.field).unique =
+    // true]``).
+    int32 field_id = 7;
+    // JSON-encoded value bound to the field. Using ``google.protobuf.Value``
+    // keeps the request agnostic to the field's scalar type (string,
+    // int, float, bool) while staying typed end-to-end.
+    google.protobuf.Value value = 8;
 }
 
 message GetNodeByKeyResponse {

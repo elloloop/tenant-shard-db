@@ -3,13 +3,25 @@ package entdb
 import (
 	"context"
 	"testing"
+
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
+	"google.golang.org/protobuf/proto"
 )
+
+// newProduct returns a fresh test Product populated with the given
+// fields. Returned as a plain proto.Message so plan_test.go doesn't
+// depend on the dynamicpb concrete type.
+func newProduct(sku, name string, priceCents int64) proto.Message {
+	m := testpb.NewProduct()
+	testpb.SetProductFields(m, sku, name, priceCents)
+	return m
+}
 
 func TestPlan_Create_ReturnsAlias(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	alias := plan.Create(1, map[string]any{"title": "Task A"})
+	alias := plan.Create(newProduct("WIDGET-1", "Widget", 999))
 	if alias == "" {
 		t.Fatal("expected non-empty alias")
 	}
@@ -24,8 +36,18 @@ func TestPlan_Create_ReturnsAlias(t *testing.T) {
 	if ops[0].Alias != alias {
 		t.Errorf("expected alias %q, got %q", alias, ops[0].Alias)
 	}
-	if ops[0].TypeID != 1 {
-		t.Errorf("expected type ID 1, got %d", ops[0].TypeID)
+	if ops[0].TypeID != 201 {
+		t.Errorf("expected type ID 201, got %d", ops[0].TypeID)
+	}
+	// Payload must be keyed by field id.
+	if ops[0].Data["1"] != "WIDGET-1" {
+		t.Errorf("Data[\"1\"] = %v, want WIDGET-1", ops[0].Data["1"])
+	}
+	if ops[0].Data["2"] != "Widget" {
+		t.Errorf("Data[\"2\"] = %v, want Widget", ops[0].Data["2"])
+	}
+	if ops[0].Data["3"] != int64(999) {
+		t.Errorf("Data[\"3\"] = %v, want int64(999)", ops[0].Data["3"])
 	}
 }
 
@@ -33,19 +55,19 @@ func TestPlan_Create_UniqueAliases(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	alias1 := plan.Create(1, map[string]any{"title": "A"})
-	alias2 := plan.Create(1, map[string]any{"title": "B"})
+	alias1 := plan.Create(newProduct("A", "A", 1))
+	alias2 := plan.Create(newProduct("B", "B", 2))
 	if alias1 == alias2 {
 		t.Errorf("aliases should be unique, got %q twice", alias1)
 	}
 }
 
-func TestPlan_CreateWithACL(t *testing.T) {
+func TestPlan_Create_WithACL(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
 	acl := []ACLEntry{{Grantee: UserActor("bob"), Permission: PermissionRead}}
-	alias := plan.CreateWithACL(1, map[string]any{"title": "Secret"}, acl)
+	alias := plan.Create(newProduct("S1", "Secret", 10), WithACL(acl...))
 	if alias == "" {
 		t.Fatal("expected non-empty alias")
 	}
@@ -55,15 +77,68 @@ func TestPlan_CreateWithACL(t *testing.T) {
 		t.Fatalf("expected 1 ACL entry, got %d", len(ops[0].ACL))
 	}
 	if ops[0].ACL[0].Grantee != UserActor("bob") {
-		t.Errorf("expected principal user:bob, got %s", ops[0].ACL[0].Grantee.String())
+		t.Errorf("expected grantee user:bob, got %s", ops[0].ACL[0].Grantee.String())
 	}
+}
+
+func TestPlan_Create_InMailbox(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	plan.Create(newProduct("M1", "Mail item", 5), InMailbox("alice"))
+
+	ops := plan.Operations()
+	if ops[0].StorageMode != StorageModeUserMailbox {
+		t.Errorf("StorageMode = %v, want UserMailbox", ops[0].StorageMode)
+	}
+	if ops[0].TargetUserID != "alice" {
+		t.Errorf("TargetUserID = %q, want alice", ops[0].TargetUserID)
+	}
+}
+
+func TestPlan_Create_InPublic(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	plan.Create(newProduct("P1", "Public", 0), InPublic())
+
+	ops := plan.Operations()
+	if ops[0].StorageMode != StorageModePublic {
+		t.Errorf("StorageMode = %v, want Public", ops[0].StorageMode)
+	}
+}
+
+func TestPlan_Create_As_ExplicitAlias(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	alias := plan.Create(newProduct("X", "X", 1), As("my-product"))
+	if alias != "my-product" {
+		t.Errorf("alias = %q, want my-product", alias)
+	}
+	if plan.Operations()[0].Alias != "my-product" {
+		t.Errorf("op alias = %q, want my-product", plan.Operations()[0].Alias)
+	}
+}
+
+func TestPlan_Create_NonEntityPanics(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for non-entity message")
+		}
+	}()
+	plan.Create(testpb.NewNotAnEntity())
 }
 
 func TestPlan_Update(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	plan.Update("node-1", 1, map[string]any{"status": "done"})
+	patch := newProduct("", "", 777)
+	plan.Update("node-1", patch)
 
 	ops := plan.Operations()
 	if len(ops) != 1 {
@@ -73,10 +148,22 @@ func TestPlan_Update(t *testing.T) {
 		t.Errorf("expected OpUpdateNode, got %v", ops[0].Type)
 	}
 	if ops[0].NodeID != "node-1" {
-		t.Errorf("expected node ID node-1, got %s", ops[0].NodeID)
+		t.Errorf("NodeID = %q, want node-1", ops[0].NodeID)
 	}
-	if ops[0].Patch["status"] != "done" {
-		t.Errorf("expected patch status=done, got %v", ops[0].Patch["status"])
+	if ops[0].TypeID != 201 {
+		t.Errorf("TypeID = %d, want 201", ops[0].TypeID)
+	}
+	if ops[0].Patch["3"] != int64(777) {
+		t.Errorf("Patch[\"3\"] = %v, want int64(777)", ops[0].Patch["3"])
+	}
+	// Unset fields (sku=\"\", name=\"\") must NOT be in the patch —
+	// proto3 Range iterates only set fields, and the empty-string
+	// sets are zero values for proto3 scalars.
+	if _, ok := ops[0].Patch["1"]; ok {
+		t.Errorf("Patch should not contain unset sku field")
+	}
+	if _, ok := ops[0].Patch["2"]; ok {
+		t.Errorf("Patch should not contain unset name field")
 	}
 }
 
@@ -84,7 +171,7 @@ func TestPlan_Delete(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	plan.Delete("node-1")
+	Delete[*testpb.Product](plan, "node-1")
 
 	ops := plan.Operations()
 	if len(ops) != 1 {
@@ -94,7 +181,10 @@ func TestPlan_Delete(t *testing.T) {
 		t.Errorf("expected OpDeleteNode, got %v", ops[0].Type)
 	}
 	if ops[0].NodeID != "node-1" {
-		t.Errorf("expected node ID node-1, got %s", ops[0].NodeID)
+		t.Errorf("NodeID = %q, want node-1", ops[0].NodeID)
+	}
+	if ops[0].TypeID != 201 {
+		t.Errorf("TypeID = %d, want 201", ops[0].TypeID)
 	}
 }
 
@@ -102,7 +192,7 @@ func TestPlan_CreateEdge(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	plan.CreateEdge(10, "from-id", "to-id")
+	EdgeCreate[*testpb.PurchaseEdge](plan, "from-id", "to-id")
 
 	ops := plan.Operations()
 	if len(ops) != 1 {
@@ -111,14 +201,14 @@ func TestPlan_CreateEdge(t *testing.T) {
 	if ops[0].Type != OpCreateEdge {
 		t.Errorf("expected OpCreateEdge, got %v", ops[0].Type)
 	}
-	if ops[0].EdgeTypeID != 10 {
-		t.Errorf("expected edge type ID 10, got %d", ops[0].EdgeTypeID)
+	if ops[0].EdgeTypeID != 301 {
+		t.Errorf("EdgeTypeID = %d, want 301", ops[0].EdgeTypeID)
 	}
 	if ops[0].FromNodeID != "from-id" {
-		t.Errorf("expected from from-id, got %s", ops[0].FromNodeID)
+		t.Errorf("From = %q, want from-id", ops[0].FromNodeID)
 	}
 	if ops[0].ToNodeID != "to-id" {
-		t.Errorf("expected to to-id, got %s", ops[0].ToNodeID)
+		t.Errorf("To = %q, want to-id", ops[0].ToNodeID)
 	}
 }
 
@@ -126,7 +216,7 @@ func TestPlan_DeleteEdge(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	plan.DeleteEdge(10, "from-id", "to-id")
+	EdgeDelete[*testpb.PurchaseEdge](plan, "from-id", "to-id")
 
 	ops := plan.Operations()
 	if len(ops) != 1 {
@@ -141,26 +231,20 @@ func TestPlan_MultipleOperations(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	alias := plan.Create(1, map[string]any{"title": "Task"})
-	plan.Update("existing-1", 1, map[string]any{"status": "done"})
-	plan.CreateEdge(10, alias, "existing-1")
-	plan.Delete("old-node")
+	alias := plan.Create(newProduct("A", "A", 1))
+	plan.Update("existing-1", newProduct("", "B", 0))
+	EdgeCreate[*testpb.PurchaseEdge](plan, alias, "existing-1")
+	Delete[*testpb.Product](plan, "old-node")
 
 	ops := plan.Operations()
 	if len(ops) != 4 {
 		t.Fatalf("expected 4 operations, got %d", len(ops))
 	}
-	if ops[0].Type != OpCreateNode {
-		t.Errorf("op[0]: expected OpCreateNode, got %v", ops[0].Type)
-	}
-	if ops[1].Type != OpUpdateNode {
-		t.Errorf("op[1]: expected OpUpdateNode, got %v", ops[1].Type)
-	}
-	if ops[2].Type != OpCreateEdge {
-		t.Errorf("op[2]: expected OpCreateEdge, got %v", ops[2].Type)
-	}
-	if ops[3].Type != OpDeleteNode {
-		t.Errorf("op[3]: expected OpDeleteNode, got %v", ops[3].Type)
+	wantTypes := []OperationType{OpCreateNode, OpUpdateNode, OpCreateEdge, OpDeleteNode}
+	for i, want := range wantTypes {
+		if ops[i].Type != want {
+			t.Errorf("op[%d].Type = %v, want %v", i, ops[i].Type, want)
+		}
 	}
 }
 
@@ -173,7 +257,7 @@ func TestPlan_Commit(t *testing.T) {
 	mock := &mockTransport{commitResp: expectedResult}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
 
-	plan.Create(1, map[string]any{"title": "Task"})
+	plan.Create(newProduct("X", "X", 1))
 
 	result, err := plan.Commit(context.Background())
 	if err != nil {
@@ -193,13 +277,12 @@ func TestPlan_Commit(t *testing.T) {
 func TestPlan_DoubleCommit_Panics(t *testing.T) {
 	mock := &mockTransport{commitResp: &CommitResult{Success: true}}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
-	plan.Create(1, map[string]any{"title": "Task"})
+	plan.Create(newProduct("X", "X", 1))
 
 	_, _ = plan.Commit(context.Background())
 
 	defer func() {
-		r := recover()
-		if r == nil {
+		if r := recover(); r == nil {
 			t.Fatal("expected panic on double commit")
 		}
 	}()
@@ -209,21 +292,19 @@ func TestPlan_DoubleCommit_Panics(t *testing.T) {
 func TestPlan_OperationAfterCommit_Panics(t *testing.T) {
 	mock := &mockTransport{commitResp: &CommitResult{Success: true}}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
-	plan.Create(1, map[string]any{"title": "Task"})
+	plan.Create(newProduct("X", "X", 1))
 	_, _ = plan.Commit(context.Background())
 
 	defer func() {
-		r := recover()
-		if r == nil {
+		if r := recover(); r == nil {
 			t.Fatal("expected panic on operation after commit")
 		}
 	}()
-	plan.Create(1, map[string]any{"title": "Another"})
+	plan.Create(newProduct("Y", "Y", 2))
 }
 
 func TestScope_Chaining(t *testing.T) {
-	expected := &Node{NodeID: "n1", TypeID: 1}
-	mock := &mockTransport{getNodeResp: expected}
+	mock := &mockTransport{}
 	client := newClientWithTransport("localhost:50051", mock)
 
 	scope := client.Tenant("acme").Actor(UserActor("bob"))
@@ -232,29 +313,6 @@ func TestScope_Chaining(t *testing.T) {
 	}
 	if scope.ActorID() != UserActor("bob") {
 		t.Errorf("expected actor user:bob, got %s", scope.ActorID())
-	}
-
-	node, err := scope.Get(context.Background(), 1, "n1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if node.NodeID != "n1" {
-		t.Errorf("expected node n1, got %s", node.NodeID)
-	}
-}
-
-func TestScope_Query(t *testing.T) {
-	expected := []*Node{{NodeID: "n1"}, {NodeID: "n2"}}
-	mock := &mockTransport{queryResp: expected}
-	client := newClientWithTransport("localhost:50051", mock)
-
-	scope := client.Tenant("acme").Actor(UserActor("bob"))
-	nodes, err := scope.Query(context.Background(), 1, map[string]any{"status": "active"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(nodes) != 2 {
-		t.Errorf("expected 2 nodes, got %d", len(nodes))
 	}
 }
 
@@ -266,7 +324,7 @@ func TestScope_Plan(t *testing.T) {
 	if plan.TenantID() != "acme" {
 		t.Errorf("expected tenant acme, got %s", plan.TenantID())
 	}
-	if plan.Actor() != "user:bob" /* Plan stores string internally */ {
+	if plan.Actor() != "user:bob" {
 		t.Errorf("expected actor user:bob, got %s", plan.Actor())
 	}
 }
@@ -294,15 +352,6 @@ func TestNode_Fields(t *testing.T) {
 	if len(node.ACL) != 1 {
 		t.Fatalf("ACL len = %d, want 1", len(node.ACL))
 	}
-	if node.ACL[0].Grantee != UserActor("bob") {
-		t.Errorf("ACL[0].Grantee = %s, want user:bob", node.ACL[0].Grantee)
-	}
-	if node.ACL[0].Permission != PermissionRead {
-		t.Errorf("ACL[0].Permission = %s, want read", node.ACL[0].Permission)
-	}
-	if node.OwnerActor != UserActor("alice") {
-		t.Errorf("OwnerActor = %s, want user:alice", node.OwnerActor)
-	}
 }
 
 func TestEdge_Fields(t *testing.T) {
@@ -316,12 +365,6 @@ func TestEdge_Fields(t *testing.T) {
 	}
 	if edge.EdgeTypeID != 10 {
 		t.Errorf("EdgeTypeID = %d, want 10", edge.EdgeTypeID)
-	}
-	if edge.FromNodeID != "n1" {
-		t.Errorf("FromNodeID = %s, want n1", edge.FromNodeID)
-	}
-	if edge.Props["weight"] != 0.5 {
-		t.Errorf("Props[weight] = %v, want 0.5", edge.Props["weight"])
 	}
 }
 

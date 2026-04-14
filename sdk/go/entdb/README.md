@@ -2,7 +2,17 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/elloloop/tenant-shard-db/sdk/go/entdb.svg)](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb)
 
-Official Go client for **EntDB** — a multi-tenant, event-sourced graph database with built-in ACL, GDPR, and compliance features.
+Official Go client for **EntDB** — a multi-tenant, event-sourced graph
+database with typed ACL, GDPR primitives, and built-in compliance
+exports.
+
+The SDK ships a **single-shape API**: there is exactly one way to
+perform every operation. Nodes are created from generated proto
+messages, unique-key lookups go through typed `UniqueKey[T]` tokens
+emitted by the `protoc-gen-entdb-keys` codegen plugin, and storage
+routing / ACL / idempotency / aliases are all options to the one
+`Create` method. Rename a proto field, regenerate, and every stale
+call site is a compile error — no runtime surprises.
 
 ## Install
 
@@ -10,470 +20,129 @@ Official Go client for **EntDB** — a multi-tenant, event-sourced graph databas
 go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest
 ```
 
-Requires Go 1.22+.
-
-## Quickstart
+Requires Go 1.22 or later.
 
 ```go
-package main
-
-import (
-    "context"
-    "log"
-
-    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
-)
-
-func main() {
-    ctx := context.Background()
-
-    client, err := entdb.NewClient("localhost:50051",
-        entdb.WithAPIKey("sk-..."),
-        entdb.WithMaxRetries(3),
-    )
-    if err != nil {
-        log.Fatal(err)
-    }
-    defer client.Close()
-
-    if err := client.Connect(ctx); err != nil {
-        log.Fatal(err)
-    }
-
-    // Typed actor — no more raw "user:bob" strings
-    bob := entdb.UserActor("bob")
-    alice := client.Tenant("acme").Actor(bob)
-
-    // Atomic plan — create + edge in one commit
-    plan := alice.Plan()
-    taskAlias := plan.Create(101, map[string]any{
-        "title":  "Ship Go SDK v0.2.0",
-        "status": "todo",
-    })
-    plan.CreateEdge(201, taskAlias, "user:charlie")
-
-    result, err := plan.Commit(ctx)
-    if err != nil {
-        log.Fatal(err)
-    }
-    log.Printf("created: %v", result.CreatedNodeIDs)
-}
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
 ```
 
-## Core Concepts
-
-### Client
-
-`entdb.NewClient(address, opts...)` creates a client. The client is not connected until `Connect()` is called.
-
-```go
-client, _ := entdb.NewClient("api.example.com:443",
-    entdb.WithSecure(),               // TLS
-    entdb.WithAPIKey("sk-..."),       // API key auth
-    entdb.WithMaxRetries(5),          // retry transient failures
-    entdb.WithTimeout(30*time.Second),// per-call timeout
-)
-defer client.Close()
-
-if err := client.Connect(ctx); err != nil {
-    log.Fatal(err)
-}
-```
-
-### Typed Actor
-
-All principals use the `Actor` type instead of raw strings. This prevents typos and makes it clear what kind of principal you're dealing with.
-
-```go
-bob := entdb.UserActor("bob")           // user:bob
-admins := entdb.GroupActor("admins")    // group:admins
-api := entdb.ServiceActor("ingestion")  // service:ingestion
-
-// Parse a wire-format string back into an Actor
-a, err := entdb.ParseActor("user:alice")
-
-// Inspect
-fmt.Println(a.Kind())   // "user"
-fmt.Println(a.ID())     // "alice"
-fmt.Println(a.String()) // "user:alice"
-```
-
-### Permissions
-
-`Permission` is a string-based enum — use the constants, not raw strings.
-
-```go
-entdb.PermissionRead
-entdb.PermissionWrite
-entdb.PermissionAdmin
-```
-
-### Hierarchical Scope API
-
-Binding tenant + actor once eliminates boilerplate on every call:
-
-```go
-// Instead of this:
-client.Get(ctx, "acme", "user:bob", 101, "task-1")
-client.Query(ctx, "acme", "user:bob", 101, filter)
-client.EdgesFrom(ctx, "acme", "user:bob", "task-1", 201)
-
-// Do this:
-scope := client.Tenant("acme").Actor(entdb.UserActor("bob"))
-scope.Get(ctx, 101, "task-1")
-scope.Query(ctx, 101, filter)
-scope.EdgesFrom(ctx, "task-1", 201)
-scope.Share(ctx, "task-1", entdb.UserActor("charlie"), entdb.PermissionWrite)
-```
-
-## Reading Data
-
-### Get a single node
-
-```go
-task, err := alice.Get(ctx, 101, "task-1")
-if err != nil {
-    var notFound *entdb.NotFoundError
-    if errors.As(err, &notFound) {
-        log.Printf("not found: %s", notFound.ResourceID)
-        return
-    }
-    log.Fatal(err)
-}
-log.Printf("title=%v", task.Payload["title"])
-```
-
-### Query nodes by filter
-
-```go
-tasks, err := alice.Query(ctx, 101, map[string]any{
-    "status": "todo",
-})
-for _, t := range tasks {
-    fmt.Println(t.NodeID, t.Payload)
-}
-```
-
-### Edge traversal
-
-```go
-// Outgoing edges (who does this task point to?)
-assignees, err := alice.EdgesFrom(ctx, "task-1", 201)
-
-// Incoming edges (what tasks point at this user?)
-assigned, err := alice.EdgesTo(ctx, "user:charlie", 201)
-```
-
-## Writing Data
-
-### Atomic plans
-
-A `Plan` batches operations into a single atomic commit. If any operation fails, none are applied.
-
-```go
-plan := alice.Plan()
-
-// Create a node, capture its alias for edge references
-taskAlias := plan.Create(101, map[string]any{
-    "title":  "Design review",
-    "status": "todo",
-})
-
-// Create an edge using the alias
-plan.CreateEdge(201, taskAlias, "user:charlie")
-
-// Update another node
-plan.Update("existing-task-id", 101, map[string]any{
-    "status": "in_progress",
-})
-
-// Delete
-plan.Delete("old-task-id")
-
-// Commit
-result, err := plan.Commit(ctx)
-if err != nil {
-    log.Fatal(err)
-}
-```
-
-A Plan **cannot be reused** after `Commit`. Create a new Plan for subsequent operations.
-
-### Create with ACL
-
-```go
-plan := alice.Plan()
-
-acl := []entdb.ACLEntry{
-    {Grantee: entdb.UserActor("charlie"), Permission: entdb.PermissionRead},
-    {Grantee: entdb.GroupActor("reviewers"), Permission: entdb.PermissionWrite},
-}
-
-plan.CreateWithACL(101, map[string]any{
-    "title": "Sensitive doc",
-}, acl)
-
-_, err := plan.Commit(ctx)
-```
-
-### Idempotency keys
-
-Pass an idempotency key to make a commit safely retryable:
-
-```go
-plan := client.NewPlanWithKey("acme", "user:bob", "order-12345")
-plan.Create(101, map[string]any{"amount": 99.99})
-result, err := plan.Commit(ctx)
-// Retrying with the same key returns the same result instead of
-// creating a duplicate node.
-```
-
-## Sharing and ACL
-
-### Grant access
-
-```go
-err := alice.Share(ctx, "task-1",
-    entdb.UserActor("charlie"),
-    entdb.PermissionWrite,
-)
-```
-
-### Revoke access
-
-Use `Plan` with a delete-ACL operation (via the raw API), or let ACL entries expire naturally.
-
-## Error Handling
-
-All errors implement `error`. Use `errors.As` to check for specific types:
-
-```go
-result, err := plan.Commit(ctx)
-if err != nil {
-    var valErr *entdb.ValidationError
-    var accessErr *entdb.AccessDeniedError
-    var txErr *entdb.TransactionError
-    var dupErr *entdb.UniqueConstraintError
-    var rlErr *entdb.RateLimitError
-
-    switch {
-    case errors.As(err, &valErr):
-        log.Printf("validation failed: %s (field=%s)", valErr.Message, valErr.Field)
-    case errors.As(err, &accessErr):
-        log.Printf("access denied for %s on %s", accessErr.Actor, accessErr.ResourceID)
-    case errors.As(err, &txErr):
-        log.Printf("transaction conflict (key=%s)", txErr.IdempotencyKey)
-    case errors.As(err, &dupErr):
-        log.Printf("duplicate %s = %q on type %d",
-            dupErr.KeyName, dupErr.KeyValue, dupErr.TypeID)
-    case errors.As(err, &rlErr):
-        log.Printf("rate limited, retry after %d ms", rlErr.RetryAfterMs)
-    default:
-        log.Printf("unexpected: %v", err)
-    }
-}
-```
-
-Error types:
-
-| Type | When |
-|------|------|
-| `ConnectionError` | Cannot reach server |
-| `ValidationError` | Payload failed schema validation |
-| `NotFoundError` | Node/edge/tenant doesn't exist |
-| `AccessDeniedError` | ACL denied the operation |
-| `TransactionError` | Idempotency conflict or atomic commit failure |
-| `SchemaError` | Schema fingerprint mismatch (stale client) |
-| `UniqueConstraintError` | A node with this `(type_id, key_name, key_value)` already exists. Carries `TenantID`, `TypeID`, `KeyName`, `KeyValue`. |
-| `RateLimitError` | Quota or rate-limit exceeded. Carries `RetryAfterMs`, `Limit`, `Used`. Same shape across all three rate-limit layers (monthly quota / per-tenant token bucket / per-user token bucket). |
-
-## Storage Modes
-
-Every node has an immutable `StorageMode` chosen at creation time. The mode determines which physical SQLite file the node lives in:
-
-| Mode | Location | Use case |
-|---|---|---|
-| `StorageModeTenant` (default) | `tenant.db` | Shared, ACL-controlled team data |
-| `StorageModeUserMailbox` | `{tenant}/user_{user_id}.db` | Inherently private per-user data (notifications, drafts, personal notes) |
-| `StorageModePublic` | `public.db` | Cross-tenant shared content (templates, reference data) |
-
-**Storage mode is immutable.** Once set, a node cannot be moved between files. Choose carefully at create time.
-
-```go
-plan := alice.Plan()
-
-// Default — goes to tenant.db
-plan.Create(101, map[string]any{"title": "Team task", "status": "todo"})
-
-// Per-user mailbox — never shared
-plan.CreateInMailbox(102, "bob", map[string]any{
-    "subject": "Personal reminder",
-    "body":    "Don't forget the demo on Friday",
-})
-
-// Public — readable by any tenant (requires PLATFORM_ADMIN)
-plan.CreateInPublic(201, map[string]any{
-    "name": "Weekly Retrospective Template",
-    "schema": "...",
-})
-
-result, err := plan.Commit(ctx)
-```
-
-**Edge invariant:** edges may only point from more-private to equal-or-less-private storage. Allowed: `mailbox → tenant`, `tenant → public`. Forbidden: `tenant → mailbox`, `public → tenant`. The server rejects forbidden edges at write time.
-
-## Unique Keys
-
-Declare a node type with one or more `keys` and the server enforces uniqueness on them. The same field doubles as a fast secondary lookup index. **The client computes the unique value, the server enforces it.**
+## Proto schema
+
+The SDK is proto-first. You declare node types, edge types, and unique
+fields directly in your `.proto` files. The single canonical example
+used throughout this README is a simple shop model — a `Product` with
+a primary unique `sku`, a secondary unique `barcode`, a `Category`
+identified by a unique `slug`, and a `BelongsTo` edge linking them.
 
 ```proto
-message User {
-  option (entdb.node) = {
-    type_id: 101
-    keys: [
-      { name: "email", required: true }
-      { name: "external_id", required: false }
-    ]
-  };
-  string email = 1;
+// schema.proto
+syntax = "proto3";
+package shop;
+
+import "entdb_options.proto";
+
+message Product {
+  option (entdb.node) = { type_id: 201 };
+
+  string sku         = 1 [(entdb.field).unique = true];
+  string barcode     = 2 [(entdb.field).unique = true];
+  string name        = 3;
+  int32  price_cents = 4;
+  int32  stock       = 5;
+}
+
+message Category {
+  option (entdb.node) = { type_id: 202 };
+
+  string slug = 1 [(entdb.field).unique = true];
   string name = 2;
-  string external_id = 3;
+}
+
+message BelongsTo {
+  option (entdb.edge) = { edge_id: 301 };
 }
 ```
 
-**Create with keys:**
+Three things to notice:
+
+1. **`(entdb.node)` / `(entdb.edge)`** declare the message as an EntDB
+   node or edge type and fix its numeric `type_id` / `edge_id`. The
+   SDK reads this option off the descriptor — you never type the
+   numeric id in user code.
+2. **`(entdb.field).unique = true`** declares a unique constraint on
+   the field. The server enforces uniqueness via a SQLite expression
+   index keyed on the field value. A `Product` cannot be created or
+   updated so that its `sku` or `barcode` collides with an existing
+   row in the same tenant.
+3. **The proto field number is the on-disk `field_id`**. Payloads are
+   stored keyed by field id, not by name, so renaming `sku` to
+   `stock_keeping_unit` in proto is a free operation — the disk
+   format is unchanged.
+
+## Build step
+
+Generate three things from one invocation of `protoc`: the standard Go
+proto bindings, the standard Python bindings (if you also use Python),
+and the EntDB typed-key sidecar. The sidecar plugin must be on
+`PATH` — build and install it once from this repository:
+
+```bash
+cd tools/protoc-gen-entdb-keys
+make build       # produces bin/protoc-gen-entdb-keys
+make install     # copies it into $GOBIN
+```
+
+Then run `protoc` against your schema:
+
+```bash
+protoc \
+  --go_out=. --go_opt=paths=source_relative \
+  --entdb-keys_out=. \
+  -I . -I path/to/entdb/proto \
+  schema.proto
+```
+
+`protoc` emits:
+
+| File | Contents |
+|---|---|
+| `schema.pb.go` | Standard generated Go types: `shop.Product`, `shop.Category`, `shop.BelongsTo` with getters / setters. |
+| `schema_entdb.go` | EntDB typed `UniqueKey` tokens, one `var` per unique field. |
+
+The sidecar file looks like this:
 
 ```go
-plan := alice.Plan()
-plan.CreateWithKeys(101,
-    map[string]any{
-        "email":       "alice@example.com",
-        "name":        "Alice",
-        "external_id": "ext-42",
-    },
-    map[string]string{
-        "email":       "alice@example.com",
-        "external_id": "ext-42",
-    },
+// Code generated by protoc-gen-entdb-keys. DO NOT EDIT.
+package shop
+
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+
+var (
+    ProductSKU      = entdb.UniqueKey[string]{TypeID: 201, FieldID: 1, Name: "sku"}
+    ProductBarcode  = entdb.UniqueKey[string]{TypeID: 201, FieldID: 2, Name: "barcode"}
+    CategorySlug    = entdb.UniqueKey[string]{TypeID: 202, FieldID: 1, Name: "slug"}
 )
-
-result, err := plan.Commit(ctx)
-if err != nil {
-    var dup *entdb.UniqueConstraintError
-    if errors.As(err, &dup) {
-        log.Printf("user already exists: %s = %q on type %d",
-            dup.KeyName, dup.KeyValue, dup.TypeID)
-    }
-}
 ```
 
-**Look up by key (no node_id needed):**
+`UniqueKey[T]` is the only way to perform a unique-key lookup in the
+SDK. The struct itself is exported so the generated code can
+construct instances, but user code never builds one by hand — the
+sidecar is the single source of truth. Rename `sku` to
+`stock_keeping_unit` in proto, regenerate, and every stale
+`shop.ProductSKU` reference is a compile error until you update the
+call site.
 
-```go
-node, err := alice.GetByKey(ctx, 101, "email", "alice@example.com")
-if err != nil {
-    log.Fatal(err)
-}
-if node == nil {
-    log.Println("not found")
-} else {
-    log.Printf("found user node %s", node.NodeID)
-}
-```
-
-`GetByKey` runs the same ACL check as `Get` — actors without read permission see `PERMISSION_DENIED`, not `NOT_FOUND`.
-
-**Two-phase enforcement.** Pre-validate at the gRPC ingress catches 99% of duplicates without a WAL round-trip. Authoritative validate inside the Applier's transaction handles the race window. Both fire `ALREADY_EXISTS` on the wire, which the SDK converts to `*UniqueConstraintError`.
-
-## Quotas and Rate Limits
-
-Three layers — each fires `RESOURCE_EXHAUSTED` with a `Retry-After` trailer. The SDK surfaces all three as `*RateLimitError`.
-
-| Layer | What | When |
-|---|---|---|
-| **Monthly write quota** | Billing enforcement, durable counters in global store | Plan-tier overuse |
-| **Per-tenant token bucket** | Noisy-neighbor / QoS protection | One tenant trying to hog the box |
-| **Per-user token bucket** | Credential abuse protection | Compromised key, runaway script |
-
-```go
-result, err := plan.Commit(ctx)
-if err != nil {
-    var rl *entdb.RateLimitError
-    if errors.As(err, &rl) {
-        log.Printf("rate limited: retry after %d ms", rl.RetryAfterMs)
-        time.Sleep(time.Duration(rl.RetryAfterMs) * time.Millisecond)
-        // optionally retry
-    }
-}
-```
-
-**Get current quota state for a dashboard:**
-
-```go
-quota, err := client.GetTenantQuota(ctx, "acme")
-if err != nil {
-    log.Fatal(err)
-}
-log.Printf("used %d/%d writes this period (resets at %d)",
-    quota.WritesUsed, quota.MaxWritesPerMonth, quota.PeriodEndMs)
-```
-
-The quota response carries every layer's limits and current state in one struct (`MaxWritesPerMonth`, `WritesUsed`, `MaxRPSSustained`, `MaxRPSBurst`, `MaxRPSPerUserSustained`, `MaxRPSPerUserBurst`, `HardEnforce`).
-
-## Flat API
-
-The hierarchical scope API (`client.Tenant().Actor()`) is the recommended entry point. For cases where you need to operate on multiple tenants from one call site, use the flat API:
-
-```go
-client.Get(ctx, tenantID, actor, typeID, nodeID)
-client.Query(ctx, tenantID, actor, typeID, filter)
-client.EdgesFrom(ctx, tenantID, actor, nodeID, edgeTypeID)
-client.EdgesTo(ctx, tenantID, actor, nodeID, edgeTypeID)
-client.NewPlan(tenantID, actor)
-client.NewPlanWithKey(tenantID, actor, idempotencyKey)
-```
-
-Both APIs share the same `Plan` type once you have one.
-
-## CLI
-
-Install the `entdb` command-line tool:
-
-```bash
-go install github.com/elloloop/tenant-shard-db/sdk/go/entdb/cmd/entdb@latest
-```
-
-Commands:
-
-```bash
-entdb version                                # print version
-entdb help                                   # usage
-entdb lint schema.proto                      # validate proto has (entdb.node) annotations
-entdb check schema.proto                     # protoc compile + list fields
-entdb ping localhost:50051 --api-key=sk-... # connectivity check
-entdb get localhost:50051 --tenant=acme --actor=user:bob --type-id=101 --node-id=task-1
-entdb query localhost:50051 --tenant=acme --actor=user:bob --type-id=101
-```
-
-## Full Example
+## Connecting
 
 ```go
 package main
 
 import (
     "context"
-    "errors"
     "log"
     "time"
 
     "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
-)
-
-const (
-    TaskType    = 101
-    CommentType = 102
-    OnEdge      = 201
-    ByEdge      = 202
 )
 
 func main() {
@@ -482,6 +151,7 @@ func main() {
     client, err := entdb.NewClient("api.example.com:443",
         entdb.WithSecure(),
         entdb.WithAPIKey("sk-prod-..."),
+        entdb.WithMaxRetries(3),
         entdb.WithTimeout(10*time.Second),
     )
     if err != nil {
@@ -493,77 +163,513 @@ func main() {
         log.Fatal(err)
     }
 
+    // Bind tenant + actor once; every subsequent call is short.
     alice := client.Tenant("acme").Actor(entdb.UserActor("alice"))
 
-    // 1. Create a task + first comment in one atomic plan
-    plan := alice.Plan()
-    taskAlias := plan.Create(TaskType, map[string]any{
-        "title":  "Review Go SDK",
-        "status": "todo",
-    })
-    commentAlias := plan.Create(CommentType, map[string]any{
-        "body": "Looks great — needs more examples",
-    })
-    plan.CreateEdge(OnEdge, commentAlias, taskAlias)
-    plan.CreateEdge(ByEdge, commentAlias, "user:alice")
-
-    result, err := plan.Commit(ctx)
-    if err != nil {
-        var valErr *entdb.ValidationError
-        if errors.As(err, &valErr) {
-            log.Fatalf("validation failed: %s", valErr.Message)
-        }
-        log.Fatal(err)
-    }
-    taskID := result.CreatedNodeIDs[0]
-    log.Printf("task created: %s", taskID)
-
-    // 2. Share with Charlie
-    _ = alice.Share(ctx, taskID,
-        entdb.UserActor("charlie"),
-        entdb.PermissionWrite,
-    )
-
-    // 3. Query all open tasks
-    tasks, _ := alice.Query(ctx, TaskType, map[string]any{"status": "todo"})
-    log.Printf("open tasks: %d", len(tasks))
-
-    // 4. Find all comments on this task
-    comments, _ := alice.EdgesTo(ctx, taskID, OnEdge)
-    log.Printf("comments: %d", len(comments))
-
-    // 5. Update task status
-    plan2 := alice.Plan()
-    plan2.Update(taskID, TaskType, map[string]any{"status": "done"})
-    _, _ = plan2.Commit(ctx)
+    _ = alice
 }
 ```
 
-## Compatibility with Python SDK
+`entdb.NewClient` returns a disconnected client; call `Connect` before
+issuing requests. `Tenant(...).Actor(...)` produces a `*Scope` that
+captures tenant + actor once so you never repeat them on every call.
 
-The Go SDK mirrors the Python SDK's API surface so teams with both can stay consistent:
+Actors are strongly typed — use `UserActor`, `GroupActor`, or
+`ServiceActor` rather than raw `"user:alice"` strings.
 
-| Python                                  | Go                                                |
-|-----------------------------------------|---------------------------------------------------|
-| `db.tenant("t").actor("u:bob")`         | `client.Tenant("t").Actor(UserActor("bob"))`      |
-| `Actor.user("bob")`                     | `UserActor("bob")`                                |
-| `Permission.WRITE`                      | `PermissionWrite`                                 |
-| `ACLEntry(grantee=..., perm=...)`       | `ACLEntry{Grantee: ..., Permission: ...}`         |
-| `alice.get(Task, "t1")`                 | `alice.Get(ctx, 101, "t1")`                       |
-| `alice.query(Task, filter={...})`       | `alice.Query(ctx, 101, map[string]any{...})`      |
-| `alice.edges_out("t1", OnEdge)`         | `alice.EdgesFrom(ctx, "t1", 201)`                 |
-| `alice.plan().create(task)`             | `plan := alice.Plan(); plan.Create(101, data)`    |
-| `plan.create_in_mailbox(node, "bob")`   | `plan.CreateInMailbox(101, "bob", data)`          |
-| `plan.create_in_public(node)`           | `plan.CreateInPublic(201, data)`                  |
-| `plan.create(node, keys={"email": ...})`| `plan.CreateWithKeys(101, data, keys)`            |
-| `alice.get_by_key(User, "email", e)`    | `alice.GetByKey(ctx, 101, "email", e)`            |
-| `client.get_tenant_quota("t")`          | `client.GetTenantQuota(ctx, "t")`                 |
-| `RateLimitError`                        | `*RateLimitError`                                 |
-| `UniqueConstraintError`                 | `*UniqueConstraintError`                          |
+## Creating nodes
+
+`Plan.Create(msg, opts...)` is the only way to create a node:
+
+```go
+plan := alice.Plan()
+
+// Default: created in tenant storage with the type's default ACL.
+plan.Create(&shop.Product{
+    Sku:        "WIDGET-1",
+    Barcode:    "0123456789012",
+    Name:       "Widget",
+    PriceCents: 1999,
+    Stock:      50,
+})
+
+// With an explicit ACL.
+plan.Create(&shop.Product{Sku: "WIDGET-2", Name: "Widget Plus"},
+    entdb.WithACL(
+        entdb.ACLEntry{
+            Grantee:    entdb.UserActor("bob"),
+            Permission: entdb.PermissionRead,
+        },
+        entdb.ACLEntry{
+            Grantee:    entdb.GroupActor("merchants"),
+            Permission: entdb.PermissionWrite,
+        },
+    ),
+)
+
+// In a user's private mailbox (never shared with the rest of the tenant).
+plan.Create(&shop.Product{Sku: "WIDGET-3", Name: "Internal draft"},
+    entdb.InMailbox("alice"),
+)
+
+// In the cross-tenant public catalogue.
+plan.Create(&shop.Product{Sku: "WIDGET-4", Name: "Reference SKU"},
+    entdb.InPublic(),
+)
+
+if _, err := plan.Commit(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+The `type_id` and payload are read from the proto message's
+descriptor — you never pass a numeric type id. `Create` returns the
+plan-local alias used if you want to point an edge at this node later
+in the same plan (see [Edges](#edges)).
+
+## Looking up by id
+
+```go
+product, err := entdb.Get[*shop.Product](ctx, alice, "node-42")
+if err != nil {
+    var nf *entdb.NotFoundError
+    if errors.As(err, &nf) {
+        log.Printf("not found: %s", nf.ResourceID)
+        return
+    }
+    log.Fatal(err)
+}
+log.Printf("%s — %d cents", product.Name, product.PriceCents)
+```
+
+`Get` is a package-level generic function (Go does not allow generic
+methods). The `T` parameter is your proto message type; the SDK reads
+the `type_id` from its descriptor at call time.
+
+## Looking up by unique key
+
+The typed `UniqueKey[T]` token is the **only** way to look up a node by
+a unique field. There is no string form. Passing the wrong scalar
+type does not type-check:
+
+```go
+product, err := entdb.GetByKey(ctx, alice, shop.ProductSKU, "WIDGET-1")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Compile error — ProductSKU is UniqueKey[string], 12345 is an int.
+//   _, _ = entdb.GetByKey(ctx, alice, shop.ProductSKU, 12345)
+
+// Use a different token for a different unique field.
+byBarcode, err := entdb.GetByKey(ctx, alice, shop.ProductBarcode, "0123456789012")
+```
+
+The pitch: **rename `sku` to `stock_keeping_unit` in proto**,
+regenerate, and `shop.ProductSKU` becomes `shop.ProductStockKeepingUnit`
+in the sidecar. Every stale call site is now a build error. With the
+old string form (`GetByKey(ctx, scope, "Product", "sku", value)`) the
+same rename would compile fine and blow up in production on the first
+call — which is exactly the failure mode the single-shape API
+eliminates.
+
+## Querying with operators
+
+`Query` takes a MongoDB-style filter map. Field names are **proto
+field names** (not field ids); the server resolves them using the
+schema registry at the ingress boundary.
+
+```go
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+
+// price_cents >= 1000 AND stock in a set
+results, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
+    "price_cents": map[string]any{"$gte": 1000},
+    "stock":       map[string]any{"$in": []any{10, 25, 50}},
+})
+
+// name prefix match
+hits, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
+    "name": map[string]any{"$like": "Widget%"},
+})
+
+// top-level $or
+either, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
+    "$or": []any{
+        map[string]any{"price_cents": map[string]any{"$lt": 500}},
+        map[string]any{"stock": 0},
+    },
+})
+```
+
+Supported operators: `$eq` (default), `$ne`, `$gt`, `$gte`, `$lt`,
+`$lte`, `$in`, `$nin`, `$like`, `$between`, plus top-level `$and` and
+`$or`. See
+[`docs/decisions/sdk_api.md`](../../../docs/decisions/sdk_api.md) for
+the complete operator table.
+
+## Updating
+
+`Plan.Update` sends a partial patch. **Only fields that are explicitly
+set on the proto message are included in the patch**; unset fields are
+left untouched on the server:
+
+```go
+plan := alice.Plan()
+
+// Only price_cents is set — the patch is {price_cents: 1499}.
+plan.Update("node-42", &shop.Product{PriceCents: 1499})
+
+if _, err := plan.Commit(ctx); err != nil {
+    log.Fatal(err)
+}
+```
+
+The type is read from the message's `(entdb.node)` option — there is
+no separate `typeID` argument. To clear a scalar to its zero value,
+use a proto3 `optional` field so the wire format can tell the
+difference between "unset" and "explicitly zero".
+
+## Deleting
+
+Delete takes a compile-time type witness via the generic parameter —
+no instance required:
+
+```go
+entdb.Delete[*shop.Product](plan, "node-42")
+```
+
+Passing a type without an `(entdb.node)` option panics at call time,
+so the failure surfaces in unit tests rather than production.
+
+## Edges
+
+Edges use the same compile-time witness pattern:
+
+```go
+plan := alice.Plan()
+
+// Alias lets the edge reference a node created in the same plan.
+categoryAlias := plan.Create(&shop.Category{
+    Slug: "hand-tools",
+    Name: "Hand tools",
+}, entdb.As("hand-tools"))
+
+productAlias := plan.Create(&shop.Product{
+    Sku:  "HAMMER-01",
+    Name: "Claw hammer",
+})
+
+// Link the product to the category.
+entdb.EdgeCreate[*shop.BelongsTo](plan, productAlias, categoryAlias)
+
+if _, err := plan.Commit(ctx); err != nil {
+    log.Fatal(err)
+}
+
+// Later: unlink it.
+plan2 := alice.Plan()
+entdb.EdgeDelete[*shop.BelongsTo](plan2, "product-id-42", "category-id-9")
+_, _ = plan2.Commit(ctx)
+```
+
+The `edge_id` is read from the edge message's `(entdb.edge)` option.
+Traversal is available via `scope.EdgesFrom` / `scope.EdgesTo` on a
+`*Scope`.
+
+## Atomic plans
+
+A `Plan` batches operations into a single atomic commit. Either every
+op applies or none do — the WAL commit is all-or-nothing:
+
+```go
+plan := alice.Plan()
+
+hammerAlias := plan.Create(&shop.Product{
+    Sku:        "HAMMER-01",
+    Barcode:    "0000000000017",
+    Name:       "Claw hammer",
+    PriceCents: 2499,
+    Stock:      100,
+})
+wrenchAlias := plan.Create(&shop.Product{
+    Sku:        "WRENCH-01",
+    Barcode:    "0000000000024",
+    Name:       "Adjustable wrench",
+    PriceCents: 1799,
+    Stock:      50,
+})
+plan.Update("old-product-id", &shop.Product{Stock: 0})
+entdb.Delete[*shop.Product](plan, "discontinued-id")
+entdb.EdgeCreate[*shop.BelongsTo](plan, hammerAlias, "category-hand-tools")
+entdb.EdgeCreate[*shop.BelongsTo](plan, wrenchAlias, "category-hand-tools")
+
+result, err := plan.Commit(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("created: %v", result.CreatedNodeIDs)
+```
+
+A `Plan` cannot be reused after `Commit`; create a fresh one for
+subsequent operations.
+
+## Idempotency keys
+
+Pass an explicit idempotency key for retry-safe commits. Retrying a
+plan with the same key returns the same result instead of creating
+duplicates:
+
+```go
+plan := alice.PlanWithKey("order-12345")
+plan.Create(&shop.Product{Sku: "LIMITED-ED-01", Name: "Limited Edition"})
+result, err := plan.Commit(ctx)
+```
+
+If the same `order-12345` key is replayed by a client after a network
+partition, the server short-circuits the second attempt and hands back
+the same `CreatedNodeIDs` as the first.
+
+## Error handling
+
+All SDK errors implement the `error` interface; use `errors.As` to
+match the typed variants:
+
+```go
+result, err := plan.Commit(ctx)
+if err != nil {
+    var uniq *entdb.UniqueConstraintError
+    var rl   *entdb.RateLimitError
+    var acc  *entdb.AccessDeniedError
+    var nf   *entdb.NotFoundError
+
+    switch {
+    case errors.As(err, &uniq):
+        log.Printf("duplicate unique value: type_id=%d field_id=%d value=%v",
+            uniq.TypeID, uniq.FieldID, uniq.Value)
+    case errors.As(err, &rl):
+        log.Printf("rate limited, retry after %d ms", rl.RetryAfterMs)
+        time.Sleep(time.Duration(rl.RetryAfterMs) * time.Millisecond)
+    case errors.As(err, &acc):
+        log.Printf("access denied: %s on %s", acc.Actor, acc.ResourceID)
+    case errors.As(err, &nf):
+        log.Printf("not found: %s", nf.ResourceID)
+    default:
+        log.Printf("unexpected: %v", err)
+    }
+}
+```
+
+| Type | Raised when |
+|---|---|
+| `*UniqueConstraintError` | A create or update collided with a declared `(entdb.field).unique = true` field. Carries `TenantID`, `TypeID`, `FieldID`, `Value`. |
+| `*RateLimitError` | The caller was throttled by one of the three quota layers (monthly write budget, per-tenant RPS, per-user RPS). Carries `RetryAfterMs`, `Limit`, `Used`. |
+| `*AccessDeniedError` | ACL rejected the operation. Carries `Actor`, `ResourceID`, `RequiredPermission`. |
+| `*NotFoundError` | The node / edge / tenant does not exist or is not visible to the caller. |
+| `*ValidationError` | The proto payload failed server-side validation. |
+| `*ConnectionError` | The gRPC connection could not be established. |
+
+## Storage modes
+
+Every node has an **immutable** `StorageMode` chosen at creation time.
+Pass one of the three `CreateOption`s to route the write; the default
+is `InTenant()`:
+
+| Mode | Location | Use case |
+|---|---|---|
+| `InTenant()` (default) | `tenant.db` | Shared, ACL-controlled team data |
+| `InMailbox(userID)` | `user_<user_id>.db` | Per-user private data — drafts, personal notes |
+| `InPublic()` | `public.db` | Cross-tenant shared content — public catalogues, templates |
+
+```go
+plan := alice.Plan()
+
+plan.Create(&shop.Product{Sku: "SHARED-1"})                         // tenant
+plan.Create(&shop.Product{Sku: "DRAFT-1"}, entdb.InMailbox("alice"))// mailbox
+plan.Create(&shop.Product{Sku: "PUBLIC-1"}, entdb.InPublic())       // public
+```
+
+Once written, a node cannot be moved between files. Pick the mode
+deliberately at create time. Edges may only point from more-private
+to equal-or-less-private storage (mailbox → tenant is fine;
+tenant → mailbox is rejected at write time).
+
+## CLI
+
+The SDK ships an `entdb` command that uses the same single-shape entry
+points via a compiled proto descriptor set, so you can inspect or
+mutate data without writing Go:
+
+```bash
+go install github.com/elloloop/tenant-shard-db/sdk/go/entdb/cmd/entdb@latest
+
+# Build a descriptor set once.
+protoc --descriptor_set_out=schema.protoset schema.proto
+
+# Read by node id.
+entdb get localhost:50051 \
+  --tenant=acme --actor=user:alice \
+  --proto-descriptor=schema.protoset \
+  --type=Product --node-id=node-42
+
+# Filter query.
+entdb query localhost:50051 \
+  --tenant=acme --actor=user:alice \
+  --proto-descriptor=schema.protoset \
+  --type=Product \
+  --filter='{"price_cents":{"$gte":1000}}'
+
+# Write a node from a JSON payload.
+entdb put localhost:50051 \
+  --tenant=acme --actor=user:alice \
+  --proto-descriptor=schema.protoset \
+  --type=Product \
+  --json='{"sku":"WIDGET-9","name":"Widget 9","price_cents":999}'
+```
+
+The CLI names the type by **proto message name** (`--type=Product`),
+never by numeric `type_id`. It goes through the same typed SDK entry
+points as your application code — one less surface to keep in sync.
+
+## Python ↔ Go parity
+
+The Python and Go SDKs mirror each other operation for operation. A
+team that uses both can copy the shape of a call between languages:
+
+| Operation | Python | Go |
+|---|---|---|
+| Bind a scope | `scope = db.tenant("acme").actor(Actor.user("alice"))` | `scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))` |
+| Start a plan | `plan = scope.plan()` | `plan := scope.Plan()` |
+| Create a node | `plan.create(schema_pb2.Product(sku="WIDGET-1"))` | `plan.Create(&shop.Product{Sku: "WIDGET-1"})` |
+| Create with ACL | `plan.create(msg, acl=[...])` | `plan.Create(msg, entdb.WithACL(...))` |
+| Create in mailbox | `plan.create(msg, storage=Mailbox("alice"))` | `plan.Create(msg, entdb.InMailbox("alice"))` |
+| Create in public | `plan.create(msg, storage=Public())` | `plan.Create(msg, entdb.InPublic())` |
+| Update a node | `plan.update("node-42", Product(price_cents=1499))` | `plan.Update("node-42", &shop.Product{PriceCents: 1499})` |
+| Delete a node | `plan.delete(schema_pb2.Product, "node-42")` | `entdb.Delete[*shop.Product](plan, "node-42")` |
+| Create an edge | `plan.edge_create(schema_pb2.BelongsTo, "a", "b")` | `entdb.EdgeCreate[*shop.BelongsTo](plan, "a", "b")` |
+| Delete an edge | `plan.edge_delete(schema_pb2.BelongsTo, "a", "b")` | `entdb.EdgeDelete[*shop.BelongsTo](plan, "a", "b")` |
+| Get by id | `await scope.get(schema_pb2.Product, "node-42")` | `entdb.Get[*shop.Product](ctx, scope, "node-42")` |
+| Get by unique key | `await scope.get_by_key(ProductKeys.sku, "WIDGET-1")` | `entdb.GetByKey(ctx, scope, shop.ProductSKU, "WIDGET-1")` |
+| Query | `await scope.query(schema_pb2.Product, filter={"price_cents": {"$gte": 1000}})` | `entdb.Query[*shop.Product](ctx, scope, map[string]any{"price_cents": map[string]any{"$gte": 1000}})` |
+| Share | `await scope.share("node-42", Actor.user("bob"), Permission.READ)` | `scope.Share(ctx, "node-42", entdb.UserActor("bob"), entdb.PermissionRead)` |
+| Commit | `await plan.commit()` | `plan.Commit(ctx)` |
+| Idempotent plan | `plan = scope.plan(idempotency_key="order-12345")` | `plan := scope.PlanWithKey("order-12345")` |
+
+## Full example
+
+End-to-end: define the schema, regenerate, connect, create, look up,
+query, update, share, delete. This mirrors
+[`v3_shape_test.go`](./v3_shape_test.go) in the SDK source.
+
+```go
+package main
+
+import (
+    "context"
+    "errors"
+    "log"
+    "time"
+
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    "example.com/shop" // the package protoc emits for schema.proto
+)
+
+func main() {
+    ctx := context.Background()
+
+    // ── Connect ────────────────────────────────────────────────
+    client, err := entdb.NewClient("api.example.com:443",
+        entdb.WithSecure(),
+        entdb.WithAPIKey("sk-prod-..."),
+        entdb.WithTimeout(10*time.Second),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+    if err := client.Connect(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    alice := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+    // ── Create a category and two products atomically ─────────
+    plan := alice.PlanWithKey("seed-hand-tools-v1")
+
+    categoryAlias := plan.Create(&shop.Category{
+        Slug: "hand-tools",
+        Name: "Hand tools",
+    }, entdb.As("hand-tools"))
+
+    hammerAlias := plan.Create(&shop.Product{
+        Sku:        "HAMMER-01",
+        Barcode:    "0000000000017",
+        Name:       "Claw hammer",
+        PriceCents: 2499,
+        Stock:      100,
+    })
+    wrenchAlias := plan.Create(&shop.Product{
+        Sku:        "WRENCH-01",
+        Barcode:    "0000000000024",
+        Name:       "Adjustable wrench",
+        PriceCents: 1799,
+        Stock:      50,
+    })
+
+    entdb.EdgeCreate[*shop.BelongsTo](plan, hammerAlias, categoryAlias)
+    entdb.EdgeCreate[*shop.BelongsTo](plan, wrenchAlias, categoryAlias)
+
+    result, err := plan.Commit(ctx)
+    if err != nil {
+        var uniq *entdb.UniqueConstraintError
+        if errors.As(err, &uniq) {
+            log.Fatalf("duplicate SKU: %v", uniq.Value)
+        }
+        log.Fatal(err)
+    }
+    log.Printf("seeded %d nodes", len(result.CreatedNodeIDs))
+
+    // ── Look up by SKU (typed token) ───────────────────────────
+    hammer, err := entdb.GetByKey(ctx, alice, shop.ProductSKU, "HAMMER-01")
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("found hammer at %s", hammer.NodeID)
+
+    // ── Query by filter ────────────────────────────────────────
+    affordable, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
+        "price_cents": map[string]any{"$lte": 2000},
+        "stock":       map[string]any{"$gt": 0},
+    })
+    if err != nil {
+        log.Fatal(err)
+    }
+    log.Printf("%d affordable in-stock products", len(affordable))
+
+    // ── Update — only price_cents gets patched ────────────────
+    update := alice.Plan()
+    update.Update(hammer.NodeID, &shop.Product{PriceCents: 2299})
+    if _, err := update.Commit(ctx); err != nil {
+        log.Fatal(err)
+    }
+
+    // ── Share with Bob ─────────────────────────────────────────
+    _ = alice.Share(ctx, hammer.NodeID,
+        entdb.UserActor("bob"),
+        entdb.PermissionWrite,
+    )
+
+    // ── Delete by type witness ────────────────────────────────
+    cleanup := alice.Plan()
+    entdb.Delete[*shop.Product](cleanup, "discontinued-id")
+    _, _ = cleanup.Commit(ctx)
+}
+```
 
 ## Links
 
 - [Full docs](https://elloloop.github.io/tenant-shard-db/)
+- [SDK API ADR](../../../docs/decisions/sdk_api.md)
 - [Python SDK](https://pypi.org/project/entdb-sdk/)
 - [pkg.go.dev reference](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb)
 - [GitHub](https://github.com/elloloop/tenant-shard-db)

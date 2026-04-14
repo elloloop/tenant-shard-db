@@ -228,18 +228,22 @@ class TransactionError(EntDbError):
 
 
 class UniqueConstraintError(EntDbError):
-    """Raised when a write would violate a declared unique key.
+    """Raised when a write would violate a declared unique field.
 
-    Implements the client-facing side of the 2026-04-13 unique_keys
-    decision. The server surfaces duplicates via gRPC ``ALREADY_EXISTS``
-    (pre-validate fast-fail) or via a failed apply (authoritative
-    validate on race). Both paths are mapped into this typed error.
+    Implements the client-facing side of the 2026-04-14 SDK v0.3
+    decision (``docs/decisions/sdk_api.md``). Unique fields are
+    declared on the proto field via ``(entdb.field).unique = true``
+    and enforced server-side by a unique expression index on the
+    payload. Duplicates surface either as a gRPC ``ALREADY_EXISTS``
+    (pre-validate fast-fail in the gRPC layer) or via a failed apply
+    at the unique-index INSERT (authoritative race winner). Both
+    paths are mapped into this typed error.
 
     Attributes:
         tenant_id: Tenant where the collision occurred.
-        type_id: Node type id.
-        key_name: The declared key name (e.g. ``"email"``).
-        key_value: The colliding value.
+        type_id: Numeric node type id.
+        field_id: Numeric field id of the unique field.
+        value: The colliding scalar value.
     """
 
     def __init__(
@@ -248,8 +252,8 @@ class UniqueConstraintError(EntDbError):
         *,
         tenant_id: str | None = None,
         type_id: int | None = None,
-        key_name: str | None = None,
-        key_value: str | None = None,
+        field_id: int | None = None,
+        value: Any = None,
     ) -> None:
         super().__init__(
             message,
@@ -257,14 +261,14 @@ class UniqueConstraintError(EntDbError):
             details={
                 "tenant_id": tenant_id,
                 "type_id": type_id,
-                "key_name": key_name,
-                "key_value": key_value,
+                "field_id": field_id,
+                "value": value,
             },
         )
         self.tenant_id = tenant_id
         self.type_id = type_id
-        self.key_name = key_name
-        self.key_value = key_value
+        self.field_id = field_id
+        self.value = value
 
 
 class RateLimitError(EntDbError):

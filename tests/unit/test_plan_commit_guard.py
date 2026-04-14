@@ -1,12 +1,15 @@
 """Regression tests for Plan double-commit guard and FieldDef type validation.
 
-Issue 1: Plan.commit() could be called multiple times, replaying all operations
-         a second time. Now raises RuntimeError on double-commit.
+Issue 1: Plan.commit() could be called multiple times, replaying all
+         operations a second time. Plan.commit() now raises
+         ``RuntimeError`` on a second call.
 
-Issue 2: FieldDef.validate_value() only checked None/required and enum membership,
-         skipping all type checks (string vs int, list element types, etc.).
-         NodeTypeDef.validate_payload() and Plan.create() used this weak path,
-         silently accepting payloads with wrong types.
+Issue 2: FieldDef.validate_value() previously skipped type checks.
+         The type checks are still exercised here directly against
+         FieldDef, since the SDK v0.3 ``Plan.create`` API takes proto
+         messages whose typed fields make most "wrong type" cases
+         impossible at the call site (the proto runtime rejects the
+         construction itself).
 """
 
 from __future__ import annotations
@@ -15,10 +18,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from sdk.entdb_sdk import register_proto_schema
 from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt
 from sdk.entdb_sdk.client import DbClient, Plan
 from sdk.entdb_sdk.errors import ValidationError
-from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
+from sdk.entdb_sdk.registry import get_registry, reset_registry
+from sdk.entdb_sdk.schema import FieldDef, FieldKind
+from tests._test_schemas import test_schema_pb2 as ts
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -43,34 +49,13 @@ def _field(fid: int, name: str, kind_str: str, **kwargs) -> FieldDef:
     return FieldDef(field_id=fid, name=name, kind=kind_map[kind_str], **kwargs)
 
 
-@pytest.fixture
-def task_type():
-    return NodeTypeDef(
-        type_id=2,
-        name="Task",
-        fields=(
-            _field(1, "title", "str", required=True),
-            _field(2, "done", "bool"),
-            _field(3, "priority", "int"),
-            _field(4, "score", "float"),
-            _field(5, "created_at", "timestamp"),
-            _field(6, "status", "enum", enum_values=("todo", "in_progress", "done")),
-            _field(7, "metadata", "json"),
-            _field(8, "tags", "list_str"),
-            _field(9, "scores", "list_int"),
-            _field(10, "assignee", "ref"),
-        ),
-    )
-
-
-@pytest.fixture
-def edge_type(task_type):
-    return EdgeTypeDef(
-        edge_id=401,
-        name="AssignedTo",
-        from_type=task_type,
-        to_type=1,
-    )
+@pytest.fixture(autouse=True)
+def _registered_schema():
+    """Register the test_schema proto types for the duration of each test."""
+    reset_registry()
+    register_proto_schema(ts)
+    yield
+    reset_registry()
 
 
 @pytest.fixture
@@ -96,9 +81,9 @@ def _make_db(mock_grpc):
     db = DbClient.__new__(DbClient)
     db._grpc = mock_grpc
     db._connected = True
-    registry = MagicMock()
-    registry.fingerprint = "fp"
-    db.registry = registry
+    db.registry = get_registry()
+    db._last_offsets = {}
+    db._schema_fingerprint = None
     return db
 
 
@@ -111,10 +96,10 @@ class TestPlanDoubleCommitGuard:
     """Plan.commit() must raise RuntimeError when called a second time."""
 
     @pytest.mark.asyncio
-    async def test_second_commit_raises(self, task_type, mock_grpc_client):
+    async def test_second_commit_raises(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
 
         result = await plan.commit()
         assert result.success
@@ -134,61 +119,61 @@ class TestPlanDoubleCommitGuard:
             await plan.commit()
 
     @pytest.mark.asyncio
-    async def test_create_after_commit_raises(self, task_type, mock_grpc_client):
+    async def test_create_after_commit_raises(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
         await plan.commit()
 
         with pytest.raises(RuntimeError, match="already been committed"):
-            plan.create(task_type, {"title": "Task 2"})
+            plan.create(ts.Product(sku="p2", name="Two", price_cents=200))
 
     @pytest.mark.asyncio
-    async def test_update_after_commit_raises(self, task_type, mock_grpc_client):
+    async def test_update_after_commit_raises(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
         await plan.commit()
 
         with pytest.raises(RuntimeError, match="already been committed"):
-            plan.update(task_type, "node_1", {"title": "Updated"})
+            plan.update("node_1", ts.Product(name="Updated"))
 
     @pytest.mark.asyncio
-    async def test_delete_after_commit_raises(self, task_type, mock_grpc_client):
+    async def test_delete_after_commit_raises(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
         await plan.commit()
 
         with pytest.raises(RuntimeError, match="already been committed"):
-            plan.delete(task_type, "node_1")
+            plan.delete(ts.Product, "node_1")
 
     @pytest.mark.asyncio
-    async def test_edge_create_after_commit_raises(self, task_type, edge_type, mock_grpc_client):
+    async def test_edge_create_after_commit_raises(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
         await plan.commit()
 
         with pytest.raises(RuntimeError, match="already been committed"):
-            plan.edge_create(edge_type, "node_1", "node_2")
+            plan.edge_create(ts.BelongsTo, "node_1", "node_2")
 
     @pytest.mark.asyncio
-    async def test_edge_delete_after_commit_raises(self, task_type, edge_type, mock_grpc_client):
+    async def test_edge_delete_after_commit_raises(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
         await plan.commit()
 
         with pytest.raises(RuntimeError, match="already been committed"):
-            plan.edge_delete(edge_type, "node_1", "node_2")
+            plan.edge_delete(ts.BelongsTo, "node_1", "node_2")
 
     @pytest.mark.asyncio
-    async def test_first_commit_still_works(self, task_type, mock_grpc_client):
+    async def test_first_commit_still_works(self, mock_grpc_client):
         """Ensure the guard doesn't break normal single-commit usage."""
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-        plan.create(task_type, {"title": "Task 1"})
+        plan.create(ts.Product(sku="p1", name="One", price_cents=100))
 
         result = await plan.commit()
         assert result.success
@@ -197,7 +182,7 @@ class TestPlanDoubleCommitGuard:
 
 
 # ---------------------------------------------------------------------------
-# Issue 2: FieldDef.validate_value() type checking
+# Issue 2: FieldDef.validate_value() type checking (still standalone)
 # ---------------------------------------------------------------------------
 
 
@@ -377,36 +362,57 @@ class TestFieldDefTypeValidation:
 
 
 class TestPlanCreateValidation:
-    """Plan.create() must now reject payloads with wrong field types."""
+    """SDK v0.3 ``Plan.create`` enforces typing at the proto layer.
+
+    Most "wrong scalar type" mistakes are now impossible to express in
+    user code — the proto class constructor rejects them with
+    ``TypeError`` before the SDK ever sees them. We still verify that
+    the SDK rejects malformed inputs that *do* survive proto
+    construction (e.g. an enum value not in the declared set).
+    """
 
     @pytest.mark.asyncio
-    async def test_create_rejects_int_for_string_field(self, task_type, mock_grpc_client):
+    async def test_proto_rejects_int_for_string_field(self, mock_grpc_client):
+        # Constructing the proto with the wrong scalar fails before
+        # the SDK is involved at all. This is the v0.3 invariant: the
+        # type system catches type errors, not the SDK.
+        with pytest.raises(TypeError):
+            ts.Product(sku=12345)  # sku is a string field
+
+    @pytest.mark.asyncio
+    async def test_create_rejects_invalid_enum_value(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
-
+        # ``status`` has enum_values draft/active/archived. The proto
+        # itself stores any string, so the SDK's NodeTypeDef enum
+        # validation is what catches "not-a-status".
         with pytest.raises(ValidationError):
-            plan.create(task_type, {"title": 12345})  # title must be str
+            plan.create(ts.Product(sku="p1", status="not-a-status"))
 
     @pytest.mark.asyncio
-    async def test_create_rejects_string_for_bool_field(self, task_type, mock_grpc_client):
+    async def test_create_accepts_valid_payload(self, mock_grpc_client):
         db = _make_db(mock_grpc_client)
         plan = Plan(db, "t1", "user:1")
 
-        with pytest.raises(ValidationError):
-            plan.create(task_type, {"title": "OK", "done": "yes"})  # done must be bool
-
-    @pytest.mark.asyncio
-    async def test_create_accepts_valid_payload(self, task_type, mock_grpc_client):
-        db = _make_db(mock_grpc_client)
-        plan = Plan(db, "t1", "user:1")
-
-        plan.create(task_type, {"title": "My Task", "done": False, "priority": 1})
+        plan.create(ts.Product(sku="p1", name="My Product", price_cents=100, status="active"))
         assert len(plan._operations) == 1
 
     @pytest.mark.asyncio
-    async def test_validate_payload_catches_wrong_types(self, task_type):
-        """NodeTypeDef.validate_payload now catches type errors."""
-        ok, errors = task_type.validate_payload({"title": 999, "done": "nope"})
+    async def test_validate_payload_catches_wrong_types(self):
+        """NodeTypeDef.validate_payload still catches type errors when
+        called directly with a hand-rolled dict (e.g. by codegen tools)."""
+        from sdk.entdb_sdk.schema import NodeTypeDef
+        from sdk.entdb_sdk.schema import field as fld
+
+        nt = NodeTypeDef(
+            type_id=99,
+            name="X",
+            fields=(
+                fld(1, "title", "str"),
+                fld(2, "done", "bool"),
+            ),
+        )
+        ok, errors = nt.validate_payload({"title": 999, "done": "nope"})
         assert not ok
         assert any("string" in e for e in errors)
         assert any("boolean" in e for e in errors)

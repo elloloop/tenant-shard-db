@@ -1,37 +1,35 @@
 """
-EntDB Python SDK - Client library for EntDB database service.
+EntDB Python SDK — single-shape v0.3 API.
 
-This SDK provides a type-safe interface to the EntDB graph database:
-- Type definitions (NodeTypeDef, EdgeTypeDef, FieldDef)
-- Schema registry for type management
-- DbClient for connecting to the server
-- Plan builder for atomic transactions
+The SDK exposes exactly one way to perform every operation:
 
-Example:
-    >>> from entdb_sdk import DbClient, NodeTypeDef, field
-    >>>
-    >>> # Define types
-    >>> Task = NodeTypeDef(
-    ...     type_id=101,
-    ...     name="Task",
-    ...     fields=(
-    ...         field(1, "title", "str", required=True),
-    ...         field(2, "status", "enum", enum_values=("todo", "done")),
-    ...     ),
-    ... )
-    >>>
-    >>> # Connect and create
-    >>> async with DbClient("localhost:50051") as db:
-    ...     plan = db.atomic("tenant_1", "user:42")
-    ...     plan.create(Task, {"title": "My Task", "status": "todo"})
-    ...     result = await plan.commit()
+- ``Plan.create(msg, *, acl=None, storage=Tenant())`` — pass a proto
+  message instance. ``type_id`` and the payload come from the proto
+  descriptor; the user never types a numeric id.
+- ``Plan.update(node_id, msg)`` — partial update; only fields set on
+  ``msg`` (per ``ListFields()``) become the patch.
+- ``Plan.delete(NodeType, node_id)`` — proto message *class* as the
+  type witness.
+- ``Scope.get_by_key(UniqueKey, value)`` — typed unique-key lookup
+  using a token from the ``protoc-gen-entdb-keys`` codegen sidecar.
 
-Invariants:
-    - Type IDs are immutable after first use
-    - All operations require tenant_id and actor
-    - Writes are atomic per commit()
+Example::
 
-Version: see VERSION file at project root.
+    from entdb_sdk import DbClient, register_proto_schema, Actor
+    from schema_entdb import ProductKeys  # codegen sidecar
+    import schema_pb2
+
+    async with DbClient("localhost:50051") as db:
+        register_proto_schema(schema_pb2)
+        scope = db.tenant("acme").actor(Actor.user("alice"))
+
+        plan = scope.plan()
+        plan.create(schema_pb2.Product(sku="WIDGET-1", name="Widget"))
+        await plan.commit(wait_applied=True)
+
+        product = await scope.get_by_key(ProductKeys.sku, "WIDGET-1")
+
+See ``docs/decisions/sdk_api.md`` for the design rationale.
 """
 
 from ._version import __version__
@@ -46,6 +44,7 @@ from .errors import (
     UnknownFieldError,
     ValidationError,
 )
+from .keys import Mailbox, Public, Storage, Tenant, UniqueKey
 from .registry import (
     SchemaRegistry,
     get_registry,
@@ -107,4 +106,10 @@ __all__ = [
     "UnknownFieldError",
     "RateLimitError",
     "UniqueConstraintError",
+    # SDK v0.3 typed unique keys + storage descriptors
+    "UniqueKey",
+    "Tenant",
+    "Mailbox",
+    "Public",
+    "Storage",
 ]

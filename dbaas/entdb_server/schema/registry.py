@@ -248,6 +248,24 @@ class SchemaRegistry:
         )
         return DataPolicy.PERSONAL
 
+    def get_unique_field_ids(self, type_id: int) -> list[int]:
+        """Return ids of fields declared ``unique`` on a node type.
+
+        Implements the 2026-04-14 SDK v0.3 decision: unique constraints
+        are a field-level concern (``(entdb.field).unique = true``) and
+        the applier looks up the per-type list on first write so it
+        can lazily create the corresponding SQLite expression indexes.
+
+        Returns an empty list for unknown types (rather than raising)
+        because the applier drives this lookup on every create and a
+        missing type should fall through to the existing validation
+        path instead of turning into a registry KeyError.
+        """
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            return []
+        return [f.field_id for f in node_type.fields if f.unique and not f.deprecated]
+
     def get_pii_fields(self, type_id: int) -> list[str]:
         """Get the names of PII-marked fields for a node type.
 

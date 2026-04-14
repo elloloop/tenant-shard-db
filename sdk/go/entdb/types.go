@@ -165,6 +165,11 @@ const (
 )
 
 // Operation represents a single mutation in a Plan.
+//
+// Data and Patch are keyed by proto field id (as decimal string) —
+// never by field name. Translation from proto names happens at the
+// SDK boundary (marshal.go). See the "Field IDs, not field names, on
+// disk" invariant in CLAUDE.md for the rationale.
 type Operation struct {
 	Type       OperationType  `json:"type"`
 	TypeID     int            `json:"type_id,omitempty"`
@@ -185,15 +190,4 @@ type Operation struct {
 	// TargetUserID is required when StorageMode is
 	// StorageModeUserMailbox; ignored otherwise.
 	TargetUserID string `json:"target_user_id,omitempty"`
-
-	// Keys declares the unique / secondary lookup key values that
-	// should be written alongside the node (2026-04-13 unique_keys
-	// decision). The server enforces each (key_name, key_value)
-	// pair as unique within (tenant_id, type_id, key_name). On a
-	// collision the commit returns a UniqueConstraintError.
-	//
-	// For create_node: these values are inserted into node_keys.
-	// For update_node: these values replace the node's existing
-	// node_keys rows inside the apply transaction.
-	Keys map[string]string `json:"keys,omitempty"`
 }

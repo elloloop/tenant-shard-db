@@ -196,8 +196,9 @@ class TestNodeOptsMessage:
             "extension_capability_enum",
             "capability_mappings",
             "capability_implications",
-            # Unique keys (2026-04-13 unique_keys decision).
-            "keys",
+            # Field 23 ("keys") is retired as of the 2026-04-14 SDK
+            # v0.3 decision — unique constraints are declared at the
+            # field site now.
         }
         assert expected == field_names
 
@@ -267,6 +268,8 @@ class TestFieldOptsMessage:
             "description",
             "deprecated",
             "pii_false",
+            # Field-level unique constraint (2026-04-14 SDK v0.3).
+            "unique",
         }
         assert expected == field_names
 

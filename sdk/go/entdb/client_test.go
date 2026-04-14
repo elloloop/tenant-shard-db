@@ -4,9 +4,15 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // mockTransport implements Transport for testing without a live gRPC server.
+//
+// It records the last-seen arguments for the operations the tests
+// care about (typeID, fieldID, committed ops) so assertions can
+// verify the SDK wrote the expected shape without a live server.
 type mockTransport struct {
 	connectCalled     bool
 	closeCalled       bool
@@ -17,6 +23,17 @@ type mockTransport struct {
 
 	edgesFromCalls int
 	edgesToCalls   int
+
+	// Last-seen arguments.
+	lastGetTypeID         int
+	lastGetNodeID         string
+	lastGetByKeyTypeID    int32
+	lastGetByKeyFieldID   int32
+	lastGetByKeyValue     *structpb.Value
+	lastQueryTypeID       int
+	lastQueryFilter       map[string]any
+	lastCommitOperations  []Operation
+	lastCommitIdempotency string
 
 	// Responses for stubbing
 	getNodeResp      *Node
@@ -42,23 +59,32 @@ func (m *mockTransport) Close() error {
 	return nil
 }
 
-func (m *mockTransport) GetNode(_ context.Context, _, _ string, _ int, _ string) (*Node, error) {
+func (m *mockTransport) GetNode(_ context.Context, _, _ string, typeID int, nodeID string) (*Node, error) {
 	m.getNodeCalls++
+	m.lastGetTypeID = typeID
+	m.lastGetNodeID = nodeID
 	return m.getNodeResp, m.getNodeErr
 }
 
-func (m *mockTransport) GetNodeByKey(_ context.Context, _, _ string, _ int, _, _ string) (*Node, error) {
+func (m *mockTransport) GetNodeByKey(_ context.Context, _, _ string, typeID, fieldID int32, value *structpb.Value) (*Node, error) {
 	m.getNodeByKeyCalls++
+	m.lastGetByKeyTypeID = typeID
+	m.lastGetByKeyFieldID = fieldID
+	m.lastGetByKeyValue = value
 	return m.getNodeByKeyResp, m.getNodeByKeyErr
 }
 
-func (m *mockTransport) QueryNodes(_ context.Context, _, _ string, _ int, _ map[string]any) ([]*Node, error) {
+func (m *mockTransport) QueryNodes(_ context.Context, _, _ string, typeID int, filter map[string]any) ([]*Node, error) {
 	m.queryCalls++
+	m.lastQueryTypeID = typeID
+	m.lastQueryFilter = filter
 	return m.queryResp, m.queryErr
 }
 
-func (m *mockTransport) ExecuteAtomic(_ context.Context, _, _, _ string, _ []Operation) (*CommitResult, error) {
+func (m *mockTransport) ExecuteAtomic(_ context.Context, _, _, idempotencyKey string, ops []Operation) (*CommitResult, error) {
 	m.commitCalls++
+	m.lastCommitIdempotency = idempotencyKey
+	m.lastCommitOperations = append([]Operation(nil), ops...)
 	return m.commitResp, m.commitErr
 }
 
@@ -220,48 +246,6 @@ func TestClient_ConnectError(t *testing.T) {
 	}
 }
 
-func TestClient_Get_DelegatesToTransport(t *testing.T) {
-	expected := &Node{
-		TenantID: "t1",
-		NodeID:   "n1",
-		TypeID:   1,
-		Payload:  map[string]any{"title": "Hello"},
-	}
-	mock := &mockTransport{getNodeResp: expected}
-	client := newTestClient(t, mock)
-
-	node, err := client.Get(context.Background(), "t1", "user:alice", 1, "n1")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if node.NodeID != "n1" {
-		t.Errorf("expected node ID n1, got %s", node.NodeID)
-	}
-	if mock.getNodeCalls != 1 {
-		t.Errorf("expected 1 GetNode call, got %d", mock.getNodeCalls)
-	}
-}
-
-func TestClient_Query_DelegatesToTransport(t *testing.T) {
-	expected := []*Node{
-		{NodeID: "n1", TypeID: 1},
-		{NodeID: "n2", TypeID: 1},
-	}
-	mock := &mockTransport{queryResp: expected}
-	client := newTestClient(t, mock)
-
-	nodes, err := client.Query(context.Background(), "t1", "user:alice", 1, map[string]any{"status": "active"})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(nodes) != 2 {
-		t.Errorf("expected 2 nodes, got %d", len(nodes))
-	}
-	if mock.queryCalls != 1 {
-		t.Errorf("expected 1 QueryNodes call, got %d", mock.queryCalls)
-	}
-}
-
 func TestClient_Tenant_ReturnsTenantScope(t *testing.T) {
 	mock := &mockTransport{}
 	client := newTestClient(t, mock)
@@ -292,45 +276,6 @@ func TestClient_NewPlanWithKey(t *testing.T) {
 	plan := client.NewPlanWithKey("t1", "user:alice", "idem-key-1")
 	if plan.IdempotencyKey() != "idem-key-1" {
 		t.Errorf("expected idempotency key idem-key-1, got %s", plan.IdempotencyKey())
-	}
-}
-
-func TestClient_EdgesFrom_DelegatesToTransport(t *testing.T) {
-	expected := []*Edge{
-		{EdgeTypeID: 201, FromNodeID: "n1", ToNodeID: "n2"},
-		{EdgeTypeID: 201, FromNodeID: "n1", ToNodeID: "n3"},
-	}
-	mock := &mockTransport{edgesFromResp: expected}
-	client := newTestClient(t, mock)
-
-	edges, err := client.EdgesFrom(context.Background(), "t1", "user:alice", "n1", 201)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(edges) != 2 {
-		t.Errorf("expected 2 edges, got %d", len(edges))
-	}
-	if mock.edgesFromCalls != 1 {
-		t.Errorf("expected 1 EdgesFrom call, got %d", mock.edgesFromCalls)
-	}
-}
-
-func TestClient_EdgesTo_DelegatesToTransport(t *testing.T) {
-	expected := []*Edge{
-		{EdgeTypeID: 201, FromNodeID: "n5", ToNodeID: "n1"},
-	}
-	mock := &mockTransport{edgesToResp: expected}
-	client := newTestClient(t, mock)
-
-	edges, err := client.EdgesTo(context.Background(), "t1", "user:alice", "n1", 201)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(edges) != 1 {
-		t.Errorf("expected 1 edge, got %d", len(edges))
-	}
-	if mock.edgesToCalls != 1 {
-		t.Errorf("expected 1 EdgesTo call, got %d", mock.edgesToCalls)
 	}
 }
 

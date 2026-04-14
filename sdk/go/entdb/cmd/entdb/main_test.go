@@ -220,19 +220,37 @@ func TestGetRequiresFlags(t *testing.T) {
 }
 
 func TestGetFlagParsing(t *testing.T) {
-	// All flags present; expect parse success. The actual RPC will return
-	// NOT_IMPLEMENTED (exit 3) or a connect error (exit 1) — we only care
-	// that parsing doesn't fail with exit 2.
+	// All flags present; descriptor file is missing so we expect
+	// exit 1 (not a flag parse error). The key check is that
+	// ``--type`` parses (not the removed ``--type-id``).
 	_, _, code := runCapture(
 		"get",
 		"127.0.0.1:1",
 		"--tenant=acme",
 		"--actor=user:bob",
-		"--type-id=1",
+		"--proto-descriptor=/tmp/does-not-exist.protoset",
+		"--type=Product",
 		"--node-id=node-123",
 	)
 	if code == 2 {
 		t.Errorf("get flag parse failed, exit=2")
+	}
+}
+
+func TestGetRejectsRemovedTypeIDFlag(t *testing.T) {
+	// The --type-id=N flag was removed as part of the 2026-04-14
+	// SDK v0.3 decision: the CLI must not let users type raw
+	// numeric type ids. Parsing it should fail with exit 2.
+	_, _, code := runCapture(
+		"get",
+		"127.0.0.1:1",
+		"--tenant=acme",
+		"--actor=user:bob",
+		"--type-id=201",
+		"--node-id=node-123",
+	)
+	if code != 2 {
+		t.Errorf("get with removed --type-id flag exit=%d, want 2", code)
 	}
 }
 

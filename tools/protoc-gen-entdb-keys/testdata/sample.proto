@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package shop;
+
+import "entdb_options.proto";
+
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/shop";
+
+message Product {
+  option (entdb.node) = { type_id: 201 };
+
+  string sku = 1 [(entdb.field).unique = true];
+  string barcode = 2 [(entdb.field).unique = true];
+  string name = 3;
+}
+
+message Order {
+  option (entdb.node) = { type_id: 202 };
+
+  string order_number = 1 [(entdb.field).unique = true];
+  int32 total_cents = 2;
+}
+
+// Has unique fields but is NOT a node type — must be skipped.
+message NotANode {
+  string email = 1 [(entdb.field).unique = true];
+}
+
+// Node with no unique fields — must be skipped entirely (no empty class).
+message Category {
+  option (entdb.node) = { type_id: 203 };
+
+  string name = 1;
+}

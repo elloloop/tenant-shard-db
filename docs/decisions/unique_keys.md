@@ -6,11 +6,11 @@ Frozen decisions about client-asserted unique constraints and secondary primary 
 
 ## 2026-04-13: Client-asserted unique keys + secondary lookup keys via one `node_keys` table
 
-**Status:** frozen
+**Status:** superseded
 **Decided:** 2026-04-13
 **Tags:** schema, indexing, consistency, sdk, proto
 **Supersedes:** none
-**Superseded by:** none
+**Superseded by:** [sdk_api.md — 2026-04-14 Single-shape SDK API](sdk_api.md#2026-04-14-single-shape-sdk-api-typed-unique-key-tokens-via-codegen-expression-index-unique-enforcement) — the user-facing concept (proto declares unique fields, server enforces) survives, but the `node_keys` table is replaced by SQLite unique expression indexes on `nodes(tenant_id, json_extract(payload, '$."<field_id>"'))`, the message-level `keys: [...]` option moves to field-level `(entdb.field).unique = true`, and the `keys={}` parameter on `plan.create` is deleted (the proto field IS the key).
 
 ### Decision
 

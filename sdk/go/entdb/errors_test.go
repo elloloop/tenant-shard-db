@@ -125,41 +125,38 @@ func TestParseRateLimitFromStatus_MalformedRetryAfter(t *testing.T) {
 	}
 }
 
-// ── UniqueConstraintError (2026-04-13 unique_keys decision) ────────
+// ── UniqueConstraintError (2026-04-14 SDK v0.3 decision) ───────────
 
 func TestNewUniqueConstraintError_Fields(t *testing.T) {
-	uce := NewUniqueConstraintError("tenant-1", 101, "email", "alice@example.com")
+	uce := NewUniqueConstraintError("tenant-1", 101, 1, "alice@example.com")
 	if uce.TenantID != "tenant-1" {
 		t.Errorf("TenantID = %q, want tenant-1", uce.TenantID)
 	}
 	if uce.TypeID != 101 {
 		t.Errorf("TypeID = %d, want 101", uce.TypeID)
 	}
-	if uce.KeyName != "email" {
-		t.Errorf("KeyName = %q, want email", uce.KeyName)
+	if uce.FieldID != 1 {
+		t.Errorf("FieldID = %d, want 1", uce.FieldID)
 	}
-	if uce.KeyValue != "alice@example.com" {
-		t.Errorf("KeyValue = %q", uce.KeyValue)
+	if v, ok := uce.Value.(string); !ok || v != "alice@example.com" {
+		t.Errorf("Value = %v", uce.Value)
 	}
 	if uce.Code != "UNIQUE_CONSTRAINT" {
 		t.Errorf("Code = %q", uce.Code)
 	}
-	if got, ok := uce.Details["key_name"].(string); !ok || got != "email" {
-		t.Errorf("Details[key_name] = %v", uce.Details["key_name"])
+	if got, ok := uce.Details["field_id"].(int32); !ok || got != 1 {
+		t.Errorf("Details[field_id] = %v", uce.Details["field_id"])
 	}
 }
 
 func TestUniqueConstraintError_Error(t *testing.T) {
-	uce := NewUniqueConstraintError("tenant-1", 101, "email", "alice@example.com")
+	uce := NewUniqueConstraintError("tenant-1", 101, 1, "alice@example.com")
 	msg := uce.Error()
 	if !strings.Contains(msg, "UNIQUE_CONSTRAINT") {
 		t.Errorf("Error() = %q missing UNIQUE_CONSTRAINT", msg)
 	}
-	if !strings.Contains(msg, "email") {
-		t.Errorf("Error() = %q missing key name", msg)
-	}
 	if !strings.Contains(msg, "alice@example.com") {
-		t.Errorf("Error() = %q missing key value", msg)
+		t.Errorf("Error() = %q missing value", msg)
 	}
 }
 
@@ -168,11 +165,11 @@ func TestUniqueConstraintError_ErrorEmptyMessage(t *testing.T) {
 		EntDBError: EntDBError{Code: "UNIQUE_CONSTRAINT"},
 		TenantID:   "t1",
 		TypeID:     7,
-		KeyName:    "sku",
-		KeyValue:   "XYZ",
+		FieldID:    2,
+		Value:      "XYZ",
 	}
 	msg := uce.Error()
-	if !strings.Contains(msg, "XYZ") || !strings.Contains(msg, "sku") {
+	if !strings.Contains(msg, "XYZ") || !strings.Contains(msg, "field_id=2") {
 		t.Errorf("Error() = %q", msg)
 	}
 }
@@ -206,7 +203,7 @@ func TestParseUniqueConstraintFromStatus_NilError(t *testing.T) {
 }
 
 func TestUniqueConstraintError_ImplementsErrorInterface(t *testing.T) {
-	var err error = NewUniqueConstraintError("t", 1, "email", "x")
+	var err error = NewUniqueConstraintError("t", 1, 3, "x")
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
@@ -214,7 +211,7 @@ func TestUniqueConstraintError_ImplementsErrorInterface(t *testing.T) {
 	if !errors.As(err, &uce) {
 		t.Fatalf("errors.As failed to extract *UniqueConstraintError")
 	}
-	if uce.KeyName != "email" {
-		t.Errorf("KeyName=%q", uce.KeyName)
+	if uce.FieldID != 3 {
+		t.Errorf("FieldID=%d, want 3", uce.FieldID)
 	}
 }

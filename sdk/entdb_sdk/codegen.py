@@ -460,19 +460,49 @@ def register_proto_schema(module: Any) -> tuple[int, int]:
     if file_descriptor is None:
         return (0, 0)
 
-    for msg_desc in file_descriptor.message_types_by_name.values():
+    from google.protobuf import descriptor_pb2
+
+    from ._generated import entdb_options_pb2
+
+    # Walk the runtime ``DescriptorProto`` for each message in the
+    # file. ``from_descriptor`` on NodeTypeDef / EdgeTypeDef wants a
+    # ``descriptor_pb2.DescriptorProto`` plus the resolved
+    # NodeOpts / EdgeOpts extension — so we serialise the runtime
+    # message descriptor into a DescriptorProto first, then re-parse
+    # the GetOptions() blob through the entdb extension surface to
+    # recover ``(entdb.node)`` / ``(entdb.edge)``.
+    file_proto = descriptor_pb2.FileDescriptorProto()
+    file_descriptor.CopyToProto(file_proto)
+    proto_by_name = {m.name: m for m in file_proto.message_type}
+
+    for msg_name, msg_desc in file_descriptor.message_types_by_name.items():
+        msg_proto = proto_by_name.get(msg_name)
+        if msg_proto is None:
+            continue
         opts = _reparse_message_options(msg_desc.GetOptions())
         if opts is None:
             continue
 
-        from ._generated import entdb_options_pb2
-
         if opts.HasExtension(entdb_options_pb2.node):
-            node_type = NodeTypeDef.from_descriptor(msg_desc)
+            node_opts = opts.Extensions[entdb_options_pb2.node]
+            if node_opts.type_id == 0:
+                continue
+            node_type = NodeTypeDef.from_descriptor(
+                msg_proto,
+                node_opts,
+                _reparse_field_options=_reparse_field_options,
+            )
             registry.register_node_type(node_type)
             nodes_registered += 1
         elif opts.HasExtension(entdb_options_pb2.edge):
-            edge_type = EdgeTypeDef.from_descriptor(msg_desc)
+            edge_opts = opts.Extensions[entdb_options_pb2.edge]
+            if edge_opts.edge_id == 0:
+                continue
+            edge_type = EdgeTypeDef.from_descriptor(
+                msg_proto,
+                edge_opts,
+                _reparse_field_options=_reparse_field_options,
+            )
             registry.register_edge_type(edge_type)
             edges_registered += 1
 

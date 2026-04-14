@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package types_fixture;
+
+import "entdb_options.proto";
+
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/typesfixture";
+
+message AllScalars {
+  option (entdb.node) = { type_id: 300 };
+
+  string f_string = 1 [(entdb.field).unique = true];
+  int32 f_int32 = 2 [(entdb.field).unique = true];
+  sint32 f_sint32 = 3 [(entdb.field).unique = true];
+  sfixed32 f_sfixed32 = 4 [(entdb.field).unique = true];
+  uint32 f_uint32 = 5 [(entdb.field).unique = true];
+  fixed32 f_fixed32 = 6 [(entdb.field).unique = true];
+  int64 f_int64 = 7 [(entdb.field).unique = true];
+  sint64 f_sint64 = 8 [(entdb.field).unique = true];
+  sfixed64 f_sfixed64 = 9 [(entdb.field).unique = true];
+  uint64 f_uint64 = 10 [(entdb.field).unique = true];
+  fixed64 f_fixed64 = 11 [(entdb.field).unique = true];
+  float f_float = 12 [(entdb.field).unique = true];
+  double f_double = 13 [(entdb.field).unique = true];
+  bool f_bool = 14 [(entdb.field).unique = true];
+  bytes f_bytes = 15 [(entdb.field).unique = true];
+}

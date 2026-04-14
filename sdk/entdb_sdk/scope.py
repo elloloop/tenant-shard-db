@@ -4,26 +4,35 @@ Provides a builder pattern that captures tenant and actor context:
 
     >>> async with DbClient("localhost:50051") as db:
     ...     alice = db.tenant("alice").actor("user:bob")
-    ...     task = await alice.get(Task, "t1")
-    ...     tasks = await alice.query(Task, status="todo")
-    ...     await alice.share("t1", "user:charlie", perm=Permission.WRITE)
+    ...     product = await alice.get(schema_pb2.Product, "p1")
+    ...     hits = await alice.query(schema_pb2.Product, filter={"sku": {"$like": "WIDGET-%"}})
+    ...     await alice.share("p1", "user:charlie", perm=Permission.WRITE)
+
+Per the 2026-04-14 SDK v0.3 decision the scope API is single-shape:
+proto messages everywhere, ``UniqueKey`` tokens for unique-field
+lookup, and one method per operation. See
+``docs/decisions/sdk_api.md``.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .keys import Storage, UniqueKey
 from .typed import ACLEntry, Actor, Permission, TypedEdge, TypedNode
 
 if TYPE_CHECKING:
     from ._grpc_client import Edge, Node
-    from .schema import EdgeTypeDef, NodeTypeDef
 
 
 class ScopedPlan:
     """A ``Plan`` pre-bound to a tenant and actor.
 
-    Supports chaining and accepts ``TypedNode`` instances directly.
+    The single-shape SDK v0.3 API: every mutation is expressed via a
+    proto message (or a proto class as a type witness for delete /
+    edge_create / edge_delete). There are no ``*WithACL`` or
+    ``*InMailbox`` parallel methods — pass ``acl=`` or ``storage=``
+    keywords to :meth:`create` instead.
     """
 
     def __init__(self, plan: Any) -> None:
@@ -31,67 +40,74 @@ class ScopedPlan:
 
     def create(
         self,
-        node: Any,
-        data: dict[str, Any] | None = None,
+        msg: Any,
         *,
         acl: list[ACLEntry] | None = None,
+        storage: Storage | None = None,
         as_: str | None = None,
         fanout_to: list[Actor | str] | None = None,
     ) -> ScopedPlan:
-        """Add a create_node operation.
+        """Create a node from a proto message.
 
-        Accepts a proto message instance, a ``TypedNode`` instance, or
-        a ``NodeTypeDef`` + data dict.
+        ``msg`` is a generated proto message instance. ``storage``
+        defaults to :class:`Tenant`; pass :class:`Mailbox` or
+        :class:`Public` for non-default routing. ``acl`` overrides the
+        per-type default ACL.
         """
-        acl_dicts = _acl_to_dicts(acl) if acl else None
         fanout_strs = [str(a) for a in fanout_to] if fanout_to else None
-        self._plan.create(node, data, acl=acl_dicts, as_=as_, fanout_to=fanout_strs)
+        self._plan.create(
+            msg,
+            acl=acl,
+            storage=storage,
+            as_=as_,
+            fanout_to=fanout_strs,
+        )
         return self
 
     def update(
         self,
-        node_type: type[TypedNode] | NodeTypeDef,
         node_id: str,
-        patch: dict[str, Any] | TypedNode,
-        *,
-        field_mask: list[str] | None = None,
+        msg: Any,
     ) -> ScopedPlan:
-        """Add an update_node operation.
+        """Update a node from a proto message.
 
-        ``patch`` can be a ``TypedNode`` instance (uses ``to_payload``)
-        or a plain dict.
+        Per the 2026-04-14 SDK v0.3 decision the patch is exactly the
+        set of fields explicitly set on ``msg`` (``ListFields()``
+        semantics). ``msg`` carries its own type via
+        ``(entdb.node)`` — there is no separate ``type_id`` argument.
         """
-        resolved_type = _resolve_node_type(node_type)
-        resolved_patch = patch.to_payload() if isinstance(patch, TypedNode) else patch
-        self._plan.update(resolved_type, node_id, resolved_patch, field_mask=field_mask)
+        self._plan.update(node_id, msg)
         return self
 
     def delete(
         self,
-        node_type: type[TypedNode] | NodeTypeDef,
+        node_type: Any,
         node_id: str,
     ) -> ScopedPlan:
-        self._plan.delete(_resolve_node_type(node_type), node_id)
+        """Delete a node. ``node_type`` is the proto message *class*."""
+        self._plan.delete(node_type, node_id)
         return self
 
     def edge_create(
         self,
-        edge_type: type[TypedEdge] | EdgeTypeDef,
-        from_: str | dict[str, Any],
-        to: str | dict[str, Any],
-        props: dict[str, Any] | TypedEdge | None = None,
+        edge_type: Any,
+        from_id: str | dict[str, Any],
+        to_id: str | dict[str, Any],
+        *,
+        props: dict[str, Any] | None = None,
     ) -> ScopedPlan:
-        resolved_props = props.to_props() if isinstance(props, TypedEdge) else props
-        self._plan.edge_create(_resolve_edge_type(edge_type), from_, to, resolved_props)
+        """Create an edge. ``edge_type`` is the proto message class
+        (carrying the ``(entdb.edge)`` annotation)."""
+        self._plan.edge_create(edge_type, from_id, to_id, props=props)
         return self
 
     def edge_delete(
         self,
-        edge_type: type[TypedEdge] | EdgeTypeDef,
-        from_: str | dict[str, Any],
-        to: str | dict[str, Any],
+        edge_type: Any,
+        from_id: str | dict[str, Any],
+        to_id: str | dict[str, Any],
     ) -> ScopedPlan:
-        self._plan.edge_delete(_resolve_edge_type(edge_type), from_, to)
+        self._plan.edge_delete(edge_type, from_id, to_id)
         return self
 
     async def commit(self, wait_applied: bool = False, *, timeout: float | None = None) -> Any:
@@ -129,13 +145,16 @@ class ActorScope:
 
     async def get(
         self,
-        node_type: type[TypedNode] | NodeTypeDef,
+        node_type: Any,
         node_id: str,
         *,
         after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
+        """Get a node by id. ``node_type`` is the proto message class
+        (or, for back-compat with internal callers, a ``NodeTypeDef`` /
+        ``TypedNode`` subclass)."""
         kwargs = _optional(after_offset=after_offset, trace_id=trace_id, timeout=timeout)
         return await self._client.get(
             _resolve_node_type(node_type), node_id, self._tenant_id, self._actor, **kwargs
@@ -143,27 +162,27 @@ class ActorScope:
 
     async def get_by_key(
         self,
-        node_type: type[TypedNode] | NodeTypeDef,
-        key_name: str,
-        key_value: str,
+        key: UniqueKey[Any],
+        value: Any,
         *,
         after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
-        """Resolve a node via a declared unique/secondary key.
+        """Resolve a node via a typed unique-key token from codegen.
 
-        Implements the client-facing half of the 2026-04-13
-        unique_keys decision. Returns ``None`` if the key is
-        unknown, and raises a typed ``PermissionError`` / gRPC
-        ``PERMISSION_DENIED`` when the actor lacks
-        ``CORE_CAP_READ`` on the resolved node.
+        Per the 2026-04-14 SDK v0.3 decision this is the single
+        canonical lookup-by-unique-field path. The ``key`` argument
+        is a :class:`UniqueKey` token emitted by the
+        ``protoc-gen-entdb-keys`` plugin and exposed in the generated
+        ``<schema>_entdb.py`` sidecar — there is no string-name
+        fallback. The generic parameter ``T`` on ``UniqueKey[T]``
+        statically constrains the value type so passing the wrong
+        scalar is a type-checker error, not a runtime one.
         """
-        resolved_type = _resolve_node_type(node_type)
         return await self._client.get_by_key(
-            resolved_type,
-            key_name,
-            key_value,
+            key,
+            value,
             self._tenant_id,
             self._actor,
             after_offset=after_offset,
@@ -173,7 +192,7 @@ class ActorScope:
 
     async def get_many(
         self,
-        node_type: type[TypedNode] | NodeTypeDef,
+        node_type: Any,
         node_ids: list[str],
         *,
         after_offset: str | None = None,
@@ -187,7 +206,7 @@ class ActorScope:
 
     async def query(
         self,
-        node_type: type[TypedNode] | NodeTypeDef,
+        node_type: Any,
         *,
         filter: dict[str, Any] | None = None,
         limit: int = 100,
@@ -198,6 +217,14 @@ class ActorScope:
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
+        """Query nodes by type with MongoDB-style filter operators.
+
+        ``node_type`` is the proto message class. ``filter`` accepts
+        the eight operators frozen in the 2026-04-14 SDK v0.3 decision:
+        ``$eq`` (default), ``$ne``, ``$gt``, ``$gte``, ``$lt``,
+        ``$lte``, ``$in``, ``$nin``, ``$like``, ``$between``, plus
+        top-level ``$and`` / ``$or`` composition.
+        """
         kwargs: dict[str, Any] = {
             "limit": limit,
             "offset": offset,
@@ -214,7 +241,7 @@ class ActorScope:
     async def edges_out(
         self,
         node_id: str,
-        edge_type: type[TypedEdge] | EdgeTypeDef | None = None,
+        edge_type: Any | None = None,
         *,
         after_offset: str | None = None,
         trace_id: str | None = None,
@@ -229,7 +256,7 @@ class ActorScope:
     async def edges_in(
         self,
         node_id: str,
-        edge_type: type[TypedEdge] | EdgeTypeDef | None = None,
+        edge_type: Any | None = None,
         *,
         after_offset: str | None = None,
         trace_id: str | None = None,
@@ -244,7 +271,7 @@ class ActorScope:
     async def connected(
         self,
         node_id: str,
-        edge_type: type[TypedEdge] | EdgeTypeDef,
+        edge_type: Any,
         *,
         limit: int = 100,
         offset: int = 0,
@@ -321,8 +348,35 @@ class ActorScope:
 # ── Helpers ──────────────────────────────────────────────────────────
 
 
-def _resolve_node_type(t: type[TypedNode] | Any) -> Any:
-    """Resolve a TypedNode class to its NodeTypeDef from the registry."""
+def _resolve_node_type(t: Any) -> Any:
+    """Resolve a node-type witness to a ``NodeTypeDef`` from the registry.
+
+    Accepts:
+    - A generated proto message *class* with an ``(entdb.node)``
+      option — looked up by ``type_id``.
+    - A ``TypedNode`` subclass — looked up by its ``_type_id`` attribute.
+    - An existing ``NodeTypeDef`` — returned as-is.
+    """
+    # Proto message class — read type_id from descriptor option.
+    if isinstance(t, type) and hasattr(t, "DESCRIPTOR") and hasattr(t, "ListFields"):
+        from ._generated import entdb_options_pb2
+        from .registry import get_registry
+
+        opts = t.DESCRIPTOR.GetOptions()
+        if opts.HasExtension(entdb_options_pb2.node):
+            type_id = int(opts.Extensions[entdb_options_pb2.node].type_id)
+            registry = get_registry()
+            node_type = registry.get_node_type(type_id)
+            if node_type is None:
+                raise ValueError(
+                    f"Proto message {t.DESCRIPTOR.name} (type_id={type_id}) "
+                    "is not registered with the SDK schema registry. Call "
+                    "register_proto_schema(<module>) on the generated proto "
+                    "module before using it with the SDK."
+                )
+            return node_type
+        raise ValueError(f"Proto message class {t.DESCRIPTOR.name} has no (entdb.node) option")
+
     if isinstance(t, type) and issubclass(t, TypedNode) and t is not TypedNode:
         from .registry import get_registry
 
@@ -334,8 +388,29 @@ def _resolve_node_type(t: type[TypedNode] | Any) -> Any:
     return t
 
 
-def _resolve_edge_type(t: type[TypedEdge] | Any) -> Any:
-    """Resolve a TypedEdge class to its EdgeTypeDef from the registry."""
+def _resolve_edge_type(t: Any) -> Any:
+    """Resolve an edge-type witness to an ``EdgeTypeDef`` from the registry.
+
+    Accepts a generated proto message class with an ``(entdb.edge)``
+    option, a ``TypedEdge`` subclass, or an existing ``EdgeTypeDef``.
+    """
+    if isinstance(t, type) and hasattr(t, "DESCRIPTOR") and hasattr(t, "ListFields"):
+        from ._generated import entdb_options_pb2
+        from .registry import get_registry
+
+        opts = t.DESCRIPTOR.GetOptions()
+        if opts.HasExtension(entdb_options_pb2.edge):
+            edge_id = int(opts.Extensions[entdb_options_pb2.edge].edge_id)
+            registry = get_registry()
+            edge_type = registry.get_edge_type(edge_id)
+            if edge_type is None:
+                raise ValueError(
+                    f"Proto edge {t.DESCRIPTOR.name} (edge_id={edge_id}) "
+                    "is not registered with the SDK schema registry."
+                )
+            return edge_type
+        raise ValueError(f"Proto message class {t.DESCRIPTOR.name} has no (entdb.edge) option")
+
     if isinstance(t, type) and issubclass(t, TypedEdge) and t is not TypedEdge:
         from .registry import get_registry
 

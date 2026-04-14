@@ -17,10 +17,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from sdk.entdb_sdk import register_proto_schema
 from sdk.entdb_sdk._grpc_client import Edge, GrpcCommitResult, GrpcReceipt, Node
 from sdk.entdb_sdk.client import DbClient
+from sdk.entdb_sdk.registry import get_registry, reset_registry
 from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
 from sdk.entdb_sdk.scope import ActorScope, ScopedPlan, TenantScope
+from tests._test_schemas import test_schema_pb2 as ts
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -99,6 +102,24 @@ def client():
     c._grpc.revoke_access = AsyncMock(return_value=True)
     c._grpc.list_shared_with_me = AsyncMock(return_value=([_make_node()], False))
     return c
+
+
+@pytest.fixture
+def proto_client(client):
+    """A ``client`` with the test_schema proto types registered.
+
+    SDK v0.3 ``Plan`` operations need the schema registry to know
+    about ``Product`` / ``Category`` / ``BelongsTo`` so that the
+    ingress translator can validate payloads. ``client`` returns a
+    fresh DbClient each call; this fixture wraps it with a registry
+    reset so the test schema is the only thing in scope, then tears
+    it down.
+    """
+    reset_registry()
+    register_proto_schema(ts)
+    client.registry = get_registry()
+    yield client
+    reset_registry()
 
 
 # ---------------------------------------------------------------------------
@@ -251,70 +272,84 @@ class TestActorScopeSharing:
 
 
 class TestScopedPlan:
+    """ScopedPlan exercises the SDK v0.3 single-shape API.
+
+    All write operations take proto messages (or proto classes for
+    ``delete`` / ``edge_create`` / ``edge_delete``). The
+    ``_proto_client`` fixture below registers the test schema and
+    points the registry at ``Product`` / ``BelongsTo`` so these tests
+    can use real proto types end-to-end.
+    """
+
     def test_plan_returns_scoped_plan(self, client):
         scope = client.tenant("t1").actor("user:bob")
         plan = scope.plan()
         assert isinstance(plan, ScopedPlan)
 
-    def test_scoped_plan_create_auto_fills_tenant_actor(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    def test_scoped_plan_create_auto_fills_tenant_actor(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
 
         # create should work without tenant/actor args
-        plan.create(TASK, {"title": "Hello"})
+        plan.create(ts.Product(sku="p1", name="Hello", price_cents=100))
         assert len(plan._plan._operations) == 1
         assert plan._plan._tenant_id == "t1"
         assert plan._plan._actor == "user:bob"
 
-    def test_scoped_plan_update(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    def test_scoped_plan_update(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
-        plan.update(TASK, "n1", {"title": "Updated"})
+        plan.update("n1", ts.Product(name="Updated"))
         assert len(plan._plan._operations) == 1
         op = plan._plan._operations[0]
         assert "update_node" in op
         assert op["update_node"]["id"] == "n1"
+        # Patch contains only the explicitly-set field — that's the
+        # SDK v0.3 partial-update semantics.
+        assert op["update_node"]["patch"] == {"name": "Updated"}
 
-    def test_scoped_plan_delete(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    def test_scoped_plan_delete(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
-        plan.delete(TASK, "n1")
+        plan.delete(ts.Product, "n1")
         assert len(plan._plan._operations) == 1
         op = plan._plan._operations[0]
         assert "delete_node" in op
+        assert op["delete_node"]["type_id"] == 9001
 
-    def test_scoped_plan_edge_create(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    def test_scoped_plan_edge_create(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
-        plan.edge_create(EDGE, "n1", "n2")
+        plan.edge_create(ts.BelongsTo, "n1", "n2")
         assert len(plan._plan._operations) == 1
         op = plan._plan._operations[0]
         assert "create_edge" in op
+        assert op["create_edge"]["edge_id"] == 9101
 
-    def test_scoped_plan_edge_delete(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    def test_scoped_plan_edge_delete(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
-        plan.edge_delete(EDGE, "n1", "n2")
+        plan.edge_delete(ts.BelongsTo, "n1", "n2")
         assert len(plan._plan._operations) == 1
         op = plan._plan._operations[0]
         assert "delete_edge" in op
 
-    def test_scoped_plan_chaining(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    def test_scoped_plan_chaining(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
-        result = plan.create(TASK, {"title": "A"}).create(TASK, {"title": "B"})
+        result = plan.create(ts.Product(sku="p1", name="A")).create(ts.Product(sku="p2", name="B"))
         assert result is plan
         assert len(plan._plan._operations) == 2
 
-    async def test_scoped_plan_commit(self, client):
-        scope = client.tenant("t1").actor("user:bob")
+    async def test_scoped_plan_commit(self, proto_client):
+        scope = proto_client.tenant("t1").actor("user:bob")
         plan = scope.plan()
-        plan.create(TASK, {"title": "Test"})
+        plan.create(ts.Product(sku="p1", name="Test"))
         result = await plan.commit()
 
         assert result.success is True
-        client._grpc.execute_atomic.assert_called_once()
-        call_kwargs = client._grpc.execute_atomic.call_args
+        proto_client._grpc.execute_atomic.assert_called_once()
+        call_kwargs = proto_client._grpc.execute_atomic.call_args
         assert call_kwargs.kwargs["tenant_id"] == "t1"
         assert call_kwargs.kwargs["actor"] == "user:bob"
 

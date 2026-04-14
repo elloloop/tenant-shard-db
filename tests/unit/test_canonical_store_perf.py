@@ -141,15 +141,25 @@ class TestQueryNodesSQLPushdown:
 
     @pytest.mark.asyncio
     async def test_sql_injection_in_key(self, seeded_store):
-        """SQL injection in filter *keys* must not break the query."""
+        """SQL injection in filter *keys* must be rejected, not executed.
+
+        Under the 2026-04-14 SDK v0.3 query-operator design the
+        filter translator validates field names against the schema
+        registry (or, in registry-less mode, a safe-identifier regex)
+        before they touch the generated SQL. A malicious key is
+        rejected with ``QueryFilterError`` rather than silently
+        returning no rows.
+        """
+        from dbaas.entdb_server.apply.query_filter import QueryFilterError
+
         malicious_key = '"; DROP TABLE nodes; --'
-        results = await seeded_store.query_nodes(
-            TENANT,
-            TYPE_ID,
-            filter_json={malicious_key: "x"},
-        )
-        assert results == []
-        # Table must still exist
+        with pytest.raises(QueryFilterError):
+            await seeded_store.query_nodes(
+                TENANT,
+                TYPE_ID,
+                filter_json={malicious_key: "x"},
+            )
+        # Table must still exist.
         all_nodes = await seeded_store.query_nodes(
             TENANT,
             TYPE_ID,

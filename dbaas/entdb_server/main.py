@@ -171,6 +171,8 @@ class Server:
                     fd["indexed"] = True
                 if f.get("searchable"):
                     fd["searchable"] = True
+                if f.get("unique"):
+                    fd["unique"] = True
                 fields_data.append(fd)
 
             node_dict = {

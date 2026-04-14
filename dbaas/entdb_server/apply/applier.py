@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 import time
 from collections.abc import Iterator
@@ -68,48 +69,55 @@ class ValidationError(ApplierError):
     pass
 
 
-def _first_key(keys: dict[str, str]) -> tuple[str, str]:
-    """Return a stable (name, value) pair to describe a key collision.
+_UNIQUE_INDEX_NAME_RE = re.compile(r"idx_unique_t(\d+)_f(\d+)")
 
-    Used when ``INSERT OR FAIL`` raises and the applier needs to report
-    which declared key caused the violation. When the op only carried
-    one key we surface that one; for multi-key ops the first-inserted
-    key is a useful hint.
+
+def _parse_unique_index_name(msg: str) -> tuple[int, int] | None:
+    """Extract ``(type_id, field_id)`` from a SQLite IntegrityError message.
+
+    SQLite formats unique-index violations as::
+
+        UNIQUE constraint failed: index 'idx_unique_t201_f1'
+
+    The applier creates indexes named ``idx_unique_t<type>_f<field>`` so
+    this regex round-trips the identifiers used by
+    ``CanonicalStore._ensure_unique_indexes``. Returns ``None`` when the
+    message doesn't match (e.g. an unrelated integrity error).
     """
-    if not keys:
-        return ("", "")
-    name = next(iter(keys))
-    return (str(name), str(keys[name]))
+    m = _UNIQUE_INDEX_NAME_RE.search(msg)
+    if m is None:
+        return None
+    return (int(m.group(1)), int(m.group(2)))
 
 
 class UniqueConstraintError(ApplierError):
-    """A create/update op violated a declared unique key.
+    """A create/update op violated a declared unique field.
 
-    Raised by the applier when an ``INSERT OR FAIL`` on ``node_keys``
-    fails because of a duplicate ``(tenant_id, type_id, key_name,
-    key_value)``. The gRPC boundary surfaces this as
-    ``ALREADY_EXISTS`` so SDKs can catch a typed
-    ``UniqueConstraintError``.
+    Raised by the applier when ``INSERT INTO nodes`` trips a unique
+    expression index defined via ``(entdb.field).unique = true``.
+    The gRPC boundary converts this into ``ALREADY_EXISTS`` with
+    structured metadata so SDKs can reconstruct a typed error.
     """
 
     def __init__(
         self,
         tenant_id: str,
         type_id: int,
-        key_name: str,
-        key_value: str,
+        field_id: int,
+        value: Any,
         *,
         message: str | None = None,
     ) -> None:
         self.tenant_id = tenant_id
         self.type_id = int(type_id)
-        self.key_name = str(key_name)
-        self.key_value = str(key_value)
+        self.field_id = int(field_id)
+        self.value = value
         super().__init__(
             message
             or (
-                f"Unique key violation: tenant={tenant_id} type_id={type_id} "
-                f"key={key_name}={key_value!r} already exists"
+                f"Unique constraint violation: tenant={tenant_id} "
+                f"type_id={type_id} field_id={field_id} value={value!r} "
+                "already exists"
             )
         )
 
@@ -844,39 +852,40 @@ class Applier:
                 op_type = op.get("op")
 
                 if op_type == "create_node":
-                    node = self.canonical_store.create_node_raw(
-                        conn,
-                        tenant_id=tenant_id,
-                        type_id=op["type_id"],
-                        payload=op.get("data", {}),
-                        owner_actor=event.actor,
-                        node_id=op.get("id"),
-                        acl=op.get("acl", []),
-                        created_at=event.ts_ms,
-                    )
-                    # Unique keys (2026-04-13) — authoritative
-                    # validation. IntegrityError is mapped to a typed
-                    # UniqueConstraintError so the outer error path
-                    # halts cleanly per halt-on-error semantics.
-                    op_keys = op.get("keys") or {}
-                    if op_keys:
-                        try:
-                            self.canonical_store.insert_node_keys(
-                                conn,
-                                tenant_id,
-                                int(op["type_id"]),
-                                node.node_id,
-                                op_keys,
-                                event.ts_ms,
-                            )
-                        except sqlite3.IntegrityError as ie:
-                            dup_name, dup_value = _first_key(op_keys)
+                    # Lazy unique-index creation (2026-04-14 SDK v0.3).
+                    # Runs once per ``(db_file, type_id)`` for the life
+                    # of the process. The schema registry is the
+                    # authority for which fields are unique.
+                    type_id_int = int(op["type_id"])
+                    registry = get_registry()
+                    unique_fids = registry.get_unique_field_ids(type_id_int)
+                    if unique_fids:
+                        self.canonical_store._ensure_unique_indexes(
+                            conn, tenant_id, type_id_int, unique_fids
+                        )
+                    try:
+                        node = self.canonical_store.create_node_raw(
+                            conn,
+                            tenant_id=tenant_id,
+                            type_id=op["type_id"],
+                            payload=op.get("data", {}),
+                            owner_actor=event.actor,
+                            node_id=op.get("id"),
+                            acl=op.get("acl", []),
+                            created_at=event.ts_ms,
+                        )
+                    except sqlite3.IntegrityError as ie:
+                        parsed = _parse_unique_index_name(str(ie))
+                        if parsed is not None:
+                            dup_type_id, dup_field_id = parsed
+                            dup_value = (op.get("data") or {}).get(str(dup_field_id))
                             raise UniqueConstraintError(
                                 tenant_id,
-                                int(op["type_id"]),
-                                dup_name,
+                                dup_type_id,
+                                dup_field_id,
                                 dup_value,
                             ) from ie
+                        raise
                     created_nodes.append(node.node_id)
                     self._log_data_policy(op["type_id"])
                     alias = op.get("as")
@@ -902,32 +911,40 @@ class Applier:
                             row[0] if isinstance(row, tuple) else row["payload_json"]
                         )
                         existing.update(patch)
-                        conn.execute(
-                            "UPDATE nodes SET payload_json = ?, updated_at = ? "
-                            "WHERE tenant_id = ? AND node_id = ?",
-                            (json.dumps(existing), event.ts_ms, tenant_id, node_id),
-                        )
-                        # Unique keys (2026-04-13) — replace node_keys
-                        # rows when the update carries a ``keys`` map.
-                        op_keys = op.get("keys") or {}
-                        if op_keys:
-                            try:
-                                self.canonical_store.update_node_keys(
-                                    conn,
-                                    tenant_id,
-                                    int(op.get("type_id", 0)),
-                                    node_id,
-                                    op_keys,
-                                    event.ts_ms,
+                        # Lazy unique-index creation so updates that
+                        # first touch a newly-declared unique field on
+                        # an existing type still get enforced.
+                        type_id_int = int(op.get("type_id", 0) or 0)
+                        if type_id_int:
+                            registry = get_registry()
+                            unique_fids = registry.get_unique_field_ids(type_id_int)
+                            if unique_fids:
+                                self.canonical_store._ensure_unique_indexes(
+                                    conn, tenant_id, type_id_int, unique_fids
                                 )
-                            except sqlite3.IntegrityError as ie:
-                                dup_name, dup_value = _first_key(op_keys)
+                        try:
+                            conn.execute(
+                                "UPDATE nodes SET payload_json = ?, updated_at = ? "
+                                "WHERE tenant_id = ? AND node_id = ?",
+                                (
+                                    json.dumps(existing),
+                                    event.ts_ms,
+                                    tenant_id,
+                                    node_id,
+                                ),
+                            )
+                        except sqlite3.IntegrityError as ie:
+                            parsed = _parse_unique_index_name(str(ie))
+                            if parsed is not None:
+                                dup_type_id, dup_field_id = parsed
+                                dup_value = existing.get(str(dup_field_id))
                                 raise UniqueConstraintError(
                                     tenant_id,
-                                    int(op.get("type_id", 0)),
-                                    dup_name,
+                                    dup_type_id,
+                                    dup_field_id,
                                     dup_value,
                                 ) from ie
+                            raise
 
                 elif op_type == "delete_node":
                     node_id = self._resolve_ref(op.get("id", ""))
@@ -940,8 +957,8 @@ class Applier:
                         "DELETE FROM node_visibility WHERE tenant_id = ? AND node_id = ?",
                         (tenant_id, node_id),
                     )
-                    # Unique keys (2026-04-13) — cascade cleanup.
-                    self.canonical_store.delete_node_keys(conn, tenant_id, node_id)
+                    # 2026-04-14 SDK v0.3: unique values live inside
+                    # the ``nodes`` row itself — no cascade table.
                     conn.execute(
                         "DELETE FROM nodes WHERE tenant_id = ? AND node_id = ?",
                         (tenant_id, node_id),
