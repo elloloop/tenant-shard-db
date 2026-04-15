@@ -96,7 +96,13 @@ const isActive = (href: string) =>
     <ThemeScript />
   </head>
   <body class="bg-background text-foreground antialiased">
-    <AppShell mobileBreakpoint={768} tabletBreakpoint={1024}>
+    <AppShell
+      sidebarWidth="17rem"
+      sidebarCollapsedWidth="4rem"
+      headerHeight="3.5rem"
+      mobileBreakpoint={768}
+      tabletBreakpoint={1024}
+    >
       <AppShellHeader>
         <div
           class="flex h-14 items-center gap-6 border-b border-border bg-background px-4 md:px-6"
@@ -160,7 +166,7 @@ const isActive = (href: string) =>
 
       <AppShellMain>
         <AppShellContent>
-          <article class="prose mx-auto max-w-3xl px-4 py-10 md:px-8">
+          <article class="prose mx-auto w-full max-w-4xl px-6 py-10 md:px-10">
             <slot />
           </article>
         </AppShellContent>
