@@ -1135,6 +1135,47 @@ class DbClient:
             timeout=timeout,
         )
 
+    async def search_nodes(
+        self,
+        node_type: NodeTypeDef,
+        tenant_id: str,
+        actor: str,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """Full-text search across searchable fields of a node type.
+
+        Args:
+            node_type: Node type to search
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            query: FTS5 match expression
+            limit: Maximum results
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of matching nodes ordered by relevance
+        """
+        self._ensure_connected()
+        trace_id = trace_id or str(uuid.uuid4())
+
+        return await self._grpc.search_nodes(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=node_type.type_id,
+            query=query,
+            limit=limit,
+            offset=offset,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
     async def health(
         self,
         *,

@@ -41,6 +41,8 @@ type Transport interface {
 	GetEdgesFrom(ctx context.Context, tenantID, actor, fromNodeID string, edgeTypeID int) ([]*Edge, error)
 	// GetEdgesTo retrieves incoming edges to a node.
 	GetEdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error)
+	// SearchNodes performs full-text search across searchable fields.
+	SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string) ([]*Node, error)
 }
 
 // grpcTransport is the production Transport backed by a gRPC connection.
@@ -112,6 +114,10 @@ func (t *grpcTransport) GetEdgesFrom(_ context.Context, _, _, _ string, _ int) (
 }
 
 func (t *grpcTransport) GetEdgesTo(_ context.Context, _, _, _ string, _ int) ([]*Edge, error) {
+	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
+}
+
+func (t *grpcTransport) SearchNodes(_ context.Context, _, _ string, _ int, _ string) ([]*Node, error) {
 	return nil, &EntDBError{Message: "not implemented: requires proto stubs", Code: "NOT_IMPLEMENTED"}
 }
 

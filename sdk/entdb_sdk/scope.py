@@ -238,6 +238,37 @@ class ActorScope:
             _resolve_node_type(node_type), self._tenant_id, self._actor, **kwargs
         )
 
+    async def search(
+        self,
+        node_type: Any,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """Full-text search across searchable fields.
+
+        ``node_type`` is the proto message class (or ``NodeTypeDef``).
+        ``query`` is an FTS5 match expression supporting AND, OR, NOT,
+        phrase ("..."), and prefix (word*) syntax.
+
+        Only fields declared with ``(entdb.field).searchable = true``
+        are searched. Results are ordered by relevance and ACL-filtered
+        server-side.
+        """
+        kwargs = _optional(trace_id=trace_id, timeout=timeout)
+        return await self._client.search_nodes(
+            _resolve_node_type(node_type),
+            self._tenant_id,
+            self._actor,
+            query,
+            limit=limit,
+            offset=offset,
+            **kwargs,
+        )
+
     async def edges_out(
         self,
         node_id: str,

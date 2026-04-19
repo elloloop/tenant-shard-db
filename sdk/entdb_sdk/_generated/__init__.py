@@ -123,6 +123,9 @@ from .entdb_pb2 import (
     # Unique keys (2026-04-13)
     GetNodeByKeyRequest,
     GetNodeByKeyResponse,
+    # Full-text search (2026-04-19)
+    SearchNodesRequest,
+    SearchNodesResponse,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 

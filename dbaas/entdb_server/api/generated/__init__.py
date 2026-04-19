@@ -124,6 +124,9 @@ from .entdb_pb2 import (
     # Unique keys
     GetNodeByKeyRequest,
     GetNodeByKeyResponse,
+    # Full-text search
+    SearchNodesRequest,
+    SearchNodesResponse,
 )
 from .entdb_pb2_grpc import (
     EntDBServiceServicer,
@@ -252,6 +255,9 @@ __all__ = [
     # Unique keys
     "GetNodeByKeyRequest",
     "GetNodeByKeyResponse",
+    # Full-text search
+    "SearchNodesRequest",
+    "SearchNodesResponse",
     # gRPC
     "EntDBServiceServicer",
     "EntDBServiceStub",

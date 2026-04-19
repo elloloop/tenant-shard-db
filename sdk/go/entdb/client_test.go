@@ -102,6 +102,10 @@ func (m *mockTransport) GetEdgesTo(_ context.Context, _, _, _ string, _ int) ([]
 	return m.edgesToResp, nil
 }
 
+func (m *mockTransport) SearchNodes(_ context.Context, _, _ string, _ int, _ string) ([]*Node, error) {
+	return nil, nil
+}
+
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
 	t.Helper()
 	return newClientWithTransport("localhost:50051", transport, opts...)

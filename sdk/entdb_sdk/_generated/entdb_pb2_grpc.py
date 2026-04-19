@@ -250,6 +250,11 @@ class EntDBServiceStub(object):
                 request_serializer=entdb__pb2.GetNodeByKeyRequest.SerializeToString,
                 response_deserializer=entdb__pb2.GetNodeByKeyResponse.FromString,
                 _registered_method=True)
+        self.SearchNodes = channel.unary_unary(
+                '/entdb.v1.EntDBService/SearchNodes',
+                request_serializer=entdb__pb2.SearchNodesRequest.SerializeToString,
+                response_deserializer=entdb__pb2.SearchNodesResponse.FromString,
+                _registered_method=True)
 
 
 class EntDBServiceServicer(object):
@@ -543,6 +548,13 @@ class EntDBServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def SearchNodes(self, request, context):
+        """Full-text search across searchable fields (2026-04-19 FTS decision)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EntDBServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -760,6 +772,11 @@ def add_EntDBServiceServicer_to_server(servicer, server):
                     servicer.GetNodeByKey,
                     request_deserializer=entdb__pb2.GetNodeByKeyRequest.FromString,
                     response_serializer=entdb__pb2.GetNodeByKeyResponse.SerializeToString,
+            ),
+            'SearchNodes': grpc.unary_unary_rpc_method_handler(
+                    servicer.SearchNodes,
+                    request_deserializer=entdb__pb2.SearchNodesRequest.FromString,
+                    response_serializer=entdb__pb2.SearchNodesResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -1924,6 +1941,33 @@ class EntDBService(object):
             '/entdb.v1.EntDBService/GetNodeByKey',
             entdb__pb2.GetNodeByKeyRequest.SerializeToString,
             entdb__pb2.GetNodeByKeyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SearchNodes(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/entdb.v1.EntDBService/SearchNodes',
+            entdb__pb2.SearchNodesRequest.SerializeToString,
+            entdb__pb2.SearchNodesResponse.FromString,
             options,
             channel_credentials,
             insecure,
