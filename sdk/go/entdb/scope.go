@@ -169,3 +169,40 @@ func Query[T proto.Message](ctx context.Context, s *Scope, filter map[string]any
 	}
 	return out, nil
 }
+
+// Search performs full-text search across searchable fields of a node
+// type.
+//
+// T determines the type_id and the result type. The query string is
+// an FTS5 match expression supporting AND, OR, NOT, phrase ("..."),
+// and prefix (word*) syntax. Only fields declared with
+// (entdb.field).searchable = true are searched.
+//
+//	results, err := entdb.Search[*shop.Product](ctx, scope, "widget")
+func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts ...QueryOption) ([]T, error) {
+	witness := newZeroMessage[T]()
+	typeID, err := typeIDFromMessage(witness)
+	if err != nil {
+		return nil, fmt.Errorf("entdb: Search: %w", err)
+	}
+	var cfg queryConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	nodes, err := s.client.transport.SearchNodes(ctx, s.tenantID, s.actor.String(), int(typeID), query)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]T, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		conv, err := unmarshalFromWire[T](n.Payload)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, nil
+}

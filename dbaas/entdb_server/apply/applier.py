@@ -888,6 +888,20 @@ class Applier:
                                 dup_value,
                             ) from ie
                         raise
+                    # FTS: index searchable fields on create.
+                    searchable_fids = registry.get_searchable_field_ids(type_id_int)
+                    if searchable_fids:
+                        self.canonical_store._ensure_fts_table(
+                            conn, tenant_id, type_id_int, searchable_fids
+                        )
+                        self.canonical_store._sync_fts_insert(
+                            conn,
+                            type_id_int,
+                            node.node_id,
+                            op.get("data", {}),
+                            searchable_fids,
+                        )
+
                     created_nodes.append(node.node_id)
                     self._log_data_policy(op["type_id"])
                     alias = op.get("as")
@@ -909,9 +923,10 @@ class Applier:
                     )
                     row = cursor.fetchone()
                     if row:
-                        existing = json.loads(
+                        old_payload = json.loads(
                             row[0] if isinstance(row, tuple) else row["payload_json"]
                         )
+                        existing = dict(old_payload)
                         existing.update(patch)
                         # Lazy field-index creation so updates that
                         # first touch a newly-declared unique/indexed
@@ -949,8 +964,40 @@ class Applier:
                                 ) from ie
                             raise
 
+                        # FTS: update searchable fields if any changed.
+                        if type_id_int:
+                            registry = get_registry()
+                            searchable_fids = registry.get_searchable_field_ids(type_id_int)
+                            if searchable_fids:
+                                self.canonical_store._ensure_fts_table(
+                                    conn, tenant_id, type_id_int, searchable_fids
+                                )
+                                self.canonical_store._sync_fts_update(
+                                    conn,
+                                    type_id_int,
+                                    node_id,
+                                    old_payload,
+                                    existing,
+                                    searchable_fids,
+                                )
+
                 elif op_type == "delete_node":
                     node_id = self._resolve_ref(op.get("id", ""))
+
+                    # FTS: remove from search index before deleting the
+                    # nodes row.
+                    del_type_id = int(op.get("type_id", 0) or 0)
+                    if del_type_id:
+                        registry = get_registry()
+                        searchable_fids = registry.get_searchable_field_ids(del_type_id)
+                        if searchable_fids:
+                            self.canonical_store._ensure_fts_table(
+                                conn, tenant_id, del_type_id, searchable_fids
+                            )
+                            self.canonical_store._sync_fts_delete(
+                                conn, del_type_id, node_id, {}, searchable_fids
+                            )
+
                     conn.execute(
                         "DELETE FROM edges WHERE tenant_id = ? "
                         "AND (from_node_id = ? OR to_node_id = ?)",

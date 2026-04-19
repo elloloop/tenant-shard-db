@@ -122,6 +122,9 @@ service EntDBService {
 
     // Unique-key secondary lookup (2026-04-13 unique_keys decision)
     rpc GetNodeByKey(GetNodeByKeyRequest) returns (GetNodeByKeyResponse);
+
+    // Full-text search across searchable fields (2026-04-19 FTS decision)
+    rpc SearchNodes(SearchNodesRequest) returns (SearchNodesResponse);
 }
 
 // Common message types
@@ -1085,4 +1088,20 @@ message GetNodeByKeyRequest {
 message GetNodeByKeyResponse {
     Node node = 1;
     bool found = 2;
+}
+
+// Full-text search (2026-04-19 FTS decision)
+
+message SearchNodesRequest {
+    string tenant_id = 1;
+    string actor = 2;
+    int32 type_id = 3;
+    // FTS5 match expression (supports AND/OR/NOT/phrase/prefix)
+    string query = 4;
+    int32 limit = 5;
+    int32 offset = 6;
+}
+
+message SearchNodesResponse {
+    repeated Node nodes = 1;
 }

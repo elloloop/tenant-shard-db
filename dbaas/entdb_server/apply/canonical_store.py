@@ -438,6 +438,12 @@ class CanonicalStore:
         self._unique_index_cache: set[tuple[str, int]] = set()
         self._query_index_cache: set[tuple[str, int]] = set()
 
+        # Lazy FTS5 virtual table creation cache. Same pattern as
+        # ``_unique_index_cache``: keyed by ``(db_path, type_id)``,
+        # ensures ``CREATE VIRTUAL TABLE IF NOT EXISTS`` runs at most
+        # once per type per process lifetime.
+        self._fts_table_cache: set[tuple[str, int]] = set()
+
     # ── offset tracking (read-after-write consistency) ──────────────────
 
     def _get_offset_condition(self, tenant_id: str) -> asyncio.Condition:
@@ -1878,6 +1884,206 @@ class CanonicalStore:
             self._ensure_unique_indexes(conn, tenant_id, type_id, unique_field_ids)
         if indexed_field_ids:
             self._ensure_query_indexes(conn, tenant_id, type_id, indexed_field_ids)
+
+    # ── FTS5 full-text search (2026-04-19) ─────────────────────────────
+
+    def _get_db_path_for_cache(self, conn: sqlite3.Connection, tenant_id: str) -> str:
+        """Extract the physical DB path from a connection for cache keying.
+
+        Shared by ``_ensure_unique_indexes`` and FTS table creation.
+        """
+        try:
+            row = conn.execute("PRAGMA database_list").fetchone()
+            if row is None:
+                return f"tenant:{tenant_id}"
+            db_path = row[2] if isinstance(row, tuple) else row["file"]
+            return db_path if db_path else f"tenant:{tenant_id}"
+        except sqlite3.Error:
+            return f"tenant:{tenant_id}"
+
+    def _ensure_fts_table(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        searchable_field_ids: list[int],
+    ) -> None:
+        """Lazily create an FTS5 virtual table for ``type_id``.
+
+        One FTS5 table per node type that has at least one searchable
+        field. The ``node_id`` column is stored but excluded from
+        tokenization (``UNINDEXED``). The searchable columns are
+        stored and indexed for full-text search.
+
+        Tokenization uses Porter stemming + Unicode-aware tokenizer so
+        ``"running"`` matches ``"run"`` and accented characters are
+        handled correctly.
+
+        Same process-local caching pattern as ``_ensure_unique_indexes``.
+
+        Args:
+            conn: Open SQLite connection.
+            tenant_id: Tenant identifier (cache-key fallback only).
+            type_id: Node type id.
+            searchable_field_ids: String field ids declared searchable.
+                An empty list is a no-op.
+        """
+        if not searchable_field_ids:
+            return
+
+        db_path = self._get_db_path_for_cache(conn, tenant_id)
+        cache_key = (db_path, int(type_id))
+        if cache_key in self._fts_table_cache:
+            return
+
+        int_type_id = int(type_id)
+        cols = ", ".join(f"f{int(fid)}" for fid in searchable_field_ids)
+        table_name = f"fts_t{int_type_id}"
+        conn.execute(
+            f"CREATE VIRTUAL TABLE IF NOT EXISTS {table_name} USING fts5("
+            f"node_id UNINDEXED, {cols}, "
+            f"tokenize='porter unicode61'"
+            f")"
+        )
+        self._fts_table_cache.add(cache_key)
+
+    def _sync_fts_insert(
+        self,
+        conn: sqlite3.Connection,
+        type_id: int,
+        node_id: str,
+        payload: dict[str, Any],
+        searchable_field_ids: list[int],
+    ) -> None:
+        """Insert a node's searchable fields into the FTS index."""
+        if not searchable_field_ids:
+            return
+        cols = ", ".join(f"f{int(fid)}" for fid in searchable_field_ids)
+        placeholders = ", ".join("?" for _ in searchable_field_ids)
+        values = [payload.get(str(fid), "") for fid in searchable_field_ids]
+        int_type_id = int(type_id)
+        conn.execute(
+            f"INSERT INTO fts_t{int_type_id}(node_id, {cols}) VALUES (?, {placeholders})",
+            [node_id] + values,
+        )
+
+    def _sync_fts_delete(
+        self,
+        conn: sqlite3.Connection,
+        type_id: int,
+        node_id: str,
+        payload: dict[str, Any],
+        searchable_field_ids: list[int],
+    ) -> None:
+        """Remove a node from the FTS index."""
+        if not searchable_field_ids:
+            return
+        int_type_id = int(type_id)
+        table_name = f"fts_t{int_type_id}"
+        conn.execute(
+            f"DELETE FROM {table_name} WHERE node_id = ?",
+            (node_id,),
+        )
+
+    def _sync_fts_update(
+        self,
+        conn: sqlite3.Connection,
+        type_id: int,
+        node_id: str,
+        old_payload: dict[str, Any],
+        new_payload: dict[str, Any],
+        searchable_field_ids: list[int],
+    ) -> None:
+        """Update FTS index when a node's searchable fields change.
+
+        Only touches the index if at least one searchable field actually
+        changed. Delete old, insert new.
+        """
+        if not searchable_field_ids:
+            return
+        changed = any(
+            old_payload.get(str(fid)) != new_payload.get(str(fid)) for fid in searchable_field_ids
+        )
+        if not changed:
+            return
+        self._sync_fts_delete(conn, type_id, node_id, old_payload, searchable_field_ids)
+        self._sync_fts_insert(conn, type_id, node_id, new_payload, searchable_field_ids)
+
+    def _sync_search_nodes(
+        self,
+        tenant_id: str,
+        type_id: int,
+        query: str,
+        searchable_field_ids: list[int],
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Node]:
+        """Full-text search across searchable fields of a node type.
+
+        Returns nodes whose searchable text matches the FTS5 ``MATCH``
+        expression, ordered by relevance (``rank``). The FTS table is
+        created lazily on first call. If the type has no searchable
+        fields, returns an empty list.
+
+        Args:
+            tenant_id: Tenant identifier.
+            type_id: Node type id.
+            query: FTS5 match expression (AND/OR/NOT/phrase/prefix).
+            searchable_field_ids: String field ids with searchable=true.
+            limit: Maximum results.
+            offset: Pagination offset.
+
+        Returns:
+            List of matching nodes ordered by relevance.
+        """
+        if not searchable_field_ids:
+            return []
+
+        with self._get_connection(tenant_id) as conn:
+            self._ensure_fts_table(conn, tenant_id, type_id, searchable_field_ids)
+            int_type_id = int(type_id)
+            table_name = f"fts_t{int_type_id}"
+            cursor = conn.execute(
+                f"SELECT n.* FROM {table_name} AS fts "
+                f"JOIN nodes AS n ON n.node_id = fts.node_id AND n.tenant_id = ? "
+                f"WHERE {table_name} MATCH ? "
+                f"ORDER BY fts.rank "
+                f"LIMIT ? OFFSET ?",
+                (tenant_id, query, limit, offset),
+            )
+            return [
+                Node.from_row(
+                    tenant_id=row["tenant_id"],
+                    node_id=row["node_id"],
+                    type_id=row["type_id"],
+                    payload_json=row["payload_json"],
+                    created_at=row["created_at"],
+                    updated_at=row["updated_at"],
+                    owner_actor=row["owner_actor"],
+                    acl_json=row["acl_blob"],
+                )
+                for row in cursor.fetchall()
+            ]
+
+    async def search_nodes(
+        self,
+        tenant_id: str,
+        type_id: int,
+        query: str,
+        searchable_field_ids: list[int],
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Node]:
+        """Async wrapper for ``_sync_search_nodes``."""
+        return await self._run_sync(
+            self._sync_search_nodes,
+            tenant_id,
+            type_id,
+            query,
+            searchable_field_ids,
+            limit,
+            offset,
+        )
 
     def _sync_get_node_by_key(
         self,

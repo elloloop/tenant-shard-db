@@ -114,6 +114,8 @@ from .generated import (
     RevokeAllUserAccessResponse,
     SearchMailboxRequest,
     SearchMailboxResponse,
+    SearchNodesRequest,
+    SearchNodesResponse,
     ShareNodeRequest,
     ShareNodeResponse,
     # Tenant registry
@@ -921,6 +923,90 @@ class EntDBServicer(EntDBServiceServicer):
             record_grpc_request("GetNodeByKey", "error", time.perf_counter() - start)
             logger.error(f"GetNodeByKey failed: {e}", exc_info=True)
             return GetNodeByKeyResponse(found=False)
+
+    async def SearchNodes(
+        self,
+        request: SearchNodesRequest,
+        context: grpc_aio.ServicerContext,
+    ) -> SearchNodesResponse:
+        """Full-text search across searchable fields of a node type.
+
+        Uses FTS5 virtual tables (one per node type with searchable
+        fields). The query string supports FTS5 match expressions:
+        AND, OR, NOT, phrase ("..."), prefix (word*), and column
+        filters (col:word).
+
+        Results are ACL-filtered the same way as QueryNodes.
+        """
+        start = time.perf_counter()
+        try:
+            await self._check_tenant(request.tenant_id, context)
+
+            # Validate query
+            query = request.query.strip()
+            if not query:
+                await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "query must not be empty")
+                return SearchNodesResponse(nodes=[])
+            if len(query) > 1000:
+                await context.abort(
+                    grpc.StatusCode.INVALID_ARGUMENT,
+                    "query must be under 1000 characters",
+                )
+                return SearchNodesResponse(nodes=[])
+
+            type_id = int(request.type_id)
+            searchable_fids = self.schema_registry.get_searchable_field_ids(type_id)
+
+            nodes = await self.canonical_store.search_nodes(
+                tenant_id=request.tenant_id,
+                type_id=type_id,
+                query=query,
+                searchable_field_ids=searchable_fids,
+                limit=request.limit or 50,
+                offset=request.offset or 0,
+            )
+
+            # ACL filtering: same pattern as QueryNodes
+            role = await self._check_cross_tenant_read(
+                request.tenant_id,
+                request.actor,
+                context,
+            )
+            if role == "cross_tenant":
+                actor_ids = await self.canonical_store.resolve_actor_groups(
+                    request.tenant_id,
+                    request.actor,
+                )
+                accessible = []
+                for n in nodes:
+                    if await self.canonical_store.can_access(
+                        request.tenant_id,
+                        n.node_id,
+                        actor_ids,
+                    ):
+                        accessible.append(n)
+                nodes = accessible
+
+            proto_nodes = [
+                Node(
+                    tenant_id=n.tenant_id,
+                    node_id=n.node_id,
+                    type_id=n.type_id,
+                    payload=_dict_to_struct(self._payload_id_to_name_dict(n)),
+                    created_at=n.created_at,
+                    updated_at=n.updated_at,
+                    owner_actor=n.owner_actor,
+                    acl=_acl_list_to_proto(n.acl),
+                )
+                for n in nodes
+            ]
+
+            record_grpc_request("SearchNodes", "ok", time.perf_counter() - start)
+            return SearchNodesResponse(nodes=proto_nodes)
+        except Exception as e:
+            record_grpc_request("SearchNodes", "error", time.perf_counter() - start)
+            logger.error(f"SearchNodes failed: {e}", exc_info=True)
+            return SearchNodesResponse(nodes=[])
 
     async def GetNodes(
         self,

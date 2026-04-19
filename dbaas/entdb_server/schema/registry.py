@@ -285,6 +285,28 @@ class SchemaRegistry:
             f.field_id for f in node_type.fields if f.indexed and not f.unique and not f.deprecated
         ]
 
+    def get_searchable_field_ids(self, type_id: int) -> list[int]:
+        """Return ids of string fields declared ``searchable`` on a node type.
+
+        Only string (TEXT) fields are eligible for FTS5 indexing. Non-
+        string fields with ``searchable = true`` are silently excluded
+        here (the warning is emitted at registration time by
+        ``register_proto_schema``).
+
+        Returns an empty list for unknown types (same rationale as
+        ``get_unique_field_ids``).
+        """
+        from .types import FieldKind
+
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            return []
+        return [
+            f.field_id
+            for f in node_type.fields
+            if f.searchable and not f.deprecated and f.kind == FieldKind.STRING
+        ]
+
     def get_pii_fields(self, type_id: int) -> list[str]:
         """Get the names of PII-marked fields for a node type.
 

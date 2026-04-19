@@ -70,6 +70,7 @@ from ._generated import (
     RevokeAccessRequest,
     RevokeAllUserAccessRequest,
     SearchMailboxRequest,
+    SearchNodesRequest,
     ShareNodeRequest,
     # Tenant membership
     TenantMemberRequest,
@@ -1057,6 +1058,54 @@ class GrpcClient:
             }
             for r in response.results
         ]
+
+    async def search_nodes(
+        self,
+        tenant_id: str,
+        actor: str,
+        type_id: int,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        trace_id: str = "",
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """Full-text search across searchable fields of a node type.
+
+        Args:
+            tenant_id: Tenant identifier
+            actor: Actor making request
+            type_id: Node type ID
+            query: FTS5 match expression
+            limit: Maximum results
+            offset: Pagination offset
+            trace_id: Optional trace ID for distributed tracing
+            timeout: Per-call timeout in seconds
+
+        Returns:
+            List of matching nodes ordered by relevance
+        """
+        stub = self._ensure_connected()
+        metadata = self._build_metadata()
+
+        request = SearchNodesRequest(
+            tenant_id=tenant_id,
+            actor=actor,
+            type_id=type_id,
+            query=query,
+            limit=limit,
+            offset=offset,
+        )
+
+        response = await self._retry(
+            stub.SearchNodes,
+            request,
+            timeout=timeout or _DEFAULT_TIMEOUT,
+            metadata=metadata,
+        )
+
+        return [_node_from_proto(n) for n in response.nodes]
 
     async def get_mailbox(
         self,

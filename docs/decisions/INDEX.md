@@ -23,6 +23,9 @@ One line per decision. Newest within each topic first. Rebuilt on each freeze.
 ### sdk
 - **2026-04-14** — [Single-shape SDK API, typed unique-key tokens via codegen, expression-index unique enforcement](sdk_api.md#2026-04-14-single-shape-sdk-api-typed-unique-key-tokens-via-codegen-expression-index-unique-enforcement) — frozen
 
+### search
+- **2026-04-19** — [FTS5-backed full-text search via (entdb.field).searchable](fts.md#2026-04-19-fts5-backed-full-text-search-via-entdbfieldsearchable) — frozen
+
 ---
 
 _Powered by the [`freeze-decision` skill](../../.claude/skills/freeze-decision/SKILL.md)._
