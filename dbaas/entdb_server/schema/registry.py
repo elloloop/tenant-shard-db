@@ -266,6 +266,25 @@ class SchemaRegistry:
             return []
         return [f.field_id for f in node_type.fields if f.unique and not f.deprecated]
 
+    def get_indexed_field_ids(self, type_id: int) -> list[int]:
+        """Return ids of fields declared ``indexed`` on a node type.
+
+        Fields with ``unique = true`` already get a unique expression
+        index (which is also usable for non-unique lookups), so they are
+        excluded here — ``unique`` is a superset of ``indexed``. Only
+        fields that have ``indexed = true`` **without** ``unique = true``
+        are returned.
+
+        Returns an empty list for unknown types (same rationale as
+        ``get_unique_field_ids``).
+        """
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            return []
+        return [
+            f.field_id for f in node_type.fields if f.indexed and not f.unique and not f.deprecated
+        ]
+
     def get_pii_fields(self, type_id: int) -> list[str]:
         """Get the names of PII-marked fields for a node type.
 
