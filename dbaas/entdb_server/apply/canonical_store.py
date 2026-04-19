@@ -428,13 +428,15 @@ class CanonicalStore:
         self._applied_offsets: dict[str, str] = {}
         self._offset_conditions: dict[str, asyncio.Condition] = {}
 
-        # Lazy unique-index creation cache (2026-04-14 SDK v0.3
-        # decision). Keyed by ``(db_path, type_id)`` — once a
-        # ``CREATE UNIQUE INDEX IF NOT EXISTS`` has been run for a
+        # Lazy field-index creation cache (2026-04-14 SDK v0.3
+        # decision, extended 2026-04-19 for non-unique query indexes).
+        # Keyed by ``(db_path, type_id)`` — once all expression
+        # indexes (unique + non-unique query) have been created for a
         # given physical DB + type combination, subsequent writes
         # skip the call. Cache is process-local; on restart the
         # ``IF NOT EXISTS`` clause keeps it idempotent.
         self._unique_index_cache: set[tuple[str, int]] = set()
+        self._query_index_cache: set[tuple[str, int]] = set()
 
     # ── offset tracking (read-after-write consistency) ──────────────────
 
@@ -1782,6 +1784,100 @@ class CanonicalStore:
                 f"WHERE type_id = {int_type_id}"
             )
         self._unique_index_cache.add(cache_key)
+
+    def _ensure_query_indexes(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        indexed_field_ids: list[int],
+    ) -> None:
+        """Lazily create non-unique expression indexes for ``type_id``.
+
+        Mirrors ``_ensure_unique_indexes`` but creates **non-unique**
+        indexes for fields declared with ``(entdb.field).indexed = true``.
+        These speed up filtered queries (``query_nodes``) by letting
+        SQLite's planner use the index when the WHERE clause contains a
+        matching ``json_extract(payload_json, '$."<field_id>"')``
+        expression — which ``compile_query_filter`` already emits.
+
+        No changes are needed to the query path itself; SQLite
+        automatically matches the indexed expression in the WHERE
+        clause to the expression in the index definition.
+
+        Storage cost is ~30-50 bytes per row per index (B-tree entry
+        for the extracted value). This is explicitly opt-in via the
+        proto annotation — no automatic indexing.
+
+        Uses the same cache-key pattern as ``_ensure_unique_indexes``
+        (physical DB path + type_id) so each ``CREATE INDEX`` runs at
+        most once per type per process lifetime.
+
+        Args:
+            conn: Open SQLite connection.
+            tenant_id: Tenant identifier (used for cache-key fallback
+                only — the index covers all tenants on the physical DB).
+            type_id: Node type id whose indexes should exist.
+            indexed_field_ids: Field ids declared ``indexed`` (but NOT
+                ``unique``) on the type's proto schema. An empty list
+                is a no-op.
+        """
+        if not indexed_field_ids:
+            return
+
+        try:
+            row = conn.execute("PRAGMA database_list").fetchone()
+            if row is None:
+                db_path = f"tenant:{tenant_id}"
+            else:
+                db_path = row[2] if isinstance(row, tuple) else row["file"]
+                if not db_path:
+                    db_path = f"tenant:{tenant_id}"
+        except sqlite3.Error:
+            db_path = f"tenant:{tenant_id}"
+
+        cache_key = (db_path, int(type_id))
+        if cache_key in self._query_index_cache:
+            return
+
+        int_type_id = int(type_id)
+        for fid_raw in indexed_field_ids:
+            fid = int(fid_raw)
+            index_name = f"idx_query_t{int_type_id}_f{fid}"
+            conn.execute(
+                f"CREATE INDEX IF NOT EXISTS {index_name} "
+                f"ON nodes(tenant_id, json_extract(payload_json, '$.\"{fid}\"')) "
+                f"WHERE type_id = {int_type_id}"
+            )
+        self._query_index_cache.add(cache_key)
+
+    def _ensure_field_indexes(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        unique_field_ids: list[int],
+        indexed_field_ids: list[int],
+    ) -> None:
+        """Create both unique and non-unique expression indexes in one call.
+
+        Convenience wrapper that dispatches to ``_ensure_unique_indexes``
+        and ``_ensure_query_indexes``. Each method manages its own
+        per-process cache independently so calling this repeatedly for
+        the same type is cheap after the first invocation.
+
+        Args:
+            conn: Open SQLite connection.
+            tenant_id: Tenant identifier.
+            type_id: Node type id.
+            unique_field_ids: Fields with ``unique = true``.
+            indexed_field_ids: Fields with ``indexed = true`` (minus
+                those already covered by ``unique``).
+        """
+        if unique_field_ids:
+            self._ensure_unique_indexes(conn, tenant_id, type_id, unique_field_ids)
+        if indexed_field_ids:
+            self._ensure_query_indexes(conn, tenant_id, type_id, indexed_field_ids)
 
     def _sync_get_node_by_key(
         self,

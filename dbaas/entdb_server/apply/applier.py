@@ -852,16 +852,18 @@ class Applier:
                 op_type = op.get("op")
 
                 if op_type == "create_node":
-                    # Lazy unique-index creation (2026-04-14 SDK v0.3).
+                    # Lazy field-index creation (2026-04-14 SDK v0.3,
+                    # extended 2026-04-19 for non-unique query indexes).
                     # Runs once per ``(db_file, type_id)`` for the life
                     # of the process. The schema registry is the
-                    # authority for which fields are unique.
+                    # authority for which fields are unique/indexed.
                     type_id_int = int(op["type_id"])
                     registry = get_registry()
                     unique_fids = registry.get_unique_field_ids(type_id_int)
-                    if unique_fids:
-                        self.canonical_store._ensure_unique_indexes(
-                            conn, tenant_id, type_id_int, unique_fids
+                    indexed_fids = registry.get_indexed_field_ids(type_id_int)
+                    if unique_fids or indexed_fids:
+                        self.canonical_store._ensure_field_indexes(
+                            conn, tenant_id, type_id_int, unique_fids, indexed_fids
                         )
                     try:
                         node = self.canonical_store.create_node_raw(
@@ -911,16 +913,17 @@ class Applier:
                             row[0] if isinstance(row, tuple) else row["payload_json"]
                         )
                         existing.update(patch)
-                        # Lazy unique-index creation so updates that
-                        # first touch a newly-declared unique field on
-                        # an existing type still get enforced.
+                        # Lazy field-index creation so updates that
+                        # first touch a newly-declared unique/indexed
+                        # field on an existing type still get enforced.
                         type_id_int = int(op.get("type_id", 0) or 0)
                         if type_id_int:
                             registry = get_registry()
                             unique_fids = registry.get_unique_field_ids(type_id_int)
-                            if unique_fids:
-                                self.canonical_store._ensure_unique_indexes(
-                                    conn, tenant_id, type_id_int, unique_fids
+                            indexed_fids = registry.get_indexed_field_ids(type_id_int)
+                            if unique_fids or indexed_fids:
+                                self.canonical_store._ensure_field_indexes(
+                                    conn, tenant_id, type_id_int, unique_fids, indexed_fids
                                 )
                         try:
                             conn.execute(
