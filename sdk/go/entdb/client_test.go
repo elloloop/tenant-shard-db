@@ -106,6 +106,10 @@ func (m *mockTransport) SearchNodes(_ context.Context, _, _ string, _ int, _ str
 	return nil, nil
 }
 
+func (m *mockTransport) GetTenantQuota(_ context.Context, _, _ string) (*TenantQuota, error) {
+	return nil, nil
+}
+
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
 	t.Helper()
 	return newClientWithTransport("localhost:50051", transport, opts...)
