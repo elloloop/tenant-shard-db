@@ -18,8 +18,8 @@ importers:
         specifier: ^5.1.0
         version: 5.2.8
       '@refraction-ui/astro':
-        specifier: 0.4.10
-        version: 0.4.10(astro@5.18.1(jiti@1.21.7)(rollup@4.60.2)(typescript@5.9.3)(yaml@2.8.3))
+        specifier: 0.4.11
+        version: 0.4.11(astro@5.18.1(jiti@1.21.7)(rollup@4.60.2)(typescript@5.9.3)(yaml@2.8.3))
       '@refraction-ui/tailwind-config':
         specifier: ^0.1.1
         version: 0.1.6(tailwindcss@3.4.19(yaml@2.8.3))
@@ -566,8 +566,8 @@ packages:
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
 
-  '@refraction-ui/astro@0.4.10':
-    resolution: {integrity: sha512-pT2P5hoHUUWsoF84w5hINaQIYJLpeWi+rI3SvCLCbhS3WJQznMOVL+pftM0zr0ie8k9RB1UGKyfY4xajagKPxQ==}
+  '@refraction-ui/astro@0.4.11':
+    resolution: {integrity: sha512-9g/ah2LHV9HquFHD+6TGbuxIijOY0HhLpGcFGmeiVAJeeyBlA2EThV/ZwNYIaL1/1rYoXIEjBc8dX29L0Lz1zA==}
     peerDependencies:
       astro: '>=4.0.0'
 
@@ -2355,7 +2355,7 @@ snapshots:
 
   '@oslojs/encoding@1.1.0': {}
 
-  '@refraction-ui/astro@0.4.10(astro@5.18.1(jiti@1.21.7)(rollup@4.60.2)(typescript@5.9.3)(yaml@2.8.3))':
+  '@refraction-ui/astro@0.4.11(astro@5.18.1(jiti@1.21.7)(rollup@4.60.2)(typescript@5.9.3)(yaml@2.8.3))':
     dependencies:
       astro: 5.18.1(jiti@1.21.7)(rollup@4.60.2)(typescript@5.9.3)(yaml@2.8.3)
 
