@@ -14,7 +14,7 @@ entdb lint schema.proto
 entdb check schema.proto --baseline .entdb/snapshot.json
 
 # 3. GENERATE — produce typed code for Python and Go
-entdb generate schema.proto --python myapp/schema.py --go pkg/schema/types.go`} lang="plaintext" />
+entdb generate schema.proto --python myapp/schema.py --go pkg/schema/types.go`} lang="bash" />
 
   <h2>GitHub Actions Setup</h2>
   <Code code={`# .github/workflows/ci.yml
@@ -90,7 +90,7 @@ git commit -m "Initialize schema baseline"
 
 # 4. Add CI workflow (above)
 
-# From now on, every PR is checked automatically.`} lang="plaintext" />
+# From now on, every PR is checked automatically.`} lang="bash" />
 
   <h2>After Making Schema Changes</h2>
   <Code code={`# Non-breaking change (add field, add type):
@@ -100,7 +100,7 @@ git commit -m "Initialize schema baseline"
 # CI blocks. To proceed:
 entdb snapshot --update
 git add .entdb/snapshot.json
-git commit -m "Accept breaking schema change: removed legacy field"`} lang="plaintext" />
+git commit -m "Accept breaking schema change: removed legacy field"`} lang="bash" />
 
   <h2>pyproject.toml Configuration</h2>
   <Code code={`[tool.entdb]

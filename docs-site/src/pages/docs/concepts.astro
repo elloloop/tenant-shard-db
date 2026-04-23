@@ -110,7 +110,7 @@ result = await plan.commit(wait_applied=True)
 
 # Option 2: Wait on a specific read
 task = await scope.get(Task, node_id,
-                       after_offset=result.receipt.stream_position)`} lang="plaintext" />
+                       after_offset=result.receipt.stream_position)`} lang="python" />
 
   <h2>Schema Registry</h2>
   <p>Type definitions are registered in a <code>SchemaRegistry</code>. The registry generates a fingerprint (SHA-256 hash) used for:</p>

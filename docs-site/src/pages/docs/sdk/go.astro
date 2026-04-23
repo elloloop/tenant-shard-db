@@ -23,7 +23,7 @@ import { Code } from "astro:components";---
   <h2>Install</h2>
   <Code code={`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest`} lang="bash" />
   <p>Requires Go 1.22 or later. Import as:</p>
-  <Code code={`import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"`} lang="go" />
+  <Code code={`import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"`} lang="plaintext" />
 
   <h2>Proto schema</h2>
   <p>
@@ -138,7 +138,7 @@ var (
     ProductSKU      = entdb.UniqueKey[string]{TypeID: 201, FieldID: 1, Name: "sku"}
     ProductBarcode  = entdb.UniqueKey[string]{TypeID: 201, FieldID: 2, Name: "barcode"}
     CategorySlug    = entdb.UniqueKey[string]{TypeID: 202, FieldID: 1, Name: "slug"}
-)`} lang="plaintext" />
+)`} lang="go" />
 
   <Callout variant="warning">
     <CalloutTitle>Typed tokens are the ONLY lookup form</CalloutTitle>
@@ -235,7 +235,7 @@ plan.Create(&shop.Product{Sku: "WIDGET-4", Name: "Reference SKU"},
 
 if _, err := plan.Commit(ctx); err != nil {
     log.Fatal(err)
-}`} lang="plaintext" />
+}`} lang="yaml" />
 
   <p>
     The <code>type_id</code> and payload are read from the proto
@@ -256,7 +256,7 @@ if err != nil {
     }
     log.Fatal(err)
 }
-log.Printf("%s — %d cents", product.Name, product.PriceCents)`} lang="plaintext" />
+log.Printf("%s — %d cents", product.Name, product.PriceCents)`} lang="go" />
 
   <p>
     <code>Get</code> is a package-level generic function (Go does not
@@ -275,7 +275,7 @@ if err != nil {
 //   _, _ = entdb.GetByKey(ctx, alice, shop.ProductSKU, 12345)
 
 // Different unique field on the same type.
-byBarcode, err := entdb.GetByKey(ctx, alice, shop.ProductBarcode, "0123456789012")`} lang="plaintext" />
+byBarcode, err := entdb.GetByKey(ctx, alice, shop.ProductBarcode, "0123456789012")`} lang="go" />
 
   <p>
     The pitch: <strong>rename <code>sku</code> to
@@ -311,7 +311,7 @@ either, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
         map[string]any{"price_cents": map[string]any{"$lt": 500}},
         map[string]any{"stock": 0},
     },
-})`} lang="plaintext" />
+})`} lang="go" />
 
   <p>
     Supported operators: <code>$eq</code> (default), <code>$ne</code>,
@@ -335,7 +335,7 @@ plan.Update("node-42", &shop.Product{PriceCents: 1499})
 
 if _, err := plan.Commit(ctx); err != nil {
     log.Fatal(err)
-}`} lang="plaintext" />
+}`} lang="go" />
 
   <p>
     The type is read from the message's <code>(entdb.node)</code>
@@ -376,7 +376,7 @@ if _, err := plan.Commit(ctx); err != nil {
 // Later: unlink it.
 plan2 := alice.Plan()
 entdb.EdgeDelete[*shop.BelongsTo](plan2, "product-id-42", "category-id-9")
-_, _ = plan2.Commit(ctx)`} lang="plaintext" />
+_, _ = plan2.Commit(ctx)`} lang="go" />
 
   <p>
     The <code>edge_id</code> is read from the edge message's
@@ -410,7 +410,7 @@ result, err := plan.Commit(ctx)
 if err != nil {
     log.Fatal(err)
 }
-log.Printf("created: %v", result.CreatedNodeIDs)`} lang="plaintext" />
+log.Printf("created: %v", result.CreatedNodeIDs)`} lang="go" />
 
   <p>
     A <code>Plan</code> cannot be reused after <code>Commit</code>;
@@ -420,7 +420,7 @@ log.Printf("created: %v", result.CreatedNodeIDs)`} lang="plaintext" />
   <h2>Idempotency keys</h2>
   <Code code={`plan := alice.PlanWithKey("order-12345")
 plan.Create(&shop.Product{Sku: "LIMITED-ED-01", Name: "Limited Edition"})
-result, err := plan.Commit(ctx)`} lang="plaintext" />
+result, err := plan.Commit(ctx)`} lang="go" />
 
   <p>
     Retrying a plan with the same key returns the same result instead
@@ -456,7 +456,7 @@ if err != nil {
     default:
         log.Printf("unexpected: %v", err)
     }
-}`} lang="plaintext" />
+}`} lang="go" />
 
   <table>
     <tr><th>Type</th><th>Raised when</th></tr>

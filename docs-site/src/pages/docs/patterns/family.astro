@@ -25,7 +25,7 @@ family = await db.create_tenant("smith-family", "Smith Family")
 # Add family members
 await db.add_tenant_member("smith-family", "user:eve", role="owner")    # other parent
 await db.add_tenant_member("smith-family", "user:kid1", role="member")  # child
-await db.add_tenant_member("smith-family", "user:kid2", role="member")  # child`} lang="plaintext" />
+await db.add_tenant_member("smith-family", "user:kid2", role="member")  # child`} lang="python" />
 
   <h2>2. Shared vs private content</h2>
   <Code code={`# Shared grocery list — everyone sees it (tenant_visible=true in schema)
@@ -45,7 +45,7 @@ await plan.commit()
 plan = db.atomic("smith-family", "user:eve")
 plan.create(CalendarEvent, {title": "Family Dinner", "date": "2026-04-15"})
 await plan.commit()
-# All family members see this.`} lang="plaintext" />
+# All family members see this.`} lang="python" />
 
   <h2>3. Personal items in personal tenant</h2>
   <Code code={`# Dave's work meetings — in his PERSONAL tenant, family can't see
@@ -55,7 +55,7 @@ await plan.commit()
 
 # The app shows Dave two contexts:
 # "Home" → smith-family tenant (family stuff)
-# "Personal" → dave tenant (work stuff)`} lang="plaintext" />
+# "Personal" → dave tenant (work stuff)`} lang="python" />
 
   <h2>4. Privacy model</h2>
   <Code code={`Admin (parent) can:
@@ -68,7 +68,7 @@ Admin (parent) CANNOT:
   - Browse all content in the tenant
 
 This is by design. Admin manages the tenant, ACL controls the data.
-Same as Google Workspace: admin manages org, can't read emails.`} lang="plaintext" />
+Same as Google Workspace: admin manages org, can't read emails.`} lang="yaml" />
 
   <h2>5. Schema for family app</h2>
   <Code code={`message GroceryList {
@@ -105,5 +105,5 @@ message CalendarEvent {
 # → smith-family tenant: kid1's diary entries → DELETED (data_policy=PERSONAL)
 # → smith-family tenant: kid1's contributions to grocery lists → ANONYMIZED
 # → kid1 removed from tenant_members
-# → All automatic. Zero application code.`} lang="plaintext" />
+# → All automatic. Zero application code.`} lang="sql" />
 </DocsLayout>

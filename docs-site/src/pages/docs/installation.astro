@@ -8,7 +8,7 @@ import { Code } from "astro:components";---
   <h2>Python SDK</h2>
   <Code code={`pip install entdb-sdk`} lang="bash" />
   <p>Or with <code>uv</code>:</p>
-  <Code code={`uv add entdb-sdk`} lang="plaintext" />
+  <Code code={`uv add entdb-sdk`} lang="bash" />
 
   <h2>Go SDK</h2>
   <Code code={`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest`} lang="bash" />
@@ -18,13 +18,13 @@ import { Code } from "astro:components";---
 docker pull ghcr.io/elloloop/entdb:latest
 
 # Run with default settings (in-memory WAL, local storage)
-docker run -p 50051:50051 ghcr.io/elloloop/entdb:latest`} lang="plaintext" />
+docker run -p 50051:50051 ghcr.io/elloloop/entdb:latest`} lang="bash" />
 
   <h2>Server (Docker Compose)</h2>
   <p>For production with Kafka WAL and S3 storage:</p>
   <Code code={`git clone https://github.com/elloloop/tenant-shard-db.git
 cd tenant-shard-db
-docker compose up -d`} lang="plaintext" />
+docker compose up -d`} lang="bash" />
   <p>This starts EntDB + Redpanda (Kafka) + MinIO (S3) + Redpanda Console.</p>
 
   <h2>From Source</h2>
@@ -38,7 +38,7 @@ pip install -e .
 pip install -e ./sdk
 
 # Run server
-entdb`} lang="plaintext" />
+entdb`} lang="bash" />
 
   <h2>Verify Installation</h2>
   <Code code={`python -c "

@@ -52,10 +52,10 @@ async with DbClient("localhost:50051", api_key="your-key") as db:
 
   <h3>3. Create Data</h3>
   <Code code={`plan = db.atomic("acme", "user:alice")
-plan.create(Task, {"{"}title": "Ship v2", "status": "todo"{"}"}, as_="t")
-plan.create(Comment, {"{"}body": "Let's go!"{"}"}, as_="c")
+plan.create(Task, {title": "Ship v2", "status": "todo"}, as_="t")
+plan.create(Comment, {body": "Let's go!"}, as_="c")
 plan.edge_create(HasComment, from_="$t.id", to="$c.id")
-result = await plan.commit(wait_applied=True)`} lang="plaintext" />
+result = await plan.commit(wait_applied=True)`} lang="python" />
 
   <h3>4. Share & Control Access</h3>
   <Code code={`# Share task with bob — comments are automatically shared (propagate_share)
@@ -63,13 +63,13 @@ await db.share(task_id, actor_id="user:bob", permission="write",
                tenant_id="acme", granted_by="user:alice")
 
 # Bob can now see the task AND all its comments
-comments = await db.connected(task_id, HasComment, tenant_id="acme", actor="user:bob")`} lang="plaintext" />
+comments = await db.connected(task_id, HasComment, tenant_id="acme", actor="user:bob")`} lang="python" />
 
   <h3>5. Read with Consistency</h3>
   <Code code={`# After a write, read with offset guarantee
 result = await plan.commit()
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
-                    after_offset=result.receipt.stream_position)`} lang="plaintext" />
+                    after_offset=result.receipt.stream_position)`} lang="python" />
 
   <h3>6. Evolve Your Schema</h3>
   <Code code={`# Add a new field (non-breaking)
@@ -84,7 +84,7 @@ Task = NodeTypeDef(
 
 # CI check: entdb check validates compatibility
 $ entdb check
-Schema compatible: 1 non-breaking change (field added)`} lang="plaintext" />
+Schema compatible: 1 non-breaking change (field added)`} lang="bash" />
 
   <h2>Architecture</h2>
   <Code code={`Clients (gRPC / Python SDK / Go SDK)

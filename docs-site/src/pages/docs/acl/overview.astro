@@ -34,7 +34,7 @@ await db.share(task_id, "user:bob", "read", tenant_id, granted_by="user:alice")
 
 # Bob can now see ALL comments on the task
 comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
-# Returns all comments - no per-comment permission check needed`} lang="plaintext" />
+# Returns all comments - no per-comment permission check needed`} lang="python" />
 
   <h3>How inheritance works internally</h3>
   <p>When a structural edge is created (<code>propagate_share=True</code>), an <code>acl_inherit</code> row is inserted:</p>
@@ -44,7 +44,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 # Access check for comment_42:
 # 1. Check comment_42 directly → not found
 # 2. Walk acl_inherit chain: comment_42 → task_1
-# 3. Check task_1: Bob has READ via node_access → ALLOWED`} lang="plaintext" />
+# 3. Check task_1: Bob has READ via node_access → ALLOWED`} lang="yaml" />
 
   <h3>Deep inheritance</h3>
   <p>Inheritance chains can be multiple levels deep:</p>
@@ -67,7 +67,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
         tenant_visible=False,  # not visible to all tenant members
     ),
 )
-# Grade is only visible to its owner and explicit direct grants`} lang="plaintext" />
+# Grade is only visible to its owner and explicit direct grants`} lang="python" />
 
   <h2>Permissions</h2>
   <table>
@@ -92,7 +92,7 @@ await db.group_add("group:eng", "user:bob", tenant_id)
 await db.group_add("group:all-staff", "group:eng", tenant_id)
 
 # Share with group — all members get access
-await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`} lang="plaintext" />
+await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`} lang="python" />
 
   <h2>Deny Rules</h2>
   <p>Explicit deny overrides all inherited access:</p>
@@ -101,7 +101,7 @@ await db.share(task_id, "user:bob", "write", tenant_id, granted_by="user:alice")
 
 # But this specific comment is confidential
 await db.share(confidential_comment_id, "user:bob", "deny", tenant_id, granted_by="user:alice")
-# Bob can see the task and all other comments, but NOT this one`} lang="plaintext" />
+# Bob can see the task and all other comments, but NOT this one`} lang="python" />
 
   <h2>Cycle Prevention</h2>
   <p>The applier detects and rejects cycles in the <code>acl_inherit</code> chain at data insertion time. For example, if Folder A contains Folder B, and you try to make B contain A, the cycle is detected and the edge creation is rejected. A depth limit of 10 in the recursive CTE provides a backstop at query time.</p>
