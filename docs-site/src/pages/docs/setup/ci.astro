@@ -1,23 +1,23 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="CI Integration">
   <h1>CI Integration</h1>
   <p>EntDB ships three CLI commands that run in your CI pipeline. Together they guarantee schema safety, GDPR compliance, and backward compatibility.</p>
 
   <h2>The Three Commands</h2>
-  <pre is:raw><code># 1. LINT — catch schema mistakes (missing data_policy, unmarked PII, etc.)
+  <Code code={`# 1. LINT — catch schema mistakes (missing data_policy, unmarked PII, etc.)
 entdb lint schema.proto
 
 # 2. CHECK — block breaking changes (removed fields, changed types, etc.)
 entdb check schema.proto --baseline .entdb/snapshot.json
 
 # 3. GENERATE — produce typed code for Python and Go
-entdb generate schema.proto --python myapp/schema.py --go pkg/schema/types.go</code></pre>
+entdb generate schema.proto --python myapp/schema.py --go pkg/schema/types.go`} lang="plaintext" />
 
   <h2>GitHub Actions Setup</h2>
-  <pre is:raw><code># .github/workflows/ci.yml
+  <Code code={`# .github/workflows/ci.yml
 name: CI
 on: [push, pull_request]
 
@@ -46,7 +46,7 @@ jobs:
       # Step 3: Generate — verify codegen works
       - name: Generate types
         run: entdb generate schema.proto --python myapp/schema_gen.py
-        # Fails if: proto compilation error, codegen bug</code></pre>
+        # Fails if: proto compilation error, codegen bug`} lang="yaml" />
 
   <h2>What Each Command Catches</h2>
 
@@ -77,7 +77,7 @@ jobs:
   </table>
 
   <h2>First-Time Setup</h2>
-  <pre is:raw><code># 1. Install the SDK
+  <Code code={`# 1. Install the SDK
 pip install entdb-sdk
 
 # 2. Initialize the baseline snapshot
@@ -90,20 +90,20 @@ git commit -m "Initialize schema baseline"
 
 # 4. Add CI workflow (above)
 
-# From now on, every PR is checked automatically.</code></pre>
+# From now on, every PR is checked automatically.`} lang="plaintext" />
 
   <h2>After Making Schema Changes</h2>
-  <pre is:raw><code># Non-breaking change (add field, add type):
+  <Code code={`# Non-breaking change (add field, add type):
 # CI passes automatically. Snapshot auto-updates on next init.
 
 # Breaking change (rare, requires migration):
 # CI blocks. To proceed:
 entdb snapshot --update
 git add .entdb/snapshot.json
-git commit -m "Accept breaking schema change: removed legacy field"</code></pre>
+git commit -m "Accept breaking schema change: removed legacy field"`} lang="plaintext" />
 
   <h2>pyproject.toml Configuration</h2>
-  <pre is:raw><code>[tool.entdb]
+  <Code code={`[tool.entdb]
 schema = "schema.proto"
-snapshot = ".entdb/snapshot.json"</code></pre>
+snapshot = ".entdb/snapshot.json"`} lang="plaintext" />
 </DocsLayout>

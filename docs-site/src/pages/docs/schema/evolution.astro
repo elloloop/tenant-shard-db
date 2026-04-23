@@ -1,6 +1,6 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Schema Evolution">
   <h1>Schema Evolution</h1>
@@ -9,7 +9,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <h2>The Lifecycle</h2>
 
   <h3>Day 1: Initial Schema</h3>
-  <pre is:raw><code># schema.py — your first release
+  <Code code={`# schema.py — your first release
 Task = NodeTypeDef(type_id=1, name="Task", fields=(
     field(1, "title", "str", required=True),
     field(2, "status", "enum", enum_values=("todo", "done")),
@@ -17,11 +17,11 @@ Task = NodeTypeDef(type_id=1, name="Task", fields=(
 
 # Generate baseline snapshot
 $ entdb init
-# Commit .entdb/snapshot.json to git</code></pre>
+# Commit .entdb/snapshot.json to git`} lang="plaintext" />
 
   <h3>Week 2: Add a Field</h3>
   <p><span class="badge badge-new">non-breaking</span> Adding a new field with a new <code>field_id</code> is always safe:</p>
-  <pre is:raw><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(
+  <Code code={`Task = NodeTypeDef(type_id=1, name="Task", fields=(
     field(1, "title", "str", required=True),
     field(2, "status", "enum", enum_values=("todo", "done")),
     field(3, "priority", "int", default=0),  # NEW
@@ -29,30 +29,30 @@ $ entdb init
 
 $ entdb check
 Schema compatible: 1 non-breaking change
-  [OK] FIELD_ADDED: NodeType:Task.field:priority — added</code></pre>
+  [OK] FIELD_ADDED: NodeType:Task.field:priority — added`} lang="plaintext" />
 
   <h3>Month 2: Add Enum Values</h3>
   <p><span class="badge badge-new">non-breaking</span> Appending new enum values is safe:</p>
-  <pre is:raw><code>field(2, "status", "enum", enum_values=("todo", "in_progress", "done", "archived"))</code></pre>
+  <Code code={`field(2, "status", "enum", enum_values=("todo", "in_progress", "done", "archived"))`} lang="plaintext" />
 
   <h3>Month 3: Add a New Type</h3>
   <p><span class="badge badge-new">non-breaking</span> New node types and edge types are always safe:</p>
-  <pre is:raw><code>Subtask = NodeTypeDef(type_id=3, name="Subtask", fields=(
+  <Code code={`Subtask = NodeTypeDef(type_id=3, name="Subtask", fields=(
     field(1, "title", "str", required=True),
 ))
 
 HasSubtask = EdgeTypeDef(edge_id=3, name="HasSubtask",
     from_type=Task, to_type=Subtask,
-    propagate_share=True)</code></pre>
+    propagate_share=True)`} lang="plaintext" />
 
   <h3>Month 6: Deprecate a Field</h3>
   <p><span class="badge badge-new">non-breaking</span> Deprecation is allowed. The field stays in the schema but is flagged:</p>
-  <pre is:raw><code>field(3, "priority", "int", default=0, deprecated=True)</code></pre>
+  <Code code={`field(3, "priority", "int", default=0, deprecated=True)`} lang="plaintext" />
 
   <h3>Month 12: Add ACL Defaults</h3>
   <p><span class="badge badge-new">non-breaking</span> Changing <code>acl_defaults</code> only affects newly created nodes:</p>
-  <pre is:raw><code>Task = NodeTypeDef(type_id=1, name="Task", fields=(...),
-    acl_defaults=AclDefaults(tenant_visible=False))  # changed from True</code></pre>
+  <Code code={`Task = NodeTypeDef(type_id=1, name="Task", fields=(...),
+    acl_defaults=AclDefaults(tenant_visible=False))  # changed from True`} lang="plaintext" />
 
   <h2>Breaking Changes</h2>
   <p>These changes are <strong>rejected by <code>entdb check</code></strong> and will fail CI:</p>
@@ -72,36 +72,36 @@ HasSubtask = EdgeTypeDef(edge_id=3, name="HasSubtask",
   <h2>CI Integration</h2>
 
   <h3>Setup</h3>
-  <pre is:raw><code># pyproject.toml
+  <Code code={`# pyproject.toml
 [tool.entdb]
 schema = "myapp.schema"
-snapshot = ".entdb/snapshot.json"</code></pre>
+snapshot = ".entdb/snapshot.json"`} lang="plaintext" />
 
   <h3>CI Pipeline</h3>
-  <pre is:raw><code># .github/workflows/ci.yml
+  <Code code={`# .github/workflows/ci.yml
 - name: Schema compatibility check
-  run: entdb check</code></pre>
+  run: entdb check`} lang="plaintext" />
 
   <h3>Local Development</h3>
-  <pre is:raw><code># Check before commit
+  <Code code={`# Check before commit
 $ entdb check
 
 # See what changed
 $ entdb diff
 
 # After intentional breaking change (rare, requires migration)
-$ entdb snapshot --update</code></pre>
+$ entdb snapshot --update`} lang="plaintext" />
 
   <h3>Automatic Test Validation</h3>
   <p>If <code>entdb-sdk</code> is installed, the pytest plugin automatically validates schema compatibility on every test run. No configuration needed.</p>
 
   <h2>Fingerprinting</h2>
   <p>The schema registry generates a SHA-256 fingerprint from the canonical schema. The server compares this fingerprint on every write:</p>
-  <pre is:raw><code># If fingerprint doesn't match, the server rejects the write
+  <Code code={`# If fingerprint doesn't match, the server rejects the write
 ExecuteAtomicResponse(
     success=False,
     error="Schema fingerprint mismatch: client=sha256:abc..., server=sha256:def..."
-)</code></pre>
+)`} lang="plaintext" />
   <p>This prevents deploying code with an incompatible schema.</p>
 
   <h2>Migration Strategies</h2>

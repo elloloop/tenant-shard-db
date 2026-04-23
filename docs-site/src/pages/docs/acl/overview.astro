@@ -1,6 +1,6 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Access Control Overview">
   <h1>Access Control (ACL)</h1>
@@ -22,7 +22,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   <h2>Inheritance: The Key Feature</h2>
   <p>When you share a task with Bob, he can automatically see all comments on that task. You don't need to share each comment individually.</p>
 
-  <pre is:raw><code># Define structural edge
+  <Code code={`# Define structural edge
 HasComment = EdgeTypeDef(
     edge_id=1, name="HasComment",
     from_type=Task, to_type=Comment,
@@ -34,22 +34,22 @@ await db.share(task_id, "user:bob", "read", tenant_id, granted_by="user:alice")
 
 # Bob can now see ALL comments on the task
 comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
-# Returns all comments - no per-comment permission check needed</code></pre>
+# Returns all comments - no per-comment permission check needed`} lang="plaintext" />
 
   <h3>How inheritance works internally</h3>
   <p>When a structural edge is created (<code>propagate_share=True</code>), an <code>acl_inherit</code> row is inserted:</p>
-  <pre is:raw><code># Creating an edge: task_1 → comment_42 (HasComment, propagate_share=True)
+  <Code code={`# Creating an edge: task_1 → comment_42 (HasComment, propagate_share=True)
 # Internally inserts: acl_inherit(node_id="comment_42", inherit_from="task_1")
 
 # Access check for comment_42:
 # 1. Check comment_42 directly → not found
 # 2. Walk acl_inherit chain: comment_42 → task_1
-# 3. Check task_1: Bob has READ via node_access → ALLOWED</code></pre>
+# 3. Check task_1: Bob has READ via node_access → ALLOWED`} lang="plaintext" />
 
   <h3>Deep inheritance</h3>
   <p>Inheritance chains can be multiple levels deep:</p>
-  <pre is:raw><code># project → task → comment (3 levels)
-# Share project with Bob → Bob can see all tasks AND all comments</code></pre>
+  <Code code={`# project → task → comment (3 levels)
+# Share project with Bob → Bob can see all tasks AND all comments`} lang="plaintext" />
 
   <h3>New nodes inherit automatically</h3>
   <p>If you add a comment to a task AFTER sharing the task, the new comment is immediately accessible. No backfill needed.</p>
@@ -59,7 +59,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h2>Private Nodes</h2>
   <p>Some node types should never inherit from parents &mdash; grades, drafts, moderator notes:</p>
-  <pre is:raw><code>Grade = NodeTypeDef(
+  <Code code={`Grade = NodeTypeDef(
     type_id=10, name="Grade",
     fields=(field(1, "score", "int", required=True),),
     acl_defaults=AclDefaults(
@@ -67,7 +67,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
         tenant_visible=False,  # not visible to all tenant members
     ),
 )
-# Grade is only visible to its owner and explicit direct grants</code></pre>
+# Grade is only visible to its owner and explicit direct grants`} lang="plaintext" />
 
   <h2>Permissions</h2>
   <table>
@@ -84,7 +84,7 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h2>Groups</h2>
   <p>Groups are a way to share with multiple users at once. Groups can contain users and other groups (nested):</p>
-  <pre is:raw><code># Add users to groups
+  <Code code={`# Add users to groups
 await db.group_add("group:eng", "user:alice", tenant_id)
 await db.group_add("group:eng", "user:bob", tenant_id)
 
@@ -92,16 +92,16 @@ await db.group_add("group:eng", "user:bob", tenant_id)
 await db.group_add("group:all-staff", "group:eng", tenant_id)
 
 # Share with group — all members get access
-await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")</code></pre>
+await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`} lang="plaintext" />
 
   <h2>Deny Rules</h2>
   <p>Explicit deny overrides all inherited access:</p>
-  <pre is:raw><code># Bob has write on task (and all comments via inheritance)
+  <Code code={`# Bob has write on task (and all comments via inheritance)
 await db.share(task_id, "user:bob", "write", tenant_id, granted_by="user:alice")
 
 # But this specific comment is confidential
 await db.share(confidential_comment_id, "user:bob", "deny", tenant_id, granted_by="user:alice")
-# Bob can see the task and all other comments, but NOT this one</code></pre>
+# Bob can see the task and all other comments, but NOT this one`} lang="plaintext" />
 
   <h2>Cycle Prevention</h2>
   <p>The applier detects and rejects cycles in the <code>acl_inherit</code> chain at data insertion time. For example, if Folder A contains Folder B, and you try to make B contain A, the cycle is detected and the edge creation is rejected. A depth limit of 10 in the recursive CTE provides a backstop at query time.</p>

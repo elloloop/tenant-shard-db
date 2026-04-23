@@ -1,6 +1,6 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Pattern: Learning Platform">
   <h1>Build a Learning Platform with EntDB</h1>
@@ -19,7 +19,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
   </table>
 
   <h2>1. Platform setup</h2>
-  <pre is:raw><code># Platform admin creates the content tenant
+  <Code code={`# Platform admin creates the content tenant
 await db.create_tenant("easyloops", "EasyLoops Learning")
 
 # Create subscription groups
@@ -40,19 +40,19 @@ await db.share(result.created_node_ids[0], "group:free-tier", "read",
 
 # Pro course → share with pro-tier group
 await db.share(result.created_node_ids[1], "group:pro-tier", "read",
-               "easyloops", granted_by="system:admin")</code></pre>
+               "easyloops", granted_by="system:admin")`} lang="plaintext" />
 
   <h2>2. Student enrollment</h2>
-  <pre is:raw><code># Alice subscribes to pro tier
+  <Code code={`# Alice subscribes to pro tier
 await db.add_tenant_member("easyloops", "user:alice", role="viewer")
 await db.group_add("pro-tier", "user:alice", "easyloops")
 
 # Alice can now see ALL pro courses + their lessons (propagate_share)
 courses = await db.query(Course, "easyloops", "user:alice")
-lessons = await db.connected(course_id, CourseHasLesson, "easyloops", "user:alice")</code></pre>
+lessons = await db.connected(course_id, CourseHasLesson, "easyloops", "user:alice")`} lang="plaintext" />
 
   <h2>3. Student progress (cross-tenant)</h2>
-  <pre is:raw><code># Alice's progress lives in HER personal tenant
+  <Code code={`# Alice's progress lives in HER personal tenant
 plan = db.atomic("alice", "user:alice")
 plan.create(Progress, {
     course_ref": "easyloops:course-python101",
@@ -64,10 +64,10 @@ await plan.commit()
 # Platform reads alice's progress (for analytics)
 # Alice explicitly grants the platform read access
 await db.share(progress_id, "user:platform-analytics", "read",
-               "alice", granted_by="user:alice")</code></pre>
+               "alice", granted_by="user:alice")`} lang="plaintext" />
 
   <h2>4. Organization bulk enrollment</h2>
-  <pre is:raw><code># Acme Corp creates their tenant
+  <Code code={`# Acme Corp creates their tenant
 await db.create_tenant("acme-corp", "Acme Corp")
 
 # Create an engineering group
@@ -80,10 +80,10 @@ for member in ["user:bob", "user:carol"]:
     await db.add_tenant_member("easyloops", member, role="viewer")
     await db.group_add("pro-tier", member, "easyloops")
 
-# All engineering members now have pro course access</code></pre>
+# All engineering members now have pro course access`} lang="plaintext" />
 
   <h2>5. Schema</h2>
-  <pre is:raw><code>message Course {
+  <Code code={`message Course {
     option (entdb.node) = {
         type_id: 1
         public: true                   // catalog is public
@@ -123,7 +123,7 @@ message CourseHasLesson {
     };
     Course from = 15;
     Lesson to = 16;
-}</code></pre>
+}`} lang="proto" />
 
   <h2>What the database handles</h2>
   <ul>

@@ -1,49 +1,49 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Read-after-Write Consistency">
   <h1>Read-after-Write Consistency</h1>
   <p>EntDB uses event sourcing: writes go to the WAL first, then the applier processes them into SQLite. By default, reads are <strong>eventually consistent</strong>. For immediate consistency, use the <code>after_offset</code> mechanism.</p>
 
   <h2>The Problem</h2>
-  <pre is:raw><code># Without consistency guarantee:
+  <Code code={`# Without consistency guarantee:
 result = await plan.commit()
 
 # This might return None — applier hasn't processed the event yet
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
-# task could be None!</code></pre>
+# task could be None!`} lang="plaintext" />
 
   <h2>Solution 1: Wait During Commit</h2>
   <p>The simplest approach &mdash; block until the write is applied:</p>
-  <pre is:raw><code>result = await plan.commit(wait_applied=True, timeout=5.0)
+  <Code code={`result = await plan.commit(wait_applied=True, timeout=5.0)
 # Returns only after the applier has processed the event
 
 # Now reads are guaranteed to see the data
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
-# task is always found</code></pre>
+# task is always found`} lang="plaintext" />
   <p>Latency: typically &lt;50ms. The server uses event-driven notification (not polling).</p>
 
   <h2>Solution 2: Offset-Based Reads</h2>
   <p>More flexible &mdash; commit fast, wait only when you need to read:</p>
-  <pre is:raw><code>result = await plan.commit()  # returns immediately after WAL append
+  <Code code={`result = await plan.commit()  # returns immediately after WAL append
 
 # Do other work...
 
 # When you need to read, pass the offset
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
                     after_offset=result.receipt.stream_position)
-# Server waits for the offset to be applied, then reads</code></pre>
+# Server waits for the offset to be applied, then reads`} lang="plaintext" />
   <p>This is useful when the write and read happen in different parts of your code.</p>
 
   <h2>Solution 3: Explicit Wait</h2>
-  <pre is:raw><code>result = await plan.commit()
+  <Code code={`result = await plan.commit()
 
 # Wait for the offset explicitly
 await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)
 
 # All subsequent reads are consistent
-tasks = await db.query(Task, "acme", "user:alice")</code></pre>
+tasks = await db.query(Task, "acme", "user:alice")`} lang="plaintext" />
 
   <h2>When to Use What</h2>
   <table>

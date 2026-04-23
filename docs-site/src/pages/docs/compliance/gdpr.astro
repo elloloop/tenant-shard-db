@@ -1,6 +1,6 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="GDPR Operations">
   <h1>GDPR Operations</h1>
@@ -25,11 +25,11 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
     the grace window the delete is reversible; after the window, all of the
     user's data across every tenant is hard-deleted.
   </p>
-  <pre is:raw><code>await db.delete_user("alice", grace_period_days=30, reason="user request")</code></pre>
+  <Code code={`await db.delete_user("alice", grace_period_days=30, reason="user request")`} lang="plaintext" />
 
   <h2>cancel_user_deletion</h2>
   <p>Cancels a pending deletion during the grace window.</p>
-  <pre is:raw><code>await db.cancel_user_deletion("alice")</code></pre>
+  <Code code={`await db.cancel_user_deletion("alice")`} lang="plaintext" />
 
   <h2>export_user_data</h2>
   <p>
@@ -37,8 +37,8 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
     and their membership in every tenant. Use this to satisfy the right of
     access and right of portability.
   </p>
-  <pre is:raw><code>export = await db.export_user_data("alice")
-# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships</code></pre>
+  <Code code={`export = await db.export_user_data("alice")
+# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships`} lang="plaintext" />
 
   <h2>freeze_user</h2>
   <p>
@@ -46,8 +46,8 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
     user are rejected; reads of existing data still work. Useful for legal
     hold or account suspension.
   </p>
-  <pre is:raw><code>await db.freeze_user("alice", reason="legal hold")
-await db.unfreeze_user("alice")</code></pre>
+  <Code code={`await db.freeze_user("alice", reason="legal hold")
+await db.unfreeze_user("alice")`} lang="plaintext" />
 
   <h2>Audit Trail</h2>
   <p>
