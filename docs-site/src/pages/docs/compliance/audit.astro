@@ -80,7 +80,7 @@ print(manifest.sha256, manifest.event_count)`} lang="python" />
     "right-to-erasure" for an entire tenant.
   </p>
   <Code code={`# Server-side API — requires admin credentials
-await global_store.crypto_shred_tenant("acme", reason="contract terminated")`} lang="plaintext" />
+await global_store.crypto_shred_tenant("acme", reason="contract terminated")`} lang="python" />
 
   <p>
     Crypto-shred is itself recorded in the WAL, so the event that a tenant

@@ -326,7 +326,7 @@ either = await alice.query(schema_pb2.Product, filter={
 # Only price_cents is set → patch = {"price_cents": 1499}.
 plan.update("node-42", schema_pb2.Product(price_cents=1499))
 
-await plan.commit()`} lang="plaintext" />
+await plan.commit()`} lang="python" />
 
   <p>
     The type is read from the message's <code>(entdb.node)</code>
@@ -400,7 +400,7 @@ plan.edge_create(schema_pb2.BelongsTo, "$hammer", "category-hand-tools")
 plan.edge_create(schema_pb2.BelongsTo, "$wrench", "category-hand-tools")
 
 result = await plan.commit()
-print("created", result.created_node_ids)`} lang="plaintext" />
+print("created", result.created_node_ids)`} lang="python" />
 
   <p>
     A plan cannot be reused after <code>commit</code>; create a fresh
@@ -410,7 +410,7 @@ print("created", result.created_node_ids)`} lang="plaintext" />
   <h2>Idempotency keys</h2>
   <Code code={`plan = alice.plan(idempotency_key="order-12345")
 plan.create(schema_pb2.Product(sku="LIMITED-ED-01", name="Limited Edition"))
-result = await plan.commit()`} lang="plaintext" />
+result = await plan.commit()`} lang="python" />
 
   <p>
     Retrying the same <code>idempotency_key</code> returns the same
@@ -495,7 +495,7 @@ except ValidationError as e:
   </p>
   <Code code={`entdb lint schema.proto
 entdb init schema.proto            # freeze baseline in .entdb/snapshot.json
-entdb check schema.proto           # compare proto against baseline`} lang="plaintext" />
+entdb check schema.proto           # compare proto against baseline`} lang="bash" />
 
   <p>
     For raw data access from the terminal (<code>get</code>,

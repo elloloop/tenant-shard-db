@@ -25,11 +25,11 @@ import { Code } from "astro:components";---
     the grace window the delete is reversible; after the window, all of the
     user's data across every tenant is hard-deleted.
   </p>
-  <Code code={`await db.delete_user("alice", grace_period_days=30, reason="user request")`} lang="plaintext" />
+  <Code code={`await db.delete_user("alice", grace_period_days=30, reason="user request")`} lang="python" />
 
   <h2>cancel_user_deletion</h2>
   <p>Cancels a pending deletion during the grace window.</p>
-  <Code code={`await db.cancel_user_deletion("alice")`} lang="plaintext" />
+  <Code code={`await db.cancel_user_deletion("alice")`} lang="python" />
 
   <h2>export_user_data</h2>
   <p>
@@ -38,7 +38,7 @@ import { Code } from "astro:components";---
     access and right of portability.
   </p>
   <Code code={`export = await db.export_user_data("alice")
-# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships`} lang="plaintext" />
+# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships`} lang="python" />
 
   <h2>freeze_user</h2>
   <p>
@@ -47,7 +47,7 @@ import { Code } from "astro:components";---
     hold or account suspension.
   </p>
   <Code code={`await db.freeze_user("alice", reason="legal hold")
-await db.unfreeze_user("alice")`} lang="plaintext" />
+await db.unfreeze_user("alice")`} lang="python" />
 
   <h2>Audit Trail</h2>
   <p>

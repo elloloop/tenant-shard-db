@@ -25,13 +25,13 @@ KAFKA_BOOTSTRAP_SERVERS=kafka:9092
 KAFKA_TOPIC=entdb-events
 KAFKA_CONSUMER_GROUP=entdb-applier
 KAFKA_REPLICATION_FACTOR=3
-KAFKA_NUM_PARTITIONS=6`} lang="plaintext" />
+KAFKA_NUM_PARTITIONS=6`} lang="bash" />
 
   <h2>Local (Development)</h2>
   <Code code={`# No external dependencies — events stay in memory
 WAL_BACKEND=local
 
-# Data is lost on restart. Use only for development.`} lang="plaintext" />
+# Data is lost on restart. Use only for development.`} lang="bash" />
 
   <h2>Disabling WAL</h2>
   <p>Set <code>WAL_BACKEND=local</code> to use the in-memory WAL. By extension, this also disables durable storage (S3/R2/etc.) since there's nothing to archive.</p>
@@ -40,13 +40,13 @@ WAL_BACKEND=local
   <p>All tenants share a single WAL topic, partitioned by <code>tenant_id</code>. This ensures events for the same tenant are ordered and processed sequentially:</p>
   <Code code={`# Kafka topic: entdb-events
 # Partition key: tenant_id
-# Result: events for tenant "acme" always go to the same partition`} lang="plaintext" />
+# Result: events for tenant "acme" always go to the same partition`} lang="yaml" />
 
   <h2>Swapping Backends</h2>
   <p>All backends implement the same <code>WalStream</code> protocol. Swapping is a config change:</p>
   <Code code={`# Switch from Kafka to Kinesis
 WAL_BACKEND=kinesis
 KINESIS_STREAM_NAME=entdb-events
-AWS_REGION=us-east-1`} lang="plaintext" />
+AWS_REGION=us-east-1`} lang="bash" />
   <p>No code changes needed. The applier consumes from whatever backend is configured.</p>
 </DocsLayout>

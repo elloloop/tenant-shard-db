@@ -67,7 +67,7 @@ message TaskAssignedTo {
 
   <h2>2. Generate types</h2>
   <Code code={`entdb generate schema.proto --python myapp/schema.py
-entdb init schema.proto`} lang="plaintext" />
+entdb init schema.proto`} lang="bash" />
 
   <h2>3. Connect and create</h2>
   <Code code={`from entdb_sdk import DbClient
@@ -100,7 +100,7 @@ await db.group_add("team-launch", "user:dave", "alice")
 
 # Share future projects with the whole group
 await db.share(next_project_id, "group:team-launch", "write", "alice", granted_by="user:alice")
-# All group members get access. Add new members to the group = instant access.`} lang="plaintext" />
+# All group members get access. Add new members to the group = instant access.`} lang="python" />
 
   <h2>5. Query tasks</h2>
   <Code code={`# Alice queries her tasks (automatic ACL filtering)
@@ -113,21 +113,21 @@ bob_tasks = await db.query(Task, "alice", "user:bob", filter={status": "TODO"})
 comments = await db.connected(task_id, TaskHasComment, "alice", "user:bob")
 
 # Bob's shared_with_me
-shared = await db.shared_with_me("user:bob", "alice")`} lang="plaintext" />
+shared = await db.shared_with_me("user:bob", "alice")`} lang="python" />
 
   <h2>6. Add a comment</h2>
   <Code code={`# Bob adds a comment to alice's task (has write access)
 plan = db.atomic("alice", "user:bob")
 plan.create(Comment, {body": "Mockups look great!", "author_id": "user:bob"}, as_="c")
 plan.edge_create(TaskHasComment, from_=task_id, to="$c.id")
-await plan.commit()`} lang="plaintext" />
+await plan.commit()`} lang="python" />
 
   <h2>7. Read-after-write consistency</h2>
   <Code code={`# SDK handles this automatically:
 result = await plan.commit()
 # Next read is guaranteed to see the write:
 task = await db.get(Task, result.created_node_ids[0], "alice", "user:alice")
-# task is ALWAYS found. Zero application code needed.`} lang="plaintext" />
+# task is ALWAYS found. Zero application code needed.`} lang="python" />
 
   <h2>What the database handles automatically</h2>
   <ul>

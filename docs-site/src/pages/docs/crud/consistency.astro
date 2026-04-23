@@ -12,7 +12,7 @@ result = await plan.commit()
 
 # This might return None — applier hasn't processed the event yet
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
-# task could be None!`} lang="plaintext" />
+# task could be None!`} lang="python" />
 
   <h2>Solution 1: Wait During Commit</h2>
   <p>The simplest approach &mdash; block until the write is applied:</p>
@@ -21,7 +21,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
 
 # Now reads are guaranteed to see the data
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
-# task is always found`} lang="plaintext" />
+# task is always found`} lang="python" />
   <p>Latency: typically &lt;50ms. The server uses event-driven notification (not polling).</p>
 
   <h2>Solution 2: Offset-Based Reads</h2>
@@ -33,7 +33,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
 # When you need to read, pass the offset
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
                     after_offset=result.receipt.stream_position)
-# Server waits for the offset to be applied, then reads`} lang="plaintext" />
+# Server waits for the offset to be applied, then reads`} lang="python" />
   <p>This is useful when the write and read happen in different parts of your code.</p>
 
   <h2>Solution 3: Explicit Wait</h2>
@@ -43,7 +43,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
 await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)
 
 # All subsequent reads are consistent
-tasks = await db.query(Task, "acme", "user:alice")`} lang="plaintext" />
+tasks = await db.query(Task, "acme", "user:alice")`} lang="python" />
 
   <h2>When to Use What</h2>
   <table>

@@ -17,7 +17,7 @@ Task = NodeTypeDef(type_id=1, name="Task", fields=(
 
 # Generate baseline snapshot
 $ entdb init
-# Commit .entdb/snapshot.json to git`} lang="plaintext" />
+# Commit .entdb/snapshot.json to git`} lang="bash" />
 
   <h3>Week 2: Add a Field</h3>
   <p><span class="badge badge-new">non-breaking</span> Adding a new field with a new <code>field_id</code> is always safe:</p>
@@ -29,7 +29,7 @@ $ entdb init
 
 $ entdb check
 Schema compatible: 1 non-breaking change
-  [OK] FIELD_ADDED: NodeType:Task.field:priority — added`} lang="plaintext" />
+  [OK] FIELD_ADDED: NodeType:Task.field:priority — added`} lang="bash" />
 
   <h3>Month 2: Add Enum Values</h3>
   <p><span class="badge badge-new">non-breaking</span> Appending new enum values is safe:</p>
@@ -52,7 +52,7 @@ HasSubtask = EdgeTypeDef(edge_id=3, name="HasSubtask",
   <h3>Month 12: Add ACL Defaults</h3>
   <p><span class="badge badge-new">non-breaking</span> Changing <code>acl_defaults</code> only affects newly created nodes:</p>
   <Code code={`Task = NodeTypeDef(type_id=1, name="Task", fields=(...),
-    acl_defaults=AclDefaults(tenant_visible=False))  # changed from True`} lang="plaintext" />
+    acl_defaults=AclDefaults(tenant_visible=False))  # changed from True`} lang="sql" />
 
   <h2>Breaking Changes</h2>
   <p>These changes are <strong>rejected by <code>entdb check</code></strong> and will fail CI:</p>
@@ -80,7 +80,7 @@ snapshot = ".entdb/snapshot.json"`} lang="plaintext" />
   <h3>CI Pipeline</h3>
   <Code code={`# .github/workflows/ci.yml
 - name: Schema compatibility check
-  run: entdb check`} lang="plaintext" />
+  run: entdb check`} lang="yaml" />
 
   <h3>Local Development</h3>
   <Code code={`# Check before commit
@@ -90,7 +90,7 @@ $ entdb check
 $ entdb diff
 
 # After intentional breaking change (rare, requires migration)
-$ entdb snapshot --update`} lang="plaintext" />
+$ entdb snapshot --update`} lang="bash" />
 
   <h3>Automatic Test Validation</h3>
   <p>If <code>entdb-sdk</code> is installed, the pytest plugin automatically validates schema compatibility on every test run. No configuration needed.</p>
