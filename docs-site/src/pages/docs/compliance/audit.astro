@@ -1,6 +1,6 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Compliance & Audit">
   <h1>Compliance &amp; Audit</h1>
@@ -19,7 +19,7 @@ import DocsLayout from "../../../layouts/DocsLayout.astro";
     events cannot be altered or deleted &mdash; not even by the account
     root &mdash; until the retention period expires.
   </p>
-  <pre is:raw><code># entdb-server config
+  <Code code={`# entdb-server config
 wal:
   backend: s3
   s3:
@@ -28,7 +28,7 @@ wal:
     object_lock:
       enabled: true
       mode: COMPLIANCE       # or GOVERNANCE
-      retention_days: 2555   # 7 years</code></pre>
+      retention_days: 2555   # 7 years`} lang="yaml" />
 
   <p>
     The bucket itself must be created with Object Lock enabled &mdash; it
@@ -41,7 +41,7 @@ wal:
     Use <code>export_audit_trail()</code> on the server to produce a signed,
     time-bounded export for auditors or incident response.
   </p>
-  <pre is:raw><code>from dbaas.entdb_server.audit.compliance import export_audit_trail
+  <Code code={`from dbaas.entdb_server.audit.compliance import export_audit_trail
 
 manifest = export_audit_trail(
     tenant_id="acme",
@@ -49,7 +49,7 @@ manifest = export_audit_trail(
     end=datetime(2026, 3, 31),
     output_path="/tmp/acme-q1-2026.jsonl.gz",
 )
-print(manifest.sha256, manifest.event_count)</code></pre>
+print(manifest.sha256, manifest.event_count)`} lang="python" />
 
   <p>
     The export contains every WAL event for the tenant in the window, plus a
@@ -65,12 +65,12 @@ print(manifest.sha256, manifest.event_count)</code></pre>
     are wrapped by a Key Encryption Key (KEK) managed by your KMS of
     choice.
   </p>
-  <pre is:raw><code>storage:
+  <Code code={`storage:
   sqlite:
     sqlcipher: true
   kms:
     provider: aws-kms        # or gcp-kms, vault, file
-    kek_arn: arn:aws:kms:us-east-1:123:key/...</code></pre>
+    kek_arn: arn:aws:kms:us-east-1:123:key/...`} lang="yaml" />
 
   <h2>Crypto-Shred</h2>
   <p>
@@ -79,8 +79,8 @@ print(manifest.sha256, manifest.event_count)</code></pre>
     even from backups. This is the cleanest way to honour
     "right-to-erasure" for an entire tenant.
   </p>
-  <pre is:raw><code># Server-side API — requires admin credentials
-await global_store.crypto_shred_tenant("acme", reason="contract terminated")</code></pre>
+  <Code code={`# Server-side API — requires admin credentials
+await global_store.crypto_shred_tenant("acme", reason="contract terminated")`} lang="plaintext" />
 
   <p>
     Crypto-shred is itself recorded in the WAL, so the event that a tenant

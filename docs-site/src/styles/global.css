@@ -1,3 +1,6 @@
+@import "@fontsource-variable/inter/index.css";
+@import "@fontsource-variable/jetbrains-mono/index.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -5,6 +8,12 @@
 /* Refraction-UI CSS variables (HSL triplets — see tailwind-config) */
 @layer base {
   :root {
+    --font-sans:
+      "Inter Variable", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    --font-mono:
+      "JetBrains Mono Variable", ui-monospace, SFMono-Regular, Menlo, Monaco,
+      Consolas, "Liberation Mono", monospace;
     --background: 0 0% 100%;
     --foreground: 222 47% 11%;
     --card: 0 0% 100%;
@@ -65,8 +74,19 @@
   }
 
   body {
+    font-family: var(--font-sans);
     font-feature-settings: "cv11", "ss01", "ss03";
     text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--font-mono);
+    font-feature-settings: "ss02", "cv01", "cv02";
   }
 }
 
@@ -119,18 +139,46 @@
 
   /* Inline code */
   .prose :not(pre) > code {
-    @apply rounded-md border border-border bg-muted px-1.5 py-0.5 text-[0.875em] font-mono text-foreground;
+    @apply rounded-md border border-primary/15 bg-primary/5 px-[0.4em] py-[0.15em] text-[0.875em] font-medium text-primary;
+    font-family: var(--font-mono);
   }
 
-  /* Code blocks — dark chrome, sits forward of the page */
+  /* Code blocks — Shiki-themed via Astro <Code> component.
+     Shiki sets background-color and per-token color inline; we provide
+     the surrounding chrome (border, radius, shadow, padding, scrollbar). */
+  .prose pre.astro-code,
   .prose pre {
-    @apply my-6 overflow-x-auto rounded-xl border border-border/60 p-5 text-[13px] leading-relaxed shadow-sm;
+    @apply relative my-6 overflow-x-auto rounded-lg border border-zinc-800/80 px-5 py-4 text-[13px] leading-[1.65] shadow-md;
+    font-family: var(--font-mono);
+  }
+  /* Fallback background for any non-Shiki <pre> (legacy raw blocks if any). */
+  .prose pre:not(.astro-code) {
     background-color: hsl(var(--code-bg));
     color: hsl(var(--code-fg));
   }
   .prose pre code {
-    @apply border-0 bg-transparent p-0 font-mono text-[13px];
-    color: hsl(var(--code-fg));
+    @apply block border-0 bg-transparent p-0 font-normal;
+    font-family: var(--font-mono);
+    font-feature-settings: "ss02", "cv01", "cv02";
+  }
+  /* Shiki-emitted code (token spans) — keep the Shiki styles, just set font */
+  .prose pre.astro-code code,
+  .prose pre.astro-code code span {
+    font-family: var(--font-mono);
+  }
+  /* Custom thin scrollbars inside code blocks */
+  .prose pre::-webkit-scrollbar {
+    height: 0.5rem;
+  }
+  .prose pre::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .prose pre::-webkit-scrollbar-thumb {
+    background: rgb(63 63 70);
+    border-radius: 0.25rem;
+  }
+  .prose pre::-webkit-scrollbar-thumb:hover {
+    background: rgb(82 82 91);
   }
 
   /* Tables */

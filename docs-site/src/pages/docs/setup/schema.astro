@@ -1,13 +1,13 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Define Schema">
   <h1>Define Your Schema</h1>
   <p>Your data model is defined in a <code>.proto</code> file using EntDB custom options. This is the single source of truth — Python and Go types are generated from it.</p>
 
   <h2>Step 1: Create schema.proto</h2>
-  <pre is:raw><code>syntax = "proto3";
+  <Code code={`syntax = "proto3";
 import "entdb_options.proto";
 import "google/protobuf/timestamp.proto";
 
@@ -45,7 +45,7 @@ message HasComment {
 
     Task from = 15;       // protoc VALIDATES Task exists
     Comment to = 16;      // protoc VALIDATES Comment exists
-}</code></pre>
+}`} lang="proto" />
 
   <h2>Step 2: What the schema declares</h2>
   <table>
@@ -77,7 +77,7 @@ message HasComment {
   <h2>Step 4: PII field rules</h2>
   <p>Every string field must be explicitly marked <code>pii: true</code> or <code>pii_false: true</code>. Unmarked fields produce a lint warning. This forces you to think about data classification from day one.</p>
 
-  <pre is:raw><code>string email = 1       [(entdb.field) = {pii: true}];     // scrubbed on user deletion
+  <Code code={`string email = 1       [(entdb.field) = {pii: true}];     // scrubbed on user deletion
 string title = 2       [(entdb.field) = {pii_false: true}]; // explicitly not PII
-string description = 3; // WARNING: unmarked — lint will flag this</code></pre>
+string description = 3; // WARNING: unmarked — lint will flag this`} lang="plaintext" />
 </DocsLayout>

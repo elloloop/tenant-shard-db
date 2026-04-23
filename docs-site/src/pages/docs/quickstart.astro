@@ -1,6 +1,6 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Quick Start">
   <h1>Quick Start</h1>
@@ -13,7 +13,7 @@ import DocsLayout from "../../layouts/DocsLayout.astro";
     the on-disk <code>field_id</code>. Renames are free &mdash; only IDs are
     load-bearing.
   </p>
-  <pre is:raw><code>// schema.proto
+  <Code code={`// schema.proto
 syntax = "proto3";
 package myapp;
 
@@ -35,17 +35,17 @@ message Task {
 message Comment {
   option (entdb.type_id) = 3;
   string body = 1;
-}</code></pre>
+}`} lang="proto" />
 
   <h2>2. Compile with protoc</h2>
   <p>
     Use the standard protobuf compiler &mdash; no EntDB-specific codegen.
   </p>
-  <pre is:raw><code>protoc --python_out=. schema.proto
-# produces schema_pb2.py</code></pre>
+  <Code code={`protoc --python_out=. schema.proto
+# produces schema_pb2.py`} lang="bash" />
 
   <h2>3. Register the Schema &amp; Connect</h2>
-  <pre is:raw><code>import asyncio
+  <Code code={`import asyncio
 from entdb_sdk import DbClient, Actor, Permission, register_proto_schema
 import schema_pb2
 
@@ -71,7 +71,7 @@ async def main():
         for t in tasks:
             print(f"  {t.node_id}: {t.payload['title']}")
 
-asyncio.run(main())</code></pre>
+asyncio.run(main())`} lang="python" />
 
   <h2>4. Share a Task</h2>
   <p>
@@ -79,21 +79,21 @@ asyncio.run(main())</code></pre>
     Edges marked <code>propagate_share=True</code> (e.g. <code>HasComment</code>)
     mean the comment inherits the task's ACL automatically.
   </p>
-  <pre is:raw><code>async def share_task(db, task_id):
+  <Code code={`async def share_task(db, task_id):
     alice = db.tenant("acme").actor(Actor.user("alice"))
     await alice.share(task_id, Actor.user("bob"), Permission.WRITE)
 
     # Bob can see the task and all its comments
     bob = db.tenant("acme").actor(Actor.user("bob"))
     comments = await bob.connected(task_id, "HasComment")
-    print(f"Bob sees {len(comments)} comments")</code></pre>
+    print(f"Bob sees {len(comments)} comments")`} lang="python" />
 
   <h2>5. Update Data</h2>
-  <pre is:raw><code>async def update_task(db, task_id):
+  <Code code={`async def update_task(db, task_id):
     scope = db.tenant("acme").actor(Actor.user("alice"))
     plan = scope.plan()
     plan.update(schema_pb2.Task, task_id, {"status": "in_progress"})
-    await plan.commit()</code></pre>
+    await plan.commit()`} lang="python" />
 
   <h2>6. Add a Field Later (Non-Breaking)</h2>
   <p>
@@ -101,17 +101,17 @@ asyncio.run(main())</code></pre>
     Because EntDB stores payloads keyed by <code>field_id</code>, you can
     even rename existing fields freely.
   </p>
-  <pre is:raw><code>message Task {
+  <Code code={`message Task {
   option (entdb.type_id) = 1;
   string title = 1;
   string status = 2;
   int32 priority = 3;
   int64 due_date = 4;   // NEW field — field_id 4
-}</code></pre>
-  <pre is:raw><code>$ protoc --python_out=. schema.proto
+}`} lang="proto" />
+  <Code code={`$ protoc --python_out=. schema.proto
 $ entdb check         # validates compatibility vs the baseline snapshot
 Schema compatible: 1 non-breaking change (field added)
-$ entdb snapshot --update</code></pre>
+$ entdb snapshot --update`} lang="bash" />
 
   <h2>Next Steps</h2>
   <ul>

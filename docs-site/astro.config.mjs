@@ -6,4 +6,10 @@ export default defineConfig({
   base: "/tenant-shard-db",
   integrations: [tailwind({ applyBaseStyles: false })],
   output: "static",
+  markdown: {
+    shikiConfig: {
+      theme: "github-dark-dimmed",
+      wrap: false,
+    },
+  },
 });

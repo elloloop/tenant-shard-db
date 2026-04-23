@@ -1,34 +1,34 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
----
+import { Code } from "astro:components";---
 
 <DocsLayout title="Installation">
   <h1>Installation</h1>
 
   <h2>Python SDK</h2>
-  <pre is:raw><code>pip install entdb-sdk</code></pre>
+  <Code code={`pip install entdb-sdk`} lang="bash" />
   <p>Or with <code>uv</code>:</p>
-  <pre is:raw><code>uv add entdb-sdk</code></pre>
+  <Code code={`uv add entdb-sdk`} lang="plaintext" />
 
   <h2>Go SDK</h2>
-  <pre is:raw><code>go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest</code></pre>
+  <Code code={`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest`} lang="bash" />
 
   <h2>Server (Docker)</h2>
-  <pre is:raw><code># Pull the latest image
+  <Code code={`# Pull the latest image
 docker pull ghcr.io/elloloop/entdb:latest
 
 # Run with default settings (in-memory WAL, local storage)
-docker run -p 50051:50051 ghcr.io/elloloop/entdb:latest</code></pre>
+docker run -p 50051:50051 ghcr.io/elloloop/entdb:latest`} lang="plaintext" />
 
   <h2>Server (Docker Compose)</h2>
   <p>For production with Kafka WAL and S3 storage:</p>
-  <pre is:raw><code>git clone https://github.com/elloloop/tenant-shard-db.git
+  <Code code={`git clone https://github.com/elloloop/tenant-shard-db.git
 cd tenant-shard-db
-docker compose up -d</code></pre>
+docker compose up -d`} lang="plaintext" />
   <p>This starts EntDB + Redpanda (Kafka) + MinIO (S3) + Redpanda Console.</p>
 
   <h2>From Source</h2>
-  <pre is:raw><code>git clone https://github.com/elloloop/tenant-shard-db.git
+  <Code code={`git clone https://github.com/elloloop/tenant-shard-db.git
 cd tenant-shard-db
 
 # Install server
@@ -38,10 +38,10 @@ pip install -e .
 pip install -e ./sdk
 
 # Run server
-entdb</code></pre>
+entdb`} lang="plaintext" />
 
   <h2>Verify Installation</h2>
-  <pre is:raw><code>python -c "
+  <Code code={`python -c "
 import asyncio
 from entdb_sdk import DbClient
 
@@ -51,7 +51,7 @@ async def check():
         print(health)
 
 asyncio.run(check())
-"</code></pre>
+"`} lang="python" />
 
   <h2>Requirements</h2>
   <table>
