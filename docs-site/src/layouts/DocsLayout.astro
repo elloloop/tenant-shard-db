@@ -131,20 +131,34 @@ const isActive = (href: string) =>
           <div class="mx-auto flex w-full max-w-[88rem] min-w-0 xl:gap-10">
             <article
               class="prose mx-auto min-w-0 w-full max-w-3xl flex-1 px-1 py-10 sm:px-2 xl:mx-0 xl:px-0"
+              data-pagefind-body
             >
-              {!hideBreadcrumbs && <Breadcrumbs currentPath={currentPath} />}
+              {
+                !hideBreadcrumbs && (
+                  <div data-pagefind-ignore>
+                    <Breadcrumbs currentPath={currentPath} />
+                  </div>
+                )
+              }
               {
                 lastUpdatedDate && (
                   <p
                     class="-mb-6 mt-0 text-[13px] text-muted-foreground"
                     data-last-updated
+                    data-pagefind-ignore
                   >
                     Last updated {lastUpdatedDate}
                   </p>
                 )
               }
               <slot />
-              {!hidePrevNext && <PrevNext currentPath={currentPath} />}
+              {
+                !hidePrevNext && (
+                  <div data-pagefind-ignore>
+                    <PrevNext currentPath={currentPath} />
+                  </div>
+                )
+              }
             </article>
             <div class="hidden w-60 shrink-0 py-10 xl:block">
               <TableOfContents>
