@@ -71,31 +71,6 @@
     --letter-spacing-widest: 0.1em;
   }
 
-  .dark {
-    --background: 222 47% 5%;
-    --foreground: 210 40% 98%;
-    --card: 222 47% 7%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222 47% 7%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 234 89% 74%;
-    --primary-foreground: 222 47% 11%;
-    --secondary: 217 33% 17%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217 33% 17%;
-    --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217 33% 17%;
-    --input: 217 33% 17%;
-    --ring: 234 89% 74%;
-
-    --code-bg: 222 47% 3%;
-    --code-fg: 210 40% 98%;
-  }
-
   /* Stop any wide child from blowing out the viewport on mobile. */
   html,
   body {
@@ -326,6 +301,34 @@
   .prose blockquote p {
     @apply mb-0;
   }
+}
+
+/* Dark-mode token overrides. Kept outside @layer base because Tailwind's
+   purge step can drop the `.dark` selector if it doesn't appear in a
+   content file — and the theme toggle adds it dynamically. */
+.dark {
+  --background: 222 47% 5%;
+  --foreground: 210 40% 98%;
+  --card: 222 47% 7%;
+  --card-foreground: 210 40% 98%;
+  --popover: 222 47% 7%;
+  --popover-foreground: 210 40% 98%;
+  --primary: 234 89% 74%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 217 33% 17%;
+  --secondary-foreground: 210 40% 98%;
+  --muted: 217 33% 17%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 33% 17%;
+  --accent-foreground: 210 40% 98%;
+  --destructive: 0 63% 31%;
+  --destructive-foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --input: 217 33% 17%;
+  --ring: 234 89% 74%;
+
+  --code-bg: 222 47% 3%;
+  --code-fg: 210 40% 98%;
 }
 
 /* Pagefind UI — recolor to match the theme. */
