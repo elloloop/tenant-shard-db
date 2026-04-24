@@ -19,12 +19,13 @@ const hasAny = !!prev || !!next;
       {prev ? (
         <a
           href={prev.href}
-          class="group flex flex-col rounded-lg border border-border bg-card p-4 transition-colors hover:border-primary/40 hover:bg-muted/40"
+          class="group flex flex-col rounded-lg border border-border bg-card p-4 no-underline transition-colors hover:border-primary/40 hover:bg-muted/40"
+          style="text-decoration:none;"
         >
           <span class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             ← Previous
           </span>
-          <span class="mt-1 text-sm font-semibold text-foreground transition-colors group-hover:text-primary">
+          <span class="mt-1 text-sm font-semibold text-foreground no-underline transition-colors group-hover:text-primary">
             {prev.label}
           </span>
         </a>
@@ -34,12 +35,13 @@ const hasAny = !!prev || !!next;
       {next ? (
         <a
           href={next.href}
-          class="group flex flex-col rounded-lg border border-border bg-card p-4 text-right transition-colors hover:border-primary/40 hover:bg-muted/40 sm:items-end"
+          class="group flex flex-col rounded-lg border border-border bg-card p-4 text-right no-underline transition-colors hover:border-primary/40 hover:bg-muted/40 sm:items-end"
+          style="text-decoration:none;"
         >
           <span class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
             Next →
           </span>
-          <span class="mt-1 text-sm font-semibold text-foreground transition-colors group-hover:text-primary">
+          <span class="mt-1 text-sm font-semibold text-foreground no-underline transition-colors group-hover:text-primary">
             {next.label}
           </span>
         </a>
