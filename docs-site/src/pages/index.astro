@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Introduction" hidePrevNext>
   <h1>EntDB</h1>
@@ -20,7 +22,8 @@ import { Code } from "astro-expressive-code/components";---
   <h2>The Lifecycle</h2>
 
   <h3>1. Define Your Schema</h3>
-  <Code code={`from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
+  <CodeTabs
+    python={`from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
 
 Task = NodeTypeDef(
     type_id=1, name="Task",
@@ -41,38 +44,99 @@ HasComment = EdgeTypeDef(
     edge_id=1, name="HasComment",
     from_type=Task, to_type=Comment,
     propagate_share=True,  # sharing a task shares its comments
-)`} lang="python" />
+)`}
+    go={`// Schema lives in a .proto file — protoc emits the typed Go structs.
+syntax = "proto3";
+import "entdb_options.proto";
+
+message Task {
+    option (entdb.node) = {
+        type_id: 1
+        tenant_visible: true
+    };
+    string title = 1   [(entdb.field) = {required: true, pii_false: true}];
+    string status = 2  [(entdb.field) = {pii_false: true}];
+}
+
+message Comment {
+    option (entdb.node) = {
+        type_id: 2
+        inherit: true
+    };
+    string body = 1    [(entdb.field) = {required: true, pii: true}];
+}
+
+message HasComment {
+    option (entdb.edge) = {
+        edge_id: 1
+        name: "HAS_COMMENT"
+        propagate_share: true
+    };
+    Task from = 15;
+    Comment to = 16;
+}`}
+  />
 
   <h3>2. Initialize & Connect</h3>
-  <Code code={`from entdb_sdk import DbClient
+  <CodeTabs
+    python={`from entdb_sdk import DbClient
 
 async with DbClient("localhost:50051", api_key="your-key") as db:
     # All operations go through the client
-    pass`} lang="python" />
+    pass`}
+    go={`client, err := entdb.NewClient("localhost:50051", entdb.WithAPIKey("your-key"))
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+
+// Scope binds tenant + actor for every call:
+scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))`}
+  />
 
   <h3>3. Create Data</h3>
-  <Code code={`plan = db.atomic("acme", "user:alice")
-plan.create(Task, {title": "Ship v2", "status": "todo"}, as_="t")
-plan.create(Comment, {body": "Let's go!"}, as_="c")
+  <CodeTabs
+    python={`plan = db.atomic("acme", "user:alice")
+plan.create(Task, {"title": "Ship v2", "status": "todo"}, as_="t")
+plan.create(Comment, {"body": "Let's go!"}, as_="c")
 plan.edge_create(HasComment, from_="$t.id", to="$c.id")
-result = await plan.commit(wait_applied=True)`} lang="python" />
+result = await plan.commit(wait_applied=True)`}
+    go={`plan := scope.Plan()
+plan.Create(&shop.Task{Title: "Ship v2", Status: "todo"}, entdb.As("t"))
+plan.Create(&shop.Comment{Body: "Let's go!"}, entdb.As("c"))
+entdb.EdgeCreate[*shop.HasComment](plan, "$t.id", "$c.id")
+result, err := plan.Commit(ctx)
+// wait_applied is not yet exposed in the Go SDK — see Consistency page.`}
+  />
 
   <h3>4. Share & Control Access</h3>
-  <Code code={`# Share task with bob — comments are automatically shared (propagate_share)
+  <CodeTabs
+    python={`# Share task with bob — comments are automatically shared (propagate_share)
 await db.share(task_id, actor_id="user:bob", permission="write",
                tenant_id="acme", granted_by="user:alice")
 
 # Bob can now see the task AND all its comments
-comments = await db.connected(task_id, HasComment, tenant_id="acme", actor="user:bob")`} lang="python" />
+comments = await db.connected(task_id, HasComment, tenant_id="acme", actor="user:bob")`}
+    go={`// Share task with bob — comments are automatically shared (propagate_share)
+err := scope.Share(ctx, taskID, entdb.UserActor("bob"), entdb.PermissionWrite)
+
+// Bob can now see the task AND all its comments
+bob := client.Tenant("acme").Actor(entdb.UserActor("bob"))
+comments, err := bob.EdgesFrom(ctx, taskID, shop.HasCommentEdgeID)`}
+  />
 
   <h3>5. Read with Consistency</h3>
-  <Code code={`# After a write, read with offset guarantee
+  <CodeTabs
+    python={`# After a write, read with offset guarantee
 result = await plan.commit()
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
-                    after_offset=result.receipt.stream_position)`} lang="python" />
+                    after_offset=result.receipt.stream_position)`}
+    goNote="after_offset is not yet exposed on Get/Query in the Go SDK. Until it lands, rely on the natural applier latency (<50ms typical) — see the Consistency page for details."
+  />
 
   <h3>6. Evolve Your Schema</h3>
-  <Code code={`# Add a new field (non-breaking)
+  <CodeTabs
+    python={`# Add a new field (non-breaking)
 Task = NodeTypeDef(
     type_id=1, name="Task",
     fields=(
@@ -80,9 +144,16 @@ Task = NodeTypeDef(
         field(2, "status", "enum", enum_values=("todo", "in_progress", "done")),
         field(3, "priority", "int", default=0),  # NEW — safe to add
     ),
-)
-
-# CI check: entdb check validates compatibility
+)`}
+    go={`// Add a new field (non-breaking) — schema lives in the .proto file:
+message Task {
+    option (entdb.node) = { type_id: 1, tenant_visible: true };
+    string title = 1   [(entdb.field) = {required: true}];
+    string status = 2;
+    int32  priority = 3 [(entdb.field) = {default: "0"}];   // NEW — safe to add
+}`}
+  />
+  <Code code={`# CI check: entdb check validates compatibility
 $ entdb check
 Schema compatible: 1 non-breaking change (field added)`} lang="bash" />
 
