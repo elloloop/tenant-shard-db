@@ -1,0 +1,190 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+---
+
+<DocsLayout title="Encryption Setup">
+  <h1>Encryption Setup</h1>
+  <p>
+    EntDB protects data at two layers: SQLCipher encrypts every tenant
+    database on disk, and gRPC TLS encrypts traffic in flight. Per-tenant
+    Data Encryption Keys (DEKs) are derived from a master key (the KEK)
+    via HKDF-SHA256, which makes per-tenant <em>crypto-shred</em> a
+    single-call operation.
+  </p>
+
+  <h2>Encryption at Rest</h2>
+  <p>
+    When <code>ENTDB_ENCRYPTION_ENABLED=true</code>, the server opens
+    every tenant database through the SQLCipher driver and applies
+    <code>PRAGMA key</code> with the per-tenant derived key plus a
+    hardened <code>PRAGMA kdf_iter</code>. If
+    <code>pysqlcipher3</code> is not installed at runtime, the server
+    falls back to plain SQLite and logs a warning &mdash; never run
+    production this way.
+  </p>
+  <Code code={`ENTDB_ENCRYPTION_ENABLED=true
+ENTDB_MASTER_KEY=<64 hex chars>     # 32 raw bytes
+ENTDB_KEY_DERIVATION=hkdf            # only supported value`} lang="bash" />
+
+  <p>
+    DEKs are derived deterministically as
+    <code>HKDF-SHA256(master_key, info="entdb-tenant-key:" + tenant_id)</code>
+    and cached in memory. Same master + same tenant always produces the
+    same 32-byte key, so the database file is portable across replicas
+    that share the master.
+  </p>
+
+  <h2>KMS Backends</h2>
+  <p>
+    The server reads its master key from the
+    <code>ENTDB_MASTER_KEY</code> environment variable. How that
+    variable gets populated is a deployment concern &mdash; integrate
+    your KMS at process-start, not inside EntDB. The patterns below all
+    end in the same place: a 64-character hex string in the
+    <code>ENTDB_MASTER_KEY</code> env var.
+  </p>
+
+  <h3>AWS KMS</h3>
+  <ol>
+    <li>Create a symmetric Customer Master Key (CMK) in the same region as your servers.</li>
+    <li>Grant the server's IAM role <code>kms:Decrypt</code> on that CMK.</li>
+    <li>Store the encrypted master key as a ciphertext blob (or in Secrets Manager / SSM Parameter Store).</li>
+    <li>At pod start, decrypt and export it.</li>
+  </ol>
+  <Code code={`# Entrypoint script — runs before exec'ing the server
+export ENTDB_MASTER_KEY=$(aws kms decrypt \
+  --ciphertext-blob fileb://master.key.enc \
+  --output text --query Plaintext | base64 -d | xxd -p -c 64)
+exec python -m dbaas.entdb_server.main`} lang="bash" />
+
+  <h3>GCP KMS</h3>
+  <ol>
+    <li>Create a keyring and a symmetric key in Cloud KMS.</li>
+    <li>Bind the workload's service account to <code>roles/cloudkms.cryptoKeyDecrypter</code>.</li>
+    <li>Store the encrypted master in Secret Manager and decrypt at start.</li>
+  </ol>
+  <Code code={`export ENTDB_MASTER_KEY=$(gcloud kms decrypt \
+  --location global --keyring entdb --key master \
+  --ciphertext-file master.key.enc \
+  --plaintext-file - | xxd -p -c 64)
+exec python -m dbaas.entdb_server.main`} lang="bash" />
+
+  <h3>HashiCorp Vault</h3>
+  <ol>
+    <li>Enable the <code>transit</code> secrets engine.</li>
+    <li>Create a key (<code>vault write -f transit/keys/entdb-kek</code>).</li>
+    <li>Authenticate the workload with Kubernetes auth (or AppRole), then decrypt.</li>
+  </ol>
+  <Code code={`CIPHERTEXT=$(cat master.key.enc)
+export ENTDB_MASTER_KEY=$(vault write -field=plaintext \
+  transit/decrypt/entdb-kek ciphertext="$CIPHERTEXT" \
+  | base64 -d | xxd -p -c 64)
+exec python -m dbaas.entdb_server.main`} lang="bash" />
+
+  <h3>File-Based (Development Only)</h3>
+  <p>
+    For local development, source the master key from a file the server
+    user owns. <strong>Never</strong> use this in production: the key
+    sits unencrypted on disk and is not auditable.
+  </p>
+  <Code code={`# .env.local — git-ignored, chmod 600
+ENTDB_ENCRYPTION_ENABLED=true
+ENTDB_MASTER_KEY=$(openssl rand -hex 32)`} lang="bash" />
+  <p>
+    To migrate off file-based: provision the KMS-backed pipeline above,
+    re-issue the same master key through KMS (so derived DEKs do not
+    change), and rotate the file off the host.
+  </p>
+
+  <h2>Key Rotation</h2>
+  <p>
+    Rotate the KEK on a schedule (90 days is a reasonable default) and
+    immediately after any suspected exposure. The
+    <code>KeyManager.rotate_master_key(old, new)</code> helper switches
+    the master key in place, re-derives every cached tenant DEK, and
+    returns a <code>{`{tenant_id: (old_dek, new_dek)}`}</code> map you
+    feed to <code>reencrypt_tenant_db()</code>:
+  </p>
+  <Code code={`from dbaas.entdb_server.crypto.key_manager import KeyManager
+
+km = KeyManager(master_key=old_master)
+rotation_map = km.rotate_master_key(old_master, new_master)
+
+for tenant_id, (old_dek, new_dek) in rotation_map.items():
+    db_path = f"/var/lib/entdb/tenant_{tenant_id}.db"
+    KeyManager.reencrypt_tenant_db(db_path, old_dek, new_dek)`} lang="python" />
+
+  <p>
+    Re-encryption uses SQLCipher's <code>PRAGMA rekey</code>, which
+    rewrites pages in place &mdash; no downtime per tenant beyond the
+    seconds needed to rewrite that file. Coordinate the rollout so all
+    replicas pick up the new <code>ENTDB_MASTER_KEY</code> in the same
+    deploy window; once a tenant is rekeyed, only servers with the new
+    master can read it.
+  </p>
+
+  <h2>Crypto-Shred</h2>
+  <p>
+    Destroying a tenant's DEK renders their on-disk SQLite permanently
+    unreadable, even if a forensic copy is recovered later. Use this
+    over row-by-row deletion when you need to honour a complete
+    "right-to-erasure" or terminate a contract: it is faster, more
+    auditable, and verifiably irreversible.
+  </p>
+  <Code code={`from dbaas.entdb_server.crypto.crypto_shred import crypto_shred_tenant
+
+await crypto_shred_tenant(
+    tenant_id="acme",
+    key_manager=server.key_manager,
+    canonical_store=server.canonical_store,
+    delete_files=True,            # also remove .db, -wal, -shm
+)`} lang="python" />
+
+  <p>
+    The shred event is itself appended to the WAL, so the audit trail
+    records that the tenant was shredded, when, and by whom &mdash; even
+    after the data itself is gone. Choose row-level deletion instead
+    when you only need to remove a single user's records and the tenant
+    keeps operating.
+  </p>
+
+  <h2>TLS / Encryption in Transit</h2>
+  <p>
+    Configure gRPC TLS by pointing the server at a PEM cert and key.
+    Both files must be readable by the server process; rotate them by
+    swapping the files and bouncing the pod.
+  </p>
+  <Code code={`GRPC_BIND=0.0.0.0:50051
+GRPC_TLS_CERT=/etc/entdb/tls/server.crt
+GRPC_TLS_KEY=/etc/entdb/tls/server.key`} lang="bash" />
+
+  <p>
+    For mutual TLS (mTLS), terminate at a sidecar (Envoy, Linkerd,
+    Istio) that validates client certificates against your CA and
+    forwards the verified principal to EntDB via
+    <code>x-entdb-actor</code> &mdash; this keeps cert lifecycle out of
+    the server's hot path and lets you reuse mesh-level rotation
+    tooling. For cert rotation without a mesh, use cert-manager (or
+    equivalent) to write fresh files and trigger a rolling restart.
+  </p>
+
+  <h2>Threat Model</h2>
+  <table>
+    <tr><th>Threat</th><th>Mitigation</th></tr>
+    <tr><td>Lost laptop with a tenant's <code>.db</code> file</td><td>SQLCipher at-rest encryption &mdash; file is unreadable without the derived DEK.</td></tr>
+    <tr><td>S3 bucket leak (snapshots / archives)</td><td>Snapshots inherit SQLCipher encryption; archive segments should use S3 server-side encryption (SSE-KMS) on top.</td></tr>
+    <tr><td>Malicious insider with read access to a node</td><td>DEKs live only in memory; <code>ENTDB_MASTER_KEY</code> is the only on-host secret and should be sourced from KMS at start.</td></tr>
+    <tr><td>KMS compromise</td><td>Rotate the KEK and re-encrypt all tenant DBs. Audit KMS logs for unauthorised <code>Decrypt</code> calls.</td></tr>
+    <tr><td>Network eavesdropper</td><td>gRPC TLS (or mTLS via service mesh).</td></tr>
+    <tr><td>Right-to-erasure for a whole tenant</td><td>Crypto-shred &mdash; destroy the DEK; ciphertext becomes unrecoverable.</td></tr>
+    <tr><td>Snapshot bit-rot</td><td>Manifest SHA-256 verified by the restore tool; <code>PRAGMA integrity_check</code> after restore.</td></tr>
+  </table>
+
+  <h2>Related</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a></li>
+    <li><a href="/tenant-shard-db/docs/compliance/gdpr">GDPR Operations</a></li>
+    <li><a href="/tenant-shard-db/docs/deploy/backups">Backups &amp; Recovery</a></li>
+  </ul>
+</DocsLayout>

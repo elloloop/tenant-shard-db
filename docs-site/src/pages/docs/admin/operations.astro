@@ -1,0 +1,148 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
+
+<DocsLayout title="Admin Operations">
+  <h1>Admin Operations</h1>
+  <p>Admin RPCs are bulk, identity-scoped operations that bypass per-node ACL checks because the caller is authenticated as <code>system:admin</code> (or a tenant <code>admin</code>/<code>owner</code>). Every one of these mutations goes through the WAL exactly like a normal write &mdash; they are appended to <code>TransactionEvent.ops</code> and applied by the Applier &mdash; so they are auditable and replayable.</p>
+  <p>Operations are ordered below by how often you will reach for them in production.</p>
+
+  <h2>get_receipt_status</h2>
+  <p>The most common admin call: confirm that a write you submitted has actually been applied. Because <code>plan.commit()</code> returns as soon as the WAL appends the event, the event may still be in flight to SQLite. The receipt status tells you where it is.</p>
+  <CodeTabs
+    python={`status = await db.get_receipt_status(
+    tenant_id="acme",
+    idempotency_key=result.receipt.idempotency_key,
+)
+# One of: "PENDING", "APPLIED", "FAILED"
+if status == "APPLIED":
+    ...`}
+    goNote={`Not exposed as a typed Go SDK method. For read-after-write consistency from Go, prefer the after_offset / wait_applied patterns described in the Consistency docs once they ship; in the meantime, call EntDBService/GetReceiptStatus on the raw generated stub.`}
+  />
+  <p>Pair this with <code>wait_for_offset</code> when you need to gate a follow-up read on the write being visible &mdash; see <a href="/tenant-shard-db/docs/crud/consistency">Read-after-Write Consistency</a>.</p>
+
+  <h2>group_add / group_remove</h2>
+  <p>Groups let you grant access to many users at once. A group is just an actor id of the form <code>group:&lt;name&gt;</code>; ACL grants made to a group are evaluated against every member of the group at read time.</p>
+  <CodeTabs
+    python={`# Add a user to a group
+await db.group_add(
+    group_id="group:eng",
+    member_actor_id="user:alice",
+    tenant_id="acme",
+    actor="user:admin",
+)
+
+# Nested groups: groups can contain other groups
+await db.group_add("group:all-staff", "group:eng", "acme", actor="user:admin")
+
+# Remove
+await db.group_remove("group:eng", "user:alice", "acme", actor="user:admin")`}
+    go={`scope := client.Tenant("acme").Actor(entdb.UserActor("admin"))
+
+// Share with the group — every member of group:eng gets WRITE
+err := scope.Share(ctx, taskID, entdb.GroupActor("eng"), entdb.PermissionWrite)`}
+  />
+  <p>Membership changes take effect on the next read; there is no cache to invalidate. Group membership lives in the per-tenant store, not the global registry &mdash; users can be in different groups in different tenants.</p>
+
+  <h2>transfer_ownership</h2>
+  <p>Move a single node to a new owner. The new owner's actor becomes <code>owner_actor</code>; existing direct grants are unchanged. Use this when content changes hands but the document itself stays in place.</p>
+  <CodeTabs
+    python={`await db.transfer_ownership(
+    node_id="task_42",
+    new_owner="user:bob",
+    tenant_id="acme",
+    actor="user:admin",
+)
+# True if the node existed and ownership was transferred`}
+    goNote={`Not exposed as a typed Go SDK method. Call EntDBService/TransferOwnership via the generated proto stub if you need this from Go.`}
+  />
+
+  <h2>delegate_access</h2>
+  <p>Grant another actor temporary access to <em>all</em> nodes owned by a user, optionally with an expiry. Useful for vacation cover, audit reviewers, and short-lived support sessions &mdash; you do not have to enumerate every node.</p>
+  <CodeTabs
+    python={`import time
+
+await db.delegate_access(
+    tenant_id="acme",
+    from_user="user:alice",
+    to_user="user:bob",
+    permission="read",
+    expires_at=int(time.time() * 1000) + 7 * 86_400_000,  # 7 days
+    actor="user:admin",
+)
+# {"success": True, "delegated": <count>, "expires_at": ...}`}
+    goNote={`Not exposed as a typed Go SDK method. Use the generated EntDBService/DelegateAccess stub from Go if needed.`}
+  />
+  <p>Pass <code>expires_at=None</code> for a permanent delegation. The grant is revoked automatically once <code>expires_at</code> passes; no background sweep is required because the ACL check evaluates the timestamp at read time.</p>
+
+  <h2>transfer_user_content</h2>
+  <p>Bulk-reassign every node owned by one user to another. The classic offboarding flow: a departing employee's content moves to their manager so it stays accessible after the membership is removed.</p>
+  <CodeTabs
+    python={`result = await db.transfer_user_content(
+    tenant_id="acme",
+    from_user="user:alice",
+    to_user="user:manager",
+    actor="user:admin",
+)
+# {"success": True, "transferred": <count>, "error": ""}`}
+    goNote={`Not exposed as a typed Go SDK method. Use EntDBService/TransferUserContent via the generated stub if needed.`}
+  />
+  <p>Server-side this also ensures <code>to_user</code> is a member of the tenant (adding them as <code>member</code> if not). It does <strong>not</strong> revoke <code>from_user</code>'s direct ACL grants on other people's nodes &mdash; combine with <code>revoke_all_user_access</code> for a full off-board.</p>
+
+  <h2>revoke_all_user_access</h2>
+  <p>Emergency lockout. Removes every direct grant, group membership, and shared-index entry the user has in the tenant, then drops their <code>tenant_members</code> row. After this returns, the user has zero visibility into the tenant.</p>
+  <CodeTabs
+    python={`result = await db.revoke_all_user_access(
+    tenant_id="acme",
+    user_id="alice",
+    actor="user:admin",
+)
+# {"success": True,
+#  "revoked_grants": 17, "revoked_groups": 3, "revoked_shared": 8,
+#  "error": ""}`}
+    goNote={`Not exposed as a typed Go SDK method. Call EntDBService/RevokeAllUserAccess via the generated stub.`}
+  />
+  <p>This does not delete or anonymize the user's owned nodes &mdash; for that, see <code>transfer_user_content</code> (offboarding) or the GDPR <code>delete_user</code> flow (right-to-erasure with grace period).</p>
+
+  <h2>Use Cases</h2>
+  <table>
+    <tr><th>Scenario</th><th>Sequence</th></tr>
+    <tr>
+      <td>Employee leaves the company</td>
+      <td><code>transfer_user_content(alice -&gt; manager)</code> &rarr; <code>revoke_all_user_access(alice)</code> &rarr; <code>remove_tenant_member(alice)</code></td>
+    </tr>
+    <tr>
+      <td>Account compromise (immediate lockout)</td>
+      <td><code>revoke_all_user_access(alice)</code> first; investigate; rotate API keys; then decide on transfer or restore</td>
+    </tr>
+    <tr>
+      <td>Acquisition: ownership of a project moves teams</td>
+      <td>For each top-level node: <code>transfer_ownership(node, new_owner)</code>. Inheritance pulls the rest along.</td>
+    </tr>
+    <tr>
+      <td>Manager on vacation</td>
+      <td><code>delegate_access(from=manager, to=deputy, permission="write", expires_at=&lt;return date&gt;)</code></td>
+    </tr>
+    <tr>
+      <td>External auditor needs read access for a quarter</td>
+      <td><code>delegate_access(from=ceo, to=auditor, permission="read", expires_at=&lt;quarter end&gt;)</code></td>
+    </tr>
+    <tr>
+      <td>Confirm an admin write made it to disk before continuing</td>
+      <td><code>get_receipt_status(idempotency_key) == "APPLIED"</code></td>
+    </tr>
+  </table>
+
+  <h2>Audit Trail</h2>
+  <p>Every operation on this page goes through the WAL, which means the S3 Object-Lock-backed audit log records who did what to whom and when. Reconstruct the timeline with <code>export_audit_trail()</code> from <code>dbaas/entdb_server/audit/compliance.py</code> &mdash; do not roll your own audit table for these events.</p>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/admin/tenants">Tenants &amp; Users</a> &mdash; the membership layer these operations sit on top of</li>
+    <li><a href="/tenant-shard-db/docs/admin/auth">Authentication</a> &mdash; how the calling admin proves who they are</li>
+    <li><a href="/tenant-shard-db/docs/acl/overview">Access Control</a> &mdash; the ACL model that <code>transfer_ownership</code>, <code>delegate_access</code>, and <code>revoke_all_user_access</code> manipulate</li>
+    <li><a href="/tenant-shard-db/docs/compliance/gdpr">GDPR</a> &mdash; right-to-erasure, which is the heavier sibling of <code>revoke_all_user_access</code></li>
+  </ul>
+</DocsLayout>

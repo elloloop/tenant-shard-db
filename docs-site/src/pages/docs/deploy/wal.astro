@@ -18,29 +18,193 @@ import { Code } from "astro-expressive-code/components";---
     <tr><td>Local (in-memory)</td><td>Development</td><td><code>WAL_BACKEND=local</code></td></tr>
   </table>
 
+  <h2>Choosing a backend</h2>
+  <table>
+    <tr><th>Need</th><th>Pick</th><th>Why</th></tr>
+    <tr><td>Highest throughput, ordered, multi-region</td><td>Kafka / Redpanda</td><td>Partition-keyed ordering, exactly-once producer, broad ecosystem</td></tr>
+    <tr><td>Managed AWS, no Kafka ops</td><td>Kinesis</td><td>Per-shard ordering, native IAM, integrates with S3 archival</td></tr>
+    <tr><td>Managed GCP</td><td>Pub/Sub</td><td>Ordering keys provide per-tenant ordering; serverless</td></tr>
+    <tr><td>Managed Azure</td><td>Service Bus / Event Hubs</td><td>Service Bus = strict per-session ordering; Event Hubs = high-throughput streaming</td></tr>
+    <tr><td>Lightweight AWS, low volume</td><td>SQS FIFO</td><td>Simplest AWS option; per-message-group ordering, but lower TPS than Kinesis</td></tr>
+    <tr><td>Local dev / unit tests</td><td>Local (memory)</td><td>Zero deps; <strong>data is lost on restart</strong></td></tr>
+  </table>
+  <p>
+    All backends implement the same <code>WalStream</code> protocol
+    (<code>dbaas/entdb_server/wal/base.py</code>), so swapping is a config
+    change &mdash; the applier and producers are agnostic.
+  </p>
+
   <h2>Kafka (Recommended)</h2>
-  <Code code={`# Environment variables
-WAL_BACKEND=kafka
-KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-KAFKA_TOPIC=entdb-events
-KAFKA_CONSUMER_GROUP=entdb-applier
-KAFKA_REPLICATION_FACTOR=3
-KAFKA_NUM_PARTITIONS=6`} lang="bash" />
+  <p>
+    Kafka is the default production target. The server uses an idempotent
+    producer with <code>acks=all</code> for strongest durability, and
+    keys every record by <code>tenant_id</code> so a tenant's events
+    always land on the same partition (and are therefore strictly
+    ordered).
+  </p>
 
-  <h2>Local (Development)</h2>
-  <Code code={`# No external dependencies — events stay in memory
-WAL_BACKEND=local
+  <h3>Recommended topic config</h3>
+  <Code code={`# Topic: entdb-wal
+# - partitions: scale to your tenant fan-out (rule of thumb: P >= concurrent active tenants / 100)
+# - replication-factor: 3 in production (tolerates one broker loss without data loss)
+# - cleanup.policy: "delete" with long retention; the WAL is the source of truth so retention
+#   should cover the longest expected disaster-recovery rebuild window. Do NOT use "compact"
+#   — it would drop historical events the applier needs for cold rebuilds.
+kafka-topics --bootstrap-server kafka:9092 \\
+  --create --topic entdb-wal \\
+  --partitions 12 \\
+  --replication-factor 3 \\
+  --config min.insync.replicas=2 \\
+  --config retention.ms=-1 \\
+  --config cleanup.policy=delete \\
+  --config compression.type=zstd`} lang="bash" />
 
-# Data is lost on restart. Use only for development.`} lang="bash" />
+  <h3>Server config</h3>
+  <Code code={`WAL_BACKEND=kafka
+KAFKA_BROKERS=kafka-1:9092,kafka-2:9092,kafka-3:9092
+KAFKA_TOPIC=entdb-wal
+KAFKA_CONSUMER_GROUP=entdb-applier-prod
 
-  <h2>Disabling WAL</h2>
-  <p>Set <code>WAL_BACKEND=local</code> to use the in-memory WAL. By extension, this also disables durable storage (S3/R2/etc.) since there's nothing to archive.</p>
+# Durability (defaults shown; only override if you know what you're doing)
+KAFKA_ACKS=all
+KAFKA_ENABLE_IDEMPOTENCE=true
+KAFKA_MAX_IN_FLIGHT=5
+KAFKA_AUTO_OFFSET_RESET=earliest`} lang="bash" />
+
+  <h3>SASL / TLS</h3>
+  <Code code={`# Confluent Cloud / MSK / SASL_SSL clusters
+KAFKA_SECURITY_PROTOCOL=SASL_SSL
+KAFKA_SASL_MECHANISM=SCRAM-SHA-512
+KAFKA_SASL_USERNAME=entdb-prod
+KAFKA_SASL_PASSWORD=...
+KAFKA_SSL_CAFILE=/etc/ssl/certs/ca-bundle.crt`} lang="bash" />
+  <p>
+    The minimum ACL set the EntDB principal needs on the topic is
+    <code>WRITE</code> (producer) and <code>READ</code> + group
+    <code>READ</code> (applier). It does <em>not</em> need
+    <code>DELETE</code>; the WAL is append-only by design.
+  </p>
+
+  <h2>AWS Kinesis</h2>
+  <p>
+    Use Kinesis when you want a fully managed AWS stream and don't want
+    to operate Kafka. EntDB partitions records by <code>tenant_id</code>
+    so each tenant's events land on a single shard.
+  </p>
+  <Code code={`# Stream creation — one shard handles ~1 MB/s in or 1000 records/s.
+# Size by peak per-shard write rate, then add headroom.
+aws kinesis create-stream \\
+  --stream-name entdb-wal \\
+  --shard-count 8
+
+# Retention: 24h default, max 365 days. EntDB needs the WAL retained for
+# at least the longest expected rebuild window.
+aws kinesis increase-stream-retention-period \\
+  --stream-name entdb-wal \\
+  --retention-period-hours 720    # 30 days`} lang="bash" />
+  <Code code={`WAL_BACKEND=kinesis
+KINESIS_STREAM_NAME=entdb-wal
+KINESIS_ITERATOR_TYPE=TRIM_HORIZON   # start from the oldest record on cold start
+AWS_REGION=us-east-1`} lang="bash" />
+  <p>Minimum IAM:</p>
+  <Code code={`{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "kinesis:PutRecord",
+      "kinesis:PutRecords",
+      "kinesis:GetRecords",
+      "kinesis:GetShardIterator",
+      "kinesis:DescribeStream",
+      "kinesis:ListShards"
+    ],
+    "Resource": "arn:aws:kinesis:us-east-1:123:stream/entdb-wal"
+  }]
+}`} lang="json" />
+
+  <h2>S3 Object backend (archival)</h2>
+  <p>
+    EntDB's S3 integration is <strong>archival</strong>, not the live
+    WAL: the streaming backend (Kafka, Kinesis, etc.) periodically rolls
+    completed segments into S3 for long-term retention and compliance
+    (Object Lock). Use this when you need:
+  </p>
+  <ul>
+    <li>Multi-year audit retention beyond what your stream broker keeps.</li>
+    <li>Tamper-evident storage via Object Lock (see <a href="/tenant-shard-db/docs/compliance/audit">Compliance &amp; Audit</a>).</li>
+    <li>A cheap cold-storage tier the applier can replay from on disaster recovery.</li>
+  </ul>
+  <Code code={`# Bucket layout
+s3://entdb-audit-prod/
+  archive/                        # S3_ARCHIVE_PREFIX — closed WAL segments
+    2026/04/segment-000123.jsonl
+    2026/04/segment-000124.jsonl
+  snapshots/                      # S3_SNAPSHOT_PREFIX — periodic SQLite snapshots
+    acme/2026-04-25.db.zst`} lang="plaintext" />
+  <Code code={`S3_BUCKET=entdb-audit-prod
+S3_REGION=us-east-1
+S3_ARCHIVE_PREFIX=archive
+S3_SNAPSHOT_PREFIX=snapshots
+# AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY follow the standard AWS chain`} lang="bash" />
+  <p>
+    Suggested bucket lifecycle: keep <code>archive/</code> in Standard
+    for 30 days, transition to Glacier Instant Retrieval, and let Object
+    Lock retention drive deletion (which it will refuse until the lock
+    expires).
+  </p>
+
+  <h2>Local / in-memory backend (development only)</h2>
+  <Code code={`WAL_BACKEND=local
+# No external dependencies. Events live entirely in process memory.`} lang="bash" />
+  <div class="rounded-md border border-yellow-500/40 bg-yellow-500/10 px-4 py-3 text-[13px]">
+    <strong>Data is lost on every server restart.</strong> The local
+    backend is intended for unit tests, integration tests, local
+    developer machines, and CI &mdash; never for staging or production.
+    Pair it with the in-memory storage backend so the whole stack is
+    ephemeral.
+  </div>
 
   <h2>Multi-Tenant Partitioning</h2>
   <p>All tenants share a single WAL topic, partitioned by <code>tenant_id</code>. This ensures events for the same tenant are ordered and processed sequentially:</p>
   <Code code={`# Kafka topic: entdb-events
 # Partition key: tenant_id
 # Result: events for tenant "acme" always go to the same partition`} lang="yaml" />
+
+  <h2>Applier scaling</h2>
+  <p>
+    The applier is the consumer that drains the WAL into per-tenant
+    SQLite. Two invariants govern how it scales:
+  </p>
+  <ol>
+    <li>
+      <strong>One writer per tenant.</strong> Because each tenant has its
+      own SQLite file and EntDB enforces per-tenant ordering, only one
+      applier instance may write to a given tenant at a time. Two
+      appliers writing the same tenant would race on
+      <code>tenant_&lt;id&gt;.db</code>.
+    </li>
+    <li>
+      <strong>Tenants shard freely across appliers.</strong> Different
+      tenants can be applied in parallel by different processes &mdash;
+      Kafka's consumer-group rebalancing assigns partitions (and thus
+      tenants) to consumers. Add applier pods to scale write throughput
+      horizontally.
+    </li>
+  </ol>
+  <Code code={`# Producer side (gRPC server) — stateless, scale on RPS
+GRPC_BIND=0.0.0.0:50051
+
+# Applier side — scale by number of partitions assigned per pod
+WAL_BACKEND=kafka
+KAFKA_CONSUMER_GROUP=entdb-applier-prod
+APPLIER_BATCH_SIZE=100
+APPLIER_COMMIT_INTERVAL_MS=1000`} lang="bash" />
+  <p>
+    Sizing rule of thumb: provision Kafka <em>partitions &ge; applier
+    pods</em>. Extra partitions allow scaling out without re-creating the
+    topic; extra appliers beyond the partition count sit idle.
+  </p>
 
   <h2>Swapping Backends</h2>
   <p>All backends implement the same <code>WalStream</code> protocol. Swapping is a config change:</p>
@@ -49,4 +213,7 @@ WAL_BACKEND=kinesis
 KINESIS_STREAM_NAME=entdb-events
 AWS_REGION=us-east-1`} lang="bash" />
   <p>No code changes needed. The applier consumes from whatever backend is configured.</p>
+
+  <h2>Disabling WAL</h2>
+  <p>Set <code>WAL_BACKEND=local</code> to use the in-memory WAL. By extension, this also disables durable storage (S3/R2/etc.) since there's nothing to archive.</p>
 </DocsLayout>

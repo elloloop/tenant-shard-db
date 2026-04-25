@@ -1,5 +1,6 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
 import CodeTabs from "../../../components/CodeTabs.astro";
 ---
 
@@ -20,47 +21,181 @@ import CodeTabs from "../../../components/CodeTabs.astro";
     across many tenants, and GDPR rights apply across all of them at once.
   </p>
 
-  <h2>delete_user</h2>
+  <h2>Subject Field</h2>
+  <p>
+    GDPR rights apply to data <em>about</em> a person, not data <em>created
+    by</em> a person. EntDB needs to know which field on a node identifies
+    the data subject. Declare it in your <code>.proto</code>:
+  </p>
+  <Code code={`message User {
+  option (entdb.node) = {
+    type_id: 1
+    data_policy: DATA_POLICY_PERSONAL
+    subject_field: "id"          // <-- this field identifies WHO the data is about
+  };
+
+  string id    = 1 [(entdb.field).required = true];
+  string email = 2 [(entdb.field).pii = true];
+  string name  = 3 [(entdb.field).pii = true];
+}
+
+message Comment {
+  option (entdb.node) = {
+    type_id: 2
+    data_policy: DATA_POLICY_BUSINESS
+    subject_field: "author_id"   // comments are "about" their author
+  };
+
+  string author_id = 1;
+  string body      = 2;
+}`} lang="proto" />
+  <p>
+    When <code>delete_user("alice")</code> runs, the server scans every node
+    type that declares a <code>subject_field</code> and finds the rows whose
+    subject field equals <code>"alice"</code>. The per-type
+    <code>data_policy</code> then decides whether each row is hard-deleted,
+    anonymized, or retained.
+  </p>
+
+  <h2>Data Policies</h2>
+  <p>
+    Each node type carries a <code>DataPolicy</code> classification (default:
+    <code>PERSONAL</code>) that drives erase and export behaviour. The enum
+    is defined in <code>proto/entdb_options.proto</code> and runtime
+    semantics live in <code>dbaas/entdb_server/data_policy.py</code>.
+  </p>
+  <table>
+    <tr><th>Policy</th><th>On <code>delete_user</code></th><th>On <code>export_user_data</code></th><th>Notes</th></tr>
+    <tr><td><code>PERSONAL</code> (default)</td><td>DELETE rows where subject = user</td><td>Fully exportable</td><td>The strictest default; what you want for user-owned content.</td></tr>
+    <tr><td><code>BUSINESS</code></td><td>ANONYMIZE PII fields, keep row</td><td>User's own contributions exportable</td><td>Comments, posts, anything that has business value beyond the author.</td></tr>
+    <tr><td><code>FINANCIAL</code></td><td>RETAIN row, ANONYMIZE PII</td><td>Exportable</td><td>Requires a documented <code>legal_basis</code> on the type.</td></tr>
+    <tr><td><code>AUDIT</code></td><td>RETAIN row, ANONYMIZE PII</td><td>NOT user-exportable</td><td>Security/audit logs. Requires <code>legal_basis</code>.</td></tr>
+    <tr><td><code>EPHEMERAL</code></td><td>DELETE</td><td>Not exportable</td><td>Sessions, drafts, anything intentionally short-lived.</td></tr>
+    <tr><td><code>HEALTHCARE</code></td><td>RETAIN row, ANONYMIZE PHI</td><td>Exportable</td><td>Field-level encryption for fields marked <code>phi: true</code>; 6-year retention default. Requires <code>legal_basis</code>.</td></tr>
+  </table>
+  <p>
+    Fields marked
+    <code>(entdb.field).pii = true</code> (or
+    <code>phi = true</code> for healthcare) are the ones that get scrubbed
+    when a policy says "anonymize". Non-PII fields stay intact so the row
+    remains useful for the business.
+  </p>
+
+  <h2>Right-to-Erasure (delete_user)</h2>
   <p>
     Schedules a user for deletion with a configurable grace window. During
-    the grace window the delete is reversible; after the window, all of the
-    user's data across every tenant is hard-deleted.
+    the grace window the delete is reversible; after the window, a
+    background worker walks every tenant the user touched and applies the
+    per-type <code>data_policy</code> rules.
   </p>
   <CodeTabs
-    python={`await db.delete_user("alice", grace_period_days=30, reason="user request")`}
-    goNote="GDPR delete_user is not yet exposed in the Go SDK. Call this from Python (or via gRPC directly) until the Go binding lands."
+    python={`result = await db.delete_user(
+    "alice",
+    actor="user:alice",      # who initiated (defaults to user:<user_id>)
+    grace_days=30,
+)
+print(result["status"], result["execute_at"])`}
+    goNote="GDPR delete_user is not yet exposed in the Go SDK. Call it from Python (or invoke the gRPC method directly) until the Go binding lands."
   />
+  <p>What actually happens at the end of the grace window:</p>
+  <ul>
+    <li>
+      <strong>Erased</strong>: every row whose <code>subject_field</code>
+      equals <code>"alice"</code> on a <code>PERSONAL</code> or
+      <code>EPHEMERAL</code> type is hard-deleted.
+    </li>
+    <li>
+      <strong>Anonymized</strong>: rows on <code>BUSINESS</code>,
+      <code>FINANCIAL</code>, <code>AUDIT</code>, or
+      <code>HEALTHCARE</code> types keep their structure but every
+      <code>pii: true</code> / <code>phi: true</code> field is replaced
+      with a tombstone (e.g. "Deleted User"). Comments, orders, audit
+      events that referenced Alice still point at the anonymized row.
+    </li>
+    <li>
+      <strong>Personal tenants dropped</strong>: a tenant where the user is
+      the sole member is removed entirely.
+    </li>
+    <li>
+      The deletion event itself is appended to the WAL &mdash; the audit
+      trail records who triggered it, when, and the resolved policy per
+      type.
+    </li>
+  </ul>
 
-  <h2>cancel_user_deletion</h2>
-  <p>Cancels a pending deletion during the grace window.</p>
+  <h2>Cancellation Window</h2>
+  <p>
+    Until <code>execute_at</code>, the deletion is reversible. After it
+    fires, the per-type policies above run and there is no undo &mdash; the
+    rows are gone (or anonymized irreversibly).
+  </p>
   <CodeTabs
-    python={`await db.cancel_user_deletion("alice")`}
+    python={`# Within the grace window
+await db.cancel_user_deletion("alice", actor="user:alice")
+
+# Past execute_at: the request has already been processed and the
+# data is gone. There is no rollback.`}
     goNote="cancel_user_deletion is not yet exposed in the Go SDK."
   />
-
-  <h2>export_user_data</h2>
   <p>
-    Returns every node owned by the user, every ACL entry granted to them,
-    and their membership in every tenant. Use this to satisfy the right of
-    access and right of portability.
+    Choose <code>grace_days</code> based on regulatory expectations and
+    your support workflow. 30 days is the common default; 7 is the
+    aggressive end; 0 means "execute immediately" (rare, usually only for
+    administrative cleanup).
+  </p>
+
+  <h2>Right-to-Data-Portability (export_user_data)</h2>
+  <p>
+    Returns a structured snapshot of every node owned by or about the
+    user, every ACL entry granted to them, and their tenant memberships.
+    Use this to satisfy GDPR Articles 15 (access) and 20 (portability).
   </p>
   <CodeTabs
-    python={`export = await db.export_user_data("alice")
-# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships`}
+    python={`bundle = await db.export_user_data("alice", actor="user:alice")
+
+# bundle is a dict shaped roughly:
+#   {
+#     "user_id": "alice",
+#     "tenants":           [...],   # tenant memberships
+#     "owned_nodes":       [...],   # nodes Alice created
+#     "shared_with_me":    [...],   # nodes shared TO Alice
+#     "group_memberships": [...],
+#   }`}
     goNote="export_user_data is not yet exposed in the Go SDK."
   />
-
-  <h2>freeze_user</h2>
   <p>
-    Suspends a user without deleting their data. All writes by or to the
-    user are rejected; reads of existing data still work. Useful for legal
-    hold or account suspension.
+    What ends up in the bundle is determined by the per-type
+    <code>data_policy</code>: <code>PERSONAL</code> and
+    <code>BUSINESS</code> rows owned by Alice are included in full,
+    <code>AUDIT</code> rows are <em>not</em> exportable, and
+    <code>HEALTHCARE</code> rows include only the fields the user is
+    permitted to receive. Deliver the bundle as a download link or
+    encrypted email per your data-handling policy &mdash; the SDK leaves
+    delivery to the application.
+  </p>
+
+  <h2>Freeze (Right-to-Object)</h2>
+  <p>
+    GDPR Article 18 lets a user demand processing be paused without their
+    data being deleted. <code>freeze_user</code> sets a flag on the user
+    that rejects all new writes by or about them; existing reads still
+    succeed. Useful for legal hold, contested accounts, or pending
+    erasure investigations.
   </p>
   <CodeTabs
-    python={`await db.freeze_user("alice", reason="legal hold")
-await db.unfreeze_user("alice")`}
-    goNote="freeze_user / unfreeze_user are not yet exposed in the Go SDK."
+    python={`# Freeze
+await db.freeze_user("alice", enabled=True, actor="user:admin")
+
+# Unfreeze (same call, enabled=False)
+await db.freeze_user("alice", enabled=False, actor="user:admin")`}
+    goNote="freeze_user is not yet exposed in the Go SDK."
   />
+  <p>
+    Freeze and erasure are independent: a frozen user can still be
+    enrolled in <code>delete_user</code>, and an in-flight
+    <code>delete_user</code> request can be cancelled even while the user
+    is frozen.
+  </p>
 
   <h2>Audit Trail</h2>
   <p>

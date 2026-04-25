@@ -101,6 +101,43 @@ comments, err := bob.EdgesFrom(ctx, taskID, shop.HasCommentEdgeID)
   </table>
   <p>Higher permissions include lower ones. <code>admin</code> includes everything. <code>deny</code> overrides everything (except owner).</p>
 
+  <h2>Receiving Shared Nodes</h2>
+  <p>The flip side of <code>share()</code>: list every node that other actors have shared with you. Use it to render an "Inbox" or "Shared with me" surface. Pagination is plain offset/limit:</p>
+  <CodeTabs
+    python={`# First page (default limit=100)
+inbox = await db.shared_with_me("acme", actor="user:bob")
+
+# Subsequent pages
+page2 = await db.shared_with_me("acme", actor="user:bob",
+                                limit=50, offset=50)
+
+for node in inbox:
+    print(node.node_id, node.type_id)`}
+    goNote="ListSharedWithMe is on the gRPC wire (EntDBService.ListSharedWithMe) but no convenience helper exists on the Go Scope yet. Call the generated client directly via internal/pb until the wrapper lands."
+  />
+
+  <h2>Revoking Access</h2>
+  <p><code>revoke()</code> removes a single direct grant from <code>node_access</code>. It returns <code>True</code> only if a grant actually existed:</p>
+  <CodeTabs
+    python={`existed = await db.revoke(
+    node_id=task_id,
+    actor_id="user:bob",          # the grantee being revoked
+    tenant_id="acme",
+    actor="user:alice",            # the actor performing the revoke
+)
+# If task → comments has propagate_share=True, Bob's access to the
+# comments disappears with the same call — inheritance is computed
+# at read time, no cascade rows to clean up.`}
+    goNote="Revoke is wire-supported (EntDBService.RevokeAccess) but the Go Scope helper has not landed yet. Call the generated client directly until then."
+  />
+  <p>
+    Revoke only undoes <em>direct</em> grants on the named node. If Bob still
+    has access via a group, a higher-level structural parent (with
+    <code>propagate_share=True</code>), or a public/tenant-visible default,
+    those paths remain — revoke the appropriate parent or remove the group
+    membership instead.
+  </p>
+
   <h2>Groups</h2>
   <p>Groups are a way to share with multiple users at once. Groups can contain users and other groups (nested):</p>
   <CodeTabs
@@ -113,18 +150,103 @@ await db.group_add("group:all-staff", "group:eng", tenant_id)
 
 # Share with group — all members get access
 await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`}
-    go={`scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+    goNote={`Group membership management (GroupAdd / GroupRemove) is not yet wired on the Go Scope. Sharing TO a group is supported via entdb.GroupActor — call it after a Python or grpcurl process has populated the group:
 
-// Add users to groups
-scope.GroupAdd(ctx, "eng", entdb.UserActor("alice"))
-scope.GroupAdd(ctx, "eng", entdb.UserActor("bob"))
-
-// Nested groups
-scope.GroupAdd(ctx, "all-staff", entdb.GroupActor("eng"))
-
-// Share with group — all members get access
 scope.Share(ctx, taskID, entdb.GroupActor("eng"), entdb.PermissionWrite)`}
   />
+
+  <h3>Worked example: group lifecycle</h3>
+  <p>Create a group, add two members, share with the group, then drop one member &mdash; the dropped member loses access immediately on the next read:</p>
+  <CodeTabs
+    python={`tenant = "acme"
+admin  = "user:alice"
+
+# 1. Populate the group
+await db.group_add("group:reviewers", "user:bob",   tenant, actor=admin)
+await db.group_add("group:reviewers", "user:carol", tenant, actor=admin)
+
+# 2. Share a doc with the whole group
+await db.share(doc_id, "group:reviewers", tenant, admin,
+               permission="write", actor_type="group")
+
+# Bob and Carol can both read+write the doc.
+assert await db.get(Doc, doc_id, tenant, "user:bob")  is not None
+assert await db.get(Doc, doc_id, tenant, "user:carol") is not None
+
+# 3. Remove Carol from the group
+await db.group_remove("group:reviewers", "user:carol", tenant, actor=admin)
+
+# 4. Carol's access is gone on the next read; Bob is unaffected.
+assert await db.get(Doc, doc_id, tenant, "user:carol") is None
+assert await db.get(Doc, doc_id, tenant, "user:bob")  is not None`}
+    goNote="The group lifecycle methods (GroupAdd / GroupRemove on Scope) are not yet wired up in the Go SDK. The wire RPCs (AddGroupMember, RemoveGroupMember) exist; helpers will follow."
+  />
+
+  <h2>Capability-Based ACL</h2>
+  <p>
+    Beyond the universal <code>read / write / admin</code> ladder, EntDB
+    supports <strong>typed capabilities</strong> declared per node type. This
+    lets you model domain roles like "Approver" or "Auditor" that grant a
+    specific, narrow operation rather than a broad permission level.
+  </p>
+  <p>The shape is two pieces in your <code>.proto</code>:</p>
+  <ol>
+    <li>
+      An enum that lists the per-type extension capabilities, named on the
+      node via
+      <code>(entdb.node).extension_capability_enum = "TaskExtCapability"</code>.
+    </li>
+    <li>
+      A list of
+      <code>CapabilityMapping</code>
+      entries on the node mapping a server op (and optionally a field, field
+      value, or child type) to the capability required to perform it.
+    </li>
+  </ol>
+  <Code code={`// schema.proto
+import "entdb_options.proto";
+
+enum TaskExtCapability {
+  TASK_EXT_CAP_UNSPECIFIED = 0;
+  TASK_EXT_CAP_APPROVE     = 1;   // can flip status -> "approved"
+  TASK_EXT_CAP_REOPEN      = 2;   // can flip status -> "reopened"
+}
+
+message Task {
+  option (entdb.node) = {
+    type_id: 30
+    extension_capability_enum: "TaskExtCapability"
+    capability_mappings: [
+      // UpdateNode on field "status" with value "approved"
+      // requires the per-type APPROVE capability.
+      { op: "UpdateNode" field: "status" field_value: "approved"
+        required_ext: 1 },
+      { op: "UpdateNode" field: "status" field_value: "reopened"
+        required_ext: 2 }
+    ]
+  };
+
+  string title  = 1 [(entdb.field).required = true];
+  string status = 2;
+}`} lang="proto" />
+  <p>
+    With this in place, an actor who only holds
+    <code>TASK_EXT_CAP_APPROVE</code> can flip <code>status</code> to
+    <code>"approved"</code> but cannot change the title or any other field
+    &mdash; the server consults the mapping table on every
+    <code>UpdateNode</code> and rejects ops the actor lacks the typed
+    capability for. Field-level mappings take precedence over type-wide
+    mappings, and built-in implications (<code>ADMIN > EDIT > COMMENT >
+    READ</code>) still apply.
+  </p>
+  <p>
+    Grant a typed capability the same way you grant a core permission &mdash;
+    via the share RPC, passing the extension capability id alongside any
+    core caps you also want to bestow. See
+    <code>proto/entdb_options.proto</code> for the full
+    <code>CapabilityMapping</code> / <code>CapabilityImplication</code>
+    schema.
+  </p>
 
   <h2>Deny Rules</h2>
   <p>Explicit deny overrides all inherited access:</p>
