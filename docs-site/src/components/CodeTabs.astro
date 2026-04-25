@@ -1,0 +1,134 @@
+---
+/**
+ * CodeTabs — Python | Go side-by-side code blocks.
+ *
+ * Picks the same language across every CodeTabs on the page (and persists
+ * across pages via localStorage), so a Go user reads Go everywhere without
+ * re-clicking on every section.
+ *
+ * Usage:
+ *   <CodeTabs python={`...`} go={`...`} />
+ *   <CodeTabs python={`...`} goNote="Not yet available in the Go SDK" />
+ */
+import { Code } from "astro-expressive-code/components";
+
+interface Props {
+  python?: string;
+  go?: string;
+  pythonNote?: string;
+  goNote?: string;
+}
+
+const { python, go, pythonNote, goNote } = Astro.props;
+
+// Stable per-instance id so triggers/panels pair correctly.
+const id = `ct-${Math.random().toString(36).slice(2, 9)}`;
+---
+
+<div class="code-tabs my-6" data-code-tabs role="region" aria-label="Code example">
+  <div class="flex items-center gap-1 border-b border-border" role="tablist" aria-label="Language">
+    <button
+      type="button"
+      role="tab"
+      aria-selected="true"
+      aria-controls={`${id}-panel-py`}
+      id={`${id}-tab-py`}
+      data-code-tab="python"
+      class="relative -mb-px border-b-2 border-primary px-3 py-1.5 text-[13px] font-medium text-foreground transition-colors hover:text-foreground aria-[selected=false]:border-transparent aria-[selected=false]:text-muted-foreground"
+    >
+      Python
+    </button>
+    <button
+      type="button"
+      role="tab"
+      aria-selected="false"
+      aria-controls={`${id}-panel-go`}
+      id={`${id}-tab-go`}
+      data-code-tab="go"
+      class="relative -mb-px border-b-2 border-transparent px-3 py-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:text-foreground aria-[selected=true]:border-primary aria-[selected=true]:text-foreground"
+    >
+      Go
+    </button>
+  </div>
+
+  <div
+    role="tabpanel"
+    id={`${id}-panel-py`}
+    aria-labelledby={`${id}-tab-py`}
+    data-code-panel="python"
+  >
+    {python ? (
+      <Code code={python} lang="python" />
+    ) : (
+      <p class="my-4 rounded-md border border-dashed border-border bg-muted/40 px-4 py-3 text-[13px] text-muted-foreground">
+        {pythonNote ?? "No Python example for this section."}
+      </p>
+    )}
+  </div>
+
+  <div
+    role="tabpanel"
+    id={`${id}-panel-go`}
+    aria-labelledby={`${id}-tab-go`}
+    data-code-panel="go"
+    hidden
+  >
+    {go ? (
+      <Code code={go} lang="go" />
+    ) : (
+      <p class="my-4 rounded-md border border-dashed border-border bg-muted/40 px-4 py-3 text-[13px] text-muted-foreground">
+        {goNote ?? "Not yet available in the Go SDK."}
+      </p>
+    )}
+  </div>
+</div>
+
+<script is:inline>
+  (function () {
+    var KEY = "entdb-docs-lang";
+    function readLang() {
+      try {
+        var v = localStorage.getItem(KEY);
+        return v === "go" || v === "python" ? v : "python";
+      } catch (_) {
+        return "python";
+      }
+    }
+    function writeLang(v) {
+      try { localStorage.setItem(KEY, v); } catch (_) { /* ignore */ }
+    }
+    function applyAll(lang) {
+      document.querySelectorAll("[data-code-tabs]").forEach(function (root) {
+        root.querySelectorAll("[data-code-tab]").forEach(function (btn) {
+          btn.setAttribute("aria-selected", btn.getAttribute("data-code-tab") === lang ? "true" : "false");
+        });
+        root.querySelectorAll("[data-code-panel]").forEach(function (panel) {
+          panel.hidden = panel.getAttribute("data-code-panel") !== lang;
+        });
+      });
+    }
+    function init() {
+      var current = readLang();
+      applyAll(current);
+      document.addEventListener("click", function (e) {
+        var btn = e.target.closest("[data-code-tab]");
+        if (!btn) return;
+        var lang = btn.getAttribute("data-code-tab");
+        if (lang !== "python" && lang !== "go") return;
+        writeLang(lang);
+        applyAll(lang);
+      });
+      // Cross-tab sync (open two browser tabs, change in one)
+      window.addEventListener("storage", function (e) {
+        if (e.key === KEY && (e.newValue === "python" || e.newValue === "go")) {
+          applyAll(e.newValue);
+        }
+      });
+    }
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", init);
+    } else {
+      init();
+    }
+  })();
+</script>

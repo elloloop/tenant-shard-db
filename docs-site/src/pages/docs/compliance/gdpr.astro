@@ -1,6 +1,7 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="GDPR Operations">
   <h1>GDPR Operations</h1>
@@ -25,11 +26,17 @@ import { Code } from "astro-expressive-code/components";---
     the grace window the delete is reversible; after the window, all of the
     user's data across every tenant is hard-deleted.
   </p>
-  <Code code={`await db.delete_user("alice", grace_period_days=30, reason="user request")`} lang="python" />
+  <CodeTabs
+    python={`await db.delete_user("alice", grace_period_days=30, reason="user request")`}
+    goNote="GDPR delete_user is not yet exposed in the Go SDK. Call this from Python (or via gRPC directly) until the Go binding lands."
+  />
 
   <h2>cancel_user_deletion</h2>
   <p>Cancels a pending deletion during the grace window.</p>
-  <Code code={`await db.cancel_user_deletion("alice")`} lang="python" />
+  <CodeTabs
+    python={`await db.cancel_user_deletion("alice")`}
+    goNote="cancel_user_deletion is not yet exposed in the Go SDK."
+  />
 
   <h2>export_user_data</h2>
   <p>
@@ -37,8 +44,11 @@ import { Code } from "astro-expressive-code/components";---
     and their membership in every tenant. Use this to satisfy the right of
     access and right of portability.
   </p>
-  <Code code={`export = await db.export_user_data("alice")
-# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships`} lang="python" />
+  <CodeTabs
+    python={`export = await db.export_user_data("alice")
+# export.tenants, export.owned_nodes, export.shared_with_me, export.group_memberships`}
+    goNote="export_user_data is not yet exposed in the Go SDK."
+  />
 
   <h2>freeze_user</h2>
   <p>
@@ -46,8 +56,11 @@ import { Code } from "astro-expressive-code/components";---
     user are rejected; reads of existing data still work. Useful for legal
     hold or account suspension.
   </p>
-  <Code code={`await db.freeze_user("alice", reason="legal hold")
-await db.unfreeze_user("alice")`} lang="python" />
+  <CodeTabs
+    python={`await db.freeze_user("alice", reason="legal hold")
+await db.unfreeze_user("alice")`}
+    goNote="freeze_user / unfreeze_user are not yet exposed in the Go SDK."
+  />
 
   <h2>Audit Trail</h2>
   <p>

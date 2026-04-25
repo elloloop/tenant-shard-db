@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Pattern: Family App">
   <h1>Build a Family App with EntDB</h1>
@@ -18,17 +20,31 @@ import { Code } from "astro-expressive-code/components";---
   </table>
 
   <h2>1. Create the family tenant</h2>
-  <Code code={`# Parent creates the family tenant
+  <CodeTabs
+    python={`# Parent creates the family tenant
 family = await db.create_tenant("smith-family", "Smith Family")
 # Parent is automatically the owner
 
 # Add family members
 await db.add_tenant_member("smith-family", "user:eve", role="owner")    # other parent
 await db.add_tenant_member("smith-family", "user:kid1", role="member")  # child
-await db.add_tenant_member("smith-family", "user:kid2", role="member")  # child`} lang="python" />
+await db.add_tenant_member("smith-family", "user:kid2", role="member")  # child`}
+    go={`// Parent creates the family tenant
+if err := client.CreateTenant(ctx, "smith-family", "Smith Family"); err != nil {
+    return err
+}
+// Parent is automatically the owner
+
+// Add family members
+dave := client.Tenant("smith-family").Actor(entdb.UserActor("dave"))
+dave.AddTenantMember(ctx, "smith-family", entdb.UserActor("eve"), "owner")    // other parent
+dave.AddTenantMember(ctx, "smith-family", entdb.UserActor("kid1"), "member")  // child
+dave.AddTenantMember(ctx, "smith-family", entdb.UserActor("kid2"), "member")  // child`}
+  />
 
   <h2>2. Shared vs private content</h2>
-  <Code code={`# Shared grocery list — everyone sees it (tenant_visible=true in schema)
+  <CodeTabs
+    python={`# Shared grocery list — everyone sees it (tenant_visible=true in schema)
 plan = db.atomic("smith-family", "user:dave")
 plan.create(GroceryList, {name": "Weekly Shopping"}, as_="list")
 plan.create(GroceryItem, {name": "Milk", "quantity": 2}, as_="item")
@@ -45,17 +61,50 @@ await plan.commit()
 plan = db.atomic("smith-family", "user:eve")
 plan.create(CalendarEvent, {title": "Family Dinner", "date": "2026-04-15"})
 await plan.commit()
-# All family members see this.`} lang="python" />
+# All family members see this.`}
+    go={`// Shared grocery list — everyone sees it (tenant_visible=true in schema)
+dave := client.Tenant("smith-family").Actor(entdb.UserActor("dave"))
+plan := dave.Plan()
+plan.Create(&family.GroceryList{Name: "Weekly Shopping"}, entdb.As("list"))
+plan.Create(&family.GroceryItem{Name: "Milk", Quantity: 2}, entdb.As("item"))
+entdb.EdgeCreate[*family.ListHasItem](plan, "$list.id", "$item.id")
+plan.Commit(ctx)
+
+// Kid's diary — only they can see it (tenant_visible=false in schema)
+kid1 := client.Tenant("smith-family").Actor(entdb.UserActor("kid1"))
+plan = kid1.Plan()
+plan.Create(&family.DiaryEntry{Body: "Today was a good day"})
+plan.Commit(ctx)
+// Only kid1 sees this. Parents CANNOT read it (admin != data access).
+
+// Family calendar — visible to all
+eve := client.Tenant("smith-family").Actor(entdb.UserActor("eve"))
+plan = eve.Plan()
+plan.Create(&family.CalendarEvent{Title: "Family Dinner", Date: "2026-04-15"})
+plan.Commit(ctx)
+// All family members see this.`}
+  />
 
   <h2>3. Personal items in personal tenant</h2>
-  <Code code={`# Dave's work meetings — in his PERSONAL tenant, family can't see
+  <CodeTabs
+    python={`# Dave's work meetings — in his PERSONAL tenant, family can't see
 plan = db.atomic("dave", "user:dave")
 plan.create(CalendarEvent, {title": "Board Meeting", "date": "2026-04-14"})
 await plan.commit()
 
 # The app shows Dave two contexts:
 # "Home" → smith-family tenant (family stuff)
-# "Personal" → dave tenant (work stuff)`} lang="python" />
+# "Personal" → dave tenant (work stuff)`}
+    go={`// Dave's work meetings — in his PERSONAL tenant, family can't see
+davePersonal := client.Tenant("dave").Actor(entdb.UserActor("dave"))
+plan := davePersonal.Plan()
+plan.Create(&family.CalendarEvent{Title: "Board Meeting", Date: "2026-04-14"})
+plan.Commit(ctx)
+
+// The app shows Dave two contexts:
+// "Home"     → smith-family tenant (family stuff)
+// "Personal" → dave tenant (work stuff)`}
+  />
 
   <h2>4. Privacy model</h2>
   <Code code={`Admin (parent) can:

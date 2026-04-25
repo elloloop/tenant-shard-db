@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Quick Start">
   <h1>Quick Start</h1>
@@ -42,10 +44,14 @@ message Comment {
     Use the standard protobuf compiler &mdash; no EntDB-specific codegen.
   </p>
   <Code code={`protoc --python_out=. schema.proto
-# produces schema_pb2.py`} lang="bash" />
+# produces schema_pb2.py
+
+protoc --go_out=. --go_opt=paths=source_relative schema.proto
+# produces schema.pb.go`} lang="bash" />
 
   <h2>3. Register the Schema &amp; Connect</h2>
-  <Code code={`import asyncio
+  <CodeTabs
+    python={`import asyncio
 from entdb_sdk import DbClient, Actor, Permission, register_proto_schema
 import schema_pb2
 
@@ -71,7 +77,54 @@ async def main():
         for t in tasks:
             print(f"  {t.node_id}: {t.payload['title']}")
 
-asyncio.run(main())`} lang="python" />
+asyncio.run(main())`}
+    go={`package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    "myapp/schema"
+)
+
+func main() {
+    ctx := context.Background()
+    client, err := entdb.NewClient("localhost:50051")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+    // Create a task with a comment, atomically
+    plan := scope.Plan()
+    plan.Create(&schema.Task{Title: "Ship v2", Status: "todo"}, entdb.As("task"))
+    plan.Create(&schema.Comment{Body: "Let's ship it!"}, entdb.As("comment"))
+    entdb.EdgeCreate[*schema.HasComment](plan, "$task.id", "$comment.id")
+    result, err := plan.Commit(ctx)
+    if err != nil {
+        log.Fatal(err)
+    }
+
+    taskID := result.CreatedNodeIDs[0]
+    fmt.Printf("Created task: %s\\n", taskID)
+
+    // Query tasks
+    tasks, err := entdb.Query[*schema.Task](ctx, scope,
+        map[string]any{"status": "todo"},
+        entdb.WithLimit(10),
+    )
+    if err != nil {
+        log.Fatal(err)
+    }
+    for _, t := range tasks {
+        fmt.Printf("  %s: %s\\n", t.NodeID, t.Payload.Title)
+    }
+}`}
+  />
 
   <h2>4. Share a Task</h2>
   <p>
@@ -79,21 +132,47 @@ asyncio.run(main())`} lang="python" />
     Edges marked <code>propagate_share=True</code> (e.g. <code>HasComment</code>)
     mean the comment inherits the task's ACL automatically.
   </p>
-  <Code code={`async def share_task(db, task_id):
+  <CodeTabs
+    python={`async def share_task(db, task_id):
     alice = db.tenant("acme").actor(Actor.user("alice"))
     await alice.share(task_id, Actor.user("bob"), Permission.WRITE)
 
     # Bob can see the task and all its comments
     bob = db.tenant("acme").actor(Actor.user("bob"))
     comments = await bob.connected(task_id, "HasComment")
-    print(f"Bob sees {len(comments)} comments")`} lang="python" />
+    print(f"Bob sees {len(comments)} comments")`}
+    go={`func shareTask(ctx context.Context, client *entdb.Client, taskID string) error {
+    alice := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+    if err := alice.Share(ctx, taskID, entdb.UserActor("bob"), entdb.PermissionWrite); err != nil {
+        return err
+    }
+
+    // Bob can see the task and all its comments
+    bob := client.Tenant("acme").Actor(entdb.UserActor("bob"))
+    comments, err := bob.EdgesFrom(ctx, taskID, schema.HasCommentEdgeID)
+    if err != nil {
+        return err
+    }
+    fmt.Printf("Bob sees %d comments\\n", len(comments))
+    return nil
+}`}
+  />
 
   <h2>5. Update Data</h2>
-  <Code code={`async def update_task(db, task_id):
+  <CodeTabs
+    python={`async def update_task(db, task_id):
     scope = db.tenant("acme").actor(Actor.user("alice"))
     plan = scope.plan()
     plan.update(schema_pb2.Task, task_id, {"status": "in_progress"})
-    await plan.commit()`} lang="python" />
+    await plan.commit()`}
+    go={`func updateTask(ctx context.Context, client *entdb.Client, taskID string) error {
+    scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+    plan := scope.Plan()
+    plan.Update(taskID, &schema.Task{Status: "in_progress"})
+    _, err := plan.Commit(ctx)
+    return err
+}`}
+  />
 
   <h2>6. Add a Field Later (Non-Breaking)</h2>
   <p>
