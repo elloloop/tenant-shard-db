@@ -1,0 +1,137 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
+
+<DocsLayout title="Tenants & Users">
+  <h1>Tenants &amp; Users</h1>
+  <p>EntDB separates <strong>cross-tenant identity</strong> (users, tenants, memberships) from <strong>per-tenant data</strong> (nodes, edges, ACLs). The cross-tenant state lives in a single <code>global.db</code> SQLite file managed by <code>GlobalStore</code>; every tenant otherwise gets its own isolated SQLite database. Admin RPCs on the gRPC service let you bootstrap and manage that global state from the SDK.</p>
+
+  <h2>The Identity Model</h2>
+  <p>There are three concepts to keep straight:</p>
+  <table>
+    <tr><th>Concept</th><th>Where it lives</th><th>Identifier shape</th></tr>
+    <tr><td><strong>User</strong></td><td><code>user_registry</code> in <code>global.db</code></td><td><code>"alice"</code> (raw <code>user_id</code>)</td></tr>
+    <tr><td><strong>Tenant</strong></td><td><code>tenant_registry</code> in <code>global.db</code></td><td><code>"acme"</code> (raw <code>tenant_id</code>)</td></tr>
+    <tr><td><strong>Membership</strong></td><td><code>tenant_members</code> in <code>global.db</code></td><td><code>(tenant_id, user_id, role)</code></td></tr>
+  </table>
+  <p>A user can belong to many tenants with a different role in each. Tenants have no implicit membership: a user has zero access to a tenant until <code>add_tenant_member</code> creates a row.</p>
+
+  <h2>user_id vs tenant_principal</h2>
+  <p>The same person is identified two different ways depending on which boundary you are on:</p>
+  <ul>
+    <li><strong><code>user_id</code></strong> — the bare identifier (<code>"alice"</code>) used by the global registry, the <code>tenant_members</code> table, GDPR APIs, and admin RPCs.</li>
+    <li><strong><code>tenant_principal</code> / actor</strong> — the same identity prefixed for use inside a tenant's ACL system (<code>"user:alice"</code> for users, <code>"group:eng"</code> for groups, <code>"system:admin"</code> for the platform).</li>
+  </ul>
+  <p>Translation happens at the gRPC boundary. The auth interceptor publishes a verified identity into a context-var; <code>get_authoritative_actor</code> normalizes it to a <code>user:&lt;id&gt;</code> actor before any ACL check runs. That means client code passes <code>user_id="alice"</code> to admin APIs and <code>actor="user:alice"</code> to data APIs &mdash; never mixed.</p>
+
+  <h2>Creating Tenants</h2>
+  <p><code>create_tenant</code> registers a new tenant in the global registry. It is idempotent only on the SDK return shape (an existing <code>tenant_id</code> raises an error from the underlying <code>INSERT</code>). The new tenant has no members yet.</p>
+  <CodeTabs
+    python={`async with DbClient("localhost:50051", api_key="eks_...") as db:
+    result = await db.create_tenant(
+        tenant_id="acme",
+        name="Acme Corp",
+        actor="system:admin",
+    )
+    # result == {"success": True, "tenant": {...}, "error": ""}`}
+    goNote={`The Go SDK does not yet expose CreateTenant as a typed client method — only the generated EntDBService proto stub is available under sdk/go/entdb/internal/pb. Provision tenants from a Python admin script or grpcurl, then read/write tenant data from Go through client.Tenant("acme").Actor(...).`}
+  />
+
+  <h2>Creating Users</h2>
+  <p>Users are created independently of any tenant. The <code>email</code> field is unique across the entire registry; reusing it raises <code>sqlite3.IntegrityError</code> on the server.</p>
+  <CodeTabs
+    python={`await db.create_user(
+    user_id="alice",
+    email="alice@acme.test",
+    name="Alice Anderson",
+    actor="system:admin",
+)
+# {"success": True, "user": {"user_id": "alice", ...}}`}
+    goNote={`Not exposed in the Go SDK. Use Python or grpcurl with EntDBService/CreateUser.`}
+  />
+
+  <h2>Memberships and Roles</h2>
+  <p>A membership row binds a user to a tenant with a role string. The server treats roles as opaque strings; the canonical values are:</p>
+  <table>
+    <tr><th>Role</th><th>Meaning</th></tr>
+    <tr><td><code>owner</code></td><td>Full administrative control, including transferring tenant ownership and removing other admins.</td></tr>
+    <tr><td><code>admin</code></td><td>Manage members, run admin operations (transfer, revoke, delegate), but cannot remove an <code>owner</code>.</td></tr>
+    <tr><td><code>member</code></td><td>Default role. Can create and own nodes; subject to ACL on everything else.</td></tr>
+    <tr><td><code>viewer</code></td><td>Read-only convention; not a hard server enforcement &mdash; ACL grants are still the source of truth on individual nodes.</td></tr>
+  </table>
+
+  <h3>Adding members</h3>
+  <CodeTabs
+    python={`await db.add_tenant_member(
+    tenant_id="acme",
+    user_id="alice",
+    role="member",
+    actor="system:admin",
+)`}
+    goNote={`Not exposed in the Go SDK. Manage memberships from Python.`}
+  />
+
+  <h3>Promoting or changing a role</h3>
+  <CodeTabs
+    python={`await db.change_member_role(
+    tenant_id="acme",
+    user_id="alice",
+    new_role="admin",
+    actor="system:admin",
+)`}
+    goNote={`Not exposed in the Go SDK.`}
+  />
+
+  <h3>Removing a member</h3>
+  <p>Removing a membership only deletes the row from <code>tenant_members</code>. It does <strong>not</strong> reassign nodes the user owns or revoke their direct ACL grants &mdash; for that, see <a href="/tenant-shard-db/docs/admin/operations">Admin Operations</a> (<code>transfer_user_content</code> and <code>revoke_all_user_access</code>).</p>
+  <CodeTabs
+    python={`await db.remove_tenant_member(
+    tenant_id="acme",
+    user_id="alice",
+    actor="system:admin",
+)`}
+    goNote={`Not exposed in the Go SDK.`}
+  />
+
+  <h2>Listing Memberships</h2>
+  <p>Two symmetric reads: members of a tenant, or tenants of a user.</p>
+  <CodeTabs
+    python={`# Everyone in a tenant
+members = await db.get_tenant_members("acme", actor="system:admin")
+# [{"tenant_id": "acme", "user_id": "alice", "role": "admin", "joined_at": ...}, ...]
+
+# Everywhere a user belongs
+tenancies = await db.get_user_tenants("alice", actor="system:admin")
+# [{"tenant_id": "acme", "user_id": "alice", "role": "admin", ...}, ...]`}
+    goNote={`Not exposed in the Go SDK.`}
+  />
+
+  <h2>End-to-end: bootstrap a tenant</h2>
+  <p>A complete flow: create the tenant, create a user, invite them, promote them, then remove them.</p>
+  <Code code={`async with DbClient("localhost:50051", api_key="eks_...") as db:
+    await db.create_tenant("acme", "Acme Corp")
+    await db.create_user("alice", "alice@acme.test", "Alice")
+
+    # 1. Invite as a regular member
+    await db.add_tenant_member("acme", "alice", role="member")
+
+    # 2. Promote to admin
+    await db.change_member_role("acme", "alice", new_role="admin")
+
+    # 3. Off-board: revoke ACL grants, then drop the membership
+    await db.revoke_all_user_access("acme", "alice")
+    await db.remove_tenant_member("acme", "alice")`} lang="python" />
+
+  <h2>Where the data lives</h2>
+  <p>If you need to inspect or back up the cross-tenant state directly, the relevant tables in <code>{`{data_dir}/global.db`}</code> are <code>user_registry</code>, <code>tenant_registry</code>, and <code>tenant_members</code>. Per-tenant payloads, ACLs, and edges live in <code>{`{data_dir}/tenants/{tenant_id}.db`}</code> and are never read across tenant boundaries in a single SQLite transaction.</p>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/admin/auth">Authentication</a> &mdash; how API keys, OAuth, and sessions identify the caller</li>
+    <li><a href="/tenant-shard-db/docs/admin/operations">Admin Operations</a> &mdash; transfer, delegate, and revoke</li>
+    <li><a href="/tenant-shard-db/docs/admin/quotas">Quotas &amp; Rate Limits</a> &mdash; per-tenant write and RPS limits</li>
+    <li><a href="/tenant-shard-db/docs/acl/overview">Access Control</a> &mdash; how membership composes with per-node ACLs</li>
+  </ul>
+</DocsLayout>

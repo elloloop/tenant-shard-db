@@ -1,0 +1,186 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
+
+<DocsLayout title="Backups & Recovery">
+  <h1>Backups &amp; Recovery</h1>
+  <p>
+    EntDB inherits its durability story from event sourcing: the WAL is
+    the source of truth, SQLite is a materialized view, and snapshots
+    exist purely to bound how long a rebuild takes. You do not back up
+    SQLite. You retain the WAL and let the server rebuild SQLite at
+    will.
+  </p>
+
+  <h2>The Recovery Model</h2>
+  <ol>
+    <li><strong>WAL</strong> &mdash; durable, ordered, partitioned by tenant. Held in Kafka / Kinesis / Pub/Sub for hot replay.</li>
+    <li><strong>S3 archive</strong> &mdash; same events, gzipped JSONL segments under <code>s3://&lt;bucket&gt;/archive/tenant=&lt;id&gt;/</code>. Survives WAL retention rolling off.</li>
+    <li><strong>Snapshots</strong> &mdash; consistent SQLite copies under <code>s3://&lt;bucket&gt;/snapshots/tenant=&lt;id&gt;/ts=&lt;unix_ms&gt;.sqlite.gz</code>, with a sibling <code>.manifest.json</code>. Restore loads the snapshot then replays only the events that came after.</li>
+  </ol>
+  <p>
+    The three tiers compose: snapshot first (fastest), then Kafka tail
+    (freshest), then S3 archive (last resort). Disabling any tier just
+    forces recovery to use the next one.
+  </p>
+
+  <h2>Snapshot Creation</h2>
+  <p>
+    The <code>Snapshotter</code> is a background loop that uses the
+    SQLite backup API for atomic, consistent copies, gzips the file,
+    uploads it to S3, and writes a manifest containing the
+    <code>last_stream_pos</code> and the schema fingerprint.
+  </p>
+  <Code code={`SNAPSHOT_ENABLED=true
+SNAPSHOT_INTERVAL_SECONDS=3600     # check every hour
+SNAPSHOT_MIN_EVENTS=1000           # skip tenants below threshold
+SNAPSHOT_COMPRESSION=gzip
+SNAPSHOT_MAX_CONCURRENT=4          # parallel uploads
+
+S3_BUCKET=entdb-storage
+S3_REGION=us-east-1
+S3_SNAPSHOT_PREFIX=snapshots`} lang="bash" />
+
+  <p>
+    The manifest is the contract restore tools rely on:
+  </p>
+  <Code code={`{
+  "tenant_id": "acme",
+  "snapshot_ts": 1735689600000,
+  "last_stream_pos": "entdb-wal:0:48217",
+  "schema_fingerprint": "sha256:7a1b...",
+  "checksum": "sha256:c3f9...",
+  "size_bytes": 18452736,
+  "s3_key": "snapshots/tenant=acme/ts=1735689600000.sqlite.gz"
+}`} lang="json" />
+
+  <h2>WAL Retention vs Snapshot Cadence</h2>
+  <p>
+    Replay cost is bounded by <em>(time since last snapshot) &times;
+    (write rate)</em>. Pick the two together:
+  </p>
+  <table>
+    <tr><th>Profile</th><th>Snapshot interval</th><th>WAL retention</th><th>Worst-case replay</th></tr>
+    <tr><td>Low-write workspace</td><td>24h</td><td>7d</td><td>~1 day of events</td></tr>
+    <tr><td>Default</td><td>1h</td><td>3d</td><td>~1 hour of events</td></tr>
+    <tr><td>High-write OLTP</td><td>15m</td><td>1d</td><td>~15 min of events</td></tr>
+  </table>
+  <p>
+    WAL retention must always exceed snapshot interval &mdash; otherwise
+    a snapshot's <code>last_stream_pos</code> falls off the live stream
+    and you are forced into the slower S3 archive tier.
+  </p>
+
+  <h2>Point-in-Time Restore</h2>
+  <p>
+    Restore is a CLI tool (<code>python -m
+    dbaas.entdb_server.tools.restore</code>) that downloads the latest
+    snapshot, then replays archived events past it. Existing on-disk
+    SQLite is renamed to <code>tenant_&lt;id&gt;.db.backup</code> before
+    being overwritten.
+  </p>
+  <Code code={`python -m dbaas.entdb_server.tools.restore \
+  --tenant-id acme \
+  --data-dir /var/lib/entdb \
+  --s3-bucket entdb-storage \
+  --s3-region us-east-1 \
+  --kafka-brokers kafka:9092 \
+  --kafka-topic entdb-wal`} lang="bash" />
+
+  <p>
+    Useful flags: <code>--dry-run</code> reports what would be done
+    without writing, <code>--skip-archive</code> restores only the
+    snapshot, <code>--no-kafka-replay</code> forces use of the S3
+    archive tier, and <code>--no-verify</code> skips the SQLite
+    integrity check.
+  </p>
+
+  <h2>Disaster Recovery</h2>
+  <p>
+    For a multi-region DR posture, replicate the S3 bucket to a second
+    region (<code>aws s3api put-bucket-replication ...</code> or the
+    equivalent in GCS / Azure) and stand up a fresh server pointed at
+    the replica:
+  </p>
+  <Code code={`# DR region: bring the cluster up empty, then restore each tenant
+for t in $(aws s3 ls s3://entdb-storage-dr/snapshots/ \
+            | awk '{print $2}' | sed 's,tenant=,,;s,/,,'); do
+  python -m dbaas.entdb_server.tools.restore \
+    --tenant-id "$t" \
+    --data-dir /var/lib/entdb \
+    --s3-bucket entdb-storage-dr \
+    --s3-region us-west-2
+done`} lang="bash" />
+
+  <p>
+    Cross-region replication is asynchronous &mdash; expect a small RPO
+    (typically seconds to minutes) for snapshots and archive segments.
+    The WAL itself should run in its own multi-AZ / multi-region
+    configuration appropriate to its backend (Kafka MirrorMaker,
+    Kinesis cross-region streams, etc.).
+  </p>
+
+  <h2>Per-Tenant Rebuild</h2>
+  <p>
+    Because every tenant has its own SQLite file and its own slice of
+    the WAL (partitioned by <code>tenant_id</code>), a single corrupted
+    tenant database can be rebuilt without touching anyone else. Stop
+    serving that tenant, run restore against just its ID, and resume.
+  </p>
+  <Code code={`# 1. Drain the tenant from the load balancer (or set tenant-paused)
+# 2. Rebuild
+python -m dbaas.entdb_server.tools.restore \
+  --tenant-id acme --data-dir /var/lib/entdb --s3-bucket entdb-storage
+# 3. Bounce the tenant's connection so the server reopens the .db
+# 4. Reinstate traffic`} lang="bash" />
+
+  <h2>Backup Verification</h2>
+  <p>
+    Trust nothing you have not test-restored. Run a sandbox restore on a
+    schedule:
+  </p>
+  <Code code={`# Nightly job: restore production snapshots into an empty volume,
+# fail loud on integrity errors.
+python -m dbaas.entdb_server.tools.restore \
+  --tenant-id acme \
+  --data-dir /tmp/restore-sandbox \
+  --s3-bucket entdb-storage`} lang="bash" />
+  <p>
+    The restore tool runs <code>PRAGMA integrity_check</code> at the
+    end (unless you pass <code>--no-verify</code>), and the manifest's
+    SHA-256 catches snapshot bit-rot before it hits production.
+  </p>
+
+  <h2>Worked Example: Restore "acme" to One Hour Ago</h2>
+  <ol>
+    <li>Find the snapshot whose <code>snapshot_ts</code> is closest to but earlier than the target time.</li>
+    <li>Run restore with <code>--skip-archive</code> to load only that snapshot.</li>
+    <li>For sub-snapshot precision, replay archived segments up to the desired stream position by hand &mdash; the archive layout is <code>archive/tenant=acme/from=&lt;offset&gt;_to=&lt;offset&gt;.jsonl.gz</code>.</li>
+  </ol>
+  <Code code={`# 1. Pick the snapshot just before T-1h
+aws s3 ls s3://entdb-storage/snapshots/tenant=acme/ | sort
+
+# 2. Restore only the snapshot (no archive replay past it)
+python -m dbaas.entdb_server.tools.restore \
+  --tenant-id acme \
+  --data-dir /tmp/acme-restore \
+  --s3-bucket entdb-storage \
+  --skip-archive`} lang="bash" />
+
+  <h2>What Does Not Survive a Restore</h2>
+  <ul>
+    <li><strong>In-flight RPCs</strong> &mdash; clients see <code>UNAVAILABLE</code> while the tenant is being rebuilt and must retry.</li>
+    <li><strong>Uncommitted WAL appends</strong> &mdash; if a write reached the server but failed to commit to the WAL backend, it is gone.</li>
+    <li><strong>Non-WAL state</strong> &mdash; rate-limit token buckets, idempotency caches, and OAuth session caches are rebuilt cold. Persistent state (users, ACL, quota usage) is in <code>global_store</code> and is restored separately.</li>
+    <li><strong>Crypto-shredded tenants</strong> &mdash; if a tenant's KEK has been destroyed, no snapshot or WAL replay can bring its data back. That is the point.</li>
+  </ul>
+
+  <h2>Related</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/deploy/wal">WAL Backends</a></li>
+    <li><a href="/tenant-shard-db/docs/deploy/observability">Monitoring &amp; Observability</a></li>
+    <li><a href="/tenant-shard-db/docs/deploy/encryption">Encryption Setup</a></li>
+  </ul>
+</DocsLayout>

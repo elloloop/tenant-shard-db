@@ -1,0 +1,148 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
+
+<DocsLayout title="Authentication">
+  <h1>Authentication</h1>
+  <p>Every gRPC request to EntDB goes through <code>AuthInterceptor</code>, an <code>async grpc.aio.ServerInterceptor</code> that validates one of three credential types and publishes a <strong>verified identity</strong> into a request-scoped context-var. Downstream handlers authorize against that trusted identity, never against the <code>actor</code> field of the request payload &mdash; reading the payload would let a caller impersonate anyone they liked.</p>
+
+  <h2>The Three Auth Modes</h2>
+  <p>The interceptor checks each credential header in order; the first that succeeds wins.</p>
+  <table>
+    <tr><th>Mode</th><th>Header</th><th>Audience</th><th>Backed by</th></tr>
+    <tr><td>OAuth / OIDC</td><td><code>Authorization: Bearer &lt;jwt&gt;</code></td><td>End users via SSO</td><td><code>OAuthValidator</code> (JWKS)</td></tr>
+    <tr><td>API key</td><td><code>x-api-key: eks_...</code></td><td>Server-to-server</td><td><code>ApiKeyManager</code> (SHA-256 hashes)</td></tr>
+    <tr><td>Session</td><td><code>x-session-token: ...</code></td><td>Browser / app sessions after login</td><td><code>SessionManager</code> (TTL, in-memory)</td></tr>
+  </table>
+  <p>Health endpoints (<code>/entdb.EntDBService/Health</code>, <code>/grpc.health.v1.Health/Check</code>) bypass authentication; everything else with no valid credential returns gRPC <code>UNAUTHENTICATED</code>.</p>
+
+  <h2>API Keys</h2>
+  <p>API keys are the workhorse for server-to-server traffic. They look like <code>eks_&lt;64 hex chars&gt;</code>, are issued with a key id (<code>ek_&lt;32 hex&gt;</code>), and are stored only as SHA-256 hashes &mdash; the plaintext is shown exactly once at creation time.</p>
+
+  <h3>Issuing a key</h3>
+  <CodeTabs
+    python={`from dbaas.entdb_server.auth.api_key_manager import ApiKeyManager
+
+mgr = ApiKeyManager()
+result = await mgr.create_key(
+    name="ingest-worker",
+    scopes=["read", "write"],
+    expires_at=None,  # or a Unix timestamp
+)
+# Show this ONCE to the operator and never log it:
+print(result["key_id"], result["key_secret"])`}
+    goNote={`Key issuance is an admin-side operation, not part of the Go SDK. Generate keys from a Python admin script (or a future entdb CLI command) and pass the secret to the Go client via WithAPIKey.`}
+  />
+
+  <h3>Scopes</h3>
+  <p>Scopes are validated against a fixed set: <code>read</code>, <code>write</code>, <code>admin</code>, <code>gdpr</code>, <code>audit</code>. They are attached to the <code>AuthContext</code> on every successful validation, so handlers can require a specific scope without re-querying the key.</p>
+
+  <h3>Rotation and revocation</h3>
+  <p>Rotation invalidates the old secret immediately and returns a new one keyed under the same <code>key_id</code>; revocation marks the key dead so <code>validate_key</code> raises <code>ApiKeyError</code> on the very next request.</p>
+  <Code code={`# Rotate (returns a fresh key_secret, keeps key_id stable)
+new = await mgr.rotate_key(result["key_id"])
+
+# Revoke (one-way; cannot be undone)
+await mgr.revoke_key(result["key_id"])
+
+# List (no secrets, no hashes)
+all_keys = await mgr.list_keys()`} lang="python" />
+
+  <h3>Tenant binding</h3>
+  <p>API keys do not embed a tenant id &mdash; the <code>tenant_id</code> is taken from the request's <code>context.tenant_id</code> field. To restrict a key to a single tenant, scope its capabilities through the membership table: provision the principal it represents (e.g. <code>system:ingest</code>) as a member of only the intended tenant, and grant ACLs accordingly.</p>
+
+  <h2>OAuth / OIDC</h2>
+  <p><code>OAuthValidator</code> accepts JWTs issued by any OIDC-compliant provider. It fetches the provider's JWKS from <code>{`{issuer_url}/.well-known/jwks.json`}</code>, caches the keys for <code>jwks_cache_ttl</code> seconds (default 3600), and validates each token's signature, expiry, issuer, and audience.</p>
+
+  <h3>Configuring the validator</h3>
+  <Code code={`from dbaas.entdb_server.auth.oauth_validator import OAuthValidator
+
+oauth = OAuthValidator(
+    issuer_url="https://accounts.google.com",
+    audience="123456789-abc.apps.googleusercontent.com",
+    jwks_cache_ttl=3600,            # seconds
+    unknown_kid_negative_ttl=60.0,  # mitigate cache-miss DoS
+)`} lang="python" />
+
+  <h3>Required claims and algorithms</h3>
+  <ul>
+    <li>Header must include a <code>kid</code> matching a key in the JWKS, and <code>alg</code> in <code>RS256</code> or <code>ES256</code>.</li>
+    <li>Body must have <code>iss</code> == <code>issuer_url</code>, <code>aud</code> == <code>audience</code>, and a non-expired <code>exp</code>.</li>
+    <li>Identity is taken from <code>sub</code> (or <code>email</code> as fallback) and surfaced as <code>AuthContext.identity</code>.</li>
+  </ul>
+  <p>Concurrent cache misses for an unknown <code>kid</code> are deduplicated under an <code>asyncio.Lock</code> so an attacker spamming random kids cannot trigger one JWKS fetch per request.</p>
+
+  <h2>Sessions</h2>
+  <p>Sessions are short-lived tokens issued <em>after</em> a user has authenticated some other way (typically OAuth). They are intended for browser flows where you do not want to round-trip to the OIDC provider on every request.</p>
+  <Code code={`from dbaas.entdb_server.auth.session_manager import SessionManager
+
+sm = SessionManager(session_ttl=3600, max_sessions_per_user=10)
+
+# After successful OAuth login:
+token = await sm.create_session("alice", metadata={"ip": "1.2.3.4"})
+
+# On every subsequent request the AuthInterceptor calls:
+data = await sm.validate_session(token)  # raises SessionError if expired
+
+# Logout:
+await sm.revoke_session(token)`} lang="python" />
+  <p>Tokens are 64 hex chars (<code>secrets.token_hex(32)</code>). Expired sessions are evicted lazily on access. Per-user session count is capped at <code>max_sessions_per_user</code>; when exceeded, the oldest session is dropped.</p>
+
+  <h2>Passing Credentials from the SDK</h2>
+  <p>Both SDKs expose a single client-construction option for API keys; the SDK adds the <code>x-api-key</code> metadata header on every gRPC call. OAuth/session tokens are passed via raw gRPC metadata when needed.</p>
+  <CodeTabs
+    python={`async with DbClient(
+    "entdb.acme.test:50051",
+    secure=True,
+    api_key="eks_abcdef0123456789...",
+) as db:
+    node = await db.get(Task, "node_42", "acme", "user:alice")`}
+    go={`client, err := entdb.NewClient(
+    "entdb.acme.test:50051",
+    entdb.WithSecure(),
+    entdb.WithAPIKey("eks_abcdef0123456789..."),
+)
+if err != nil { return err }
+defer client.Close()
+
+if err := client.Connect(ctx); err != nil { return err }
+scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))`}
+  />
+
+  <h2>Calling the Server Directly</h2>
+  <p>Useful for smoke tests, ops scripts, and debugging the interceptor.</p>
+  <Code code={`# API key — set the x-api-key header
+grpcurl \\
+  -H "x-api-key: eks_abcdef..." \\
+  -d '{"tenant_id": "acme"}' \\
+  entdb.acme.test:50051 \\
+  entdb.EntDBService/GetTenantQuota
+
+# OAuth — Authorization: Bearer <jwt>
+grpcurl \\
+  -H "Authorization: Bearer eyJraWQiOiJrLTEi..." \\
+  -d '{"tenant_id": "acme"}' \\
+  entdb.acme.test:50051 \\
+  entdb.EntDBService/GetTenantQuota`} lang="bash" />
+
+  <h2>Failure Modes</h2>
+  <table>
+    <tr><th>Symptom</th><th>gRPC status</th><th>Cause</th></tr>
+    <tr><td><code>No valid authentication credentials provided.</code></td><td><code>UNAUTHENTICATED</code></td><td>No header matched OAuth, API key, or session</td></tr>
+    <tr><td><code>API key has been revoked</code></td><td><code>UNAUTHENTICATED</code></td><td><code>revoke_key</code> ran since the secret was issued</td></tr>
+    <tr><td><code>API key has expired</code></td><td><code>UNAUTHENTICATED</code></td><td>Wall clock past <code>expires_at</code></td></tr>
+    <tr><td><code>Token has expired</code></td><td><code>UNAUTHENTICATED</code></td><td>JWT <code>exp</code> in the past</td></tr>
+    <tr><td><code>Invalid issuer</code> / <code>Invalid audience</code></td><td><code>UNAUTHENTICATED</code></td><td>JWT <code>iss</code> / <code>aud</code> does not match validator config</td></tr>
+    <tr><td><code>No JWKS key found for kid</code></td><td><code>UNAUTHENTICATED</code></td><td>Token signed with a key the provider has rotated out, or random kid attack</td></tr>
+  </table>
+  <p>Authorization failures (the caller is who they say they are but lacks ACL) return <code>PERMISSION_DENIED</code> from the data-path handler, not <code>UNAUTHENTICATED</code>.</p>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/admin/tenants">Tenants &amp; Users</a> &mdash; the global identity model</li>
+    <li><a href="/tenant-shard-db/docs/admin/quotas">Quotas &amp; Rate Limits</a> &mdash; what runs after auth succeeds</li>
+    <li><a href="/tenant-shard-db/docs/admin/operations">Admin Operations</a> &mdash; what the <code>admin</code> scope unlocks</li>
+  </ul>
+</DocsLayout>

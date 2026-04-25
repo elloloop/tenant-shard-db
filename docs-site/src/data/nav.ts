@@ -59,6 +59,15 @@ export const sidebarSections: NavSection[] = [
     ],
   },
   {
+    title: "Administration",
+    items: [
+      { label: "Tenants & Users", href: `${BASE}/docs/admin/tenants` },
+      { label: "Authentication", href: `${BASE}/docs/admin/auth` },
+      { label: "Quotas & Rate Limits", href: `${BASE}/docs/admin/quotas` },
+      { label: "Admin Operations", href: `${BASE}/docs/admin/operations` },
+    ],
+  },
+  {
     title: "Compliance",
     items: [
       { label: "Audit & Object Lock", href: `${BASE}/docs/compliance/audit` },
@@ -67,7 +76,12 @@ export const sidebarSections: NavSection[] = [
   },
   {
     title: "Deployment",
-    items: [{ label: "WAL Backends", href: `${BASE}/docs/deploy/wal` }],
+    items: [
+      { label: "WAL Backends", href: `${BASE}/docs/deploy/wal` },
+      { label: "Backups & Recovery", href: `${BASE}/docs/deploy/backups` },
+      { label: "Monitoring & Observability", href: `${BASE}/docs/deploy/observability` },
+      { label: "Encryption Setup", href: `${BASE}/docs/deploy/encryption` },
+    ],
   },
 ];
 

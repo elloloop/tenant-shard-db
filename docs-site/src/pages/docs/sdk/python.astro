@@ -314,6 +314,42 @@ either = await alice.query(schema_pb2.Product, filter={
     <code>$and</code> and <code>$or</code>.
   </p>
 
+  <h2>Full-text search</h2>
+  <p>
+    <code>scope.search(node_type, query, *, limit=50, offset=0)</code>
+    runs an FTS5 match expression across every field declared with
+    <code>(entdb.field).searchable = true</code>. Results are
+    ordered by relevance and ACL-filtered server-side, so the caller
+    only ever sees nodes the actor is allowed to read.
+  </p>
+
+  <Code code={`// schema.proto — mark fields searchable
+message Product {
+  option (entdb.node) = { type_id: 201 };
+
+  string sku  = 1 [(entdb.field).unique = true];
+  string name        = 3 [(entdb.field).searchable = true];
+  string description = 6 [(entdb.field).searchable = true];
+}`} lang="proto" />
+
+  <Code code={`# Single term, phrase, prefix, and boolean queries are all valid FTS5.
+hits = await alice.search(schema_pb2.Product, "widget")
+phrase = await alice.search(schema_pb2.Product, '"claw hammer"')
+prefix = await alice.search(schema_pb2.Product, "wid*")
+boolean = await alice.search(schema_pb2.Product, "hammer OR wrench NOT broken")
+
+# Pagination via limit / offset.
+page2 = await alice.search(
+    schema_pb2.Product, "tool", limit=20, offset=20,
+)`} lang="python" />
+
+  <p>
+    Underlying call is <code>DbClient.search_nodes(node_type, tenant,
+    actor, query, *, limit, offset)</code>. A type without any
+    <code>searchable</code> field returns an empty list rather than
+    raising — the FTS5 virtual table just has nothing indexed.
+  </p>
+
   <h2>Updating</h2>
   <p>
     <code>plan.update(node_id, msg)</code> sends a partial patch.
@@ -377,6 +413,40 @@ await plan2.commit()`} lang="python" />
     <code>$</code> refer to nodes created earlier in the same plan.
   </p>
 
+  <h2>Edge traversal</h2>
+  <p>
+    <code>scope.edges_out(node_id, edge_type=...)</code> returns the
+    raw outgoing edges from a node;
+    <code>scope.edges_in(node_id, edge_type=...)</code> returns the
+    incoming edges. Both differ from <code>scope.connected(...)</code>:
+    <code>connected</code> dereferences each edge and returns the
+    nodes on the far side, while <code>edges_out</code> /
+    <code>edges_in</code> return the edges themselves with their
+    metadata (<code>edge_id</code>, <code>from_id</code>,
+    <code>to_id</code>, <code>props</code>).
+  </p>
+
+  <Code code={`from schema_entdb import BelongsToEdge  # generated EdgeTypeDef witness
+
+# All outgoing BelongsTo edges from a product.
+out_edges = await alice.edges_out("product-id-42", edge_type=schema_pb2.BelongsTo)
+for e in out_edges:
+    print(e.edge_id, e.from_id, "→", e.to_id, e.props)
+
+# All incoming BelongsTo edges into a category.
+in_edges = await alice.edges_in("category-hand-tools", edge_type=schema_pb2.BelongsTo)
+
+# Omit edge_type to fetch every edge type touching the node.
+all_out = await alice.edges_out("product-id-42")`} lang="python" />
+
+  <p>
+    Use <code>edges_out</code> / <code>edges_in</code> when you need
+    edge properties or want to walk a multi-hop graph manually; use
+    <code>connected</code> when you only care about the destination
+    nodes and want them ACL-filtered and paginated in a single
+    round-trip.
+  </p>
+
   <h2>Atomic plans</h2>
   <p>
     A <code>plan</code> batches operations into a single atomic
@@ -419,6 +489,39 @@ result = await plan.commit()`} lang="python" />
     <code>created_node_ids</code>.
   </p>
 
+  <h2>Receipt status</h2>
+  <p>
+    <code>plan.commit()</code> returns as soon as the WAL append is
+    durable — the <code>Applier</code> may not have materialized the
+    write into SQLite yet. For workflows that need to know whether a
+    write has been applied without blocking on
+    <code>wait_for_offset</code>, poll the receipt by its
+    idempotency key:
+  </p>
+
+  <Code code={`plan = alice.plan(idempotency_key="order-12345")
+plan.create(schema_pb2.Product(sku="LIMITED-ED-01", name="Limited Edition"))
+result = await plan.commit()
+
+# Status transitions: PENDING → APPLIED (or FAILED on apply error).
+status = await db.get_receipt_status("acme", "order-12345")
+if status == "APPLIED":
+    print("materialized into SQLite")
+elif status == "PENDING":
+    print("still in the WAL, applier hasn't caught up")
+elif status == "FAILED":
+    print("apply failed — see server logs")`} lang="python" />
+
+  <p>
+    The receipt is keyed by <code>(tenant_id, idempotency_key)</code>,
+    so a plan committed without an explicit key still has a generated
+    UUID under <code>result.receipt.idempotency_key</code> that you
+    can pass back. Prefer <code>wait_for_offset</code> when you need
+    a blocking guarantee, and <code>get_receipt_status</code> for
+    fire-and-poll workflows where the caller cannot tie up a
+    connection.
+  </p>
+
   <h2>Error handling</h2>
   <p>All SDK errors subclass <code>EntDbError</code>; match the typed variants:</p>
 
@@ -450,6 +553,51 @@ except ValidationError as e:
     capped at that value is the standard pattern.
     </CalloutDescription>
   </Callout>
+
+  <h2>Group management</h2>
+  <p>
+    Groups are first-class actors: any ACL entry that grants to a
+    <code>group:</code> principal cascades to every current member.
+    Add and remove members through
+    <code>db.group_add(group_id, member_actor_id, tenant, actor)</code>
+    and
+    <code>db.group_remove(group_id, member_actor_id, tenant, actor)</code>.
+    The actor performing the change must be an admin of the tenant.
+  </p>
+
+  <Code code={`from entdb_sdk import Actor, Permission
+
+# Create a "merchants" group by sharing nodes to it — the group is
+# materialized lazily on first reference. Membership is tracked
+# server-side, separately from the ACL graph.
+await db.group_add(
+    group_id="merchants",
+    member_actor_id=str(Actor.user("alice")),
+    tenant_id="acme",
+    actor="user:admin",
+    role="member",       # or "admin" for delegated group management
+)
+await db.group_add("merchants", str(Actor.user("bob")), "acme", "user:admin")
+
+# Share a node to the whole group in one call. Alice and Bob both
+# now have WRITE access via their merchants membership.
+await alice.share(
+    "product-id-42",
+    Actor.group("merchants"),
+    Permission.WRITE,
+)
+
+# Remove Bob — the existing share is unaffected for everyone else.
+await db.group_remove("merchants", str(Actor.user("bob")), "acme", "user:admin")`} lang="python" />
+
+  <p>
+    Both methods return <code>True</code> on success and
+    <code>False</code> when the membership did not exist (idempotent
+    no-op). To list all members of a group or all groups an actor
+    belongs to, query the global store via the admin gRPC surface;
+    these are not exposed on <code>ActorScope</code> because they
+    cross tenant boundaries.
+  </p>
 
   <h2>Storage modes</h2>
   <p>
@@ -594,6 +742,41 @@ entdb query localhost:50051 \\
       <td>Share</td>
       <td><code>await scope.share("node-42", Actor.user("bob"), Permission.READ)</code></td>
       <td><code>scope.Share(ctx, "node-42", entdb.UserActor("bob"), entdb.PermissionRead)</code></td>
+    </tr>
+    <tr>
+      <td>Full-text search</td>
+      <td><code>await scope.search(schema_pb2.Product, "widget*")</code></td>
+      <td><code>entdb.Search[*shop.Product](ctx, scope, "widget*")</code></td>
+    </tr>
+    <tr>
+      <td>Outgoing edges</td>
+      <td><code>await scope.edges_out("node-42", edge_type=schema_pb2.BelongsTo)</code></td>
+      <td><code>scope.EdgesFrom(ctx, "node-42", shop.BelongsToEdgeID)</code></td>
+    </tr>
+    <tr>
+      <td>Incoming edges</td>
+      <td><code>await scope.edges_in("node-42", edge_type=schema_pb2.BelongsTo)</code></td>
+      <td><code>scope.EdgesTo(ctx, "node-42", shop.BelongsToEdgeID)</code></td>
+    </tr>
+    <tr>
+      <td>Tenant quota</td>
+      <td>✗ (planned)</td>
+      <td><code>client.GetTenantQuota(ctx, "system:admin", "acme")</code></td>
+    </tr>
+    <tr>
+      <td>Receipt status</td>
+      <td><code>await db.get_receipt_status("acme", "order-12345")</code></td>
+      <td>✗ (planned)</td>
+    </tr>
+    <tr>
+      <td>Group add member</td>
+      <td><code>await db.group_add("merchants", "user:alice", "acme", "user:admin")</code></td>
+      <td>✗ (planned)</td>
+    </tr>
+    <tr>
+      <td>Group remove member</td>
+      <td><code>await db.group_remove("merchants", "user:alice", "acme", "user:admin")</code></td>
+      <td>✗ (planned)</td>
     </tr>
     <tr>
       <td>Commit</td>

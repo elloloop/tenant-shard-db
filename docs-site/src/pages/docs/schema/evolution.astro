@@ -6,6 +6,182 @@ import { Code } from "astro-expressive-code/components";---
   <h1>Schema Evolution</h1>
   <p>EntDB schemas evolve safely over time. The SDK enforces protobuf-like compatibility rules &mdash; you can always add, never remove.</p>
 
+  <h2>Snapshot file format</h2>
+  <p>
+    <code>entdb init</code> writes a <code>.entdb/snapshot.json</code>
+    file that captures the committed shape of every node and edge type.
+    This file is the baseline that <code>entdb check</code> compares
+    every future schema change against in CI.
+  </p>
+  <Code code={`{
+  "version": 2,
+  "source": "schema.proto",
+  "node_types": [
+    {
+      "type_id": 1,
+      "name": "Task",
+      "deprecated": false,
+      "description": "",
+      "data_policy": "PERSONAL",
+      "fields": [
+        { "field_id": 1, "name": "title",  "kind": "str",  "required": true,
+          "pii": false, "enum_values": null, "default_value": "",
+          "deprecated": false, "description": "" },
+        { "field_id": 2, "name": "status", "kind": "enum", "required": false,
+          "pii": false, "enum_values": ["todo", "done"], "default_value": "",
+          "deprecated": false, "description": "" }
+      ]
+    }
+  ],
+  "edge_types": [
+    {
+      "edge_id": 1, "name": "HasComment",
+      "from_type": "Task", "to_type": "Comment",
+      "propagate_share": true, "data_policy": "BUSINESS",
+      "deprecated": false, "description": ""
+    }
+  ]
+}`} lang="json" />
+  <p>
+    The on-disk format is intentionally readable: reviewers can diff
+    <code>.entdb/snapshot.json</code> in a pull request just like source
+    code. Type ids and field ids are pinned, so renames (which preserve
+    ids) show up as a one-line change to <code>name</code> while real
+    structural change diffs cleanly.
+  </p>
+
+  <h2>Workflow</h2>
+  <ol>
+    <li>
+      <strong>Bootstrap once</strong>: run <code>entdb init schema.proto</code>
+      after the first schema is finalised. Commit
+      <code>.entdb/snapshot.json</code> to the repo. This is the baseline
+      every future build is judged against.
+    </li>
+    <li>
+      <strong>Iterate freely</strong>: edit <code>schema.proto</code>,
+      regenerate, run <code>entdb check schema.proto</code> locally
+      &mdash; non-breaking changes print
+      <code>[OK]</code> markers; breaking changes print
+      <code>[BREAKING]</code> and exit non-zero.
+    </li>
+    <li>
+      <strong>Commit a snapshot bump only with the change</strong>: when
+      you make a deliberate, compatible schema change, run
+      <code>entdb init schema.proto --force</code> to refresh the
+      baseline and include the updated <code>snapshot.json</code> in the
+      same pull request. Reviewers see the schema diff and the
+      snapshot diff together.
+    </li>
+    <li>
+      <strong>CI gate</strong>: the CI job runs <code>entdb check
+      schema.proto</code>. If anyone introduces a breaking change without
+      refreshing the snapshot, CI fails before the change can land.
+    </li>
+  </ol>
+  <p>What <code>entdb check</code> actually does, step by step:</p>
+  <ol>
+    <li>Parse <code>schema.proto</code> via <code>parse_proto()</code>, producing in-memory <code>NodeInfo</code> / <code>EdgeInfo</code> records.</li>
+    <li>Build a v2 snapshot dict from the parsed proto (same shape as <code>.entdb/snapshot.json</code>).</li>
+    <li>Load the baseline snapshot from <code>.entdb/snapshot.json</code> (override with <code>--baseline</code>).</li>
+    <li>Run <code>_check_compat(old, new)</code>, which iterates every node and edge type, every field, and every enum value, classifying each diff as breaking or non-breaking.</li>
+    <li>Print one line per detected change. Exit <code>1</code> if any breaking change is present, <code>0</code> otherwise.</li>
+  </ol>
+
+  <h2>Compatible vs breaking changes</h2>
+  <p>
+    The lint rules implemented in
+    <code>sdk/entdb_sdk/cli.py::_check_compat()</code> are the source of
+    truth. The summary:
+  </p>
+  <table>
+    <tr><th>Change</th><th>Status</th><th>Why</th></tr>
+    <tr><td>Add a new node or edge type</td><td><span class="badge badge-new">non-breaking</span></td><td>Old clients ignore unknown <code>type_id</code>s.</td></tr>
+    <tr><td>Add a new field</td><td><span class="badge badge-new">non-breaking</span></td><td>Old payloads omit it; defaults apply on read.</td></tr>
+    <tr><td>Add new enum values (append)</td><td><span class="badge badge-new">non-breaking</span></td><td>No existing row carries the new value.</td></tr>
+    <tr><td>Rename a field</td><td><span class="badge badge-new">non-breaking</span></td><td>On-disk payloads use <code>field_id</code>, not name &mdash; the rename touches generated code only.</td></tr>
+    <tr><td>Rename a type</td><td><span class="badge badge-new">non-breaking</span></td><td>Same reason &mdash; the wire identifier is <code>type_id</code>.</td></tr>
+    <tr><td>Mark a field <code>deprecated</code></td><td><span class="badge badge-new">non-breaking</span></td><td>Lint warns at read sites; the field is still readable.</td></tr>
+    <tr><td>Change <code>acl_defaults</code></td><td><span class="badge badge-new">non-breaking</span></td><td>Only affects <em>newly created</em> nodes.</td></tr>
+    <tr><td>Remove a field</td><td><span class="badge badge-breaking">breaking</span></td><td>Existing payloads keyed by that <code>field_id</code> become unreadable through the new schema.</td></tr>
+    <tr><td>Remove a node or edge type</td><td><span class="badge badge-breaking">breaking</span></td><td>Existing data references the removed <code>type_id</code> / <code>edge_id</code>.</td></tr>
+    <tr><td>Change a field's <code>kind</code> (str ↔ int, etc.)</td><td><span class="badge badge-breaking">breaking</span></td><td>On-disk values can no longer be decoded as the new type.</td></tr>
+    <tr><td>Reuse a <code>type_id</code> or <code>field_id</code></td><td><span class="badge badge-breaking">breaking</span></td><td>Collision with retired data.</td></tr>
+    <tr><td>Remove an enum value</td><td><span class="badge badge-breaking">breaking</span></td><td>Existing rows may still hold the value.</td></tr>
+    <tr><td>Make an optional field required</td><td><span class="badge badge-breaking">breaking</span></td><td>Pre-existing rows have no value for it.</td></tr>
+    <tr><td>Change <code>propagate_share</code> on an edge</td><td><span class="badge badge-breaking">breaking</span></td><td>Alters ACL inheritance for already-shared data.</td></tr>
+    <tr><td>Change an edge's <code>from_type</code> / <code>to_type</code></td><td><span class="badge badge-breaking">breaking</span></td><td>Existing edges reference incompatible endpoints.</td></tr>
+  </table>
+
+  <h2>Versioning &amp; the WAL</h2>
+  <p>
+    Every WAL event carries a <code>schema_fingerprint</code> &mdash; the
+    SHA-256 of the canonical schema at the time the producer wrote the
+    event. Because payloads on disk are keyed by
+    <code>field_id</code>, not field name, schema versioning is
+    effectively free:
+  </p>
+  <ul>
+    <li>
+      Renames change the fingerprint but leave on-disk bytes intact &mdash;
+      the new schema can read all old events because the
+      <code>field_id</code>s still match.
+    </li>
+    <li>
+      Field additions change the fingerprint; old events simply lack the
+      new <code>field_id</code> in their payload, and the field defaults
+      apply on read.
+    </li>
+    <li>
+      A breaking change (which CI should have rejected) would still
+      <em>parse</em> at the WAL level (events are JSON keyed by id) but
+      would mismatch when the applier tried to materialise the row,
+      surfacing as a schema-fingerprint error rather than silent data
+      corruption.
+    </li>
+  </ul>
+  <p>
+    There is no separate "schema version" integer: the fingerprint <em>is</em>
+    the version, and any two snapshots with the same fingerprint are
+    interchangeable.
+  </p>
+
+  <h2>Recovering from a bad snapshot</h2>
+  <p>
+    If a snapshot was committed with an incorrect baseline &mdash; e.g.
+    someone ran <code>entdb init --force</code> against the wrong proto
+    file and pushed the result &mdash; the symptom is a CI run that
+    either passes a real breaking change or rejects something that's
+    actually fine. Recovery:
+  </p>
+  <ol>
+    <li>
+      Identify the last commit where the snapshot matched the deployed
+      schema (usually the previous green CI build on
+      <code>main</code>).
+    </li>
+    <li>
+      Restore that <code>.entdb/snapshot.json</code> file:
+      <Code code={`git checkout <good-sha> -- .entdb/snapshot.json`} lang="bash" />
+    </li>
+    <li>
+      Re-run <code>entdb check schema.proto</code>. The diff against the
+      restored baseline is the <em>real</em> set of changes since the
+      last known-good schema.
+    </li>
+    <li>
+      If those changes are intentional and compatible, run
+      <code>entdb init schema.proto --force</code> to write a fresh
+      snapshot, commit it, and push.
+    </li>
+    <li>
+      If the live deployment has already accepted writes under the wrong
+      fingerprint, no data is lost &mdash; field-id stability means the
+      payloads remain readable. The fingerprint mismatch is itself the
+      red flag and resolves once the snapshot is corrected.
+    </li>
+  </ol>
+
   <h2>The Lifecycle</h2>
 
   <h3>Day 1: Initial Schema</h3>

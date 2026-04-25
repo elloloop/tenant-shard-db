@@ -1,0 +1,191 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
+
+<DocsLayout title="Monitoring & Observability">
+  <h1>Monitoring &amp; Observability</h1>
+  <p>
+    EntDB ships with first-class hooks for the four pillars operators
+    actually need: a health RPC for orchestrators, Prometheus metrics for
+    dashboards, OpenTelemetry traces for request flows, and structured
+    logs for audit and debugging. Everything is opt-in via environment
+    variables and degrades gracefully if a dependency is missing.
+  </p>
+
+  <h2>Health Checks</h2>
+  <p>
+    The server exposes a <code>Health</code> gRPC method on the main
+    listener (default <code>0.0.0.0:50051</code>). It returns the
+    aggregated status of the WAL connection and the local storage layer,
+    plus per-component detail you can scrape into a dashboard.
+  </p>
+  <CodeTabs
+    python={`from entdb_sdk import Client
+
+client = Client(target="entdb:50051")
+await client.connect()
+
+status = await client.health(timeout=2.0)
+# {"healthy": True, "version": "1.0.0",
+#  "components": {"wal": "healthy", "storage": "healthy"}}`}
+    goNote="Health is exposed on the underlying gRPC connection. Until a typed Go helper lands, call HealthRequest{} directly via the generated stub or hit the port with grpcurl from your liveness probe sidecar."
+  />
+
+  <p>
+    Wire the same RPC to Kubernetes liveness and readiness probes via
+    <code>grpc-health-probe</code>:
+  </p>
+  <Code code={`livenessProbe:
+  exec:
+    command: ["/bin/grpc_health_probe", "-addr=:50051"]
+  initialDelaySeconds: 10
+  periodSeconds: 10
+readinessProbe:
+  exec:
+    command: ["/bin/grpc_health_probe", "-addr=:50051"]
+  initialDelaySeconds: 2
+  periodSeconds: 5`} lang="yaml" />
+
+  <p>
+    The server only flips its internal <code>_running</code> flag after
+    the WAL connection succeeds, so readiness will fail until the WAL is
+    reachable. This is the desired behaviour &mdash; do not promote a
+    pod that cannot append events.
+  </p>
+
+  <h2>Prometheus Metrics</h2>
+  <p>
+    Set <code>METRICS_ENABLED=true</code> (default in production images)
+    and the server starts a Prometheus exposition endpoint on
+    <code>METRICS_PORT</code> (default <code>9090</code>) at the standard
+    <code>/metrics</code> path.
+  </p>
+  <Code code={`METRICS_ENABLED=true
+METRICS_PORT=9090`} lang="bash" />
+
+  <h3>Exported Metrics</h3>
+  <table>
+    <tr><th>Name</th><th>Type</th><th>Labels</th><th>Meaning</th></tr>
+    <tr><td><code>entdb_grpc_requests_total</code></td><td>counter</td><td>method, status</td><td>Total gRPC requests by method and outcome.</td></tr>
+    <tr><td><code>entdb_grpc_latency_seconds</code></td><td>histogram</td><td>method</td><td>Per-method request latency (1ms&ndash;5s buckets).</td></tr>
+    <tr><td><code>entdb_applier_events_total</code></td><td>counter</td><td>status</td><td>Events the applier processed (<code>applied</code>, <code>skipped</code>, <code>error</code>).</td></tr>
+    <tr><td><code>entdb_applier_lag_seconds</code></td><td>gauge</td><td>&mdash;</td><td>How far the applier is behind the WAL head.</td></tr>
+    <tr><td><code>entdb_wal_appends_total</code></td><td>counter</td><td>status</td><td>WAL append attempts.</td></tr>
+    <tr><td><code>entdb_wal_append_latency_seconds</code></td><td>histogram</td><td>&mdash;</td><td>WAL append latency (1ms&ndash;1s buckets).</td></tr>
+    <tr><td><code>entdb_sqlite_operations_total</code></td><td>counter</td><td>operation</td><td>SQLite read/write counts.</td></tr>
+    <tr><td><code>entdb_active_tenants</code></td><td>gauge</td><td>&mdash;</td><td>Number of tenants with open SQLite handles.</td></tr>
+  </table>
+
+  <h3>Useful PromQL</h3>
+  <Code code={`# p99 request latency per method
+histogram_quantile(0.99,
+  sum by (method, le) (rate(entdb_grpc_latency_seconds_bucket[5m])))
+
+# Error rate (per method)
+sum by (method) (rate(entdb_grpc_requests_total{status="error"}[5m]))
+  / sum by (method) (rate(entdb_grpc_requests_total[5m]))
+
+# Applier lag — alert if > 30s for 5m
+max(entdb_applier_lag_seconds) > 30
+
+# WAL append p99
+histogram_quantile(0.99,
+  sum by (le) (rate(entdb_wal_append_latency_seconds_bucket[5m])))`} lang="promql" />
+
+  <h3>Scrape Configuration</h3>
+  <Code code={`scrape_configs:
+  - job_name: entdb
+    metrics_path: /metrics
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: entdb
+      - source_labels: [__meta_kubernetes_pod_container_port_number]
+        action: keep
+        regex: "9090"`} lang="yaml" />
+
+  <h2>Distributed Tracing</h2>
+  <p>
+    Tracing is OpenTelemetry-based and ships spans over OTLP/gRPC. Enable
+    it with three environment variables; the server applies the sampler
+    at startup, so changes require a restart.
+  </p>
+  <Code code={`TRACE_ENABLED=true
+TRACE_EXPORTER=otlp           # console, otlp
+TRACE_ENDPOINT=http://otel-collector:4317
+TRACE_SAMPLING_RATE=0.1        # 10% head-based sampling`} lang="bash" />
+
+  <p>
+    Spans are emitted around gRPC handlers, WAL appends, and SQLite
+    operations. Send the OTLP stream to any collector &mdash; Jaeger,
+    Tempo, Datadog Agent &mdash; that speaks OTLP/gRPC on port 4317. To
+    debug locally without a collector, set
+    <code>TRACE_EXPORTER=console</code> and spans print to stdout.
+  </p>
+
+  <h2>Structured Logging</h2>
+  <p>
+    Logs default to JSON for production, with one record per event. Use
+    text for local development.
+  </p>
+  <Code code={`LOG_LEVEL=INFO     # DEBUG, INFO, WARNING, ERROR
+LOG_FORMAT=json    # json or text`} lang="bash" />
+
+  <p>
+    The JSON formatter emits <code>time</code>, <code>level</code>,
+    <code>logger</code>, <code>message</code>, plus any structured
+    <code>extra</code> fields the call site supplied (tenant_id, actor,
+    stream_pos, latency_ms). Library noise from <code>aiokafka</code>
+    and <code>botocore</code> is pinned to <code>WARNING</code> so the
+    signal-to-noise ratio stays high.
+  </p>
+
+  <h2>gRPC Reflection</h2>
+  <p>
+    Reflection is on by default (<code>GRPC_REFLECTION=true</code>) so
+    operators can introspect the running service with
+    <code>grpcurl</code>. Disable it on internet-exposed deployments
+    &mdash; it leaks every method name and message schema to anyone who
+    can reach the port.
+  </p>
+  <Code code={`# List services
+grpcurl -plaintext entdb:50051 list
+
+# Inspect a method
+grpcurl -plaintext entdb:50051 describe entdb.v1.EntDB.Health
+
+# Call Health
+grpcurl -plaintext -d '{}' entdb:50051 entdb.v1.EntDB/Health`} lang="bash" />
+
+  <Code code={`# Production: turn it off
+GRPC_REFLECTION=false`} lang="bash" />
+
+  <h2>Suggested SLOs</h2>
+  <table>
+    <tr><th>SLI</th><th>Target</th><th>Burn-rate alert</th></tr>
+    <tr><td>Request availability (non-error / total)</td><td>99.9% monthly</td><td>2% error budget over 1h</td></tr>
+    <tr><td>p99 request latency</td><td>&lt; 100ms (read), &lt; 250ms (write)</td><td>3x target for 10m</td></tr>
+    <tr><td>Applier lag</td><td>&lt; 5s p95</td><td>&gt; 30s for 5m (page)</td></tr>
+    <tr><td>WAL append p99</td><td>&lt; 50ms</td><td>&gt; 200ms for 5m</td></tr>
+    <tr><td>Snapshot freshness</td><td>&le; snapshot interval + 10%</td><td>2x interval (page)</td></tr>
+  </table>
+
+  <h2>Recommended Dashboard Panels</h2>
+  <ul>
+    <li><strong>Throughput</strong>: <code>sum by (method) (rate(entdb_grpc_requests_total[1m]))</code></li>
+    <li><strong>Latency heatmap</strong>: <code>sum by (le) (rate(entdb_grpc_latency_seconds_bucket[1m]))</code></li>
+    <li><strong>Applier health</strong>: <code>entdb_applier_lag_seconds</code> with annotated deploys</li>
+    <li><strong>WAL pipeline</strong>: <code>rate(entdb_wal_appends_total&lbrace;status="ok"&rbrace;[1m])</code> vs <code>rate(entdb_applier_events_total&lbrace;status="applied"&rbrace;[1m])</code></li>
+    <li><strong>Tenants</strong>: <code>entdb_active_tenants</code> (capacity planning)</li>
+  </ul>
+
+  <h2>Related</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/deploy/wal">WAL Backends</a></li>
+    <li><a href="/tenant-shard-db/docs/deploy/backups">Backups &amp; Recovery</a></li>
+  </ul>
+</DocsLayout>

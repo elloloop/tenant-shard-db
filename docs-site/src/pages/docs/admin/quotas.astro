@@ -1,0 +1,120 @@
+---
+import DocsLayout from "../../../layouts/DocsLayout.astro";
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
+
+<DocsLayout title="Quotas & Rate Limits">
+  <h1>Quotas &amp; Rate Limits</h1>
+  <p>EntDB enforces a three-layer quota model on every <code>ExecuteAtomic</code> request. <code>QuotaInterceptor</code> is an async <code>grpc.aio.ServerInterceptor</code> that runs <em>after</em> auth and <em>before</em> the handler, so a denied request never touches the WAL.</p>
+
+  <h2>The Three-Tier Model</h2>
+  <table>
+    <tr><th>Phase</th><th>Limit</th><th>State</th><th>Blast radius</th></tr>
+    <tr><td>1</td><td>Per-tenant monthly writes</td><td>Durable in <code>global.db</code></td><td>Billing</td></tr>
+    <tr><td>2</td><td>Per-tenant burst RPS (token bucket)</td><td>In-memory, per-process</td><td>Noisy neighbour</td></tr>
+    <tr><td>3</td><td>Per-user burst RPS (token bucket)</td><td>In-memory, per-process</td><td>Compromised credential</td></tr>
+  </table>
+  <p>Checks run in the order above. The first denial wins. A tenant with no quota config or a zero limit at any tier skips that tier entirely &mdash; <code>0</code> means <em>unlimited</em>.</p>
+
+  <h2>What Counts</h2>
+  <p>Only <code>ExecuteAtomic</code> is metered. Reads (<code>GetNode</code>, <code>QueryNodes</code>, <code>SearchNodes</code>, etc.) pass through untouched. Within an <code>ExecuteAtomic</code>, the meter charges <strong>one token per op</strong> &mdash; a batch of 10 creates is 10 writes, so callers cannot game the limit by stuffing more ops into a single request.</p>
+
+  <h2>Configuring Quotas</h2>
+  <p>Quotas are set per-tenant on the server, via <code>GlobalStore.set_quota_config</code>. There is no per-request override. A missing row is "unlimited"; a row with all zeros is also "unlimited".</p>
+  <Code code={`# Server-side admin script
+await global_store.set_quota_config(
+    tenant_id="acme",
+    max_writes_per_month=10_000_000,    # Phase 1
+    hard_enforce=True,                  # reject vs. soft-warn over monthly cap
+    max_rps_sustained=500,              # Phase 2: tenant steady-state
+    max_rps_burst=1_000,                # Phase 2: tenant bucket capacity
+    max_rps_per_user_sustained=50,      # Phase 3: per-user steady-state
+    max_rps_per_user_burst=100,         # Phase 3: per-user bucket capacity
+)`} lang="python" />
+  <ul>
+    <li><strong><code>hard_enforce</code></strong>: when <code>True</code>, requests over the monthly cap return <code>RESOURCE_EXHAUSTED</code>. When <code>False</code> (default), the interceptor logs a warning and lets the write through &mdash; intentional for overage-billing models.</li>
+    <li><strong>Burst</strong> sets the token-bucket capacity. If left at <code>0</code> it falls back to the sustained value, giving you a bucket equal to one second of capacity.</li>
+    <li>Config changes are picked up within <code>_CONFIG_TTL_S</code> (30s) on each server. Token buckets are rebuilt the moment the cache refreshes a different shape.</li>
+  </ul>
+
+  <h2>Reading Current Quota State</h2>
+  <p>The <code>GetTenantQuota</code> RPC returns the dashboard view in a single round-trip: monthly cap + writes used + bucket sizes. It is wired in the Go SDK today; the Python SDK exposes the underlying gRPC stub but no high-level wrapper has been added yet.</p>
+  <CodeTabs
+    pythonNote={`No high-level wrapper exists yet on DbClient. To call the RPC today, use the generated stub directly:
+
+from entdb_sdk._generated.entdb_pb2 import GetTenantQuotaRequest
+from entdb_sdk._generated.entdb_pb2_grpc import EntDBStub
+
+stub = EntDBStub(channel)              # raw gRPC channel
+resp = await stub.GetTenantQuota(
+    GetTenantQuotaRequest(tenant_id="acme", actor_id="system:admin"),
+)`}
+    go={`q, err := client.GetTenantQuota(ctx, "system:admin", "acme")
+if err != nil { return err }
+fmt.Printf("used %d / %d this period\\n", q.WritesUsed, q.MaxWritesPerMonth)
+fmt.Printf("burst capacity %d @ %d rps sustained\\n", q.MaxRPSBurst, q.MaxRPSSustained)`}
+  />
+  <p>The response is computed from <code>tenant_quotas</code> + <code>tenant_usage</code> rows; the in-memory token-bucket levels are not exposed because they are per-process and would not give a meaningful global view.</p>
+
+  <h2>RateLimitError Shape</h2>
+  <p>When any tier denies a request, the server aborts with gRPC <code>RESOURCE_EXHAUSTED</code> and attaches a <code>retry-after</code> trailing-metadata header in seconds. The Python SDK parses both into a typed <code>RateLimitError</code>:</p>
+  <Code code={`class RateLimitError(EntDbError):
+    code = "RATE_LIMITED"
+    retry_after_ms: int | None   # ms to back off
+    limit: int | None            # configured cap, when known
+    used: int | None             # current consumption, when known`} lang="python" />
+  <p>The same error type is raised for all three tiers. The meaning of <code>retry_after_ms</code> differs:</p>
+  <table>
+    <tr><th>Tier</th><th><code>retry_after_ms</code></th></tr>
+    <tr><td>Monthly (hard)</td><td>Milliseconds until the next calendar-month period starts</td></tr>
+    <tr><td>Tenant burst</td><td>Milliseconds until the bucket refills enough for one more request</td></tr>
+    <tr><td>Per-user burst</td><td>Same, scoped to <code>(tenant_id, actor_id)</code></td></tr>
+  </table>
+
+  <h2>Backoff Strategy</h2>
+  <p>Always honour <code>retry_after_ms</code> as a floor &mdash; retrying earlier just spends more capacity and pushes the bucket further into the red. Add jitter when more than one client is likely to be retrying at the same time.</p>
+  <CodeTabs
+    python={`import asyncio, random
+from entdb_sdk.errors import RateLimitError
+
+async def commit_with_backoff(plan, max_attempts=5):
+    for attempt in range(max_attempts):
+        try:
+            return await plan.commit()
+        except RateLimitError as exc:
+            if attempt == max_attempts - 1:
+                raise
+            base = (exc.retry_after_ms or 1000) / 1000.0
+            await asyncio.sleep(base + random.uniform(0, base * 0.25))`}
+    goNote={`The Go SDK surfaces RESOURCE_EXHAUSTED as a typed RateLimitError-equivalent on the returned error. Pattern-match on it (errors.As) and read the retry-after duration off the trailing metadata, then time.Sleep before retrying. Same exponential + jitter logic as the Python sample.`}
+  />
+
+  <h2>Producer Example</h2>
+  <p>A small batched writer that streams events into EntDB and backs off cleanly when it hits the per-tenant burst limit:</p>
+  <Code code={`async def stream_events(db, events):
+    plan = db.new_plan("acme", actor="user:ingest")
+    for ev in events:
+        plan.create(Event, payload=ev)
+        if len(plan.ops) >= 100:
+            await commit_with_backoff(plan)
+            plan = db.new_plan("acme", actor="user:ingest")
+    if plan.ops:
+        await commit_with_backoff(plan)`} lang="python" />
+
+  <h2>Operational Notes</h2>
+  <ul>
+    <li><strong>Fail-open on backend errors.</strong> If the interceptor cannot reach <code>global_store</code> for the config or usage row, it logs and allows the request. Billing drift is preferable to an outage.</li>
+    <li><strong>Usage is incremented by the Applier, not the interceptor.</strong> The interceptor is read-only against durable state; the post-apply step in the Applier calls <code>increment_usage</code>. This means a denied request never touches the counter.</li>
+    <li><strong>Token buckets are per-process.</strong> A server restart resets every tenant's bucket to full &mdash; one free burst, intentional. Horizontal scaling means a tenant's effective burst is roughly <code>max_rps_burst &times; n_replicas</code>.</li>
+    <li><strong>Per-user buckets are bounded</strong> at 10,000 entries per process; LRU eviction kicks in if you exceed that.</li>
+    <li><strong>Per-user tier needs auth.</strong> If no trusted identity is set on the request (e.g. auth disabled in tests), the per-user check is skipped &mdash; the per-tenant bucket still applies.</li>
+  </ul>
+
+  <h2>Next Steps</h2>
+  <ul>
+    <li><a href="/tenant-shard-db/docs/admin/auth">Authentication</a> &mdash; how the trusted identity used by Phase 3 is established</li>
+    <li><a href="/tenant-shard-db/docs/admin/tenants">Tenants &amp; Users</a> &mdash; where <code>tenant_id</code> comes from</li>
+    <li><a href="/tenant-shard-db/docs/admin/operations">Admin Operations</a> &mdash; admin RPCs that set quotas and inspect usage</li>
+  </ul>
+</DocsLayout>

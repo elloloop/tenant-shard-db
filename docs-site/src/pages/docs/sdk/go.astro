@@ -321,6 +321,45 @@ either, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
     <code>$and</code> and <code>$or</code>.
   </p>
 
+  <h2>Full-text search</h2>
+  <p>
+    <code>entdb.Search[T](ctx, scope, query)</code> runs an FTS5 match
+    expression across every field declared with
+    <code>(entdb.field).searchable = true</code> on the proto type.
+    Results are ranked by relevance and ACL-filtered server-side, so
+    the caller only ever sees rows the actor is allowed to read.
+  </p>
+
+  <Code code={`// schema.proto — mark fields as searchable.
+message Product {
+  option (entdb.node) = { type_id: 201 };
+
+  string sku         = 1 [(entdb.field).unique = true];
+  string name        = 3 [(entdb.field).searchable = true];
+  string description = 6 [(entdb.field).searchable = true];
+}`} lang="proto" />
+
+  <Code code={`// Single term, phrase, prefix, and boolean queries are all valid FTS5.
+hits, err := entdb.Search[*shop.Product](ctx, alice, "widget")
+
+phrase, err := entdb.Search[*shop.Product](ctx, alice, "\"claw hammer\"")
+prefix, err := entdb.Search[*shop.Product](ctx, alice, "wid*")
+boolean, err := entdb.Search[*shop.Product](ctx, alice,
+    "hammer OR wrench NOT broken")
+
+if err != nil {
+    log.Fatal(err)
+}
+for _, p := range hits {
+    log.Printf("%s — %s", p.Sku, p.Name)
+}`} lang="go" />
+
+  <p>
+    A type without any <code>searchable</code> field returns an
+    empty slice rather than an error — the FTS5 virtual table
+    simply has nothing indexed for it.
+  </p>
+
   <h2>Updating</h2>
   <p>
     <code>Plan.Update</code> sends a partial patch. <strong>Only
@@ -382,6 +421,44 @@ _, _ = plan2.Commit(ctx)`} lang="go" />
     The <code>edge_id</code> is read from the edge message's
     <code>(entdb.edge)</code> option. Traversal uses
     <code>scope.EdgesFrom</code> / <code>scope.EdgesTo</code>.
+  </p>
+
+  <h2>Edge traversal</h2>
+  <p>
+    <code>scope.EdgesFrom(ctx, fromNodeID, edgeTypeID)</code> returns
+    raw outgoing edges; <code>scope.EdgesTo(ctx, toNodeID, edgeTypeID)</code>
+    returns the incoming side. Each <code>*entdb.Edge</code> carries
+    <code>EdgeID</code>, <code>FromID</code>, <code>ToID</code>, and
+    any <code>Props</code> set when the edge was created.
+  </p>
+
+  <Code code={`// All BelongsTo edges from a product to its categories.
+const belongsToEdgeID = 301 // matches (entdb.edge).edge_id in schema.proto
+
+outgoing, err := alice.EdgesFrom(ctx, "product-id-42", belongsToEdgeID)
+if err != nil {
+    log.Fatal(err)
+}
+for _, e := range outgoing {
+    log.Printf("%s --(%d)--> %s  props=%v", e.FromID, e.EdgeID, e.ToID, e.Props)
+}
+
+// All products that BelongTo a given category.
+incoming, err := alice.EdgesTo(ctx, "category-hand-tools", belongsToEdgeID)
+if err != nil {
+    log.Fatal(err)
+}
+log.Printf("%d products in this category", len(incoming))`} lang="go" />
+
+  <p>
+    The integer <code>edgeTypeID</code> is the same numeric
+    <code>edge_id</code> that
+    <code>entdb.EdgeCreate[*shop.BelongsTo](...)</code> resolves
+    automatically; pass it directly here until a typed
+    <code>EdgeType[T]</code> overload lands. To dereference each
+    edge into the node on the other side, fetch with
+    <code>entdb.Get[T]</code> using the relevant <code>FromID</code>
+    or <code>ToID</code>.
   </p>
 
   <h2>Atomic plans</h2>
@@ -499,6 +576,68 @@ if err != nil {
     capped at that value is the standard pattern.
     </CalloutDescription>
   </Callout>
+
+  <h2>Tenant quotas</h2>
+  <p>
+    <code>client.GetTenantQuota(ctx, actor, tenantID)</code> returns
+    a single-round-trip snapshot of the tenant's quota configuration
+    and current usage. The call is admin-oriented (it lives on
+    <code>*DbClient</code>, not on a <code>*Scope</code>) because
+    quota data does not have a typed proto node behind it. The
+    returned <code>*TenantQuota</code> mirrors the three-layer
+    rate-limit model: monthly write quota, per-tenant token bucket,
+    and per-user token bucket.
+  </p>
+
+  <Code code={`q, err := client.GetTenantQuota(ctx, "system:admin", "acme")
+if err != nil {
+    log.Fatal(err)
+}
+
+log.Printf("monthly writes: %d / %d", q.WritesUsed, q.MaxWritesPerMonth)
+log.Printf("period: %d → %d (unix ms)", q.PeriodStartMs, q.PeriodEndMs)
+log.Printf("tenant RPS: sustained=%d burst=%d",
+    q.MaxRPSSustained, q.MaxRPSBurst)
+log.Printf("per-user RPS: sustained=%d burst=%d",
+    q.MaxRPSPerUserSustained, q.MaxRPSPerUserBurst)
+log.Printf("hard enforce on overage: %v", q.HardEnforce)`} lang="go" />
+
+  <p>
+    A zero value for any <code>*Limit</code> field means
+    <em>unlimited</em> — the server treats 0 as unbounded for that
+    layer. Pair this with <code>*RateLimitError</code> to drive a
+    backoff loop honouring the server's own retry hint:
+  </p>
+
+  <Code code={`import (
+    "errors"
+    "time"
+)
+
+func commitWithBackoff(ctx context.Context, plan *entdb.Plan) (*entdb.CommitResult, error) {
+    backoff := 100 * time.Millisecond
+    for attempt := 0; attempt < 5; attempt++ {
+        result, err := plan.Commit(ctx)
+        if err == nil {
+            return result, nil
+        }
+        var rl *entdb.RateLimitError
+        if !errors.As(err, &rl) {
+            return nil, err
+        }
+        wait := backoff
+        if hint := time.Duration(rl.RetryAfterMs) * time.Millisecond; hint > wait {
+            wait = hint
+        }
+        select {
+        case <-time.After(wait):
+        case <-ctx.Done():
+            return nil, ctx.Err()
+        }
+        backoff *= 2
+    }
+    return nil, errors.New("commit: exceeded retry budget")
+}`} lang="go" />
 
   <h2>Storage modes</h2>
   <p>
@@ -648,6 +787,41 @@ entdb put localhost:50051 \\
       <td>Share</td>
       <td><code>await scope.share("node-42", Actor.user("bob"), Permission.READ)</code></td>
       <td><code>scope.Share(ctx, "node-42", entdb.UserActor("bob"), entdb.PermissionRead)</code></td>
+    </tr>
+    <tr>
+      <td>Full-text search</td>
+      <td><code>await scope.search(schema_pb2.Product, "widget*")</code></td>
+      <td><code>entdb.Search[*shop.Product](ctx, scope, "widget*")</code></td>
+    </tr>
+    <tr>
+      <td>Outgoing edges</td>
+      <td><code>await scope.edges_out("node-42", edge_type=schema_pb2.BelongsTo)</code></td>
+      <td><code>scope.EdgesFrom(ctx, "node-42", shop.BelongsToEdgeID)</code></td>
+    </tr>
+    <tr>
+      <td>Incoming edges</td>
+      <td><code>await scope.edges_in("node-42", edge_type=schema_pb2.BelongsTo)</code></td>
+      <td><code>scope.EdgesTo(ctx, "node-42", shop.BelongsToEdgeID)</code></td>
+    </tr>
+    <tr>
+      <td>Tenant quota</td>
+      <td>✗ (planned)</td>
+      <td><code>client.GetTenantQuota(ctx, "system:admin", "acme")</code></td>
+    </tr>
+    <tr>
+      <td>Receipt status</td>
+      <td><code>await db.get_receipt_status("acme", "order-12345")</code></td>
+      <td>✗ (planned)</td>
+    </tr>
+    <tr>
+      <td>Group add member</td>
+      <td><code>await db.group_add("merchants", "user:alice", "acme", "user:admin")</code></td>
+      <td>✗ (planned)</td>
+    </tr>
+    <tr>
+      <td>Group remove member</td>
+      <td><code>await db.group_remove("merchants", "user:alice", "acme", "user:admin")</code></td>
+      <td>✗ (planned)</td>
     </tr>
     <tr>
       <td>Commit</td>
