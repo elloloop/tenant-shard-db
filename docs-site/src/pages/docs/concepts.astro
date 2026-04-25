@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Core Concepts">
   <h1>Core Concepts</h1>
@@ -53,11 +55,21 @@ globex = db.tenant("globex").actor(Actor.user("bob"))`} lang="plaintext" />
     Every operation requires an <code>Actor</code> &mdash; the typed identity
     performing the action. Use the constructors instead of raw strings.
   </p>
-  <Code code={`from entdb_sdk import Actor
+  <CodeTabs
+    python={`from entdb_sdk import Actor
 
 Actor.user("alice")        # user:alice
 Actor.group("eng")         # group:eng
-Actor.service("ingest-api") # service:ingest-api`} lang="python" />
+Actor.service("ingest-api") # service:ingest-api`}
+    go={`import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+
+entdb.UserActor("alice")          // user:alice
+entdb.GroupActor("eng")           // group:eng
+entdb.ServiceActor("ingest-api")  // service:ingest-api
+
+// Parse a "kind:id" string back into an Actor
+a, err := entdb.ParseActor("user:alice")`}
+  />
   <table>
     <tr><th>Constructor</th><th>Wire form</th><th>Use for</th></tr>
     <tr><td><code>Actor.user(id)</code></td><td><code>user:id</code></td><td>Human principals</td></tr>
@@ -87,7 +99,8 @@ Actor.service("ingest-api") # service:ingest-api`} lang="python" />
     <code>Plan</code> builder. <code>plan.create()</code> accepts proto
     messages directly.
   </p>
-  <Code code={`import schema_pb2
+  <CodeTabs
+    python={`import schema_pb2
 from entdb_sdk import Actor
 
 scope = db.tenant("acme").actor(Actor.user("alice"))
@@ -96,7 +109,15 @@ plan.create(schema_pb2.Task(title="New Task"), as_="task")
 plan.create(schema_pb2.Comment(body="First comment"), as_="comment")
 plan.edge_create("HasComment", from_="$task.id", to="$comment.id")
 result = await plan.commit()
-# All three operations succeed or fail together`} lang="python" />
+# All three operations succeed or fail together`}
+    go={`scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+plan := scope.Plan()
+plan.Create(&schema.Task{Title: "New Task"}, entdb.As("task"))
+plan.Create(&schema.Comment{Body: "First comment"}, entdb.As("comment"))
+entdb.EdgeCreate[*schema.HasComment](plan, "$task.id", "$comment.id")
+result, err := plan.Commit(ctx)
+// All three operations succeed or fail together`}
+  />
   <p>The <code>as_</code> parameter creates an alias for referencing the created node in subsequent operations (<code>$task.id</code>).</p>
 
   <h2>Read-after-Write Consistency</h2>
@@ -105,12 +126,15 @@ result = await plan.commit()
     (<code>db._last_offsets</code>) and forwards it on subsequent reads, so
     you get read-after-write by default. For explicit control:
   </p>
-  <Code code={`# Option 1: Wait during commit
+  <CodeTabs
+    python={`# Option 1: Wait during commit
 result = await plan.commit(wait_applied=True)
 
 # Option 2: Wait on a specific read
 task = await scope.get(Task, node_id,
-                       after_offset=result.receipt.stream_position)`} lang="python" />
+                       after_offset=result.receipt.stream_position)`}
+    goNote="wait_applied and after_offset are not yet exposed in the Go SDK. See the Consistency page for the explicit-wait alternative."
+  />
 
   <h2>Schema Registry</h2>
   <p>Type definitions are registered in a <code>SchemaRegistry</code>. The registry generates a fingerprint (SHA-256 hash) used for:</p>

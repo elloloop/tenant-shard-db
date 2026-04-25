@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Installation">
   <h1>Installation</h1>
@@ -41,7 +43,8 @@ pip install -e ./sdk
 entdb`} lang="bash" />
 
   <h2>Verify Installation</h2>
-  <Code code={`python -c "
+  <CodeTabs
+    python={`python -c "
 import asyncio
 from entdb_sdk import DbClient
 
@@ -51,7 +54,31 @@ async def check():
         print(health)
 
 asyncio.run(check())
-"`} lang="python" />
+"`}
+    go={`package main
+
+import (
+    "context"
+    "fmt"
+    "log"
+
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+)
+
+func main() {
+    client, err := entdb.NewClient("localhost:50051")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer client.Close()
+
+    health, err := client.Health(context.Background())
+    if err != nil {
+        log.Fatal(err)
+    }
+    fmt.Println(health)
+}`}
+  />
 
   <h2>Requirements</h2>
   <table>

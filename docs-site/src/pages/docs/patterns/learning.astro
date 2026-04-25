@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Pattern: Learning Platform">
   <h1>Build a Learning Platform with EntDB</h1>
@@ -19,7 +21,8 @@ import { Code } from "astro-expressive-code/components";---
   </table>
 
   <h2>1. Platform setup</h2>
-  <Code code={`# Platform admin creates the content tenant
+  <CodeTabs
+    python={`# Platform admin creates the content tenant
 await db.create_tenant("easyloops", "EasyLoops Learning")
 
 # Create subscription groups
@@ -40,19 +43,59 @@ await db.share(result.created_node_ids[0], "group:free-tier", "read",
 
 # Pro course → share with pro-tier group
 await db.share(result.created_node_ids[1], "group:pro-tier", "read",
-               "easyloops", granted_by="system:admin")`} lang="python" />
+               "easyloops", granted_by="system:admin")`}
+    go={`// Platform admin creates the content tenant
+if err := client.CreateTenant(ctx, "easyloops", "EasyLoops Learning"); err != nil {
+    return err
+}
+
+admin := client.Tenant("easyloops").Actor(entdb.ServiceActor("admin"))
+
+// Create subscription groups (placeholder member; real users added on enrollment)
+admin.GroupAdd(ctx, "free-tier", entdb.UserActor("placeholder"))
+admin.GroupAdd(ctx, "pro-tier", entdb.UserActor("placeholder"))
+
+// Create courses (public catalog)
+plan := admin.Plan()
+plan.Create(&learning.Course{Title: "Python 101", Price: 0}, entdb.As("c1"))
+plan.Create(&learning.Course{Title: "System Design", Price: 49}, entdb.As("c2"))
+plan.Create(&learning.Lesson{Title: "Variables", Content: "..."}, entdb.As("l1"))
+entdb.EdgeCreate[*learning.CourseHasLesson](plan, "$c1.id", "$l1.id")
+result, err := plan.Commit(ctx)
+if err != nil {
+    return err
+}
+
+// Free course → share with free-tier group
+admin.Share(ctx, result.CreatedNodeIDs[0], entdb.GroupActor("free-tier"), entdb.PermissionRead)
+
+// Pro course → share with pro-tier group
+admin.Share(ctx, result.CreatedNodeIDs[1], entdb.GroupActor("pro-tier"), entdb.PermissionRead)`}
+  />
 
   <h2>2. Student enrollment</h2>
-  <Code code={`# Alice subscribes to pro tier
+  <CodeTabs
+    python={`# Alice subscribes to pro tier
 await db.add_tenant_member("easyloops", "user:alice", role="viewer")
 await db.group_add("pro-tier", "user:alice", "easyloops")
 
 # Alice can now see ALL pro courses + their lessons (propagate_share)
 courses = await db.query(Course, "easyloops", "user:alice")
-lessons = await db.connected(course_id, CourseHasLesson, "easyloops", "user:alice")`} lang="python" />
+lessons = await db.connected(course_id, CourseHasLesson, "easyloops", "user:alice")`}
+    go={`// Alice subscribes to pro tier
+admin := client.Tenant("easyloops").Actor(entdb.ServiceActor("admin"))
+admin.AddTenantMember(ctx, "easyloops", entdb.UserActor("alice"), "viewer")
+admin.GroupAdd(ctx, "pro-tier", entdb.UserActor("alice"))
+
+// Alice can now see ALL pro courses + their lessons (propagate_share)
+alice := client.Tenant("easyloops").Actor(entdb.UserActor("alice"))
+courses, err := entdb.Query[*learning.Course](ctx, alice, nil)
+lessons, err := alice.EdgesFrom(ctx, courseID, learning.CourseHasLessonEdgeID)`}
+  />
 
   <h2>3. Student progress (cross-tenant)</h2>
-  <Code code={`# Alice's progress lives in HER personal tenant
+  <CodeTabs
+    python={`# Alice's progress lives in HER personal tenant
 plan = db.atomic("alice", "user:alice")
 plan.create(Progress, {
     course_ref": "easyloops:course-python101",
@@ -64,10 +107,29 @@ await plan.commit()
 # Platform reads alice's progress (for analytics)
 # Alice explicitly grants the platform read access
 await db.share(progress_id, "user:platform-analytics", "read",
-               "alice", granted_by="user:alice")`} lang="python" />
+               "alice", granted_by="user:alice")`}
+    go={`// Alice's progress lives in HER personal tenant
+alice := client.Tenant("alice").Actor(entdb.UserActor("alice"))
+plan := alice.Plan()
+plan.Create(&learning.Progress{
+    CourseRef:        "easyloops:course-python101",
+    CompletedLessons: 3,
+    QuizScore:        85,
+})
+result, err := plan.Commit(ctx)
+if err != nil {
+    return err
+}
+progressID := result.CreatedNodeIDs[0]
+
+// Platform reads alice's progress (for analytics).
+// Alice explicitly grants the platform read access.
+alice.Share(ctx, progressID, entdb.UserActor("platform-analytics"), entdb.PermissionRead)`}
+  />
 
   <h2>4. Organization bulk enrollment</h2>
-  <Code code={`# Acme Corp creates their tenant
+  <CodeTabs
+    python={`# Acme Corp creates their tenant
 await db.create_tenant("acme-corp", "Acme Corp")
 
 # Create an engineering group
@@ -80,7 +142,28 @@ for member in ["user:bob", "user:carol"]:
     await db.add_tenant_member("easyloops", member, role="viewer")
     await db.group_add("pro-tier", member, "easyloops")
 
-# All engineering members now have pro course access`} lang="python" />
+# All engineering members now have pro course access`}
+    go={`// Acme Corp creates their tenant
+if err := client.CreateTenant(ctx, "acme-corp", "Acme Corp"); err != nil {
+    return err
+}
+
+acmeAdmin := client.Tenant("acme-corp").Actor(entdb.ServiceActor("admin"))
+platformAdmin := client.Tenant("easyloops").Actor(entdb.ServiceActor("admin"))
+
+// Create an engineering group
+acmeAdmin.GroupAdd(ctx, "engineering", entdb.UserActor("bob"))
+acmeAdmin.GroupAdd(ctx, "engineering", entdb.UserActor("carol"))
+
+// Acme admin enrolls the engineering team —
+// each member is added to the platform tenant + pro group
+for _, member := range []entdb.Actor{entdb.UserActor("bob"), entdb.UserActor("carol")} {
+    platformAdmin.AddTenantMember(ctx, "easyloops", member, "viewer")
+    platformAdmin.GroupAdd(ctx, "pro-tier", member)
+}
+
+// All engineering members now have pro course access`}
+  />
 
   <h2>5. Schema</h2>
   <Code code={`message Course {

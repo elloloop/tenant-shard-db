@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Compliance & Audit">
   <h1>Compliance &amp; Audit</h1>
@@ -41,7 +43,8 @@ wal:
     Use <code>export_audit_trail()</code> on the server to produce a signed,
     time-bounded export for auditors or incident response.
   </p>
-  <Code code={`from dbaas.entdb_server.audit.compliance import export_audit_trail
+  <CodeTabs
+    python={`from dbaas.entdb_server.audit.compliance import export_audit_trail
 
 manifest = export_audit_trail(
     tenant_id="acme",
@@ -49,7 +52,9 @@ manifest = export_audit_trail(
     end=datetime(2026, 3, 31),
     output_path="/tmp/acme-q1-2026.jsonl.gz",
 )
-print(manifest.sha256, manifest.event_count)`} lang="python" />
+print(manifest.sha256, manifest.event_count)`}
+    goNote="Audit-trail export is a server-side operation, not yet exposed in the Go SDK. Run it from Python or invoke the server tool directly."
+  />
 
   <p>
     The export contains every WAL event for the tenant in the window, plus a
@@ -79,8 +84,11 @@ print(manifest.sha256, manifest.event_count)`} lang="python" />
     even from backups. This is the cleanest way to honour
     "right-to-erasure" for an entire tenant.
   </p>
-  <Code code={`# Server-side API — requires admin credentials
-await global_store.crypto_shred_tenant("acme", reason="contract terminated")`} lang="python" />
+  <CodeTabs
+    python={`# Server-side API — requires admin credentials
+await global_store.crypto_shred_tenant("acme", reason="contract terminated")`}
+    goNote="crypto_shred_tenant is a server-side admin operation, not exposed in the Go SDK."
+  />
 
   <p>
     Crypto-shred is itself recorded in the WAL, so the event that a tenant

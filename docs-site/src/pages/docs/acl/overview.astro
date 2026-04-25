@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Access Control Overview">
   <h1>Access Control (ACL)</h1>
@@ -22,7 +24,8 @@ import { Code } from "astro-expressive-code/components";---
   <h2>Inheritance: The Key Feature</h2>
   <p>When you share a task with Bob, he can automatically see all comments on that task. You don't need to share each comment individually.</p>
 
-  <Code code={`# Define structural edge
+  <CodeTabs
+    python={`# Define structural edge
 HasComment = EdgeTypeDef(
     edge_id=1, name="HasComment",
     from_type=Task, to_type=Comment,
@@ -34,7 +37,20 @@ await db.share(task_id, "user:bob", "read", tenant_id, granted_by="user:alice")
 
 # Bob can now see ALL comments on the task
 comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
-# Returns all comments - no per-comment permission check needed`} lang="python" />
+# Returns all comments - no per-comment permission check needed`}
+    go={`// Edge type defined in .proto with propagate_share=true (registered via codegen).
+
+// Share the task
+alice := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+if err := alice.Share(ctx, taskID, entdb.UserActor("bob"), entdb.PermissionRead); err != nil {
+    return err
+}
+
+// Bob can now see ALL comments on the task
+bob := client.Tenant("acme").Actor(entdb.UserActor("bob"))
+comments, err := bob.EdgesFrom(ctx, taskID, shop.HasCommentEdgeID)
+// Returns all comments — no per-comment permission check needed`}
+  />
 
   <h3>How inheritance works internally</h3>
   <p>When a structural edge is created (<code>propagate_share=True</code>), an <code>acl_inherit</code> row is inserted:</p>
@@ -59,7 +75,8 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h2>Private Nodes</h2>
   <p>Some node types should never inherit from parents &mdash; grades, drafts, moderator notes:</p>
-  <Code code={`Grade = NodeTypeDef(
+  <CodeTabs
+    python={`Grade = NodeTypeDef(
     type_id=10, name="Grade",
     fields=(field(1, "score", "int", required=True),),
     acl_defaults=AclDefaults(
@@ -67,7 +84,9 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
         tenant_visible=False,  # not visible to all tenant members
     ),
 )
-# Grade is only visible to its owner and explicit direct grants`} lang="python" />
+# Grade is only visible to its owner and explicit direct grants`}
+    goNote={`In Go, "private" node behaviour is configured at the schema layer (proto entdb.node options: inherit=false, tenant_visible=false), not in client code. Once the proto is registered with the codegen'd type, the Go SDK simply respects it on read.`}
+  />
 
   <h2>Permissions</h2>
   <table>
@@ -84,7 +103,8 @@ comments = await db.connected(task_id, HasComment, tenant_id, actor="user:bob")
 
   <h2>Groups</h2>
   <p>Groups are a way to share with multiple users at once. Groups can contain users and other groups (nested):</p>
-  <Code code={`# Add users to groups
+  <CodeTabs
+    python={`# Add users to groups
 await db.group_add("group:eng", "user:alice", tenant_id)
 await db.group_add("group:eng", "user:bob", tenant_id)
 
@@ -92,16 +112,38 @@ await db.group_add("group:eng", "user:bob", tenant_id)
 await db.group_add("group:all-staff", "group:eng", tenant_id)
 
 # Share with group — all members get access
-await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`} lang="python" />
+await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`}
+    go={`scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+// Add users to groups
+scope.GroupAdd(ctx, "eng", entdb.UserActor("alice"))
+scope.GroupAdd(ctx, "eng", entdb.UserActor("bob"))
+
+// Nested groups
+scope.GroupAdd(ctx, "all-staff", entdb.GroupActor("eng"))
+
+// Share with group — all members get access
+scope.Share(ctx, taskID, entdb.GroupActor("eng"), entdb.PermissionWrite)`}
+  />
 
   <h2>Deny Rules</h2>
   <p>Explicit deny overrides all inherited access:</p>
-  <Code code={`# Bob has write on task (and all comments via inheritance)
+  <CodeTabs
+    python={`# Bob has write on task (and all comments via inheritance)
 await db.share(task_id, "user:bob", "write", tenant_id, granted_by="user:alice")
 
 # But this specific comment is confidential
 await db.share(confidential_comment_id, "user:bob", "deny", tenant_id, granted_by="user:alice")
-# Bob can see the task and all other comments, but NOT this one`} lang="python" />
+# Bob can see the task and all other comments, but NOT this one`}
+    go={`alice := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+// Bob has write on task (and all comments via inheritance)
+alice.Share(ctx, taskID, entdb.UserActor("bob"), entdb.PermissionWrite)
+
+// But this specific comment is confidential
+alice.Share(ctx, confidentialCommentID, entdb.UserActor("bob"), entdb.PermissionDeny)
+// Bob can see the task and all other comments, but NOT this one`}
+  />
 
   <h2>Cycle Prevention</h2>
   <p>The applier detects and rejects cycles in the <code>acl_inherit</code> chain at data insertion time. For example, if Folder A contains Folder B, and you try to make B contain A, the cycle is detected and the edge creation is rejected. A depth limit of 10 in the recursive CTE provides a backstop at query time.</p>

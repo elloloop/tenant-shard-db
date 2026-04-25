@@ -1,6 +1,8 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
-import { Code } from "astro-expressive-code/components";---
+import { Code } from "astro-expressive-code/components";
+import CodeTabs from "../../../components/CodeTabs.astro";
+---
 
 <DocsLayout title="Pattern: Task Management">
   <h1>Build a Task Manager with EntDB</h1>
@@ -70,7 +72,8 @@ message TaskAssignedTo {
 entdb init schema.proto`} lang="bash" />
 
   <h2>3. Connect and create</h2>
-  <Code code={`from entdb_sdk import DbClient
+  <CodeTabs
+    python={`from entdb_sdk import DbClient
 from myapp.schema import Project, Task, Comment, ProjectHasTask, TaskHasComment
 
 async with DbClient("localhost:50051") as db:
@@ -83,10 +86,33 @@ async with DbClient("localhost:50051") as db:
     plan.edge_create(ProjectHasTask, from_="$project.id", to="$task2.id")
     result = await plan.commit()
 
-    project_id = result.created_node_ids[0]`} lang="python" />
+    project_id = result.created_node_ids[0]`}
+    go={`client, err := entdb.NewClient("localhost:50051")
+if err != nil {
+    log.Fatal(err)
+}
+defer client.Close()
+
+scope := client.Tenant("alice").Actor(entdb.UserActor("alice"))
+
+// Create project with tasks — atomic
+plan := scope.Plan()
+plan.Create(&shop.Project{Name: "Q4 Launch"}, entdb.As("project"))
+plan.Create(&shop.Task{Title: "Design mockups", Status: shop.TaskStatus_TODO}, entdb.As("task1"))
+plan.Create(&shop.Task{Title: "Backend API", Status: shop.TaskStatus_TODO}, entdb.As("task2"))
+entdb.EdgeCreate[*shop.ProjectHasTask](plan, "$project.id", "$task1.id")
+entdb.EdgeCreate[*shop.ProjectHasTask](plan, "$project.id", "$task2.id")
+result, err := plan.Commit(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+
+projectID := result.CreatedNodeIDs[0]`}
+  />
 
   <h2>4. Share with teammates</h2>
-  <Code code={`# Share the project — tasks are automatically shared (propagate_share)
+  <CodeTabs
+    python={`# Share the project — tasks are automatically shared (propagate_share)
 await db.share(project_id, "user:bob", "write", "alice", granted_by="user:alice")
 await db.share(project_id, "user:carol", "read", "alice", granted_by="user:alice")
 
@@ -100,10 +126,41 @@ await db.group_add("team-launch", "user:dave", "alice")
 
 # Share future projects with the whole group
 await db.share(next_project_id, "group:team-launch", "write", "alice", granted_by="user:alice")
-# All group members get access. Add new members to the group = instant access.`} lang="python" />
+# All group members get access. Add new members to the group = instant access.`}
+    go={`alice := client.Tenant("alice").Actor(entdb.UserActor("alice"))
+
+// Share the project — tasks are automatically shared (propagate_share)
+if err := alice.Share(ctx, projectID, entdb.UserActor("bob"), entdb.PermissionWrite); err != nil {
+    return err
+}
+if err := alice.Share(ctx, projectID, entdb.UserActor("carol"), entdb.PermissionRead); err != nil {
+    return err
+}
+
+// Bob can now see AND edit all tasks in the project
+// Carol can see but not edit
+
+// Create a group for the team
+if err := alice.GroupAdd(ctx, "team-launch", entdb.UserActor("bob")); err != nil {
+    return err
+}
+if err := alice.GroupAdd(ctx, "team-launch", entdb.UserActor("carol")); err != nil {
+    return err
+}
+if err := alice.GroupAdd(ctx, "team-launch", entdb.UserActor("dave")); err != nil {
+    return err
+}
+
+// Share future projects with the whole group
+if err := alice.Share(ctx, nextProjectID, entdb.GroupActor("team-launch"), entdb.PermissionWrite); err != nil {
+    return err
+}
+// All group members get access. Add new members to the group = instant access.`}
+  />
 
   <h2>5. Query tasks</h2>
-  <Code code={`# Alice queries her tasks (automatic ACL filtering)
+  <CodeTabs
+    python={`# Alice queries her tasks (automatic ACL filtering)
 tasks = await db.query(Task, "alice", "user:alice", filter={status": "TODO"})
 
 # Bob queries (sees only what he has access to)
@@ -113,21 +170,50 @@ bob_tasks = await db.query(Task, "alice", "user:bob", filter={status": "TODO"})
 comments = await db.connected(task_id, TaskHasComment, "alice", "user:bob")
 
 # Bob's shared_with_me
-shared = await db.shared_with_me("user:bob", "alice")`} lang="python" />
+shared = await db.shared_with_me("user:bob", "alice")`}
+    go={`// Alice queries her tasks (automatic ACL filtering)
+aliceScope := client.Tenant("alice").Actor(entdb.UserActor("alice"))
+tasks, err := entdb.Query[*shop.Task](ctx, aliceScope,
+    map[string]any{"status": shop.TaskStatus_TODO},
+)
+
+// Bob queries (sees only what he has access to)
+bobScope := client.Tenant("alice").Actor(entdb.UserActor("bob"))
+bobTasks, err := entdb.Query[*shop.Task](ctx, bobScope,
+    map[string]any{"status": shop.TaskStatus_TODO},
+)
+
+// Get all comments on a task (ACL via parent)
+comments, err := bobScope.EdgesFrom(ctx, taskID, shop.TaskHasCommentEdgeID)
+
+// Bob's shared_with_me
+shared, err := bobScope.SharedWithMe(ctx)`}
+  />
 
   <h2>6. Add a comment</h2>
-  <Code code={`# Bob adds a comment to alice's task (has write access)
+  <CodeTabs
+    python={`# Bob adds a comment to alice's task (has write access)
 plan = db.atomic("alice", "user:bob")
 plan.create(Comment, {body": "Mockups look great!", "author_id": "user:bob"}, as_="c")
 plan.edge_create(TaskHasComment, from_=task_id, to="$c.id")
-await plan.commit()`} lang="python" />
+await plan.commit()`}
+    go={`// Bob adds a comment to alice's task (has write access)
+bob := client.Tenant("alice").Actor(entdb.UserActor("bob"))
+plan := bob.Plan()
+plan.Create(&shop.Comment{Body: "Mockups look great!", AuthorId: "user:bob"}, entdb.As("c"))
+entdb.EdgeCreate[*shop.TaskHasComment](plan, taskID, "$c.id")
+_, err := plan.Commit(ctx)`}
+  />
 
   <h2>7. Read-after-write consistency</h2>
-  <Code code={`# SDK handles this automatically:
+  <CodeTabs
+    python={`# SDK handles this automatically:
 result = await plan.commit()
 # Next read is guaranteed to see the write:
 task = await db.get(Task, result.created_node_ids[0], "alice", "user:alice")
-# task is ALWAYS found. Zero application code needed.`} lang="python" />
+# task is ALWAYS found. Zero application code needed.`}
+    goNote="Automatic offset-tracked read-after-write is not yet exposed in the Go SDK. The Get/Query calls do not block on the write's stream position; rely on natural applier latency (<50ms typical), or see the Consistency page for the explicit-wait pattern."
+  />
 
   <h2>What the database handles automatically</h2>
   <ul>
