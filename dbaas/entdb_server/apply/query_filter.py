@@ -13,7 +13,9 @@ Supported operators:
 - ``$gt``, ``$gte``, ``$lt``, ``$lte`` — range
 - ``$in`` — membership in a list
 - ``$nin`` — complement of membership
-- ``$like`` — SQL LIKE pattern
+- ``$like`` — SQL LIKE pattern (caller supplies wildcards)
+- ``$contains`` — substring match on string fields (LIKE ``%v%`` with
+  the value's own ``%``/``_``/backslash escaped so they match literally)
 - ``$between`` — inclusive ``BETWEEN lo AND hi`` (list of two)
 - ``$and``, ``$or`` — boolean composition at the top level or nested
 
@@ -72,7 +74,7 @@ _SCALAR_OPS: dict[str, str] = {
 _LIST_OPS: frozenset[str] = frozenset({"$in", "$nin"})
 
 # Pattern / range operators.
-_PATTERN_OPS: frozenset[str] = frozenset({"$like", "$between"})
+_PATTERN_OPS: frozenset[str] = frozenset({"$like", "$contains", "$between"})
 
 # Boolean composition operators.
 _BOOL_OPS: frozenset[str] = frozenset({"$and", "$or"})
@@ -207,6 +209,17 @@ def _compile_field_clause(
                 raise QueryFilterError(f"$like on field '{field_name}' requires a string pattern")
             frags.append(f"{expr} LIKE ?")
             params.append(arg)
+            continue
+
+        if op == "$contains":
+            # Substring match — escape SQL LIKE wildcards in the
+            # supplied value so a caller passing "10%" matches the
+            # literal characters, not "10 followed by anything".
+            if not isinstance(arg, str):
+                raise QueryFilterError(f"$contains on field '{field_name}' requires a string value")
+            escaped = arg.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            frags.append(f"{expr} LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped}%")
             continue
 
         if op == "$between":

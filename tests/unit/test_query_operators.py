@@ -165,6 +165,23 @@ class TestCompileQueryFilterBasic:
         assert "BETWEEN ? AND ?" in sql
         assert params == [200, 600]
 
+    def test_contains_operator_wraps_with_wildcards(self, schema_registry):
+        sql, params = compile_query_filter(
+            {"name": {"$contains": "idg"}}, TYPE_PRODUCT, schema_registry
+        )
+        assert " LIKE ? ESCAPE '\\'" in sql
+        assert params == ["%idg%"]
+
+    def test_contains_escapes_user_wildcards(self, schema_registry):
+        # ``%``/``_``/``\`` in the user-supplied substring must match
+        # literally — they should be escaped, not treated as LIKE
+        # wildcards.
+        sql, params = compile_query_filter(
+            {"name": {"$contains": "100%_off\\"}}, TYPE_PRODUCT, schema_registry
+        )
+        assert " LIKE ? ESCAPE '\\'" in sql
+        assert params == ["%100\\%\\_off\\\\%"]
+
 
 class TestCompileQueryFilterComposition:
     def test_and_top_level(self, schema_registry):
@@ -271,6 +288,10 @@ class TestQueryFilterRejection:
     def test_like_requires_string(self, schema_registry):
         with pytest.raises(QueryFilterError, match="string pattern"):
             compile_query_filter({"name": {"$like": 42}}, TYPE_PRODUCT, schema_registry)
+
+    def test_contains_requires_string(self, schema_registry):
+        with pytest.raises(QueryFilterError, match="string value"):
+            compile_query_filter({"name": {"$contains": 42}}, TYPE_PRODUCT, schema_registry)
 
     def test_top_level_scalar_operator_rejected(self, schema_registry):
         with pytest.raises(QueryFilterError, match="Top-level operator"):
@@ -418,6 +439,35 @@ class TestQueryNodesE2E:
         )
         # prices 100, 200, 900, 1000 ⇒ four rows.
         assert len(results) == 4
+
+    @pytest.mark.asyncio
+    async def test_contains_substring_match(self, seeded_store):
+        # Names are "Widget 1" through "Widget 10" — substring "et 1"
+        # should match Widget 1 and Widget 10.
+        results = await seeded_store.query_nodes(
+            tenant_id=TENANT,
+            type_id=TYPE_PRODUCT,
+            filter_json={"name": {"$contains": "et 1"}},
+            schema_registry=get_registry(),
+            limit=100,
+        )
+        assert len(results) == 2
+        names = sorted(r.payload["2"] for r in results)
+        assert names == ["Widget 1", "Widget 10"]
+
+    @pytest.mark.asyncio
+    async def test_contains_treats_user_wildcards_literally(self, seeded_store):
+        # No product has a literal "%" in its name, so a $contains
+        # search for "%" must return zero rows — proving the
+        # user-supplied "%" is not interpreted as a SQL LIKE wildcard.
+        results = await seeded_store.query_nodes(
+            tenant_id=TENANT,
+            type_id=TYPE_PRODUCT,
+            filter_json={"name": {"$contains": "%"}},
+            schema_registry=get_registry(),
+            limit=100,
+        )
+        assert results == []
 
     @pytest.mark.asyncio
     async def test_unknown_field_raises_at_runtime(self, seeded_store):
