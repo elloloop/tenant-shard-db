@@ -212,7 +212,15 @@ result = await plan.commit()
 # Next read is guaranteed to see the write:
 task = await db.get(Task, result.created_node_ids[0], "alice", "user:alice")
 # task is ALWAYS found. Zero application code needed.`}
-    goNote="Automatic offset-tracked read-after-write is not yet exposed in the Go SDK. The Get/Query calls do not block on the write's stream position; rely on natural applier latency (<50ms typical), or see the Consistency page for the explicit-wait pattern."
+    go={`result, err := plan.Commit(ctx)
+
+// Explicit one-line wait so the next read sees the write.
+client.WaitForOffset(ctx, "alice", "user:alice",
+    result.Receipt.StreamPosition, 5_000)
+
+task, err := entdb.Get[*shop.Task](ctx, scope, result.CreatedNodeIDs[0])
+// task is now found. (Automatic offset tracking like the Python
+// SDK has lands in a future version; this is the explicit form.)`}
   />
 
   <h2>What the database handles automatically</h2>

@@ -118,3 +118,46 @@ func (a *Admin) TransferUserContent(ctx context.Context, actor, tenantID, fromUs
 func (a *Admin) RevokeAllUserAccess(ctx context.Context, actor, tenantID, userID string) (*RevokeAllResult, error) {
 	return a.client.transport.RevokeAllUserAccess(ctx, actor, tenantID, userID)
 }
+
+// ── GDPR user lifecycle (right-to-be-forgotten) ─────────────────────
+
+// DeleteUser schedules deletion of ``userID``. The deletion is not
+// immediate — the GDPR worker executes it after a grace period
+// (default 30 days; pass ``graceDays > 0`` to override). The user
+// enters ``"deletion_pending"`` status right away; reads continue
+// to work until the grace expires. Use [Admin.CancelUserDeletion]
+// to lift the schedule before then.
+//
+// Returns the absolute requested-at and execute-at timestamps so
+// you can show "your data will be removed at <date>" UI without a
+// follow-up read.
+func (a *Admin) DeleteUser(ctx context.Context, actor, userID string, graceDays int32) (*DeletionScheduled, error) {
+	return a.client.transport.DeleteUser(ctx, actor, userID, graceDays)
+}
+
+// CancelUserDeletion lifts a pending deletion request. Idempotent
+// — calling it on a user with no pending deletion returns success
+// with no observable change.
+func (a *Admin) CancelUserDeletion(ctx context.Context, actor, userID string) error {
+	return a.client.transport.CancelUserDeletion(ctx, actor, userID)
+}
+
+// ExportUserData returns the GDPR Article 20 portability bundle —
+// a JSON-serialized export of every node the user owns across all
+// tenants. The exact JSON shape is documented server-side; treat
+// it as opaque from the SDK's perspective.
+func (a *Admin) ExportUserData(ctx context.Context, actor, userID string) (string, error) {
+	return a.client.transport.ExportUserData(ctx, actor, userID)
+}
+
+// FreezeUser flips ``userID``'s status. With ``enabled = true``
+// the user is frozen — their authentication continues to succeed
+// but every read or write is rejected until they are unfrozen.
+// Their data is preserved (no deletion clock starts). Pass
+// ``enabled = false`` to lift the freeze.
+//
+// Returns the new status string (typically ``"frozen"`` or
+// ``"active"``).
+func (a *Admin) FreezeUser(ctx context.Context, actor, userID string, enabled bool) (string, error) {
+	return a.client.transport.FreezeUser(ctx, actor, userID, enabled)
+}
