@@ -95,7 +95,10 @@ message Comment {
     grace_days=30,
 )
 print(result["status"], result["execute_at"])`}
-    goNote="GDPR delete_user is not yet exposed in the Go SDK. Call it from Python (or invoke the gRPC method directly) until the Go binding lands."
+    go={`res, err := client.Admin().DeleteUser(
+    ctx, "user:alice", "alice", 30, // graceDays; pass 0 for server default
+)
+log.Printf("%s — execute at %d", res.Status, res.ExecuteAtMs)`}
   />
   <p>What actually happens at the end of the grace window:</p>
   <ul>
@@ -135,7 +138,11 @@ await db.cancel_user_deletion("alice", actor="user:alice")
 
 # Past execute_at: the request has already been processed and the
 # data is gone. There is no rollback.`}
-    goNote="cancel_user_deletion is not yet exposed in the Go SDK."
+    go={`// Within the grace window
+err := client.Admin().CancelUserDeletion(ctx, "user:alice", "alice")
+
+// Past execute_at: the request has already been processed and the
+// data is gone. There is no rollback.`}
   />
   <p>
     Choose <code>grace_days</code> based on regulatory expectations and
@@ -161,7 +168,11 @@ await db.cancel_user_deletion("alice", actor="user:alice")
 #     "shared_with_me":    [...],   # nodes shared TO Alice
 #     "group_memberships": [...],
 #   }`}
-    goNote="export_user_data is not yet exposed in the Go SDK."
+    go={`bundleJSON, err := client.Admin().ExportUserData(ctx, "user:alice", "alice")
+
+// bundleJSON is the JSON-serialized export — the SDK leaves it as a
+// string so callers can stream it to a file, upload to S3, or feed
+// it to encoding/json.NewDecoder before delivery.`}
   />
   <p>
     What ends up in the bundle is determined by the per-type
@@ -188,7 +199,11 @@ await db.freeze_user("alice", enabled=True, actor="user:admin")
 
 # Unfreeze (same call, enabled=False)
 await db.freeze_user("alice", enabled=False, actor="user:admin")`}
-    goNote="freeze_user is not yet exposed in the Go SDK."
+    go={`// Freeze — returns the new status string ("frozen")
+status, err := client.Admin().FreezeUser(ctx, "user:admin", "alice", true)
+
+// Unfreeze (same call, enabled=false) — returns "active"
+status, err = client.Admin().FreezeUser(ctx, "user:admin", "alice", false)`}
   />
   <p>
     Freeze and erasure are independent: a frozen user can still be

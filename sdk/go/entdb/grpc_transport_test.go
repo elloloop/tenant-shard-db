@@ -120,6 +120,23 @@ type fakeServer struct {
 	revokeAllResp        *pb.RevokeAllUserAccessResponse
 	revokeAllErr         error
 
+	// v1.6 GDPR user-lifecycle surface
+	deleteUserReq      *pb.DeleteUserRequest
+	deleteUserResp     *pb.DeleteUserResponse
+	deleteUserErr      error
+	cancelDeletionReq  *pb.CancelUserDeletionRequest
+	cancelDeletionResp *pb.CancelUserDeletionResponse
+	cancelDeletionErr  error
+	exportUserReq      *pb.ExportUserDataRequest
+	exportUserResp     *pb.ExportUserDataResponse
+	exportUserErr      error
+	freezeUserReq      *pb.FreezeUserRequest
+	freezeUserResp     *pb.FreezeUserResponse
+	freezeUserErr      error
+	healthReq          *pb.HealthRequest
+	healthResp         *pb.HealthResponse
+	healthErr          error
+
 	// headerMeta is sent as a trailing metadata entry on every
 	// RPC when non-empty. Used to test that rate-limit
 	// translation picks up the ``retry-after`` header.
@@ -389,6 +406,53 @@ func (s *fakeServer) RevokeAllUserAccess(ctx context.Context, req *pb.RevokeAllU
 		return nil, s.revokeAllErr
 	}
 	return s.revokeAllResp, nil
+}
+
+// ── v1.6 GDPR user-lifecycle handlers ───────────────────────────────
+
+func (s *fakeServer) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {
+	s.deleteUserReq = req
+	s.sendTrailer(ctx)
+	if s.deleteUserErr != nil {
+		return nil, s.deleteUserErr
+	}
+	return s.deleteUserResp, nil
+}
+
+func (s *fakeServer) CancelUserDeletion(ctx context.Context, req *pb.CancelUserDeletionRequest) (*pb.CancelUserDeletionResponse, error) {
+	s.cancelDeletionReq = req
+	s.sendTrailer(ctx)
+	if s.cancelDeletionErr != nil {
+		return nil, s.cancelDeletionErr
+	}
+	return s.cancelDeletionResp, nil
+}
+
+func (s *fakeServer) ExportUserData(ctx context.Context, req *pb.ExportUserDataRequest) (*pb.ExportUserDataResponse, error) {
+	s.exportUserReq = req
+	s.sendTrailer(ctx)
+	if s.exportUserErr != nil {
+		return nil, s.exportUserErr
+	}
+	return s.exportUserResp, nil
+}
+
+func (s *fakeServer) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb.FreezeUserResponse, error) {
+	s.freezeUserReq = req
+	s.sendTrailer(ctx)
+	if s.freezeUserErr != nil {
+		return nil, s.freezeUserErr
+	}
+	return s.freezeUserResp, nil
+}
+
+func (s *fakeServer) Health(ctx context.Context, req *pb.HealthRequest) (*pb.HealthResponse, error) {
+	s.healthReq = req
+	s.sendTrailer(ctx)
+	if s.healthErr != nil {
+		return nil, s.healthErr
+	}
+	return s.healthResp, nil
 }
 
 // startFakeServer spins up an in-process gRPC server over

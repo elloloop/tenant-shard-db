@@ -150,8 +150,16 @@ await db.group_add("group:all-staff", "group:eng", tenant_id)
 
 # Share with group — all members get access
 await db.share(task_id, "group:eng", "write", tenant_id, granted_by="user:alice")`}
-    goNote={`Group membership management (GroupAdd / GroupRemove) is not yet wired on the Go Scope. Sharing TO a group is supported via entdb.GroupActor — call it after a Python or grpcurl process has populated the group:
+    go={`scope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
 
+// Add users to groups
+scope.AddGroupMember(ctx, "group:eng", entdb.UserActor("alice"), "member")
+scope.AddGroupMember(ctx, "group:eng", entdb.UserActor("bob"),   "member")
+
+// Nested groups
+scope.AddGroupMember(ctx, "group:all-staff", entdb.GroupActor("eng"), "member")
+
+// Share with the group — all members get access
 scope.Share(ctx, taskID, entdb.GroupActor("eng"), entdb.PermissionWrite)`}
   />
 
@@ -179,7 +187,27 @@ await db.group_remove("group:reviewers", "user:carol", tenant, actor=admin)
 # 4. Carol's access is gone on the next read; Bob is unaffected.
 assert await db.get(Doc, doc_id, tenant, "user:carol") is None
 assert await db.get(Doc, doc_id, tenant, "user:bob")  is not None`}
-    goNote="The group lifecycle methods (GroupAdd / GroupRemove on Scope) are not yet wired up in the Go SDK. The wire RPCs (AddGroupMember, RemoveGroupMember) exist; helpers will follow."
+    go={`adminScope := client.Tenant("acme").Actor(entdb.UserActor("alice"))
+
+// 1. Populate the group
+adminScope.AddGroupMember(ctx, "group:reviewers", entdb.UserActor("bob"),   "member")
+adminScope.AddGroupMember(ctx, "group:reviewers", entdb.UserActor("carol"), "member")
+
+// 2. Share a doc with the whole group
+adminScope.Share(ctx, docID, entdb.GroupActor("reviewers"), entdb.PermissionWrite)
+
+// Bob and Carol can both read+write the doc.
+bobScope   := client.Tenant("acme").Actor(entdb.UserActor("bob"))
+carolScope := client.Tenant("acme").Actor(entdb.UserActor("carol"))
+_, _ = entdb.Get[*shop.Doc](ctx, bobScope, docID)
+_, _ = entdb.Get[*shop.Doc](ctx, carolScope, docID)
+
+// 3. Remove Carol from the group
+adminScope.RemoveGroupMember(ctx, "group:reviewers", entdb.UserActor("carol"))
+
+// 4. Carol's access is gone on the next read; Bob is unaffected.
+carolDoc, _ := entdb.Get[*shop.Doc](ctx, carolScope, docID) // nil
+bobDoc,   _ := entdb.Get[*shop.Doc](ctx, bobScope,   docID) // still readable`}
   />
 
   <h2>Capability-Based ACL</h2>
