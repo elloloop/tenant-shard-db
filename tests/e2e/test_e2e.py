@@ -207,14 +207,10 @@ async def test_create_edges(runner: TestRunner):
     plan = runner.scope.plan()
     plan.create(pb.User(email="charlie@example.com", name="Charlie"), as_="charlie")
     plan.create(
-        pb.Product(
-            sku="PHONE-001", name="Smartphone", price=799.99, category="electronics"
-        ),
+        pb.Product(sku="PHONE-001", name="Smartphone", price=799.99, category="electronics"),
         as_="phone",
     )
-    plan.create(
-        pb.Order(order_number="ORD-001", total=799.99, status="pending"), as_="order1"
-    )
+    plan.create(pb.Order(order_number="ORD-001", total=799.99, status="pending"), as_="order1")
 
     plan.edge_create(
         pb.Purchased, "$charlie", "$phone", props={"quantity": 1, "price_paid": 799.99}
@@ -277,12 +273,8 @@ async def test_get_edges_from_node(runner: TestRunner):
         pb.Product(sku="BOOK-002", name="Go Book", price=39.99, category="other"),
         as_="gobook",
     )
-    plan.edge_create(
-        pb.Purchased, "$eve", "$book", props={"quantity": 2, "price_paid": 99.98}
-    )
-    plan.edge_create(
-        pb.Purchased, "$eve", "$gobook", props={"quantity": 1, "price_paid": 39.99}
-    )
+    plan.edge_create(pb.Purchased, "$eve", "$book", props={"quantity": 2, "price_paid": 99.98})
+    plan.edge_create(pb.Purchased, "$eve", "$gobook", props={"quantity": 1, "price_paid": 39.99})
 
     result = await plan.commit(wait_applied=True)
     assert result.success
@@ -301,9 +293,7 @@ async def test_get_edges_from_node(runner: TestRunner):
 async def test_update_node(runner: TestRunner):
     """Test updating a node."""
     plan = runner.scope.plan()
-    plan.create(
-        pb.User(email="frank@example.com", name="Frank", age=40), as_="frank"
-    )
+    plan.create(pb.User(email="frank@example.com", name="Frank", age=40), as_="frank")
     result = await plan.commit(wait_applied=True)
     assert result.success
 
