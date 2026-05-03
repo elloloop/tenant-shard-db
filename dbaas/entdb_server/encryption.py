@@ -135,17 +135,17 @@ def open_encrypted_connection(
 
 
 def shred_tenant(data_dir: str, tenant_id: str) -> bool:
-    """Crypto-shred a tenant by deleting its SQLite database file.
+    """Delete a tenant's SQLite database file (and WAL / SHM sidecars).
 
-    Because key derivation is deterministic, true crypto-shredding
-    (making the key unrecoverable) would require storing per-tenant
-    random keys rather than deriving them.  As a pragmatic first step
-    this function simply removes the database file and any WAL/SHM
-    companions.
-
-    TODO: Implement proper crypto-shredding with per-tenant random
-    keys stored in a key-management table.  With random keys, shredding
-    means deleting the key entry rather than the entire database file.
+    This is the file-deletion half of crypto-shred. For the full
+    durable shred — which makes the data unrecoverable even if the
+    SQLite ciphertext is restored from a backup — wire a
+    :class:`~dbaas.entdb_server.crypto.tenant_key_vault.TenantKeyVault`
+    into your :class:`~dbaas.entdb_server.crypto.key_manager.KeyManager`
+    and call
+    :func:`~dbaas.entdb_server.crypto.crypto_shred.crypto_shred_tenant`.
+    With the vault configured, the per-tenant DEK is destroyed in the
+    vault tombstone so re-deriving it is impossible.
 
     Args:
         data_dir: Directory containing tenant database files.
