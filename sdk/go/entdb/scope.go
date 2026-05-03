@@ -75,6 +75,47 @@ func (s *Scope) EdgesTo(ctx context.Context, toNodeID string, edgeTypeID int) ([
 	return s.client.transport.GetEdgesTo(ctx, s.tenantID, s.actor.String(), toNodeID, edgeTypeID)
 }
 
+// RevokeAccess removes a previously-shared grant on a node.
+//
+// Returns true if the grant existed and was removed, false if no
+// matching grant was found (idempotent — re-revoke is a no-op).
+func (s *Scope) RevokeAccess(ctx context.Context, nodeID string, grantee Actor) (bool, error) {
+	return s.client.transport.RevokeAccess(ctx, s.tenantID, s.actor.String(), nodeID, grantee.String())
+}
+
+// TransferOwnership reassigns ``nodeID``'s owner to ``newOwner``.
+// Returns false if the node was not found.
+func (s *Scope) TransferOwnership(ctx context.Context, nodeID string, newOwner Actor) (bool, error) {
+	return s.client.transport.TransferOwnership(ctx, s.tenantID, s.actor.String(), nodeID, newOwner.String())
+}
+
+// AddGroupMember adds ``member`` to the ACL group identified by
+// ``groupID`` (a node id of the group node). ``role`` is an
+// optional free-form label like ``"admin"`` or ``"member"``.
+func (s *Scope) AddGroupMember(ctx context.Context, groupID string, member Actor, role string) error {
+	return s.client.transport.AddGroupMember(ctx, s.tenantID, s.actor.String(), groupID, member.String(), role)
+}
+
+// RemoveGroupMember removes ``member`` from the ACL group.
+func (s *Scope) RemoveGroupMember(ctx context.Context, groupID string, member Actor) error {
+	return s.client.transport.RemoveGroupMember(ctx, s.tenantID, s.actor.String(), groupID, member.String())
+}
+
+// SharedWithMe returns nodes other actors have shared with this
+// scope's actor — including cross-tenant shares routed through the
+// global shared_index.
+//
+// ``limit``/``offset`` of zero use the server defaults.
+func (s *Scope) SharedWithMe(ctx context.Context, limit, offset int32) ([]*Node, error) {
+	return s.client.transport.ListSharedWithMe(ctx, s.tenantID, s.actor.String(), limit, offset)
+}
+
+// Connected returns nodes reachable from ``nodeID`` via edges of
+// ``edgeTypeID``. Server-side ACL filtering is applied.
+func (s *Scope) Connected(ctx context.Context, nodeID string, edgeTypeID int) ([]*Node, error) {
+	return s.client.transport.GetConnectedNodes(ctx, s.tenantID, s.actor.String(), nodeID, edgeTypeID)
+}
+
 // Plan creates a new Plan pre-bound to this scope's tenant and actor.
 func (s *Scope) Plan() *Plan {
 	return s.client.NewPlan(s.tenantID, s.actor.String())
@@ -168,6 +209,40 @@ func Query[T proto.Message](ctx context.Context, s *Scope, filter map[string]any
 		out = append(out, conv)
 	}
 	return out, nil
+}
+
+// GetMany batch-fetches nodes by id. Returns the list of unmarshaled
+// messages plus the list of ids the server reported as missing.
+//
+//	products, missing, err := entdb.GetMany[*shop.Product](
+//	    ctx, scope, []string{"node-1", "node-2", "node-3"})
+//
+// Order is not guaranteed; callers needing input-order alignment
+// should index by ``Node.NodeID``.
+func GetMany[T proto.Message](ctx context.Context, s *Scope, nodeIDs []string) ([]T, []string, error) {
+	witness := newZeroMessage[T]()
+	typeID, err := typeIDFromMessage(witness)
+	if err != nil {
+		return nil, nil, fmt.Errorf("entdb: GetMany: %w", err)
+	}
+	nodes, missing, err := s.client.transport.GetNodes(
+		ctx, s.tenantID, s.actor.String(), int(typeID), nodeIDs,
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	out := make([]T, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		conv, err := unmarshalFromWire[T](n.Payload)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, missing, nil
 }
 
 // Search performs full-text search across searchable fields of a node
