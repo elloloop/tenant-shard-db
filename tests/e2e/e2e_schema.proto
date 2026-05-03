@@ -1,0 +1,91 @@
+// E2E schema for the EntDB end-to-end test suite.
+//
+// Mirrors the User/Product/Order graph that test_e2e.py exercises.
+// Type / edge IDs sit in the 8000s to avoid colliding with the unit
+// tests' fixture schema in tests/_test_schemas (which uses 9000s).
+//
+// Regenerating after edits:
+//
+//     cd tests/e2e
+//     protoc \
+//       --python_out=. \
+//       --proto_path=. \
+//       --proto_path=../../sdk/entdb_sdk/proto \
+//       e2e_schema.proto
+
+syntax = "proto3";
+
+package entdb.e2e;
+
+import "entdb_options.proto";
+
+// --- Node types ---
+
+message User {
+    option (entdb.node) = {
+        type_id: 8001
+        description: "E2E test user"
+    };
+
+    string email      = 1 [(entdb.field) = { required: true, indexed: true }];
+    string name       = 2 [(entdb.field) = { required: true, searchable: true }];
+    int64  age        = 3 [(entdb.field) = { kind: "int" }];
+    optional bool active = 4;  // optional → proto3 presence tracking, so update(active=False) ships.
+    int64  created_at = 5 [(entdb.field) = { kind: "int" }];
+}
+
+message Product {
+    option (entdb.node) = {
+        type_id: 8002
+        description: "E2E test product"
+    };
+
+    string sku      = 1 [(entdb.field) = { required: true, indexed: true, unique: true }];
+    string name     = 2 [(entdb.field) = { required: true, searchable: true }];
+    double price    = 3 [(entdb.field) = { required: true }];
+    string category = 4 [(entdb.field) = { enum_values: "electronics,clothing,food,other" }];
+    optional bool in_stock = 5;
+}
+
+message Order {
+    option (entdb.node) = {
+        type_id: 8003
+        description: "E2E test order"
+    };
+
+    string order_number = 1 [(entdb.field) = { required: true, indexed: true, unique: true }];
+    double total        = 2 [(entdb.field) = { required: true }];
+    string status       = 3 [(entdb.field) = { enum_values: "pending,paid,shipped,delivered,cancelled" }];
+    int64  created_at   = 4 [(entdb.field) = { kind: "int" }];
+}
+
+// --- Edge types ---
+
+message Purchased {
+    option (entdb.edge) = {
+        edge_id: 8101
+        name: "purchased"
+        description: "User purchased a product"
+    };
+
+    int64  quantity   = 1 [(entdb.field) = { required: true, kind: "int" }];
+    double price_paid = 2;
+}
+
+message PlacedOrder {
+    option (entdb.edge) = {
+        edge_id: 8102
+        name: "placed_order"
+        description: "User placed an order"
+    };
+}
+
+message OrderContains {
+    option (entdb.edge) = {
+        edge_id: 8103
+        name: "contains"
+        description: "Order contains a product"
+    };
+
+    int64 quantity = 1 [(entdb.field) = { required: true, kind: "int" }];
+}
