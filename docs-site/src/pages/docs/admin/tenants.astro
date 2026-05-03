@@ -36,7 +36,10 @@ import CodeTabs from "../../../components/CodeTabs.astro";
         actor="system:admin",
     )
     # result == {"success": True, "tenant": {...}, "error": ""}`}
-    goNote={`The Go SDK does not yet expose CreateTenant as a typed client method — only the generated EntDBService proto stub is available under sdk/go/entdb/internal/pb. Provision tenants from a Python admin script or grpcurl, then read/write tenant data from Go through client.Tenant("acme").Actor(...).`}
+    go={`tenant, err := client.Admin().CreateTenant(
+    ctx, "system:admin", "acme", "Acme Corp",
+)
+// tenant.TenantID == "acme", tenant.Status == "active"`}
   />
 
   <h2>Creating Users</h2>
@@ -49,7 +52,11 @@ import CodeTabs from "../../../components/CodeTabs.astro";
     actor="system:admin",
 )
 # {"success": True, "user": {"user_id": "alice", ...}}`}
-    goNote={`Not exposed in the Go SDK. Use Python or grpcurl with EntDBService/CreateUser.`}
+    go={`user, err := client.Admin().CreateUser(
+    ctx, "system:admin",
+    "alice", "alice@acme.test", "Alice Anderson",
+)
+// user.UserID == "alice", user.Status == "active"`}
   />
 
   <h2>Memberships and Roles</h2>
@@ -70,7 +77,9 @@ import CodeTabs from "../../../components/CodeTabs.astro";
     role="member",
     actor="system:admin",
 )`}
-    goNote={`Not exposed in the Go SDK. Manage memberships from Python.`}
+    go={`err := client.Admin().AddTenantMember(
+    ctx, "system:admin", "acme", "alice", "member",
+)`}
   />
 
   <h3>Promoting or changing a role</h3>
@@ -81,7 +90,9 @@ import CodeTabs from "../../../components/CodeTabs.astro";
     new_role="admin",
     actor="system:admin",
 )`}
-    goNote={`Not exposed in the Go SDK.`}
+    go={`err := client.Admin().ChangeMemberRole(
+    ctx, "system:admin", "acme", "alice", "admin",
+)`}
   />
 
   <h3>Removing a member</h3>
@@ -92,7 +103,9 @@ import CodeTabs from "../../../components/CodeTabs.astro";
     user_id="alice",
     actor="system:admin",
 )`}
-    goNote={`Not exposed in the Go SDK.`}
+    go={`err := client.Admin().RemoveTenantMember(
+    ctx, "system:admin", "acme", "alice",
+)`}
   />
 
   <h2>Listing Memberships</h2>
@@ -105,12 +118,18 @@ members = await db.get_tenant_members("acme", actor="system:admin")
 # Everywhere a user belongs
 tenancies = await db.get_user_tenants("alice", actor="system:admin")
 # [{"tenant_id": "acme", "user_id": "alice", "role": "admin", ...}, ...]`}
-    goNote={`Not exposed in the Go SDK.`}
+    go={`// Everyone in a tenant
+members, err := client.Admin().GetTenantMembers(ctx, "system:admin", "acme")
+// []entdb.TenantMember{{TenantID: "acme", UserID: "alice", Role: "admin", JoinedAt: ...}, ...}
+
+// Everywhere a user belongs
+tenancies, err := client.Admin().GetUserTenants(ctx, "system:admin", "alice")`}
   />
 
   <h2>End-to-end: bootstrap a tenant</h2>
   <p>A complete flow: create the tenant, create a user, invite them, promote them, then remove them.</p>
-  <Code code={`async with DbClient("localhost:50051", api_key="eks_...") as db:
+  <CodeTabs
+    python={`async with DbClient("localhost:50051", api_key="eks_...") as db:
     await db.create_tenant("acme", "Acme Corp")
     await db.create_user("alice", "alice@acme.test", "Alice")
 
@@ -122,7 +141,35 @@ tenancies = await db.get_user_tenants("alice", actor="system:admin")
 
     # 3. Off-board: revoke ACL grants, then drop the membership
     await db.revoke_all_user_access("acme", "alice")
-    await db.remove_tenant_member("acme", "alice")`} lang="python" />
+    await db.remove_tenant_member("acme", "alice")`}
+    go={`admin := client.Admin()
+const root = "system:admin"
+
+if _, err := admin.CreateTenant(ctx, root, "acme", "Acme Corp"); err != nil {
+    return err
+}
+if _, err := admin.CreateUser(ctx, root, "alice", "alice@acme.test", "Alice"); err != nil {
+    return err
+}
+
+// 1. Invite as a regular member
+if err := admin.AddTenantMember(ctx, root, "acme", "alice", "member"); err != nil {
+    return err
+}
+
+// 2. Promote to admin
+if err := admin.ChangeMemberRole(ctx, root, "acme", "alice", "admin"); err != nil {
+    return err
+}
+
+// 3. Off-board: revoke ACL grants, then drop the membership
+if _, err := admin.RevokeAllUserAccess(ctx, root, "acme", "alice"); err != nil {
+    return err
+}
+if err := admin.RemoveTenantMember(ctx, root, "acme", "alice"); err != nil {
+    return err
+}`}
+  />
 
   <h2>Where the data lives</h2>
   <p>If you need to inspect or back up the cross-tenant state directly, the relevant tables in <code>{`{data_dir}/global.db`}</code> are <code>user_registry</code>, <code>tenant_registry</code>, and <code>tenant_members</code>. Per-tenant payloads, ACLs, and edges live in <code>{`{data_dir}/tenants/{tenant_id}.db`}</code> and are never read across tenant boundaries in a single SQLite transaction.</p>

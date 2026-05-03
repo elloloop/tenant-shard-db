@@ -88,6 +88,38 @@ type fakeServer struct {
 	rmGroupResp    *pb.GroupMemberResponse
 	rmGroupErr     error
 
+	// v1.5 admin surface
+	createTenantReq      *pb.CreateTenantRequest
+	createTenantResp     *pb.CreateTenantResponse
+	createTenantErr      error
+	createUserReq        *pb.CreateUserRequest
+	createUserResp       *pb.CreateUserResponse
+	createUserErr        error
+	addTenantMemberReq   *pb.TenantMemberRequest
+	addTenantMemberResp  *pb.TenantMemberResponse
+	addTenantMemberErr   error
+	rmTenantMemberReq    *pb.TenantMemberRequest
+	rmTenantMemberResp   *pb.TenantMemberResponse
+	rmTenantMemberErr    error
+	changeRoleReq        *pb.ChangeMemberRoleRequest
+	changeRoleResp       *pb.ChangeMemberRoleResponse
+	changeRoleErr        error
+	getTenantMembersReq  *pb.GetTenantMembersRequest
+	getTenantMembersResp *pb.GetTenantMembersResponse
+	getTenantMembersErr  error
+	getUserTenantsReq    *pb.GetUserTenantsRequest
+	getUserTenantsResp   *pb.GetUserTenantsResponse
+	getUserTenantsErr    error
+	delegateReq          *pb.DelegateAccessRequest
+	delegateResp         *pb.DelegateAccessResponse
+	delegateErr          error
+	xferContentReq       *pb.TransferUserContentRequest
+	xferContentResp      *pb.TransferUserContentResponse
+	xferContentErr       error
+	revokeAllReq         *pb.RevokeAllUserAccessRequest
+	revokeAllResp        *pb.RevokeAllUserAccessResponse
+	revokeAllErr         error
+
 	// headerMeta is sent as a trailing metadata entry on every
 	// RPC when non-empty. Used to test that rate-limit
 	// translation picks up the ``retry-after`` header.
@@ -265,6 +297,98 @@ func (s *fakeServer) RemoveGroupMember(ctx context.Context, req *pb.GroupMemberR
 		return nil, s.rmGroupErr
 	}
 	return s.rmGroupResp, nil
+}
+
+// ── v1.5 admin handlers ────────────────────────────────────────────────
+
+func (s *fakeServer) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) (*pb.CreateTenantResponse, error) {
+	s.createTenantReq = req
+	s.sendTrailer(ctx)
+	if s.createTenantErr != nil {
+		return nil, s.createTenantErr
+	}
+	return s.createTenantResp, nil
+}
+
+func (s *fakeServer) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb.CreateUserResponse, error) {
+	s.createUserReq = req
+	s.sendTrailer(ctx)
+	if s.createUserErr != nil {
+		return nil, s.createUserErr
+	}
+	return s.createUserResp, nil
+}
+
+func (s *fakeServer) AddTenantMember(ctx context.Context, req *pb.TenantMemberRequest) (*pb.TenantMemberResponse, error) {
+	s.addTenantMemberReq = req
+	s.sendTrailer(ctx)
+	if s.addTenantMemberErr != nil {
+		return nil, s.addTenantMemberErr
+	}
+	return s.addTenantMemberResp, nil
+}
+
+func (s *fakeServer) RemoveTenantMember(ctx context.Context, req *pb.TenantMemberRequest) (*pb.TenantMemberResponse, error) {
+	s.rmTenantMemberReq = req
+	s.sendTrailer(ctx)
+	if s.rmTenantMemberErr != nil {
+		return nil, s.rmTenantMemberErr
+	}
+	return s.rmTenantMemberResp, nil
+}
+
+func (s *fakeServer) ChangeMemberRole(ctx context.Context, req *pb.ChangeMemberRoleRequest) (*pb.ChangeMemberRoleResponse, error) {
+	s.changeRoleReq = req
+	s.sendTrailer(ctx)
+	if s.changeRoleErr != nil {
+		return nil, s.changeRoleErr
+	}
+	return s.changeRoleResp, nil
+}
+
+func (s *fakeServer) GetTenantMembers(ctx context.Context, req *pb.GetTenantMembersRequest) (*pb.GetTenantMembersResponse, error) {
+	s.getTenantMembersReq = req
+	s.sendTrailer(ctx)
+	if s.getTenantMembersErr != nil {
+		return nil, s.getTenantMembersErr
+	}
+	return s.getTenantMembersResp, nil
+}
+
+func (s *fakeServer) GetUserTenants(ctx context.Context, req *pb.GetUserTenantsRequest) (*pb.GetUserTenantsResponse, error) {
+	s.getUserTenantsReq = req
+	s.sendTrailer(ctx)
+	if s.getUserTenantsErr != nil {
+		return nil, s.getUserTenantsErr
+	}
+	return s.getUserTenantsResp, nil
+}
+
+func (s *fakeServer) DelegateAccess(ctx context.Context, req *pb.DelegateAccessRequest) (*pb.DelegateAccessResponse, error) {
+	s.delegateReq = req
+	s.sendTrailer(ctx)
+	if s.delegateErr != nil {
+		return nil, s.delegateErr
+	}
+	return s.delegateResp, nil
+}
+
+func (s *fakeServer) TransferUserContent(ctx context.Context, req *pb.TransferUserContentRequest) (*pb.TransferUserContentResponse, error) {
+	s.xferContentReq = req
+	s.sendTrailer(ctx)
+	if s.xferContentErr != nil {
+		return nil, s.xferContentErr
+	}
+	return s.xferContentResp, nil
+}
+
+func (s *fakeServer) RevokeAllUserAccess(ctx context.Context, req *pb.RevokeAllUserAccessRequest) (*pb.RevokeAllUserAccessResponse, error) {
+	s.revokeAllReq = req
+	s.sendTrailer(ctx)
+	if s.revokeAllErr != nil {
+		return nil, s.revokeAllErr
+	}
+	return s.revokeAllResp, nil
 }
 
 // startFakeServer spins up an in-process gRPC server over

@@ -77,6 +77,68 @@ type Transport interface {
 	// ``memberActor`` is the principal being added or removed.
 	AddGroupMember(ctx context.Context, tenantID, actor, groupID, memberActor, role string) error
 	RemoveGroupMember(ctx context.Context, tenantID, actor, groupID, memberActor string) error
+
+	// ── Admin / cross-tenant identity (``client.Admin()``) ──────────
+	// Cross-tenant identity operations grouped under DbClient.Admin().
+	// They take ``actor`` as a string (typically ``"system:admin"`` or
+	// a tenant owner/admin actor) rather than a scoped Actor because
+	// they either operate above a single tenant (CreateTenant,
+	// CreateUser, GetUserTenants) or want raw ``user_id`` form to
+	// match the global registry's identifier shape.
+
+	CreateTenant(ctx context.Context, actor, tenantID, name string) (*TenantDetail, error)
+	CreateUser(ctx context.Context, actor, userID, email, name string) (*UserInfo, error)
+	AddTenantMember(ctx context.Context, actor, tenantID, userID, role string) error
+	RemoveTenantMember(ctx context.Context, actor, tenantID, userID string) error
+	ChangeMemberRole(ctx context.Context, actor, tenantID, userID, newRole string) error
+	GetTenantMembers(ctx context.Context, actor, tenantID string) ([]TenantMember, error)
+	GetUserTenants(ctx context.Context, actor, userID string) ([]TenantMember, error)
+	DelegateAccess(ctx context.Context, actor, tenantID, fromUser, toUser, permission string, expiresAtMs int64) (*DelegateResult, error)
+	TransferUserContent(ctx context.Context, actor, tenantID, fromUser, toUser string) (int32, error)
+	RevokeAllUserAccess(ctx context.Context, actor, tenantID, userID string) (*RevokeAllResult, error)
+}
+
+// TenantDetail mirrors ``pb.TenantDetail`` — the identity-layer
+// description of a tenant (not its quota, not its data).
+type TenantDetail struct {
+	TenantID  string
+	Name      string
+	Status    string
+	CreatedAt int64
+}
+
+// UserInfo mirrors ``pb.UserInfo`` from the global user registry.
+type UserInfo struct {
+	UserID    string
+	Email     string
+	Name      string
+	Status    string
+	CreatedAt int64
+	UpdatedAt int64
+}
+
+// TenantMember describes one ``(tenant_id, user_id, role)`` row
+// from ``tenant_members`` — used by both ``GetTenantMembers`` (rows
+// for one tenant) and ``GetUserTenants`` (rows for one user).
+type TenantMember struct {
+	TenantID string
+	UserID   string
+	Role     string
+	JoinedAt int64
+}
+
+// DelegateResult is returned by ``Admin.DelegateAccess`` — how many
+// nodes were affected and the absolute expiry timestamp.
+type DelegateResult struct {
+	Delegated   int32
+	ExpiresAtMs int64
+}
+
+// RevokeAllResult tallies what ``Admin.RevokeAllUserAccess`` removed.
+type RevokeAllResult struct {
+	RevokedGrants int32
+	RevokedGroups int32
+	RevokedShared int32
 }
 
 // ReceiptStatus mirrors the wire enum (UNKNOWN / PENDING / APPLIED / FAILED).
@@ -539,6 +601,246 @@ func (t *grpcTransport) RemoveGroupMember(ctx context.Context, tenantID, actor, 
 		return translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
 	}
 	return nil
+}
+
+// ── Admin (cross-tenant identity) wire methods ───────────────────────
+
+func (t *grpcTransport) CreateTenant(ctx context.Context, actor, tenantID, name string) (*TenantDetail, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.CreateTenant(t.callContext(ctx), &pb.CreateTenantRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+		Name:     name,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return nil, &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	td := resp.GetTenant()
+	return &TenantDetail{
+		TenantID:  td.GetTenantId(),
+		Name:      td.GetName(),
+		Status:    td.GetStatus(),
+		CreatedAt: td.GetCreatedAt(),
+	}, nil
+}
+
+func (t *grpcTransport) CreateUser(ctx context.Context, actor, userID, email, name string) (*UserInfo, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.CreateUser(t.callContext(ctx), &pb.CreateUserRequest{
+		Actor:  actor,
+		UserId: userID,
+		Email:  email,
+		Name:   name,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	if !resp.GetSuccess() {
+		return nil, &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	u := resp.GetUser()
+	return &UserInfo{
+		UserID:    u.GetUserId(),
+		Email:     u.GetEmail(),
+		Name:      u.GetName(),
+		Status:    u.GetStatus(),
+		CreatedAt: u.GetCreatedAt(),
+		UpdatedAt: u.GetUpdatedAt(),
+	}, nil
+}
+
+func (t *grpcTransport) AddTenantMember(ctx context.Context, actor, tenantID, userID, role string) error {
+	client, err := t.ensureReady()
+	if err != nil {
+		return err
+	}
+	var trailer metadata.MD
+	resp, err := client.AddTenantMember(t.callContext(ctx), &pb.TenantMemberRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+		UserId:   userID,
+		Role:     role,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return nil
+}
+
+func (t *grpcTransport) RemoveTenantMember(ctx context.Context, actor, tenantID, userID string) error {
+	client, err := t.ensureReady()
+	if err != nil {
+		return err
+	}
+	var trailer metadata.MD
+	resp, err := client.RemoveTenantMember(t.callContext(ctx), &pb.TenantMemberRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+		UserId:   userID,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return nil
+}
+
+func (t *grpcTransport) ChangeMemberRole(ctx context.Context, actor, tenantID, userID, newRole string) error {
+	client, err := t.ensureReady()
+	if err != nil {
+		return err
+	}
+	var trailer metadata.MD
+	resp, err := client.ChangeMemberRole(t.callContext(ctx), &pb.ChangeMemberRoleRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+		UserId:   userID,
+		NewRole:  newRole,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return nil
+}
+
+func (t *grpcTransport) GetTenantMembers(ctx context.Context, actor, tenantID string) ([]TenantMember, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.GetTenantMembers(t.callContext(ctx), &pb.GetTenantMembersRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	out := make([]TenantMember, 0, len(resp.GetMembers()))
+	for _, m := range resp.GetMembers() {
+		out = append(out, TenantMember{
+			TenantID: m.GetTenantId(),
+			UserID:   m.GetUserId(),
+			Role:     m.GetRole(),
+			JoinedAt: m.GetJoinedAt(),
+		})
+	}
+	return out, nil
+}
+
+func (t *grpcTransport) GetUserTenants(ctx context.Context, actor, userID string) ([]TenantMember, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.GetUserTenants(t.callContext(ctx), &pb.GetUserTenantsRequest{
+		Actor:  actor,
+		UserId: userID,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	out := make([]TenantMember, 0, len(resp.GetMemberships()))
+	for _, m := range resp.GetMemberships() {
+		out = append(out, TenantMember{
+			TenantID: m.GetTenantId(),
+			UserID:   m.GetUserId(),
+			Role:     m.GetRole(),
+			JoinedAt: m.GetJoinedAt(),
+		})
+	}
+	return out, nil
+}
+
+func (t *grpcTransport) DelegateAccess(ctx context.Context, actor, tenantID, fromUser, toUser, permission string, expiresAtMs int64) (*DelegateResult, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.DelegateAccess(t.callContext(ctx), &pb.DelegateAccessRequest{
+		Actor:      actor,
+		TenantId:   tenantID,
+		FromUser:   fromUser,
+		ToUser:     toUser,
+		Permission: permission,
+		ExpiresAt:  expiresAtMs,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return nil, &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return &DelegateResult{
+		Delegated:   resp.GetDelegated(),
+		ExpiresAtMs: resp.GetExpiresAt(),
+	}, nil
+}
+
+func (t *grpcTransport) TransferUserContent(ctx context.Context, actor, tenantID, fromUser, toUser string) (int32, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return 0, err
+	}
+	var trailer metadata.MD
+	resp, err := client.TransferUserContent(t.callContext(ctx), &pb.TransferUserContentRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+		FromUser: fromUser,
+		ToUser:   toUser,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return 0, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return 0, &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return resp.GetTransferred(), nil
+}
+
+func (t *grpcTransport) RevokeAllUserAccess(ctx context.Context, actor, tenantID, userID string) (*RevokeAllResult, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.RevokeAllUserAccess(t.callContext(ctx), &pb.RevokeAllUserAccessRequest{
+		Actor:    actor,
+		TenantId: tenantID,
+		UserId:   userID,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetSuccess() {
+		return nil, &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return &RevokeAllResult{
+		RevokedGrants: resp.GetRevokedGrants(),
+		RevokedGroups: resp.GetRevokedGroups(),
+		RevokedShared: resp.GetRevokedShared(),
+	}, nil
 }
 
 // DbClient is the main entry point for the EntDB Go SDK.
