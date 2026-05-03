@@ -59,6 +59,7 @@ from .generated import (
     ExecuteAtomicResponse,
     ExportUserDataRequest,
     ExportUserDataResponse,
+    FilterOp,
     FreezeUserRequest,
     FreezeUserResponse,
     # ACL v2
@@ -169,6 +170,62 @@ def _acl_list_to_proto(acl_list):
 def _acl_proto_to_list(acl_entries):
     """Convert repeated AclEntry to list of dicts."""
     return [{"principal": e.principal, "permission": e.permission} for e in acl_entries]
+
+
+# Wire-level FilterOp → MongoDB-style operator key used by
+# ``compile_query_filter``. The mapping only covers ops where both
+# sides agree on the semantics; ``EQ`` is excluded because it is
+# expressed as a bare value (the existing flat-equality shape).
+_FILTER_OP_TO_MONGO: dict[int, str] = {
+    FilterOp.NEQ: "$ne",
+    FilterOp.GT: "$gt",
+    FilterOp.GTE: "$gte",
+    FilterOp.LT: "$lt",
+    FilterOp.LTE: "$lte",
+    FilterOp.CONTAINS: "$contains",
+    FilterOp.IN: "$in",
+}
+
+
+def _field_filters_to_filter_dict(filters) -> dict:
+    """Translate repeated FieldFilter into a MongoDB-style filter dict.
+
+    The wire format (``FieldFilter{field, op, value}``) carries the
+    operator out-of-band so a typed Go client can send
+    ``{"price": {"$gte": 100}}`` as ``Op=GTE, Value=100``. The Python
+    SDK historically inlines the operator into ``value`` as a Struct
+    (``Op=EQ, Value={"$gte": 100}``) — both shapes have to round-trip
+    to the same operator dict so ``canonical_store.query_nodes`` sees a
+    consistent input regardless of which client produced it.
+
+    When two filters target the same field (e.g. range queries split as
+    ``Op=GTE, Value=100`` + ``Op=LTE, Value=200``) the entries are
+    merged into a single operator dict. Equality and operator filters
+    collapsing onto the same field also merge — equality is rewritten
+    to ``$eq`` so the result remains a single operator dict the
+    downstream compiler can validate.
+    """
+    out: dict = {}
+    for f in filters:
+        value = json_format.MessageToDict(f.value) if f.HasField("value") else None
+        if f.op == FilterOp.EQ:
+            spec: Any = value
+        else:
+            op_key = _FILTER_OP_TO_MONGO.get(f.op)
+            if op_key is None:
+                raise ValueError(f"unsupported FilterOp value: {f.op}")
+            spec = {op_key: value}
+        if f.field in out:
+            existing = out[f.field]
+            if not isinstance(existing, dict):
+                existing = {"$eq": existing}
+            if not isinstance(spec, dict):
+                spec = {"$eq": spec}
+            existing.update(spec)
+            out[f.field] = existing
+        else:
+            out[f.field] = spec
+    return out
 
 
 class EntDBServicer(EntDBServiceServicer):
@@ -1117,8 +1174,12 @@ class EntDBServicer(EntDBServiceServicer):
                 # translator inside ``canonical_store.query_nodes``
                 # resolves field names to ids via the schema registry
                 # so MongoDB-style operators (``$and``, ``$gt``, ...)
-                # can also be wired through this path.
-                filter_dict = {f.field: json_format.MessageToDict(f.value) for f in request.filters}
+                # can also be wired through this path. Honour the
+                # FieldFilter ``op`` field so typed clients (Go SDK)
+                # that send ``Op=GTE, Value=100`` round-trip to the
+                # same operator dict as Python clients that send the
+                # operator inline as a Value-Struct.
+                filter_dict = _field_filters_to_filter_dict(request.filters)
 
             nodes = await self.canonical_store.query_nodes(
                 tenant_id=request.context.tenant_id,
