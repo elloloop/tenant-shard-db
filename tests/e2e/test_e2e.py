@@ -37,9 +37,9 @@ sys.path.insert(0, "/app/sdk")
 # ``tests/__init__.py`` package marker inside the container.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from entdb_sdk import DbClient, register_proto_schema  # noqa: E402
-
 import e2e_schema_pb2 as pb  # noqa: E402
+
+from entdb_sdk import DbClient, register_proto_schema  # noqa: E402
 
 # =============================================================================
 # Test Configuration
