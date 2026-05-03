@@ -577,6 +577,191 @@ if err != nil {
     </CalloutDescription>
   </Callout>
 
+  <h2>Read-after-write &amp; receipts</h2>
+  <p>
+    Two callable surfaces let you reason about commit landings across
+    process boundaries: <code>WaitForOffset</code> for "block until the
+    applier has caught up to this stream position" and
+    <code>GetReceiptStatus</code> for "look up the outcome of a
+    transaction by idempotency key."
+  </p>
+
+  <h3>WaitForOffset</h3>
+  <p>
+    The implicit form is <code>plan.Commit(ctx)</code> with
+    <code>wait_applied=true</code> baked into the wire — that's what
+    <em>most</em> code wants. <code>WaitForOffset</code> is the
+    explicit form: useful when one process commits and a different
+    process needs to read-its-own-write without re-issuing the commit.
+    Returns <code>(reached, currentPosition, err)</code> — a
+    <code>currentPosition</code> behind the requested
+    <code>streamPosition</code> tells you how far the applier still
+    needs to advance, useful for surfacing lag.
+  </p>
+
+  <Code code={`reached, current, err := client.WaitForOffset(
+    ctx, "acme", "user:alice",
+    "kafka:0:42",  // stream position from a previous Commit
+    5_000,         // timeout_ms (server-side)
+)
+if err != nil {
+    return err
+}
+if !reached {
+    log.Printf("applier still at %s; waited 5s", current)
+}`} lang="go" />
+
+  <h3>GetReceiptStatus</h3>
+  <p>
+    Receipts are durable: every committed transaction lands a row keyed
+    by <code>(tenant_id, idempotency_key)</code>. If a network blip
+    drops the original commit response, you have two safe options —
+    re-issue the same idempotency key (the WAL deduplicates) or call
+    <code>GetReceiptStatus</code> to probe what happened.
+  </p>
+
+  <Code code={`status, msg, err := client.GetReceiptStatus(
+    ctx, "acme", "user:alice", "order-12345",
+)
+switch status {
+case entdb.ReceiptStatusApplied:
+    log.Printf("transaction landed cleanly")
+case entdb.ReceiptStatusPending:
+    log.Printf("queued; retry GetReceiptStatus in a moment")
+case entdb.ReceiptStatusFailed:
+    log.Printf("transaction was rejected: %s", msg)
+case entdb.ReceiptStatusUnknown:
+    log.Printf("server has no receipt for this idempotency key — safe to re-issue")
+}`} lang="go" />
+
+  <h2>Batch reads</h2>
+  <p>
+    <code>GetMany</code> fetches multiple nodes in one round trip,
+    returning the slice of found nodes plus the slice of ids the
+    server reports as missing. Useful for hydrating a list of
+    references without N+1 individual <code>Get</code> calls.
+  </p>
+
+  <Code code={`products, missing, err := entdb.GetMany[*shop.Product](
+    ctx, scope, []string{"node-1", "node-2", "node-3"},
+)
+if err != nil {
+    return err
+}
+
+for _, p := range products {
+    log.Printf("%s: %s ($%d)", p.GetSku(), p.GetName(), p.GetPriceCents())
+}
+if len(missing) > 0 {
+    log.Printf("server could not find: %v", missing)
+}`} lang="go" />
+
+  <p>
+    Order of returned nodes is <strong>not</strong> guaranteed to match
+    the input id order. Callers needing input-order alignment should
+    index the results by <code>Node.NodeID</code>.
+  </p>
+
+  <h2>Connected nodes</h2>
+  <p>
+    <code>scope.Connected</code> walks an outbound edge type and
+    returns the destination nodes — server-side ACL filtered, so the
+    caller only sees nodes they are allowed to read. Equivalent to
+    <code>EdgesFrom</code> followed by <code>GetMany</code>, but in a
+    single RPC.
+  </p>
+
+  <Code code={`// "What products has this user purchased?"
+products, err := scope.Connected(ctx, userID, shop.PurchasedEdgeID)
+if err != nil {
+    return err
+}
+log.Printf("%s has bought %d products", userID, len(products))`} lang="go" />
+
+  <h2>Sharing &amp; access control</h2>
+  <p>
+    Beyond <code>Share</code> (covered in the parity table) the Go SDK
+    exposes the rest of the ACL surface — <code>RevokeAccess</code> to
+    remove a grant, <code>TransferOwnership</code> to reassign the
+    canonical <code>owner_actor</code>, and group-membership
+    management for shareable ACL group nodes.
+  </p>
+
+  <h3>RevokeAccess</h3>
+  <p>
+    Idempotent: re-revoking a grant that no longer exists returns
+    <code>found=false</code> rather than erroring, so retries are
+    safe. The grant is removed from both the per-tenant
+    <code>node_access</code> table and the global
+    <code>shared_index</code> when the grant was cross-tenant.
+  </p>
+
+  <Code code={`found, err := scope.RevokeAccess(ctx, "node-42", entdb.UserActor("bob"))
+if err != nil {
+    return err
+}
+if !found {
+    log.Printf("no existing grant — already revoked")
+}`} lang="go" />
+
+  <h3>TransferOwnership</h3>
+  <p>
+    Reassigns a node's <code>owner_actor</code>. The previous owner
+    loses ownership-implied capabilities (typically <code>ADMIN</code>);
+    the new owner gains them. Use for handoffs (employee leaves) and
+    delegated administration. Returns <code>found=false</code> when the
+    node id does not exist in the tenant.
+  </p>
+
+  <Code code={`found, err := scope.TransferOwnership(
+    ctx, "node-42", entdb.UserActor("carol"),
+)
+if !found {
+    return fmt.Errorf("node not found")
+}`} lang="go" />
+
+  <h3>Group membership</h3>
+  <p>
+    ACL groups are themselves nodes — sharing a node with the group
+    grants the listed members the same capability. Manage membership
+    with <code>AddGroupMember</code> / <code>RemoveGroupMember</code>:
+  </p>
+
+  <Code code={`// Add Alice to the "merchants" group as an admin.
+if err := scope.AddGroupMember(ctx, "merchants", entdb.UserActor("alice"), "admin"); err != nil {
+    return err
+}
+
+// Later, remove her.
+if err := scope.RemoveGroupMember(ctx, "merchants", entdb.UserActor("alice")); err != nil {
+    return err
+}`} lang="go" />
+
+  <p>
+    The <code>role</code> string on <code>AddGroupMember</code> is a
+    free-form label (<code>"admin"</code>, <code>"member"</code>,
+    <code>"viewer"</code>) — group capability mappings live in the
+    schema, not in the role string.
+  </p>
+
+  <h2>Cross-tenant inbox</h2>
+  <p>
+    When another tenant's user shares a node with you,
+    <code>SharedWithMe</code> surfaces those nodes in a single paged
+    list. The returned nodes carry their <em>source</em> tenant in
+    <code>Node.TenantID</code> — typically different from the scope's
+    tenant — so caller code can route follow-up reads to the right
+    place.
+  </p>
+
+  <Code code={`shared, err := scope.SharedWithMe(ctx, 50, 0)
+if err != nil {
+    return err
+}
+for _, n := range shared {
+    log.Printf("shared from tenant=%s: node %s", n.TenantID, n.NodeID)
+}`} lang="go" />
+
   <h2>Tenant quotas</h2>
   <p>
     <code>client.GetTenantQuota(ctx, actor, tenantID)</code> returns
@@ -811,17 +996,47 @@ entdb put localhost:50051 \\
     <tr>
       <td>Receipt status</td>
       <td><code>await db.get_receipt_status("acme", "order-12345")</code></td>
-      <td>✗ (planned)</td>
+      <td><code>client.GetReceiptStatus(ctx, "acme", "user:admin", "order-12345")</code></td>
+    </tr>
+    <tr>
+      <td>Wait for offset</td>
+      <td><code>await db.wait_for_offset("acme", pos, timeout_ms=5000)</code></td>
+      <td><code>client.WaitForOffset(ctx, "acme", "user:alice", pos, 5000)</code></td>
+    </tr>
+    <tr>
+      <td>Batch get</td>
+      <td><code>await scope.get_many(schema_pb2.Product, ["n1", "n2"])</code></td>
+      <td><code>entdb.GetMany[*shop.Product](ctx, scope, []string&#123;"n1", "n2"&#125;)</code></td>
+    </tr>
+    <tr>
+      <td>Connected nodes</td>
+      <td><code>await scope.connected("user-1", edge_type=Purchased)</code></td>
+      <td><code>scope.Connected(ctx, "user-1", shop.PurchasedEdgeID)</code></td>
+    </tr>
+    <tr>
+      <td>Shared with me</td>
+      <td><code>await scope.shared_with_me(limit=50)</code></td>
+      <td><code>scope.SharedWithMe(ctx, 50, 0)</code></td>
+    </tr>
+    <tr>
+      <td>Revoke access</td>
+      <td><code>await scope.revoke("node-42", Actor.user("bob"))</code></td>
+      <td><code>scope.RevokeAccess(ctx, "node-42", entdb.UserActor("bob"))</code></td>
+    </tr>
+    <tr>
+      <td>Transfer ownership</td>
+      <td><code>await scope.transfer_ownership("node-42", Actor.user("carol"))</code></td>
+      <td><code>scope.TransferOwnership(ctx, "node-42", entdb.UserActor("carol"))</code></td>
     </tr>
     <tr>
       <td>Group add member</td>
       <td><code>await db.group_add("merchants", "user:alice", "acme", "user:admin")</code></td>
-      <td>✗ (planned)</td>
+      <td><code>scope.AddGroupMember(ctx, "merchants", entdb.UserActor("alice"), "member")</code></td>
     </tr>
     <tr>
       <td>Group remove member</td>
       <td><code>await db.group_remove("merchants", "user:alice", "acme", "user:admin")</code></td>
-      <td>✗ (planned)</td>
+      <td><code>scope.RemoveGroupMember(ctx, "merchants", entdb.UserActor("alice"))</code></td>
     </tr>
     <tr>
       <td>Commit</td>

@@ -110,6 +110,42 @@ func (m *mockTransport) GetTenantQuota(_ context.Context, _, _ string) (*TenantQ
 	return nil, nil
 }
 
+func (m *mockTransport) GetNodes(_ context.Context, _, _ string, _ int, _ []string) ([]*Node, []string, error) {
+	return nil, nil, nil
+}
+
+func (m *mockTransport) GetReceiptStatus(_ context.Context, _, _, _ string) (ReceiptStatus, string, error) {
+	return ReceiptStatusUnknown, "", nil
+}
+
+func (m *mockTransport) WaitForOffset(_ context.Context, _, _, _ string, _ int32) (bool, string, error) {
+	return false, "", nil
+}
+
+func (m *mockTransport) GetConnectedNodes(_ context.Context, _, _, _ string, _ int) ([]*Node, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) ListSharedWithMe(_ context.Context, _, _ string, _, _ int32) ([]*Node, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) RevokeAccess(_ context.Context, _, _, _, _ string) (bool, error) {
+	return false, nil
+}
+
+func (m *mockTransport) TransferOwnership(_ context.Context, _, _, _, _ string) (bool, error) {
+	return false, nil
+}
+
+func (m *mockTransport) AddGroupMember(_ context.Context, _, _, _, _, _ string) error {
+	return nil
+}
+
+func (m *mockTransport) RemoveGroupMember(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
 	t.Helper()
 	return newClientWithTransport("localhost:50051", transport, opts...)

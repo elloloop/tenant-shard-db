@@ -59,6 +59,35 @@ type fakeServer struct {
 	execResp         *pb.ExecuteAtomicResponse
 	execErr          error
 
+	// v1.4 surface
+	getNodesReq    *pb.GetNodesRequest
+	getNodesResp   *pb.GetNodesResponse
+	getNodesErr    error
+	waitOffsetReq  *pb.WaitForOffsetRequest
+	waitOffsetResp *pb.WaitForOffsetResponse
+	waitOffsetErr  error
+	receiptReq     *pb.GetReceiptStatusRequest
+	receiptResp    *pb.GetReceiptStatusResponse
+	receiptErr     error
+	connectedReq   *pb.GetConnectedNodesRequest
+	connectedResp  *pb.GetConnectedNodesResponse
+	connectedErr   error
+	sharedReq      *pb.ListSharedWithMeRequest
+	sharedResp     *pb.ListSharedWithMeResponse
+	sharedErr      error
+	revokeReq      *pb.RevokeAccessRequest
+	revokeResp     *pb.RevokeAccessResponse
+	revokeErr      error
+	xferReq        *pb.TransferOwnershipRequest
+	xferResp       *pb.TransferOwnershipResponse
+	xferErr        error
+	addGroupReq    *pb.GroupMemberRequest
+	addGroupResp   *pb.GroupMemberResponse
+	addGroupErr    error
+	rmGroupReq     *pb.GroupMemberRequest
+	rmGroupResp    *pb.GroupMemberResponse
+	rmGroupErr     error
+
 	// headerMeta is sent as a trailing metadata entry on every
 	// RPC when non-empty. Used to test that rate-limit
 	// translation picks up the ``retry-after`` header.
@@ -151,6 +180,91 @@ func (s *fakeServer) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicReq
 		return nil, s.execErr
 	}
 	return s.execResp, nil
+}
+
+// ── v1.4 surface: GetNodes / WaitForOffset / GetReceiptStatus /
+//    GetConnectedNodes / ListSharedWithMe / RevokeAccess /
+//    TransferOwnership / Add+RemoveGroupMember ─────────────────────────
+
+func (s *fakeServer) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.GetNodesResponse, error) {
+	s.getNodesReq = req
+	s.sendTrailer(ctx)
+	if s.getNodesErr != nil {
+		return nil, s.getNodesErr
+	}
+	return s.getNodesResp, nil
+}
+
+func (s *fakeServer) WaitForOffset(ctx context.Context, req *pb.WaitForOffsetRequest) (*pb.WaitForOffsetResponse, error) {
+	s.waitOffsetReq = req
+	s.sendTrailer(ctx)
+	if s.waitOffsetErr != nil {
+		return nil, s.waitOffsetErr
+	}
+	return s.waitOffsetResp, nil
+}
+
+func (s *fakeServer) GetReceiptStatus(ctx context.Context, req *pb.GetReceiptStatusRequest) (*pb.GetReceiptStatusResponse, error) {
+	s.receiptReq = req
+	s.sendTrailer(ctx)
+	if s.receiptErr != nil {
+		return nil, s.receiptErr
+	}
+	return s.receiptResp, nil
+}
+
+func (s *fakeServer) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNodesRequest) (*pb.GetConnectedNodesResponse, error) {
+	s.connectedReq = req
+	s.sendTrailer(ctx)
+	if s.connectedErr != nil {
+		return nil, s.connectedErr
+	}
+	return s.connectedResp, nil
+}
+
+func (s *fakeServer) ListSharedWithMe(ctx context.Context, req *pb.ListSharedWithMeRequest) (*pb.ListSharedWithMeResponse, error) {
+	s.sharedReq = req
+	s.sendTrailer(ctx)
+	if s.sharedErr != nil {
+		return nil, s.sharedErr
+	}
+	return s.sharedResp, nil
+}
+
+func (s *fakeServer) RevokeAccess(ctx context.Context, req *pb.RevokeAccessRequest) (*pb.RevokeAccessResponse, error) {
+	s.revokeReq = req
+	s.sendTrailer(ctx)
+	if s.revokeErr != nil {
+		return nil, s.revokeErr
+	}
+	return s.revokeResp, nil
+}
+
+func (s *fakeServer) TransferOwnership(ctx context.Context, req *pb.TransferOwnershipRequest) (*pb.TransferOwnershipResponse, error) {
+	s.xferReq = req
+	s.sendTrailer(ctx)
+	if s.xferErr != nil {
+		return nil, s.xferErr
+	}
+	return s.xferResp, nil
+}
+
+func (s *fakeServer) AddGroupMember(ctx context.Context, req *pb.GroupMemberRequest) (*pb.GroupMemberResponse, error) {
+	s.addGroupReq = req
+	s.sendTrailer(ctx)
+	if s.addGroupErr != nil {
+		return nil, s.addGroupErr
+	}
+	return s.addGroupResp, nil
+}
+
+func (s *fakeServer) RemoveGroupMember(ctx context.Context, req *pb.GroupMemberRequest) (*pb.GroupMemberResponse, error) {
+	s.rmGroupReq = req
+	s.sendTrailer(ctx)
+	if s.rmGroupErr != nil {
+		return nil, s.rmGroupErr
+	}
+	return s.rmGroupResp, nil
 }
 
 // startFakeServer spins up an in-process gRPC server over

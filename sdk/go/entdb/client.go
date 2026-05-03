@@ -50,7 +50,44 @@ type Transport interface {
 	// and current usage (monthly writes + per-tenant / per-user
 	// RPS buckets).
 	GetTenantQuota(ctx context.Context, actor, tenantID string) (*TenantQuota, error)
+	// GetNodes batch-fetches nodes by id. Returns the slice of
+	// found nodes plus the slice of ids that were missing — both in
+	// input order is NOT guaranteed.
+	GetNodes(ctx context.Context, tenantID, actor string, typeID int, nodeIDs []string) ([]*Node, []string, error)
+	// GetReceiptStatus polls a transaction by its idempotency key.
+	GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error)
+	// WaitForOffset blocks (server-side) until the applier has
+	// reached ``streamPosition`` for the tenant, or ``timeoutMs``
+	// elapses. Returns whether the offset was reached and the
+	// current position (so callers can detect "still behind by N").
+	WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error)
+	// GetConnectedNodes returns nodes reachable from ``nodeID`` via
+	// edges of ``edgeTypeID`` — server-side ACL filtered.
+	GetConnectedNodes(ctx context.Context, tenantID, actor, nodeID string, edgeTypeID int) ([]*Node, error)
+	// ListSharedWithMe returns nodes other actors have shared with
+	// the calling actor (cross-tenant included).
+	ListSharedWithMe(ctx context.Context, tenantID, actor string, limit, offset int32) ([]*Node, error)
+	// RevokeAccess removes a previously-shared grant from a node.
+	RevokeAccess(ctx context.Context, tenantID, actor, nodeID, granteeActor string) (bool, error)
+	// TransferOwnership reassigns ``nodeID``'s ``owner_actor`` to
+	// ``newOwner``. Returns false if the node was not found.
+	TransferOwnership(ctx context.Context, tenantID, actor, nodeID, newOwner string) (bool, error)
+	// AddGroupMember / RemoveGroupMember manage the membership of an
+	// ACL group node — ``groupID`` is the node id of the group,
+	// ``memberActor`` is the principal being added or removed.
+	AddGroupMember(ctx context.Context, tenantID, actor, groupID, memberActor, role string) error
+	RemoveGroupMember(ctx context.Context, tenantID, actor, groupID, memberActor string) error
 }
+
+// ReceiptStatus mirrors the wire enum (UNKNOWN / PENDING / APPLIED / FAILED).
+type ReceiptStatus int32
+
+const (
+	ReceiptStatusUnknown ReceiptStatus = 0
+	ReceiptStatusPending ReceiptStatus = 1
+	ReceiptStatusApplied ReceiptStatus = 2
+	ReceiptStatusFailed  ReceiptStatus = 3
+)
 
 // grpcTransport is the production Transport backed by a gRPC connection.
 type grpcTransport struct {
@@ -336,6 +373,174 @@ func (t *grpcTransport) GetTenantQuota(ctx context.Context, actor, tenantID stri
 	}, nil
 }
 
+func (t *grpcTransport) GetNodes(ctx context.Context, tenantID, actor string, typeID int, nodeIDs []string) ([]*Node, []string, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.GetNodes(t.callContext(ctx), &pb.GetNodesRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		TypeId:  int32(typeID),
+		NodeIds: nodeIDs,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	nodes := resp.GetNodes()
+	out := make([]*Node, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeFromProto(n))
+	}
+	return out, resp.GetMissingIds(), nil
+}
+
+func (t *grpcTransport) GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return ReceiptStatusUnknown, "", err
+	}
+	var trailer metadata.MD
+	resp, err := client.GetReceiptStatus(t.callContext(ctx), &pb.GetReceiptStatusRequest{
+		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		IdempotencyKey: idempotencyKey,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return ReceiptStatusUnknown, "", translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	return ReceiptStatus(resp.GetStatus()), resp.GetError(), nil
+}
+
+func (t *grpcTransport) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return false, "", err
+	}
+	var trailer metadata.MD
+	resp, err := client.WaitForOffset(t.callContext(ctx), &pb.WaitForOffsetRequest{
+		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		StreamPosition: streamPosition,
+		TimeoutMs:      timeoutMs,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return false, "", translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	return resp.GetReached(), resp.GetCurrentPosition(), nil
+}
+
+func (t *grpcTransport) GetConnectedNodes(ctx context.Context, tenantID, actor, nodeID string, edgeTypeID int) ([]*Node, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.GetConnectedNodes(t.callContext(ctx), &pb.GetConnectedNodesRequest{
+		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		NodeId:     nodeID,
+		EdgeTypeId: int32(edgeTypeID),
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	nodes := resp.GetNodes()
+	out := make([]*Node, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeFromProto(n))
+	}
+	return out, nil
+}
+
+func (t *grpcTransport) ListSharedWithMe(ctx context.Context, tenantID, actor string, limit, offset int32) ([]*Node, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.ListSharedWithMe(t.callContext(ctx), &pb.ListSharedWithMeRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		Limit:   limit,
+		Offset:  offset,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	nodes := resp.GetNodes()
+	out := make([]*Node, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeFromProto(n))
+	}
+	return out, nil
+}
+
+func (t *grpcTransport) RevokeAccess(ctx context.Context, tenantID, actor, nodeID, granteeActor string) (bool, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return false, err
+	}
+	var trailer metadata.MD
+	resp, err := client.RevokeAccess(t.callContext(ctx), &pb.RevokeAccessRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		NodeId:  nodeID,
+		ActorId: granteeActor,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return false, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	return resp.GetFound(), nil
+}
+
+func (t *grpcTransport) TransferOwnership(ctx context.Context, tenantID, actor, nodeID, newOwner string) (bool, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return false, err
+	}
+	var trailer metadata.MD
+	resp, err := client.TransferOwnership(t.callContext(ctx), &pb.TransferOwnershipRequest{
+		Context:  &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		NodeId:   nodeID,
+		NewOwner: newOwner,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return false, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	return resp.GetFound(), nil
+}
+
+func (t *grpcTransport) AddGroupMember(ctx context.Context, tenantID, actor, groupID, memberActor, role string) error {
+	client, err := t.ensureReady()
+	if err != nil {
+		return err
+	}
+	var trailer metadata.MD
+	_, err = client.AddGroupMember(t.callContext(ctx), &pb.GroupMemberRequest{
+		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		GroupId:       groupID,
+		MemberActorId: memberActor,
+		Role:          role,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	return nil
+}
+
+func (t *grpcTransport) RemoveGroupMember(ctx context.Context, tenantID, actor, groupID, memberActor string) error {
+	client, err := t.ensureReady()
+	if err != nil {
+		return err
+	}
+	var trailer metadata.MD
+	_, err = client.RemoveGroupMember(t.callContext(ctx), &pb.GroupMemberRequest{
+		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		GroupId:       groupID,
+		MemberActorId: memberActor,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	return nil
+}
+
 // DbClient is the main entry point for the EntDB Go SDK.
 //
 // DbClient owns the gRPC transport and hands out [TenantScope] /
@@ -437,4 +642,30 @@ func (c *DbClient) NewPlanWithKey(tenantID, actor, idempotencyKey string) *Plan 
 // oriented — there is no typed node behind it.
 func (c *DbClient) GetTenantQuota(ctx context.Context, actor, tenantID string) (*TenantQuota, error) {
 	return c.transport.GetTenantQuota(ctx, actor, tenantID)
+}
+
+// WaitForOffset blocks server-side until the WAL applier has reached
+// ``streamPosition`` for ``tenantID``, or ``timeoutMs`` elapses.
+// Returns ``(reached, currentPosition, err)``.  ``reached`` is true
+// when the offset was met; ``currentPosition`` lets the caller see
+// how far behind the applier is when it wasn't.
+//
+// This is the explicit form of the ``wait_applied`` option callers
+// can pass to [Plan.Commit] — useful for read-after-write across
+// independent processes that share an idempotency key but not a
+// commit chain.
+func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error) {
+	return c.transport.WaitForOffset(ctx, tenantID, actor, streamPosition, timeoutMs)
+}
+
+// GetReceiptStatus polls the status of a transaction by its
+// idempotency key. Returns the status enum, an optional error
+// message (when status is FAILED), and any transport error.
+//
+// Useful when a network blip dropped the original commit response
+// — re-issuing the same idempotency_key on a new ExecuteAtomic call
+// is also safe (the WAL deduplicates) but ``GetReceiptStatus`` is
+// the cheap "did it actually land?" probe.
+func (c *DbClient) GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error) {
+	return c.transport.GetReceiptStatus(ctx, tenantID, actor, idempotencyKey)
 }
