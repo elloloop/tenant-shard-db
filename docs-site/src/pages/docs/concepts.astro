@@ -133,7 +133,15 @@ result = await plan.commit(wait_applied=True)
 # Option 2: Wait on a specific read
 task = await scope.get(Task, node_id,
                        after_offset=result.receipt.stream_position)`}
-    goNote="wait_applied and after_offset are not yet exposed in the Go SDK. See the Consistency page for the explicit-wait alternative."
+    go={`result, err := plan.Commit(ctx)
+
+// Explicit wait — block until the applier has caught up to the
+// stream position the commit returned. After this, all reads on
+// any scope for this tenant see the new data.
+client.WaitForOffset(ctx, "acme", "user:alice",
+    result.Receipt.StreamPosition, 5_000)
+
+task, err := entdb.Get[*shop.Task](ctx, scope, nodeID)`}
   />
 
   <h2>Schema Registry</h2>

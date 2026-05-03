@@ -96,6 +96,52 @@ type Transport interface {
 	DelegateAccess(ctx context.Context, actor, tenantID, fromUser, toUser, permission string, expiresAtMs int64) (*DelegateResult, error)
 	TransferUserContent(ctx context.Context, actor, tenantID, fromUser, toUser string) (int32, error)
 	RevokeAllUserAccess(ctx context.Context, actor, tenantID, userID string) (*RevokeAllResult, error)
+
+	// ── GDPR user lifecycle (right-to-be-forgotten + deletion grace) ─
+
+	// DeleteUser requests deletion of ``userID``. The deletion is
+	// scheduled — actually executed by the GDPR worker after a
+	// grace period. Pass ``graceDays = 0`` to use the server
+	// default (30 days). The user enters the ``"deletion_pending"``
+	// status immediately; reads continue to succeed until the grace
+	// expires.
+	DeleteUser(ctx context.Context, actor, userID string, graceDays int32) (*DeletionScheduled, error)
+	// CancelUserDeletion lifts a pending deletion. Idempotent on a
+	// user with no pending deletion (returns success but no
+	// observable change).
+	CancelUserDeletion(ctx context.Context, actor, userID string) error
+	// ExportUserData returns a JSON-serialized bundle of every node
+	// the user owns across all tenants — the GDPR Article 20
+	// portability dump. The shape is documented on the server side.
+	ExportUserData(ctx context.Context, actor, userID string) (string, error)
+	// FreezeUser flips ``userID`` between ``"active"`` and
+	// ``"frozen"``. A frozen user cannot read or write, but their
+	// data is preserved (no deletion clock starts). Pass
+	// ``enabled = true`` to freeze, ``false`` to unfreeze.
+	FreezeUser(ctx context.Context, actor, userID string, enabled bool) (string, error)
+
+	// Health returns a snapshot of server health — useful as a
+	// Kubernetes liveness/readiness probe target. Tenant-agnostic.
+	Health(ctx context.Context) (*HealthStatus, error)
+}
+
+// HealthStatus mirrors ``pb.HealthResponse`` — the boolean
+// healthy flag, the server version string, and a map of named
+// components to their status (e.g. "wal" → "ok",
+// "global_store" → "ok").
+type HealthStatus struct {
+	Healthy    bool
+	Version    string
+	Components map[string]string
+}
+
+// DeletionScheduled is what ``Admin.DeleteUser`` returns — the
+// GDPR-mandated timestamps so callers can show "your data will be
+// permanently removed at <date>" UI without a follow-up read.
+type DeletionScheduled struct {
+	RequestedAtMs int64
+	ExecuteAtMs   int64
+	Status        string // typically "deletion_pending"
 }
 
 // TenantDetail mirrors ``pb.TenantDetail`` — the identity-layer
@@ -843,6 +889,107 @@ func (t *grpcTransport) RevokeAllUserAccess(ctx context.Context, actor, tenantID
 	}, nil
 }
 
+// ── GDPR user-lifecycle wire methods ─────────────────────────────────
+
+func (t *grpcTransport) DeleteUser(ctx context.Context, actor, userID string, graceDays int32) (*DeletionScheduled, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.DeleteUser(t.callContext(ctx), &pb.DeleteUserRequest{
+		Actor:     actor,
+		UserId:    userID,
+		GraceDays: graceDays,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	if !resp.GetSuccess() {
+		return nil, &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return &DeletionScheduled{
+		RequestedAtMs: resp.GetRequestedAt(),
+		ExecuteAtMs:   resp.GetExecuteAt(),
+		Status:        resp.GetStatus(),
+	}, nil
+}
+
+func (t *grpcTransport) CancelUserDeletion(ctx context.Context, actor, userID string) error {
+	client, err := t.ensureReady()
+	if err != nil {
+		return err
+	}
+	var trailer metadata.MD
+	resp, err := client.CancelUserDeletion(t.callContext(ctx), &pb.CancelUserDeletionRequest{
+		Actor:  actor,
+		UserId: userID,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	if !resp.GetSuccess() {
+		return &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return nil
+}
+
+func (t *grpcTransport) ExportUserData(ctx context.Context, actor, userID string) (string, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return "", err
+	}
+	var trailer metadata.MD
+	resp, err := client.ExportUserData(t.callContext(ctx), &pb.ExportUserDataRequest{
+		Actor:  actor,
+		UserId: userID,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return "", translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	if !resp.GetSuccess() {
+		return "", &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return resp.GetExportJson(), nil
+}
+
+func (t *grpcTransport) Health(ctx context.Context) (*HealthStatus, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.Health(t.callContext(ctx), &pb.HealthRequest{}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	return &HealthStatus{
+		Healthy:    resp.GetHealthy(),
+		Version:    resp.GetVersion(),
+		Components: resp.GetComponents(),
+	}, nil
+}
+
+func (t *grpcTransport) FreezeUser(ctx context.Context, actor, userID string, enabled bool) (string, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return "", err
+	}
+	var trailer metadata.MD
+	resp, err := client.FreezeUser(t.callContext(ctx), &pb.FreezeUserRequest{
+		Actor:   actor,
+		UserId:  userID,
+		Enabled: enabled,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return "", translateGRPCStatusWithTrailer(err, trailer, "", t.address)
+	}
+	if !resp.GetSuccess() {
+		return "", &EntDBError{Message: resp.GetError(), Code: "ADMIN_ERROR"}
+	}
+	return resp.GetStatus(), nil
+}
+
 // DbClient is the main entry point for the EntDB Go SDK.
 //
 // DbClient owns the gRPC transport and hands out [TenantScope] /
@@ -958,6 +1105,14 @@ func (c *DbClient) GetTenantQuota(ctx context.Context, actor, tenantID string) (
 // commit chain.
 func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error) {
 	return c.transport.WaitForOffset(ctx, tenantID, actor, streamPosition, timeoutMs)
+}
+
+// Health returns a snapshot of server health for liveness /
+// readiness probes. The response includes a boolean healthy flag,
+// the server version string, and a per-component status map (e.g.
+// ``"wal"`` → ``"ok"``).
+func (c *DbClient) Health(ctx context.Context) (*HealthStatus, error) {
+	return c.transport.Health(ctx)
 }
 
 // GetReceiptStatus polls the status of a transaction by its

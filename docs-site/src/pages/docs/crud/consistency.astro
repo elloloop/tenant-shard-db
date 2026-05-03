@@ -35,7 +35,7 @@ task, err := entdb.Get[*shop.Task](ctx, scope, result.CreatedNodeIDs[0])
 # Now reads are guaranteed to see the data
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
 # task is always found`}
-    goNote="wait_applied is not yet exposed in the Go SDK. Use Solution 3 (explicit wait) below — it's the same primitive, just one extra line."
+    goNote="The Go Plan.Commit doesn't have a built-in wait_applied flag. Use Solution 3 below (one extra call to client.WaitForOffset on result.Receipt.StreamPosition) — it's the same primitive."
   />
   <p>Latency: typically &lt;50ms. The server uses event-driven notification (not polling).</p>
 
@@ -50,7 +50,7 @@ task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice")
 task = await db.get(Task, result.created_node_ids[0], "acme", "user:alice",
                     after_offset=result.receipt.stream_position)
 # Server waits for the offset to be applied, then reads`}
-    goNote="after_offset is not yet exposed on Get/Query in the Go SDK. Use Solution 3 (explicit wait) below."
+    goNote="The Go Get/Query helpers don't yet take an after_offset option — use Solution 3 below (one upfront call to client.WaitForOffset, then any subsequent read is consistent)."
   />
   <p>This is useful when the write and read happen in different parts of your code.</p>
 
@@ -63,7 +63,21 @@ await db.wait_for_offset("acme", result.receipt.stream_position, timeout=5.0)
 
 # All subsequent reads are consistent
 tasks = await db.query(Task, "acme", "user:alice")`}
-    goNote="WaitForOffset is not yet implemented in the Go SDK (tracked for vNext). Until then, the Go client receives result.Receipt.StreamPosition but cannot block on it server-side; rely on natural latency (<50ms typical) or call back briefly until the read returns."
+    go={`result, err := plan.Commit(ctx)
+if err != nil {
+    return err
+}
+
+// Wait for the offset explicitly (5 second server-side timeout).
+reached, currentPos, err := client.WaitForOffset(
+    ctx, "acme", "user:alice", result.Receipt.StreamPosition, 5_000,
+)
+if !reached {
+    log.Printf("applier still at %s after 5s", currentPos)
+}
+
+// All subsequent reads on this scope are consistent.
+tasks, err := entdb.Query[*shop.Task](ctx, scope, nil)`}
   />
 
   <h2>When to Use What</h2>

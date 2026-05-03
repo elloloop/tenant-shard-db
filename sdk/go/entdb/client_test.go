@@ -186,6 +186,26 @@ func (m *mockTransport) RevokeAllUserAccess(_ context.Context, _, _, _ string) (
 	return nil, nil
 }
 
+func (m *mockTransport) DeleteUser(_ context.Context, _, _ string, _ int32) (*DeletionScheduled, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) CancelUserDeletion(_ context.Context, _, _ string) error {
+	return nil
+}
+
+func (m *mockTransport) ExportUserData(_ context.Context, _, _ string) (string, error) {
+	return "", nil
+}
+
+func (m *mockTransport) FreezeUser(_ context.Context, _, _ string, _ bool) (string, error) {
+	return "", nil
+}
+
+func (m *mockTransport) Health(_ context.Context) (*HealthStatus, error) {
+	return nil, nil
+}
+
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
 	t.Helper()
 	return newClientWithTransport("localhost:50051", transport, opts...)

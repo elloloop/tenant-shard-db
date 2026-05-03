@@ -30,7 +30,11 @@ await client.connect()
 status = await client.health(timeout=2.0)
 # {"healthy": True, "version": "1.0.0",
 #  "components": {"wal": "healthy", "storage": "healthy"}}`}
-    goNote="Health is exposed on the underlying gRPC connection. Until a typed Go helper lands, call HealthRequest{} directly via the generated stub or hit the port with grpcurl from your liveness probe sidecar."
+    go={`h, err := client.Health(ctx)
+if err != nil || !h.Healthy {
+    return errors.New("server unhealthy")
+}
+log.Printf("server %s — %v", h.Version, h.Components)`}
   />
 
   <p>
