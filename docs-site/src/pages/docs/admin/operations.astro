@@ -19,7 +19,14 @@ import CodeTabs from "../../../components/CodeTabs.astro";
 # One of: "PENDING", "APPLIED", "FAILED"
 if status == "APPLIED":
     ...`}
-    goNote={`Not exposed as a typed Go SDK method. For read-after-write consistency from Go, prefer the after_offset / wait_applied patterns described in the Consistency docs once they ship; in the meantime, call EntDBService/GetReceiptStatus on the raw generated stub.`}
+    go={`status, errMsg, err := client.GetReceiptStatus(
+    ctx, "acme", "user:admin", result.Receipt.IdempotencyKey,
+)
+if status == entdb.ReceiptStatusApplied {
+    // Landed cleanly.
+}
+// Other values: ReceiptStatusPending, ReceiptStatusFailed (with errMsg),
+// ReceiptStatusUnknown (no receipt — safe to re-issue).`}
   />
   <p>Pair this with <code>wait_for_offset</code> when you need to gate a follow-up read on the write being visible &mdash; see <a href="/tenant-shard-db/docs/crud/consistency">Read-after-Write Consistency</a>.</p>
 
@@ -56,7 +63,9 @@ err := scope.Share(ctx, taskID, entdb.GroupActor("eng"), entdb.PermissionWrite)`
     actor="user:admin",
 )
 # True if the node existed and ownership was transferred`}
-    goNote={`Not exposed as a typed Go SDK method. Call EntDBService/TransferOwnership via the generated proto stub if you need this from Go.`}
+    go={`scope := client.Tenant("acme").Actor(entdb.UserActor("admin"))
+found, err := scope.TransferOwnership(ctx, "task_42", entdb.UserActor("bob"))
+// found == true if the node existed and ownership was transferred`}
   />
 
   <h2>delegate_access</h2>
@@ -73,7 +82,15 @@ await db.delegate_access(
     actor="user:admin",
 )
 # {"success": True, "delegated": <count>, "expires_at": ...}`}
-    goNote={`Not exposed as a typed Go SDK method. Use the generated EntDBService/DelegateAccess stub from Go if needed.`}
+    go={`expires := time.Now().Add(7 * 24 * time.Hour).UnixMilli()
+
+result, err := client.Admin().DelegateAccess(
+    ctx, "user:admin", "acme",
+    "user:alice", "user:bob",
+    "read", expires,
+)
+// result.Delegated == <count of nodes affected>; result.ExpiresAtMs == expires
+// Pass expires=0 for a permanent delegation.`}
   />
   <p>Pass <code>expires_at=None</code> for a permanent delegation. The grant is revoked automatically once <code>expires_at</code> passes; no background sweep is required because the ACL check evaluates the timestamp at read time.</p>
 
@@ -87,7 +104,11 @@ await db.delegate_access(
     actor="user:admin",
 )
 # {"success": True, "transferred": <count>, "error": ""}`}
-    goNote={`Not exposed as a typed Go SDK method. Use EntDBService/TransferUserContent via the generated stub if needed.`}
+    go={`count, err := client.Admin().TransferUserContent(
+    ctx, "user:admin", "acme",
+    "user:alice", "user:manager",
+)
+// count == <number of nodes reassigned>`}
   />
   <p>Server-side this also ensures <code>to_user</code> is a member of the tenant (adding them as <code>member</code> if not). It does <strong>not</strong> revoke <code>from_user</code>'s direct ACL grants on other people's nodes &mdash; combine with <code>revoke_all_user_access</code> for a full off-board.</p>
 
@@ -102,7 +123,10 @@ await db.delegate_access(
 # {"success": True,
 #  "revoked_grants": 17, "revoked_groups": 3, "revoked_shared": 8,
 #  "error": ""}`}
-    goNote={`Not exposed as a typed Go SDK method. Call EntDBService/RevokeAllUserAccess via the generated stub.`}
+    go={`result, err := client.Admin().RevokeAllUserAccess(
+    ctx, "user:admin", "acme", "alice",
+)
+// result.RevokedGrants == 17, RevokedGroups == 3, RevokedShared == 8`}
   />
   <p>This does not delete or anonymize the user's owned nodes &mdash; for that, see <code>transfer_user_content</code> (offboarding) or the GDPR <code>delete_user</code> flow (right-to-erasure with grace period).</p>
 
