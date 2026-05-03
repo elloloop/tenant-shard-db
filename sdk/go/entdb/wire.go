@@ -197,10 +197,19 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 // filterToProto converts the SDK's MongoDB-style filter map into
 // a slice of *pb.FieldFilter. The mapping matches the Python
 // SDK's behaviour: top-level entries become equality filters; a
-// nested map with “$<op>“ keys selects the appropriate
-// FilterOp. Unknown operators fall through as equality against
-// the entire subtree — the server surfaces the mismatch as an
-// INVALID_ARGUMENT that the SDK turns into a ValidationError.
+// nested map with “$<op>“ keys emits one FieldFilter per operator
+// and selects the appropriate FilterOp.
+//
+// Unknown operators (e.g. “$nin“, “$between“, “$and“) are not
+// expressible in the wire's FilterOp enum, so they are passed
+// through as the raw subtree on a single EQ filter — the server
+// reconstructs a MongoDB-style operator dict from that and runs it
+// through the SQL compiler, where unknown operators surface as a
+// typed ValidationError. To keep this fallback deterministic
+// regardless of Go's randomised map iteration, we detect the
+// "contains an unknown operator" case up-front and emit a single
+// pass-through filter rather than mixing per-op filters with a
+// pass-through.
 func filterToProto(filter map[string]any) ([]*pb.FieldFilter, error) {
 	if len(filter) == 0 {
 		return nil, nil
@@ -209,18 +218,20 @@ func filterToProto(filter map[string]any) ([]*pb.FieldFilter, error) {
 	for field, raw := range filter {
 		// Nested operator dict — e.g. {"price": {"$gte": 100}}
 		if sub, ok := raw.(map[string]any); ok && len(sub) > 0 {
-			for opKey, val := range sub {
-				op, ok := filterOpFromKey(opKey)
-				if !ok {
-					// Fall back to passing the raw value through as a
-					// Struct so the server can surface a typed error.
-					v, err := structpb.NewValue(raw)
-					if err != nil {
-						return nil, fmt.Errorf("entdb: filter field %q: %w", field, err)
-					}
-					out = append(out, &pb.FieldFilter{Field: field, Op: pb.FilterOp_EQ, Value: v})
-					break
+			if subHasUnknownOp(sub) {
+				// Pass the full subtree through as a Struct on a
+				// single EQ filter — the server's
+				// _field_filters_to_filter_dict reconstructs the
+				// operator dict and the SQL compiler validates it.
+				v, err := structpb.NewValue(raw)
+				if err != nil {
+					return nil, fmt.Errorf("entdb: filter field %q: %w", field, err)
 				}
+				out = append(out, &pb.FieldFilter{Field: field, Op: pb.FilterOp_EQ, Value: v})
+				continue
+			}
+			for opKey, val := range sub {
+				op, _ := filterOpFromKey(opKey)
 				v, err := structpb.NewValue(val)
 				if err != nil {
 					return nil, fmt.Errorf("entdb: filter field %q op %q: %w", field, opKey, err)
@@ -237,6 +248,17 @@ func filterToProto(filter map[string]any) ([]*pb.FieldFilter, error) {
 		out = append(out, &pb.FieldFilter{Field: field, Op: pb.FilterOp_EQ, Value: v})
 	}
 	return out, nil
+}
+
+// subHasUnknownOp reports whether any key in the operator dict is
+// not representable on the wire as a FilterOp enum value.
+func subHasUnknownOp(sub map[string]any) bool {
+	for k := range sub {
+		if _, ok := filterOpFromKey(k); !ok {
+			return true
+		}
+	}
+	return false
 }
 
 // filterOpFromKey maps the MongoDB-style "$eq"/"$gte"/... strings
