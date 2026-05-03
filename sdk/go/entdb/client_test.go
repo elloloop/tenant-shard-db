@@ -146,6 +146,46 @@ func (m *mockTransport) RemoveGroupMember(_ context.Context, _, _, _, _ string) 
 	return nil
 }
 
+func (m *mockTransport) CreateTenant(_ context.Context, _, _, _ string) (*TenantDetail, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) CreateUser(_ context.Context, _, _, _, _ string) (*UserInfo, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) AddTenantMember(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
+func (m *mockTransport) RemoveTenantMember(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
+func (m *mockTransport) ChangeMemberRole(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
+
+func (m *mockTransport) GetTenantMembers(_ context.Context, _, _ string) ([]TenantMember, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) GetUserTenants(_ context.Context, _, _ string) ([]TenantMember, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) DelegateAccess(_ context.Context, _, _, _, _, _ string, _ int64) (*DelegateResult, error) {
+	return nil, nil
+}
+
+func (m *mockTransport) TransferUserContent(_ context.Context, _, _, _, _ string) (int32, error) {
+	return 0, nil
+}
+
+func (m *mockTransport) RevokeAllUserAccess(_ context.Context, _, _, _ string) (*RevokeAllResult, error) {
+	return nil, nil
+}
+
 func newTestClient(t *testing.T, transport *mockTransport, opts ...ClientOption) *DbClient {
 	t.Helper()
 	return newClientWithTransport("localhost:50051", transport, opts...)
