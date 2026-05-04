@@ -622,6 +622,8 @@ class DbClient:
         registry: SchemaRegistry | None = None,
         schema_module: Any | None = None,
         schema_fingerprint: str | None = None,
+        node_resolver: Any | None = None,
+        base_domain: str | None = None,
     ) -> None:
         """Initialize client.
 
@@ -637,6 +639,17 @@ class DbClient:
                 every write for server-side version checks.
             schema_fingerprint: Optional explicit schema fingerprint. Takes
                 precedence over ``schema_module`` and the registry.
+            node_resolver: Optional :class:`NodeResolver` used to map
+                server-issued ``node_id`` redirect hints to dial-able
+                endpoints. When set the SDK transparently caches a
+                sub-channel per tenant on first redirect and routes
+                future calls there.
+            base_domain: Convenience for the common DNS-template case.
+                ``base_domain="entdb.svc.cluster.local"`` installs a
+                :class:`DNSTemplateResolver` that resolves
+                ``node-a`` to ``node-a.entdb.svc.cluster.local:50051``.
+                Mutually exclusive with ``node_resolver`` — if both
+                are provided ``node_resolver`` wins.
         """
         # Parse address
         if ":" in address:
@@ -647,6 +660,11 @@ class DbClient:
             port = 50051  # Default gRPC port
 
         self.registry = registry or get_registry()
+        if node_resolver is None and base_domain:
+            from ._redirect_cache import DNSTemplateResolver
+
+            node_resolver = DNSTemplateResolver(base_domain=base_domain)
+
         self._grpc = GrpcClient(
             host=host,
             port=port,
@@ -654,6 +672,7 @@ class DbClient:
             api_key=api_key,
             max_retries=max_retries,
             registry=self.registry,
+            node_resolver=node_resolver,
         )
         self._connected = False
         self._last_offsets: dict[str, str] = {}  # tenant_id -> stream_position

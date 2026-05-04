@@ -1,13 +1,23 @@
 package entdb
 
-import "time"
+import (
+	"time"
+
+	"google.golang.org/grpc"
+)
 
 // clientConfig holds all client configuration values.
 type clientConfig struct {
-	secure     bool
-	apiKey     string
-	maxRetries int
-	timeout    time.Duration
+	secure       bool
+	apiKey       string
+	maxRetries   int
+	timeout      time.Duration
+	nodeResolver NodeResolver
+	// dialOptions is appended to the grpc.NewClient option list on
+	// every dial — both the primary endpoint and any redirect
+	// sub-channels. Tests use it to install a contextDialer for
+	// bufconn-backed in-process servers.
+	dialOptions []grpc.DialOption
 }
 
 // defaultConfig returns a clientConfig with sensible defaults.
@@ -50,6 +60,36 @@ func WithMaxRetries(n int) ClientOption {
 func WithTimeout(d time.Duration) ClientOption {
 	return func(c *clientConfig) {
 		c.timeout = d
+	}
+}
+
+// WithNodeResolver installs a custom [NodeResolver] used to map
+// server-issued ``node_id`` redirect hints to dial-able endpoints.
+//
+// Use this with [StaticMapResolver] for deployments without DNS,
+// or with a custom implementation backed by service discovery.
+//
+// If both [WithNodeResolver] and [WithBaseDomain] are supplied,
+// the last one wins.
+func WithNodeResolver(r NodeResolver) ClientOption {
+	return func(c *clientConfig) { c.nodeResolver = r }
+}
+
+// WithBaseDomain wires a [DNSTemplateResolver] for the given base
+// domain. Sub-channels are dialed at ``<node_id>.<baseDomain>:50051``
+// when the server returns a redirect hint via the
+// ``entdb-redirect-node`` trailing metadata header.
+//
+// This is the recommended way to configure node redirection on
+// Kubernetes — point ``baseDomain`` at the headless service and
+// the Pod-per-shard StatefulSet will be reachable via the
+// per-pod DNS record.
+//
+//	client, _ := entdb.NewClient("entdb.svc.cluster.local:50051",
+//	    entdb.WithBaseDomain("entdb.svc.cluster.local"))
+func WithBaseDomain(baseDomain string) ClientOption {
+	return func(c *clientConfig) {
+		c.nodeResolver = &DNSTemplateResolver{BaseDomain: baseDomain}
 	}
 }
 
