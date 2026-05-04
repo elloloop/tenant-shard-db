@@ -55,37 +55,42 @@ COPY playground/frontend/ playground/frontend/
 RUN cd playground/frontend && npm run build
 
 # =============================================================================
-# Builder stage - install dependencies
+# Builder stage - install dependencies via uv from pyproject.toml
 # =============================================================================
 FROM base AS builder
 
-# Install build dependencies
+# Pull pinned uv binary from the official distroless image. uv resolves
+# and installs the dependency tree from pyproject.toml extras, so the
+# image deps cannot drift from the declared deps.
+COPY --from=ghcr.io/astral-sh/uv:0.5.14 /uv /uvx /usr/local/bin/
+
+# Build deps for any wheels that need compilation (cryptography, grpcio
+# on uncommon archs). Most wheels are prebuilt.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never
 
-# Copy requirements and install dependencies
-COPY pyproject.toml ./
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir \
-    aiokafka>=0.10.0 \
-    aiobotocore>=2.11.0 \
-    aiohttp>=3.9.0 \
-    grpcio>=1.60.0 \
-    grpcio-tools>=1.60.0 \
-    uvicorn>=0.27.0 \
-    fastapi>=0.109.0 \
-    pydantic>=2.5.0 \
-    pydantic-settings>=2.0.0 \
-    pyyaml>=6.0.0 \
-    aiofiles>=23.2.0 \
-    PyJWT>=2.8.0 \
-    cryptography>=41.0.0
+RUN uv venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
+
+# pyproject.toml is the single source of truth for runtime deps.
+# `uv pip compile` resolves the named extras into a flat requirement
+# list, which `uv pip install` then installs. The entdb package itself
+# is NOT installed here — modules are imported from /app via PYTHONPATH
+# at the per-stage level, so a code change does not invalidate this
+# dependency layer.
+COPY pyproject.toml README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip compile pyproject.toml \
+        --extra server --extra console --extra playground \
+        -o /tmp/requirements.txt && \
+    uv pip install --no-cache -r /tmp/requirements.txt
 
 # =============================================================================
 # Server stage - production image
@@ -210,10 +215,6 @@ FROM base AS playground
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install playground dependencies (SDK from PyPI)
-COPY playground/requirements.txt /app/playground/
-RUN pip install --no-cache-dir -r /app/playground/requirements.txt
-
 # Copy application code
 COPY playground/*.py /app/playground/
 
@@ -248,13 +249,11 @@ CMD ["uvicorn", "playground.app:app", "--host", "0.0.0.0", "--port", "8081"]
 # =============================================================================
 FROM builder AS test
 
-# Install test dependencies
-RUN pip install --no-cache-dir \
-    pytest>=7.4.0 \
-    pytest-asyncio>=0.23.0 \
-    pytest-cov>=4.1.0 \
-    pytest-timeout>=2.2.0 \
-    httpx>=0.26.0
+# Install dev extras (pytest, mypy, grpcio-tools, etc.) on top of the
+# runtime venv. Source of truth is pyproject.toml [dev] extras.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip compile pyproject.toml --extra dev -o /tmp/dev-requirements.txt && \
+    uv pip install --no-cache -r /tmp/dev-requirements.txt
 
 # Copy all code
 COPY . /app/
