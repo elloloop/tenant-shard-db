@@ -81,7 +81,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import grpc; ch = grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=5)"]
+      test: ["CMD", "python", "-m", "dbaas.entdb_server.healthcheck", "--addr=localhost:50051"]
       interval: 10s
       timeout: 10s
       retries: 5

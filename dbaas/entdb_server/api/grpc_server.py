@@ -3096,6 +3096,19 @@ class GrpcServer:
         # Register servicer
         add_EntDBServiceServicer_to_server(self.servicer, self._server)
 
+        # Register the standard gRPC Health Checking Protocol
+        # (grpc.health.v1.Health). Orchestrators (k8s, ECS, Docker
+        # HEALTHCHECK) probe via grpc_health_probe / equivalent rather
+        # than relying on a separate HTTP endpoint. Status is set to
+        # SERVING immediately; we don't currently degrade it on
+        # backend-component failure (snapshot/applier errors don't make
+        # the gRPC surface unhealthy — those have their own metrics).
+        from grpc_health.v1 import health, health_pb2, health_pb2_grpc
+
+        self._health_servicer = health.aio.HealthServicer()
+        health_pb2_grpc.add_HealthServicer_to_server(self._health_servicer, self._server)
+        await self._health_servicer.set("", health_pb2.HealthCheckResponse.SERVING)
+
         # Enable reflection for debugging tools like grpcurl
         if self.reflection_enabled:
             try:
@@ -3105,6 +3118,7 @@ class GrpcServer:
 
                 SERVICE_NAMES = (
                     entdb_pb2.DESCRIPTOR.services_by_name["EntDBService"].full_name,
+                    health_pb2.DESCRIPTOR.services_by_name["Health"].full_name,
                     reflection.SERVICE_NAME,
                 )
                 reflection.enable_server_reflection(SERVICE_NAMES, self._server)
