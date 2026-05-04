@@ -123,18 +123,18 @@ ENV PYTHONPATH="/app:/app/sdk"
 
 # Default configuration
 ENV GRPC_BIND="0.0.0.0:50051"
-ENV HTTP_ENABLED="true"
-ENV HTTP_BIND="0.0.0.0:8081"
 ENV DATA_DIR="/var/lib/entdb"
 ENV LOG_LEVEL="INFO"
 ENV LOG_FORMAT="json"
 
 # Expose ports
-EXPOSE 50051 8081
+EXPOSE 50051
 
-# Health check
+# Health check via the standard gRPC Health Checking Protocol
+# (grpc.health.v1.Health/Check). The probe script ships in the image
+# alongside the server — no separate binary download.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8081/v1/health || exit 1
+    CMD python -m dbaas.entdb_server.healthcheck --addr=localhost:50051 || exit 1
 
 # Default command
 CMD ["python", "-m", "dbaas.entdb_server.main"]
