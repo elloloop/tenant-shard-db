@@ -1,5 +1,16 @@
 # API Reference
 
+> ## ⚠ Internal transport — use an SDK
+>
+> The gRPC and HTTP surfaces below are **internal transports** used by the official SDKs. They are not stable public contracts; the wire format may change between releases, and the SDKs enforce non-obvious invariants (field IDs, actor strings, ACL encoding, idempotency keys, schema fingerprints) that hand-rolled clients will get wrong.
+>
+> Use one of the sanctioned SDKs:
+>
+> - **Go:** [`github.com/elloloop/tenant-shard-db/sdk/go/entdb`](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb)
+> - **Python:** `pip install entdb-sdk`
+>
+> The reference below is for SDK maintainers and operators debugging the wire — not for application code.
+
 EntDB exposes both gRPC and HTTP APIs.
 
 ## gRPC API

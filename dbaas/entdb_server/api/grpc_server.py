@@ -3104,6 +3104,12 @@ class GrpcServer:
             f"gRPC server started on {bind_address}",
             extra={"host": self.host, "port": self.port},
         )
+        logger.warning(
+            "EntDB gRPC is an INTERNAL transport. Clients MUST use the official "
+            "SDKs (Go: github.com/elloloop/tenant-shard-db/sdk/go/entdb, "
+            "Python: pip install entdb-sdk). Hand-rolled gRPC clients are "
+            "unsupported and may break without notice."
+        )
 
     async def stop(self, grace_period: float = 5.0) -> None:
         """Stop the gRPC server gracefully.
