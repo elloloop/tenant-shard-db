@@ -251,6 +251,7 @@ class EntDBServicer(EntDBServiceServicer):
         sharding: ShardingConfig | None = None,
         global_store: Any | None = None,
         capability_registry: Any | None = None,
+        served_region: str | None = None,
     ) -> None:
         """Initialize the gRPC servicer.
 
@@ -265,6 +266,10 @@ class EntDBServicer(EntDBServiceServicer):
                 ``CapabilityRegistry``. When ``None``, a default
                 (core-caps-only) registry is built from
                 ``schema_registry`` on first use.
+            served_region: Geographic region this node serves (e.g.
+                ``us-east-1``). Data-plane requests for tenants pinned to
+                a different region are rejected with FAILED_PRECONDITION.
+                ``None`` disables the check (single-region back-compat).
         """
         self.wal = wal
         self.canonical_store = canonical_store
@@ -273,6 +278,7 @@ class EntDBServicer(EntDBServiceServicer):
         self._sharding = sharding
         self.global_store = global_store
         self._capability_registry = capability_registry
+        self.served_region = served_region
 
     @property
     def capability_registry(self) -> Any:
@@ -362,6 +368,21 @@ class EntDBServicer(EntDBServiceServicer):
                 grpc.StatusCode.UNAVAILABLE,
                 f"Tenant '{tenant_id}' is not served by this node{hint}",
             )
+
+        # Region pinning: a tenant pinned to region X must not be served by a
+        # node configured for region Y. Permanent for this node, so
+        # FAILED_PRECONDITION (not UNAVAILABLE — UNAVAILABLE invites retries).
+        if self.served_region and self.global_store is not None:
+            tenant = await self.global_store.get_tenant(tenant_id)
+            if tenant is not None:
+                tenant_region = tenant.get("region")
+                if tenant_region and tenant_region != self.served_region:
+                    await context.abort(
+                        grpc.StatusCode.FAILED_PRECONDITION,
+                        f"Tenant '{tenant_id}' is pinned to region "
+                        f"'{tenant_region}'; this node serves "
+                        f"'{self.served_region}'.",
+                    )
 
     def _actor_user_id(self, actor: str) -> str:
         """Extract user_id from actor string like 'user:ID'."""
@@ -2093,6 +2114,7 @@ class EntDBServicer(EntDBServiceServicer):
             name=t.get("name", ""),
             status=t.get("status", ""),
             created_at=t.get("created_at", 0),
+            region=t.get("region", ""),
         )
 
     @staticmethod
@@ -2140,7 +2162,13 @@ class EntDBServicer(EntDBServiceServicer):
             if not request.name:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "name is required")
 
-            tenant = await self.global_store.create_tenant(request.tenant_id, request.name)
+            # Empty region defaults to the server's served region (or
+            # 'us-east-1' when this node has no region configured —
+            # single-region back-compat).
+            region = request.region or self.served_region or "us-east-1"
+            tenant = await self.global_store.create_tenant(
+                request.tenant_id, request.name, region=region
+            )
 
             # Initialize the per-tenant SQLite database
             await self.canonical_store.initialize_tenant(request.tenant_id)

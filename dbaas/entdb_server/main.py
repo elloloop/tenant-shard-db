@@ -366,6 +366,7 @@ class Server:
                 topic=topic,
                 sharding=self.config.sharding,
                 global_store=self.global_store,
+                served_region=os.getenv("ENTDB_REGION") or None,
             )
 
             # Start gRPC server

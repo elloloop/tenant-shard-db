@@ -144,6 +144,7 @@ class GlobalStore:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         conn = self._open_connection()
         self._create_schema(conn)
+        self._migrate_tenant_registry_region(conn)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Open (or return cached) connection to global.db."""
@@ -181,6 +182,19 @@ class GlobalStore:
         conn = self._open_connection()
         yield conn
 
+    @staticmethod
+    def _migrate_tenant_registry_region(conn: sqlite3.Connection) -> None:
+        """Add the region column to tenant_registry if it predates the column.
+
+        Older deployments shipped without per-tenant region pinning; opening
+        such a database with the current code must not crash.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(tenant_registry)")}
+        if "region" not in cols:
+            conn.execute(
+                "ALTER TABLE tenant_registry ADD COLUMN region TEXT NOT NULL DEFAULT 'us-east-1'"
+            )
+
     def _create_schema(self, conn: sqlite3.Connection) -> None:
         """Create all global tables if they do not exist."""
         conn.executescript(
@@ -198,7 +212,8 @@ class GlobalStore:
                 tenant_id   TEXT PRIMARY KEY,
                 name        TEXT NOT NULL,
                 status      TEXT NOT NULL DEFAULT 'active',
-                created_at  INTEGER NOT NULL
+                created_at  INTEGER NOT NULL,
+                region      TEXT NOT NULL DEFAULT 'us-east-1'
             );
 
             CREATE TABLE IF NOT EXISTS tenant_members (
@@ -434,36 +449,40 @@ class GlobalStore:
 
     # ── Tenant CRUD ───────────────────────────────────────────────────
 
-    async def create_tenant(self, tenant_id: str, name: str) -> dict:
+    async def create_tenant(self, tenant_id: str, name: str, region: str = "us-east-1") -> dict:
         """Register a new tenant.
 
         Args:
             tenant_id: Unique tenant identifier
             name: Tenant display name
+            region: Geographic region pin (e.g. ``us-east-1``, ``eu-west-1``).
+                Once set, all data-plane traffic for this tenant must land
+                on a server configured to serve this region.
 
         Returns:
-            Dict with tenant fields
+            Dict with tenant fields (including ``region``)
 
         Raises:
             sqlite3.IntegrityError: If tenant_id already exists
         """
-        return await self._run_sync(self._sync_create_tenant, tenant_id, name)
+        return await self._run_sync(self._sync_create_tenant, tenant_id, name, region)
 
-    def _sync_create_tenant(self, tenant_id: str, name: str) -> dict:
+    def _sync_create_tenant(self, tenant_id: str, name: str, region: str) -> dict:
         now = self._now()
         with self._get_connection() as conn:
             conn.execute(
                 """
-                INSERT INTO tenant_registry (tenant_id, name, status, created_at)
-                VALUES (?, ?, 'active', ?)
+                INSERT INTO tenant_registry (tenant_id, name, status, created_at, region)
+                VALUES (?, ?, 'active', ?, ?)
                 """,
-                (tenant_id, name, now),
+                (tenant_id, name, now, region),
             )
             return {
                 "tenant_id": tenant_id,
                 "name": name,
                 "status": "active",
                 "created_at": now,
+                "region": region,
             }
 
     async def get_tenant(self, tenant_id: str) -> dict | None:

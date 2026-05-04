@@ -75,6 +75,76 @@ class TestGlobalStoreTenantCRUD:
         assert active[0]["tenant_id"] == "t1"
 
 
+class TestGlobalStoreTenantRegion:
+    """Tests for per-tenant region pinning in the tenant registry."""
+
+    @pytest.fixture
+    def store(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            s = GlobalStore(tmpdir)
+            yield s
+            s.close()
+
+    async def test_create_tenant_default_region(self, store):
+        """A tenant created without specifying region defaults to us-east-1."""
+        tenant = await store.create_tenant("t1", "Acme")
+        assert tenant["region"] == "us-east-1"
+
+    async def test_create_tenant_with_region(self, store):
+        """create_tenant accepts an explicit region kwarg and persists it."""
+        tenant = await store.create_tenant("t-eu", "Acme EU", region="eu-west-1")
+        assert tenant["region"] == "eu-west-1"
+
+    async def test_get_tenant_returns_region(self, store):
+        """get_tenant surfaces the persisted region."""
+        await store.create_tenant("t-ap", "Acme APAC", region="ap-southeast-1")
+        fetched = await store.get_tenant("t-ap")
+        assert fetched is not None
+        assert fetched["region"] == "ap-southeast-1"
+
+    async def test_list_tenants_returns_region(self, store):
+        """list_tenants surfaces region for every row."""
+        await store.create_tenant("t-us", "US", region="us-east-1")
+        await store.create_tenant("t-eu", "EU", region="eu-west-1")
+        listed = {t["tenant_id"]: t["region"] for t in await store.list_tenants()}
+        assert listed == {"t-us": "us-east-1", "t-eu": "eu-west-1"}
+
+    async def test_alter_table_migration_for_pre_region_db(self, tmp_path):
+        """A tenant_registry created before the region column exists gains it on open.
+
+        This guards against in-place upgrades: existing deployments must not
+        crash when the new GlobalStore schema runs against an old DB file.
+        """
+        # Hand-create a pre-region tenant_registry (no region column).
+        db_path = tmp_path / "global.db"
+        with sqlite3.connect(db_path) as conn:
+            conn.execute(
+                """
+                CREATE TABLE tenant_registry (
+                    tenant_id   TEXT PRIMARY KEY,
+                    name        TEXT NOT NULL,
+                    status      TEXT NOT NULL DEFAULT 'active',
+                    created_at  INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO tenant_registry (tenant_id, name, status, created_at) "
+                "VALUES ('legacy', 'Legacy Co', 'active', 1)"
+            )
+            conn.commit()
+
+        # Opening with the new schema must add the column without losing data.
+        store = GlobalStore(str(tmp_path))
+        try:
+            tenant = await store.get_tenant("legacy")
+            assert tenant is not None
+            assert tenant["name"] == "Legacy Co"
+            assert tenant["region"] == "us-east-1"  # backfilled default
+        finally:
+            store.close()
+
+
 class TestGlobalStoreMembership:
     """Tests for tenant membership operations in GlobalStore."""
 
