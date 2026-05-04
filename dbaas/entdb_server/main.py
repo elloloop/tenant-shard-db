@@ -196,8 +196,6 @@ class Server:
     @staticmethod
     def _load_schema_file(registry: object, schema_file: str) -> None:
         """Load node/edge types from a YAML or JSON schema file into the registry."""
-        import yaml
-
         from .schema.types import EdgeTypeDef, NodeTypeDef
 
         path = Path(schema_file)
@@ -207,6 +205,12 @@ class Server:
 
         raw = path.read_text()
         if path.suffix in (".yaml", ".yml"):
+            # ``yaml`` is only required for the legacy YAML-format
+            # path; lazy-import so JSON schema files (the canonical
+            # ``entdb-schema snapshot`` output) load even in
+            # environments that don't have PyYAML installed.
+            import yaml
+
             data = yaml.safe_load(raw)
         else:
             import json
