@@ -63,7 +63,61 @@ jobs:
             # SHA
             type=sha,prefix=sha-
 
-      - name: Build and push
+      # Stage 1: build a single-arch image into the local docker daemon so
+      # we can boot it and run a real smoke test BEFORE pushing anything
+      # to the registry. This catches the "image fails at startup" class
+      # of bug (e.g. missing runtime dep) that the multi-arch push step
+      # cannot, since `load: true` is incompatible with multi-platform.
+      - name: Build (smoke, linux/amd64, load only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          push: false
+          target: ${{ matrix.target }}
+          tags: entdb-smoke:${{ matrix.target }}
+          cache-from: type=gha
+          # Don't write smoke build to cache — let the multi-arch push
+          # step own the cache so its layers are reused.
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+
+      - name: Smoke test - server image boots and healthcheck reports SERVING
+        if: matrix.target == 'server'
+        run: |
+          set -euo pipefail
+          docker run -d --name entdb-smoke \
+            -e WAL_BACKEND=local \
+            -p 50051:50051 \
+            entdb-smoke:server
+          # Poll the in-image healthcheck (the same one Docker / k8s use).
+          # Wait up to 60s for the server to come up.
+          for i in $(seq 1 30); do
+            if docker exec entdb-smoke \
+                python -m dbaas.entdb_server.healthcheck --addr=localhost:50051; then
+              echo "::notice::Server healthy after ${i} attempts"
+              docker rm -f entdb-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Server did not become healthy within 60s — refusing to publish image"
+          docker logs entdb-smoke
+          docker rm -f entdb-smoke
+          exit 1
+
+      - name: Smoke test - SDK image imports entdb_sdk
+        if: matrix.target == 'sdk'
+        run: |
+          set -euo pipefail
+          docker run --rm entdb-smoke:sdk \
+            python -c "import entdb_sdk; print('entdb_sdk', entdb_sdk.__version__)"
+
+      # Stage 2: smoke passed — now build the multi-arch image and push.
+      # Buildkit reuses layers from the smoke build via gha cache.
+      - name: Build and push (multi-arch)
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -153,6 +207,19 @@ jobs:
         run: |
           cd sdk
           python -m build
+
+      # Smoke-test the built wheel in a clean venv before publishing.
+      # If the wheel can't be imported, refuse to push it to PyPI.
+      - name: Smoke test - install wheel and import entdb_sdk
+        run: |
+          set -euo pipefail
+          uv venv /tmp/sdk-smoke
+          uv pip install --python /tmp/sdk-smoke/bin/python sdk/dist/*.whl
+          /tmp/sdk-smoke/bin/python -c "
+          import entdb_sdk
+          from entdb_sdk import DbClient, register_proto_schema, Permission, Actor
+          print('entdb_sdk', entdb_sdk.__version__)
+          "
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

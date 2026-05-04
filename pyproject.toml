@@ -37,6 +37,25 @@ server = [
     "grpcio-health-checking>=1.60.0",
     "PyJWT>=2.8.0",
     "cryptography>=41.0.0",
+    "PyYAML>=6.0.0",
+]
+console = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "httpx>=0.26.0",
+    "python-multipart>=0.0.6",
+    "aiofiles>=23.2.0",
+]
+playground = [
+    "aiohttp>=3.9.0",
+    "uvicorn>=0.27.0",
+    "fastapi>=0.109.0",
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.0.0",
+    "PyYAML>=6.0.0",
+    "aiofiles>=23.2.0",
 ]
 pubsub = [
     "google-cloud-pubsub>=2.18.0",
@@ -77,7 +96,7 @@ dev = [
     "grpcio-tools>=1.60.0",
 ]
 all = [
-    "entdb[server,sdk,metrics,tracing,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
+    "entdb[server,console,playground,sdk,metrics,tracing,pubsub,servicebus,eventhubs,azure-storage,gcs,dev]",
 ]
 
 [project.scripts]
