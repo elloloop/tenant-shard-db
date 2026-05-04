@@ -152,6 +152,38 @@ _RETRYABLE_STATUS_CODES = frozenset(
 _DEFAULT_TIMEOUT: float = 30.0
 
 
+def _multicallable_rebinder(fn: Any):
+    """Return a callable ``(channel) -> new_multicallable`` that
+    re-issues ``fn``'s RPC on a different gRPC AIO channel.
+
+    The grpc.aio stub binds each RPC to a fixed channel; to follow
+    a redirect we need an equivalent multicallable on the redirect
+    target's channel. We read the method path and serializers from
+    the original — these are stable across the grpc-python releases
+    used by the SDK (see the ``UnaryUnaryMultiCallable`` API).
+
+    Returns ``None`` for callables we can't recognise (e.g. a
+    custom test fake), so the caller can skip the redirect path
+    rather than raising a confusing AttributeError.
+    """
+    method = getattr(fn, "_method", None)
+    if method is None:
+        return None
+    request_serializer = getattr(fn, "_request_serializer", None)
+    response_deserializer = getattr(fn, "_response_deserializer", None)
+
+    method_str = method.decode() if isinstance(method, (bytes, bytearray)) else method
+
+    def _rebind(channel: grpc_aio.Channel):
+        return channel.unary_unary(
+            method_str,
+            request_serializer=request_serializer,
+            response_deserializer=response_deserializer,
+        )
+
+    return _rebind
+
+
 @dataclass
 class Node:
     """A node from the database.
@@ -313,6 +345,7 @@ class GrpcClient:
         api_key: str | None = None,
         max_retries: int = 3,
         registry: Any = None,
+        node_resolver: Any | None = None,
     ) -> None:
         """Initialize the gRPC client.
 
@@ -325,6 +358,11 @@ class GrpcClient:
             max_retries: Maximum number of retries for transient failures
             registry: Optional schema registry used to translate the
                 id-keyed wire payload back to user-facing field names.
+            node_resolver: Optional :class:`NodeResolver` used to map
+                server-issued ``node_id`` redirect hints to dial-able
+                endpoints. When set, the SDK transparently caches a
+                sub-channel per tenant the first time the server
+                redirects, and routes future calls there.
         """
         self._host = host
         self._port = port
@@ -335,6 +373,28 @@ class GrpcClient:
         self._registry = registry
         self._channel: grpc_aio.Channel | None = None
         self._stub: EntDBServiceStub | None = None
+        self._node_resolver = node_resolver
+        # Lazily initialised on first connect — see
+        # ``_redirect_cache.py`` for the design.
+        self._redirect_cache: Any = None
+
+    def _open_channel(self, address: str) -> grpc_aio.Channel:
+        """Open a gRPC channel mirroring the client's TLS settings.
+
+        Used both for the primary connection and for the per-tenant
+        sub-channels managed by the redirect cache.
+        """
+        if self._secure:
+            if self._credentials:
+                return grpc_aio.secure_channel(address, self._credentials)
+            return grpc_aio.secure_channel(address, grpc.ssl_channel_credentials())
+        return grpc_aio.insecure_channel(
+            address,
+            options=[
+                ("grpc.max_send_message_length", 50 * 1024 * 1024),
+                ("grpc.max_receive_message_length", 50 * 1024 * 1024),
+            ],
+        )
 
     async def connect(self) -> None:
         """Establish connection to the server."""
@@ -342,29 +402,20 @@ class GrpcClient:
             return
 
         address = f"{self._host}:{self._port}"
-
-        if self._secure:
-            if self._credentials:
-                self._channel = grpc_aio.secure_channel(address, self._credentials)
-            else:
-                self._channel = grpc_aio.secure_channel(
-                    address,
-                    grpc.ssl_channel_credentials(),
-                )
-        else:
-            self._channel = grpc_aio.insecure_channel(
-                address,
-                options=[
-                    ("grpc.max_send_message_length", 50 * 1024 * 1024),
-                    ("grpc.max_receive_message_length", 50 * 1024 * 1024),
-                ],
-            )
-
+        self._channel = self._open_channel(address)
         self._stub = EntDBServiceStub(self._channel)
+
+        if self._node_resolver is not None:
+            from ._redirect_cache import TenantEndpointCache
+
+            self._redirect_cache = TenantEndpointCache(channel_factory=self._open_channel)
         logger.debug(f"Connected to EntDB server at {address}")
 
     async def close(self) -> None:
         """Close the connection."""
+        if self._redirect_cache is not None:
+            await self._redirect_cache.close()
+            self._redirect_cache = None
         if self._channel:
             await self._channel.close()
             self._channel = None
@@ -406,28 +457,97 @@ class GrpcClient:
         fn: Any,
         *args: Any,
         max_retries: int | None = None,
+        tenant_id: str = "",
         **kwargs: Any,
     ) -> Any:
-        """Retry on transient gRPC errors (UNAVAILABLE, DEADLINE_EXCEEDED).
+        """Retry on transient gRPC errors and follow tenant redirects.
+
+        Behaviour:
+            - On UNAVAILABLE / DEADLINE_EXCEEDED, retry with
+              exponential backoff up to ``max_retries`` times.
+            - On UNAVAILABLE with the ``entdb-redirect-node``
+              trailing metadata header (and a non-empty
+              ``tenant_id``), resolve the node, dial a sub-channel,
+              cache it, and re-issue the call against the cached
+              endpoint. Counts as the redirect retry — does not
+              consume the transient-failure budget.
+            - On UNAVAILABLE against an already-cached sub-channel,
+              evict the cache entry so the next call falls back to
+              the primary endpoint.
 
         Args:
-            fn: Async callable to retry
-            *args: Positional arguments for fn
-            max_retries: Override for max retry attempts
-            **kwargs: Keyword arguments for fn
-
-        Returns:
-            Result of the callable
-
-        Raises:
-            grpc.RpcError: If all retries are exhausted or error is non-retryable
+            fn: Bound stub method (e.g. ``stub.GetNode``).
+            *args: Positional arguments for fn.
+            max_retries: Override for max retry attempts.
+            tenant_id: Tenant id of the call. Required for the
+                redirect path; pass ``""`` for tenant-agnostic RPCs
+                (Health, CreateUser, ...).
+            **kwargs: Keyword arguments for fn.
         """
+        from ._redirect_cache import extract_redirect_node
+
+        # ``fn`` is a UnaryUnaryMultiCallable bound to a specific
+        # channel. To re-issue the same RPC on a different channel
+        # we re-create the multicallable from the call's
+        # ``_method`` path and serializers — these are stable,
+        # non-public attributes maintained by grpc.aio across
+        # versions used in the SDK.
+        rebind = _multicallable_rebinder(fn)
+
+        # If we already cached an endpoint for this tenant, route
+        # the first attempt there.
+        if tenant_id and self._redirect_cache is not None and rebind is not None:
+            entry = await self._redirect_cache.get(tenant_id)
+            if entry is not None:
+                fn = rebind(entry.channel)
+                rebind = _multicallable_rebinder(fn)
+
         retries = max_retries if max_retries is not None else self._max_retries
         last_error: grpc.RpcError | None = None
         for attempt in range(retries + 1):
             try:
                 return await fn(*args, **kwargs)
             except grpc.RpcError as e:
+                # Redirect path: server says "try node X" — resolve,
+                # cache, retry once on the new sub-channel.
+                node_id = extract_redirect_node(e)
+                if (
+                    node_id
+                    and tenant_id
+                    and self._redirect_cache is not None
+                    and self._node_resolver is not None
+                    and rebind is not None
+                ):
+                    try:
+                        endpoint = self._node_resolver.resolve(node_id)
+                    except LookupError:
+                        # No endpoint — surface the original error.
+                        raise e from None
+                    entry = await self._redirect_cache.store(tenant_id, endpoint)
+                    redirected = rebind(entry.channel)
+                    try:
+                        return await redirected(*args, **kwargs)
+                    except grpc.RpcError as redir_err:
+                        # If the redirect target is also broken,
+                        # evict so we don't keep using a bad
+                        # sub-channel and fall through to the
+                        # transient-retry logic below.
+                        if redir_err.code() == grpc.StatusCode.UNAVAILABLE:
+                            await self._redirect_cache.evict(tenant_id)
+                        raise
+                # If the call failed against a cached sub-channel,
+                # evict so the next call falls back to the primary
+                # endpoint (tenant may have moved).
+                primary_channel = getattr(self._stub, "_channel", None) if self._stub else None
+                fn_channel = getattr(fn, "_channel", None)
+                if (
+                    e.code() == grpc.StatusCode.UNAVAILABLE
+                    and tenant_id
+                    and self._redirect_cache is not None
+                    and fn_channel is not None
+                    and fn_channel is not primary_channel
+                ):
+                    await self._redirect_cache.evict(tenant_id)
                 if e.code() not in _RETRYABLE_STATUS_CODES or attempt == retries:
                     raise
                 last_error = e
@@ -484,6 +604,7 @@ class GrpcClient:
                 request,
                 timeout=timeout or _DEFAULT_TIMEOUT,
                 metadata=metadata,
+                tenant_id=tenant_id,
             )
 
             receipt = None
@@ -676,6 +797,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         status_map = {
@@ -721,6 +843,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return response.reached, response.current_position
@@ -768,6 +891,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         if not response.found:
@@ -826,6 +950,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         if not response.found:
@@ -875,6 +1000,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
@@ -946,6 +1072,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
@@ -992,6 +1119,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         edges = [_edge_from_proto(e) for e in response.edges]
@@ -1038,6 +1166,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         edges = [_edge_from_proto(e) for e in response.edges]
@@ -1091,6 +1220,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return [
@@ -1156,6 +1286,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return [_node_from_proto(n, self._registry) for n in response.nodes]
@@ -1209,6 +1340,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         items = [
@@ -1333,6 +1465,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
@@ -1385,6 +1518,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return response.success
@@ -1426,6 +1560,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return response.found
@@ -1467,6 +1602,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
@@ -1513,6 +1649,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return response.success
@@ -1554,6 +1691,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return response.success
@@ -1595,6 +1733,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return response.found
@@ -1837,6 +1976,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         result: dict[str, Any] = {
@@ -1883,6 +2023,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         if not response.found:
@@ -1926,6 +2067,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return {
@@ -1969,6 +2111,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return {
@@ -2009,6 +2152,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return {
@@ -2046,6 +2190,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return [
@@ -2136,6 +2281,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
 
         return {
@@ -2180,6 +2326,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
         return {
             "success": response.success,
@@ -2228,6 +2375,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
         return {
             "success": response.success,
@@ -2269,6 +2417,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
         return {
             "success": response.success,
@@ -2312,6 +2461,7 @@ class GrpcClient:
             request,
             timeout=timeout or _DEFAULT_TIMEOUT,
             metadata=metadata,
+            tenant_id=tenant_id,
         )
         return {
             "success": response.success,

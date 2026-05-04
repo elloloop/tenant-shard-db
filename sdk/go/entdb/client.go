@@ -212,6 +212,11 @@ type grpcTransport struct {
 	config  clientConfig
 	conn    *grpc.ClientConn
 	client  pb.EntDBServiceClient
+	// redirectCache is non-nil when the client was constructed
+	// with a [NodeResolver] (via [WithNodeResolver] or
+	// [WithBaseDomain]). It caches per-tenant sub-channels for
+	// nodes the SDK has been redirected to.
+	redirectCache *tenantEndpointCache
 }
 
 func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
@@ -225,23 +230,44 @@ func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
 // API keys) to the outgoing context. Done on every call rather
 // than on the dial to match the Python SDK's behaviour — the
 // metadata is per-call, not per-channel.
-func (t *grpcTransport) callContext(ctx context.Context) context.Context {
-	if t.config.apiKey == "" {
-		return ctx
+//
+// When ``tenantID`` is non-empty it is also stamped onto the
+// outgoing context as ``entdb-tenant-id``. The redirect
+// interceptor (see ``redirect_cache.go``) reads this header to
+// route the call against a cached sub-channel without having to
+// reflect over every request type.
+func (t *grpcTransport) callContext(ctx context.Context, tenantID string) context.Context {
+	if t.config.apiKey != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+t.config.apiKey)
 	}
-	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+t.config.apiKey)
+	if tenantID != "" {
+		ctx = metadata.AppendToOutgoingContext(ctx, outgoingTenantHeader, tenantID)
+	}
+	return ctx
 }
 
 func (t *grpcTransport) Connect(_ context.Context) error {
-	var creds credentials.TransportCredentials
-	if t.config.secure {
-		creds = credentials.NewTLS(nil)
-	} else {
-		creds = insecure.NewCredentials()
+	// When a NodeResolver is configured, the redirect cache holds
+	// per-tenant sub-channels and a unary interceptor routes calls
+	// onto them transparently. The cache uses the same dial
+	// settings (TLS / insecure / explicit dial options) as the
+	// primary connection.
+	if t.config.nodeResolver != nil && t.redirectCache == nil {
+		t.redirectCache = newTenantEndpointCache(dialerFromConfig(t.config))
 	}
 
-	opts := []grpc.DialOption{
-		grpc.WithTransportCredentials(creds),
+	opts := append([]grpc.DialOption(nil), t.config.dialOptions...)
+	if !hasTransportCreds(opts) {
+		var creds credentials.TransportCredentials
+		if t.config.secure {
+			creds = credentials.NewTLS(nil)
+		} else {
+			creds = insecure.NewCredentials()
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	}
+	if interceptor := redirectInterceptor(t.config.nodeResolver, t.redirectCache); interceptor != nil {
+		opts = append(opts, grpc.WithUnaryInterceptor(interceptor))
 	}
 
 	conn, err := grpc.NewClient(t.address, opts...)
@@ -254,6 +280,9 @@ func (t *grpcTransport) Connect(_ context.Context) error {
 }
 
 func (t *grpcTransport) Close() error {
+	if t.redirectCache != nil {
+		t.redirectCache.closeAll()
+	}
 	if t.conn != nil {
 		err := t.conn.Close()
 		t.conn = nil
@@ -281,7 +310,7 @@ func (t *grpcTransport) GetNode(ctx context.Context, tenantID, actor string, typ
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetNode(t.callContext(ctx), &pb.GetNodeRequest{
+	resp, err := client.GetNode(t.callContext(ctx, tenantID), &pb.GetNodeRequest{
 		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		TypeId:  int32(typeID),
 		NodeId:  nodeID,
@@ -301,7 +330,7 @@ func (t *grpcTransport) GetNodeByKey(ctx context.Context, tenantID, actor string
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetNodeByKey(t.callContext(ctx), &pb.GetNodeByKeyRequest{
+	resp, err := client.GetNodeByKey(t.callContext(ctx, tenantID), &pb.GetNodeByKeyRequest{
 		TenantId: tenantID,
 		Actor:    actor,
 		TypeId:   typeID,
@@ -327,7 +356,7 @@ func (t *grpcTransport) QueryNodes(ctx context.Context, tenantID, actor string, 
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.QueryNodes(t.callContext(ctx), &pb.QueryNodesRequest{
+	resp, err := client.QueryNodes(t.callContext(ctx, tenantID), &pb.QueryNodesRequest{
 		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		TypeId:  int32(typeID),
 		Filters: filters,
@@ -353,7 +382,7 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.ExecuteAtomic(t.callContext(ctx), &pb.ExecuteAtomicRequest{
+	resp, err := client.ExecuteAtomic(t.callContext(ctx, tenantID), &pb.ExecuteAtomicRequest{
 		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		IdempotencyKey: idempotencyKey,
 		Operations:     protoOps,
@@ -384,7 +413,7 @@ func (t *grpcTransport) Share(ctx context.Context, tenantID, actor, nodeID, gran
 		return err
 	}
 	var trailer metadata.MD
-	_, err = client.ShareNode(t.callContext(ctx), &pb.ShareNodeRequest{
+	_, err = client.ShareNode(t.callContext(ctx, tenantID), &pb.ShareNodeRequest{
 		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		NodeId:     nodeID,
 		ActorId:    grantee,
@@ -402,7 +431,7 @@ func (t *grpcTransport) GetEdgesFrom(ctx context.Context, tenantID, actor, fromN
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetEdgesFrom(t.callContext(ctx), &pb.GetEdgesRequest{
+	resp, err := client.GetEdgesFrom(t.callContext(ctx, tenantID), &pb.GetEdgesRequest{
 		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		NodeId:     fromNodeID,
 		EdgeTypeId: int32(edgeTypeID),
@@ -424,7 +453,7 @@ func (t *grpcTransport) GetEdgesTo(ctx context.Context, tenantID, actor, toNodeI
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetEdgesTo(t.callContext(ctx), &pb.GetEdgesRequest{
+	resp, err := client.GetEdgesTo(t.callContext(ctx, tenantID), &pb.GetEdgesRequest{
 		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		NodeId:     toNodeID,
 		EdgeTypeId: int32(edgeTypeID),
@@ -446,7 +475,7 @@ func (t *grpcTransport) SearchNodes(ctx context.Context, tenantID, actor string,
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.SearchNodes(t.callContext(ctx), &pb.SearchNodesRequest{
+	resp, err := client.SearchNodes(t.callContext(ctx, tenantID), &pb.SearchNodesRequest{
 		TenantId: tenantID,
 		Actor:    actor,
 		TypeId:   int32(typeID),
@@ -469,7 +498,7 @@ func (t *grpcTransport) GetTenantQuota(ctx context.Context, actor, tenantID stri
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetTenantQuota(t.callContext(ctx), &pb.GetTenantQuotaRequest{
+	resp, err := client.GetTenantQuota(t.callContext(ctx, tenantID), &pb.GetTenantQuotaRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 	}, grpc.Trailer(&trailer))
@@ -496,7 +525,7 @@ func (t *grpcTransport) GetNodes(ctx context.Context, tenantID, actor string, ty
 		return nil, nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetNodes(t.callContext(ctx), &pb.GetNodesRequest{
+	resp, err := client.GetNodes(t.callContext(ctx, tenantID), &pb.GetNodesRequest{
 		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		TypeId:  int32(typeID),
 		NodeIds: nodeIDs,
@@ -518,7 +547,7 @@ func (t *grpcTransport) GetReceiptStatus(ctx context.Context, tenantID, actor, i
 		return ReceiptStatusUnknown, "", err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetReceiptStatus(t.callContext(ctx), &pb.GetReceiptStatusRequest{
+	resp, err := client.GetReceiptStatus(t.callContext(ctx, tenantID), &pb.GetReceiptStatusRequest{
 		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		IdempotencyKey: idempotencyKey,
 	}, grpc.Trailer(&trailer))
@@ -534,7 +563,7 @@ func (t *grpcTransport) WaitForOffset(ctx context.Context, tenantID, actor, stre
 		return false, "", err
 	}
 	var trailer metadata.MD
-	resp, err := client.WaitForOffset(t.callContext(ctx), &pb.WaitForOffsetRequest{
+	resp, err := client.WaitForOffset(t.callContext(ctx, tenantID), &pb.WaitForOffsetRequest{
 		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		StreamPosition: streamPosition,
 		TimeoutMs:      timeoutMs,
@@ -551,7 +580,7 @@ func (t *grpcTransport) GetConnectedNodes(ctx context.Context, tenantID, actor, 
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetConnectedNodes(t.callContext(ctx), &pb.GetConnectedNodesRequest{
+	resp, err := client.GetConnectedNodes(t.callContext(ctx, tenantID), &pb.GetConnectedNodesRequest{
 		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		NodeId:     nodeID,
 		EdgeTypeId: int32(edgeTypeID),
@@ -573,7 +602,7 @@ func (t *grpcTransport) ListSharedWithMe(ctx context.Context, tenantID, actor st
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.ListSharedWithMe(t.callContext(ctx), &pb.ListSharedWithMeRequest{
+	resp, err := client.ListSharedWithMe(t.callContext(ctx, tenantID), &pb.ListSharedWithMeRequest{
 		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		Limit:   limit,
 		Offset:  offset,
@@ -595,7 +624,7 @@ func (t *grpcTransport) RevokeAccess(ctx context.Context, tenantID, actor, nodeI
 		return false, err
 	}
 	var trailer metadata.MD
-	resp, err := client.RevokeAccess(t.callContext(ctx), &pb.RevokeAccessRequest{
+	resp, err := client.RevokeAccess(t.callContext(ctx, tenantID), &pb.RevokeAccessRequest{
 		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		NodeId:  nodeID,
 		ActorId: granteeActor,
@@ -612,7 +641,7 @@ func (t *grpcTransport) TransferOwnership(ctx context.Context, tenantID, actor, 
 		return false, err
 	}
 	var trailer metadata.MD
-	resp, err := client.TransferOwnership(t.callContext(ctx), &pb.TransferOwnershipRequest{
+	resp, err := client.TransferOwnership(t.callContext(ctx, tenantID), &pb.TransferOwnershipRequest{
 		Context:  &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		NodeId:   nodeID,
 		NewOwner: newOwner,
@@ -629,7 +658,7 @@ func (t *grpcTransport) AddGroupMember(ctx context.Context, tenantID, actor, gro
 		return err
 	}
 	var trailer metadata.MD
-	_, err = client.AddGroupMember(t.callContext(ctx), &pb.GroupMemberRequest{
+	_, err = client.AddGroupMember(t.callContext(ctx, tenantID), &pb.GroupMemberRequest{
 		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		GroupId:       groupID,
 		MemberActorId: memberActor,
@@ -647,7 +676,7 @@ func (t *grpcTransport) RemoveGroupMember(ctx context.Context, tenantID, actor, 
 		return err
 	}
 	var trailer metadata.MD
-	_, err = client.RemoveGroupMember(t.callContext(ctx), &pb.GroupMemberRequest{
+	_, err = client.RemoveGroupMember(t.callContext(ctx, tenantID), &pb.GroupMemberRequest{
 		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		GroupId:       groupID,
 		MemberActorId: memberActor,
@@ -670,7 +699,7 @@ func (t *grpcTransport) CreateTenant(ctx context.Context, actor, tenantID, name 
 		opt(&cfg)
 	}
 	var trailer metadata.MD
-	resp, err := client.CreateTenant(t.callContext(ctx), &pb.CreateTenantRequest{
+	resp, err := client.CreateTenant(t.callContext(ctx, tenantID), &pb.CreateTenantRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		Name:     name,
@@ -698,7 +727,7 @@ func (t *grpcTransport) CreateUser(ctx context.Context, actor, userID, email, na
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.CreateUser(t.callContext(ctx), &pb.CreateUserRequest{
+	resp, err := client.CreateUser(t.callContext(ctx, ""), &pb.CreateUserRequest{
 		Actor:  actor,
 		UserId: userID,
 		Email:  email,
@@ -727,7 +756,7 @@ func (t *grpcTransport) AddTenantMember(ctx context.Context, actor, tenantID, us
 		return err
 	}
 	var trailer metadata.MD
-	resp, err := client.AddTenantMember(t.callContext(ctx), &pb.TenantMemberRequest{
+	resp, err := client.AddTenantMember(t.callContext(ctx, tenantID), &pb.TenantMemberRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		UserId:   userID,
@@ -748,7 +777,7 @@ func (t *grpcTransport) RemoveTenantMember(ctx context.Context, actor, tenantID,
 		return err
 	}
 	var trailer metadata.MD
-	resp, err := client.RemoveTenantMember(t.callContext(ctx), &pb.TenantMemberRequest{
+	resp, err := client.RemoveTenantMember(t.callContext(ctx, tenantID), &pb.TenantMemberRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		UserId:   userID,
@@ -768,7 +797,7 @@ func (t *grpcTransport) ChangeMemberRole(ctx context.Context, actor, tenantID, u
 		return err
 	}
 	var trailer metadata.MD
-	resp, err := client.ChangeMemberRole(t.callContext(ctx), &pb.ChangeMemberRoleRequest{
+	resp, err := client.ChangeMemberRole(t.callContext(ctx, tenantID), &pb.ChangeMemberRoleRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		UserId:   userID,
@@ -789,7 +818,7 @@ func (t *grpcTransport) GetTenantMembers(ctx context.Context, actor, tenantID st
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetTenantMembers(t.callContext(ctx), &pb.GetTenantMembersRequest{
+	resp, err := client.GetTenantMembers(t.callContext(ctx, tenantID), &pb.GetTenantMembersRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 	}, grpc.Trailer(&trailer))
@@ -814,7 +843,7 @@ func (t *grpcTransport) GetUserTenants(ctx context.Context, actor, userID string
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.GetUserTenants(t.callContext(ctx), &pb.GetUserTenantsRequest{
+	resp, err := client.GetUserTenants(t.callContext(ctx, ""), &pb.GetUserTenantsRequest{
 		Actor:  actor,
 		UserId: userID,
 	}, grpc.Trailer(&trailer))
@@ -839,7 +868,7 @@ func (t *grpcTransport) DelegateAccess(ctx context.Context, actor, tenantID, fro
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.DelegateAccess(t.callContext(ctx), &pb.DelegateAccessRequest{
+	resp, err := client.DelegateAccess(t.callContext(ctx, tenantID), &pb.DelegateAccessRequest{
 		Actor:      actor,
 		TenantId:   tenantID,
 		FromUser:   fromUser,
@@ -865,7 +894,7 @@ func (t *grpcTransport) TransferUserContent(ctx context.Context, actor, tenantID
 		return 0, err
 	}
 	var trailer metadata.MD
-	resp, err := client.TransferUserContent(t.callContext(ctx), &pb.TransferUserContentRequest{
+	resp, err := client.TransferUserContent(t.callContext(ctx, tenantID), &pb.TransferUserContentRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		FromUser: fromUser,
@@ -886,7 +915,7 @@ func (t *grpcTransport) RevokeAllUserAccess(ctx context.Context, actor, tenantID
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.RevokeAllUserAccess(t.callContext(ctx), &pb.RevokeAllUserAccessRequest{
+	resp, err := client.RevokeAllUserAccess(t.callContext(ctx, tenantID), &pb.RevokeAllUserAccessRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		UserId:   userID,
@@ -912,7 +941,7 @@ func (t *grpcTransport) DeleteUser(ctx context.Context, actor, userID string, gr
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.DeleteUser(t.callContext(ctx), &pb.DeleteUserRequest{
+	resp, err := client.DeleteUser(t.callContext(ctx, ""), &pb.DeleteUserRequest{
 		Actor:     actor,
 		UserId:    userID,
 		GraceDays: graceDays,
@@ -936,7 +965,7 @@ func (t *grpcTransport) CancelUserDeletion(ctx context.Context, actor, userID st
 		return err
 	}
 	var trailer metadata.MD
-	resp, err := client.CancelUserDeletion(t.callContext(ctx), &pb.CancelUserDeletionRequest{
+	resp, err := client.CancelUserDeletion(t.callContext(ctx, ""), &pb.CancelUserDeletionRequest{
 		Actor:  actor,
 		UserId: userID,
 	}, grpc.Trailer(&trailer))
@@ -955,7 +984,7 @@ func (t *grpcTransport) ExportUserData(ctx context.Context, actor, userID string
 		return "", err
 	}
 	var trailer metadata.MD
-	resp, err := client.ExportUserData(t.callContext(ctx), &pb.ExportUserDataRequest{
+	resp, err := client.ExportUserData(t.callContext(ctx, ""), &pb.ExportUserDataRequest{
 		Actor:  actor,
 		UserId: userID,
 	}, grpc.Trailer(&trailer))
@@ -974,7 +1003,7 @@ func (t *grpcTransport) Health(ctx context.Context) (*HealthStatus, error) {
 		return nil, err
 	}
 	var trailer metadata.MD
-	resp, err := client.Health(t.callContext(ctx), &pb.HealthRequest{}, grpc.Trailer(&trailer))
+	resp, err := client.Health(t.callContext(ctx, ""), &pb.HealthRequest{}, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, "", t.address)
 	}
@@ -991,7 +1020,7 @@ func (t *grpcTransport) FreezeUser(ctx context.Context, actor, userID string, en
 		return "", err
 	}
 	var trailer metadata.MD
-	resp, err := client.FreezeUser(t.callContext(ctx), &pb.FreezeUserRequest{
+	resp, err := client.FreezeUser(t.callContext(ctx, ""), &pb.FreezeUserRequest{
 		Actor:   actor,
 		UserId:  userID,
 		Enabled: enabled,

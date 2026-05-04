@@ -18,6 +18,7 @@ How to change safely:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -358,10 +359,35 @@ class EntDBServicer(EntDBServiceServicer):
         )
 
     async def _check_tenant(self, tenant_id: str, context) -> None:
-        """Reject requests for tenants not owned by this node."""
+        """Reject requests for tenants not owned by this node.
+
+        When the sharding registry knows which node owns the tenant
+        we attach the owner's ``node_id`` as a trailing metadata
+        entry (``entdb-redirect-node``) before aborting. SDKs use
+        this header to resolve the correct endpoint and retry the
+        RPC there — see ``sdk/go/entdb/redirect_cache.go`` and
+        ``sdk/entdb_sdk/_redirect_cache.py``. The human-readable
+        ``(try node X)`` tail of the error message is preserved for
+        log readability and for older SDKs that don't parse the
+        trailer.
+        """
         if self._sharding and not self._sharding.is_mine(tenant_id):
             owner = self._sharding.get_owner(tenant_id)
             hint = f" (try node {owner})" if owner else ""
+            if owner:
+                # Set the trailer FIRST — once ``abort`` is awaited
+                # the call is closed and trailers are flushed with it.
+                # ``set_trailing_metadata`` on a grpc.aio
+                # ServicerContext is *synchronous* (returns None)
+                # despite the rest of the surface being awaitable. We
+                # await it conditionally so the same call site works
+                # against a unit-test ``AsyncMock`` (which always
+                # returns a coroutine).
+                _trailer_result = context.set_trailing_metadata(
+                    (("entdb-redirect-node", owner),),
+                )
+                if asyncio.iscoroutine(_trailer_result):
+                    await _trailer_result
             await context.abort(
                 grpc.StatusCode.UNAVAILABLE,
                 f"Tenant '{tenant_id}' is not served by this node{hint}",
