@@ -198,13 +198,62 @@ class Edge:
     created_at: int
 
 
-def _node_from_proto(n: Any) -> Node:
-    """Build a user-facing Node directly from a proto Node message."""
+def _payload_id_to_name(payload: dict[str, Any], type_id: int, registry: Any) -> dict[str, Any]:
+    """Translate an id-keyed payload dict to a name-keyed payload dict.
+
+    The wire format is field-id-keyed (per ``CLAUDE.md`` invariant #6
+    and the Go SDK contract at ``sdk/go/entdb/marshal.go:342``). The
+    Python SDK exposes payloads to users as name-keyed for ergonomics,
+    so we translate at the SDK boundary using the local schema
+    registry.
+
+    Behavior:
+        * Empty payload → empty dict.
+        * Registry without a definition for ``type_id`` → pass through
+          unchanged (schema-less mode, e.g. raw tests).
+        * Keys that aren't digit strings (legacy / partial migrations)
+          are passed through verbatim.
+        * Unknown id keys are kept as the raw id-string so that
+          forward-compatible clients don't lose data.
+    """
+    if not payload:
+        return {}
+    if registry is None or not hasattr(registry, "get_node_type"):
+        return dict(payload)
+    node_type = registry.get_node_type(type_id)
+    if node_type is None:
+        return dict(payload)
+    id_to_name: dict[int, str] = {}
+    for f in getattr(node_type, "fields", ()) or ():
+        fid = getattr(f, "field_id", None)
+        fname = getattr(f, "name", None)
+        if fid is not None and fname is not None:
+            id_to_name[int(fid)] = fname
+    out: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(key, str) and key.isdigit():
+            name = id_to_name.get(int(key))
+            out[name if name is not None else key] = value
+        else:
+            out[key] = value
+    return out
+
+
+def _node_from_proto(n: Any, registry: Any = None) -> Node:
+    """Build a user-facing Node directly from a proto Node message.
+
+    The wire payload is id-keyed; the SDK translates to name-keyed for
+    ergonomic user code via the supplied schema ``registry``. When no
+    registry is supplied (or the type is not registered) the payload
+    is passed through unchanged.
+    """
+    raw = _struct_to_dict(n.payload)
+    payload = _payload_id_to_name(raw, n.type_id, registry) if registry is not None else raw
     return Node(
         tenant_id=n.tenant_id,
         node_id=n.node_id,
         type_id=n.type_id,
-        payload=_struct_to_dict(n.payload),
+        payload=payload,
         created_at=n.created_at,
         updated_at=n.updated_at,
         owner_actor=n.owner_actor,
@@ -263,6 +312,7 @@ class GrpcClient:
         credentials: grpc.ChannelCredentials | None = None,
         api_key: str | None = None,
         max_retries: int = 3,
+        registry: Any = None,
     ) -> None:
         """Initialize the gRPC client.
 
@@ -273,6 +323,8 @@ class GrpcClient:
             credentials: Optional TLS credentials
             api_key: Optional API key for authentication
             max_retries: Maximum number of retries for transient failures
+            registry: Optional schema registry used to translate the
+                id-keyed wire payload back to user-facing field names.
         """
         self._host = host
         self._port = port
@@ -280,6 +332,7 @@ class GrpcClient:
         self._credentials = credentials
         self._api_key = api_key
         self._max_retries = max_retries
+        self._registry = registry
         self._channel: grpc_aio.Channel | None = None
         self._stub: EntDBServiceStub | None = None
 
@@ -720,7 +773,7 @@ class GrpcClient:
         if not response.found:
             return None
 
-        return _node_from_proto(response.node)
+        return _node_from_proto(response.node, self._registry)
 
     async def get_node_by_key(
         self,
@@ -777,7 +830,7 @@ class GrpcClient:
 
         if not response.found:
             return None
-        return _node_from_proto(response.node)
+        return _node_from_proto(response.node, self._registry)
 
     async def get_nodes(
         self,
@@ -824,7 +877,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [_node_from_proto(n) for n in response.nodes]
+        nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
 
         return nodes, list(response.missing_ids)
 
@@ -895,7 +948,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [_node_from_proto(n) for n in response.nodes]
+        nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
 
         return nodes, response.has_more
 
@@ -1105,7 +1158,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        return [_node_from_proto(n) for n in response.nodes]
+        return [_node_from_proto(n, self._registry) for n in response.nodes]
 
     async def get_mailbox(
         self,
@@ -1282,7 +1335,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [_node_from_proto(n) for n in response.nodes]
+        nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
 
         return nodes, response.has_more
 
@@ -1416,7 +1469,7 @@ class GrpcClient:
             metadata=metadata,
         )
 
-        nodes = [_node_from_proto(n) for n in response.nodes]
+        nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
 
         return nodes, response.has_more
 

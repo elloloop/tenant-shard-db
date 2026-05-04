@@ -3,7 +3,8 @@ Unit tests for field-ID based payload translation.
 
 Covers the helpers in
 ``dbaas.entdb_server.schema.field_id_translation`` which translate
-between name-keyed (wire) and id-keyed (on-disk) payloads, including:
+between name-keyed (client/SDK ingress) and id-keyed (on-disk and
+on-the-wire) payloads, including:
 
 - ``looks_id_keyed``
 - ``name_to_id_keys``
@@ -11,6 +12,12 @@ between name-keyed (wire) and id-keyed (on-disk) payloads, including:
 - ``translate_payload_json_to_names``
 - ``translate_filter_name_to_id``
 - round-trip + field-rename safety properties
+
+Note: as of PR-D both storage and the gRPC wire are id-keyed; the
+only translation point is the **write ingress** boundary where the
+server accepts name-keyed input from clients and converts to ids
+before persisting. Egress now ships id-keyed payloads to clients,
+which translate to names locally via their own schema registry.
 """
 
 from __future__ import annotations

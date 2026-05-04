@@ -11,11 +11,11 @@ decoupled and able to browse any EntDB instance without schema code.
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
+from google.protobuf import json_format
 from grpc import aio as grpc_aio
 
 # Import generated stubs - Console has its own copy
@@ -34,6 +34,13 @@ from entdb_sdk._generated import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _struct_to_dict(s: Any) -> dict[str, Any]:
+    """Convert a protobuf Struct to a Python dict."""
+    if not s or not getattr(s, "fields", None):
+        return {}
+    return json_format.MessageToDict(s)
 
 
 @dataclass
@@ -74,6 +81,68 @@ class ConsoleClient:
         self._port = port
         self._channel: grpc_aio.Channel | None = None
         self._stub: EntDBServiceStub | None = None
+        # Cache of {tenant_id: {type_id: {field_id_int: field_name}}}.
+        # Populated lazily by ``_get_id_to_name_map`` when translating
+        # id-keyed payloads back to names for the Console UI.
+        self._field_name_cache: dict[str, dict[int, dict[int, str]]] = {}
+
+    async def _get_id_to_name_map(self, tenant_id: str, type_id: int) -> dict[int, str]:
+        """Return a ``{field_id: field_name}`` map for ``type_id``.
+
+        Fetches the tenant's schema on first use and caches it. The
+        wire payload is field-id-keyed (per CLAUDE.md invariant #6) so
+        the Console must translate ids to names locally for display.
+        """
+        per_tenant = self._field_name_cache.get(tenant_id)
+        if per_tenant is None:
+            per_tenant = {}
+            self._field_name_cache[tenant_id] = per_tenant
+        cached = per_tenant.get(type_id)
+        if cached is not None:
+            return cached
+        try:
+            schema = await self.get_schema(tenant_id)
+        except Exception:
+            return {}
+        node_types = schema.get("schema", {}).get("node_types", []) or []
+        for nt in node_types:
+            try:
+                tid = int(nt.get("type_id", 0))
+            except (TypeError, ValueError):
+                continue
+            mapping: dict[int, str] = {}
+            for f in nt.get("fields", []) or []:
+                fid_raw = f.get("field_id")
+                fname = f.get("name")
+                if fid_raw is None or fname is None:
+                    continue
+                try:
+                    mapping[int(fid_raw)] = str(fname)
+                except (TypeError, ValueError):
+                    continue
+            per_tenant[tid] = mapping
+        return per_tenant.get(type_id, {})
+
+    async def _translate_payload(
+        self, tenant_id: str, type_id: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Translate an id-keyed payload to a name-keyed payload.
+
+        Unknown id keys are kept verbatim so partial/forward-compat
+        schemas don't drop data on display.
+        """
+        if not payload:
+            return {}
+        id_to_name = await self._get_id_to_name_map(tenant_id, type_id)
+        if not id_to_name:
+            return dict(payload)
+        out: dict[str, Any] = {}
+        for key, value in payload.items():
+            if isinstance(key, str) and key.isdigit():
+                out[id_to_name.get(int(key), key)] = value
+            else:
+                out[key] = value
+        return out
 
     async def connect(self) -> None:
         """Connect to EntDB server."""
@@ -124,7 +193,7 @@ class ConsoleClient:
         request = GetSchemaRequest(tenant_id=tenant_id or "")
         response = await self._stub.GetSchema(request)
         return {
-            "schema": json.loads(response.schema_json) if response.schema_json else {},
+            "schema": _struct_to_dict(response.schema),
             "fingerprint": response.fingerprint,
         }
 
@@ -150,11 +219,13 @@ class ConsoleClient:
             return None
 
         n = response.node
+        raw_payload = _struct_to_dict(n.payload)
+        translated = await self._translate_payload(tenant_id, n.type_id, raw_payload)
         return ConsoleNode(
             node_id=n.node_id,
             type_id=n.type_id,
             tenant_id=n.tenant_id,
-            payload=json.loads(n.payload_json) if n.payload_json else {},
+            payload=translated,
             owner_actor=n.owner_actor,
             created_at=n.created_at,
             updated_at=n.updated_at,
@@ -181,18 +252,21 @@ class ConsoleClient:
 
         response = await self._stub.QueryNodes(request)
 
-        nodes = [
-            ConsoleNode(
-                node_id=n.node_id,
-                type_id=n.type_id,
-                tenant_id=n.tenant_id,
-                payload=json.loads(n.payload_json) if n.payload_json else {},
-                owner_actor=n.owner_actor,
-                created_at=n.created_at,
-                updated_at=n.updated_at,
+        nodes = []
+        for n in response.nodes:
+            raw_payload = _struct_to_dict(n.payload)
+            translated = await self._translate_payload(tenant_id, n.type_id, raw_payload)
+            nodes.append(
+                ConsoleNode(
+                    node_id=n.node_id,
+                    type_id=n.type_id,
+                    tenant_id=n.tenant_id,
+                    payload=translated,
+                    owner_actor=n.owner_actor,
+                    created_at=n.created_at,
+                    updated_at=n.updated_at,
+                )
             )
-            for n in response.nodes
-        ]
 
         return nodes, response.has_more
 
@@ -223,7 +297,7 @@ class ConsoleClient:
                 from_node_id=e.from_node_id,
                 to_node_id=e.to_node_id,
                 tenant_id=e.tenant_id,
-                props=json.loads(e.props_json) if e.props_json else {},
+                props=_struct_to_dict(e.props),
                 created_at=e.created_at,
             )
             for e in response.edges
@@ -256,7 +330,7 @@ class ConsoleClient:
                 from_node_id=e.from_node_id,
                 to_node_id=e.to_node_id,
                 tenant_id=e.tenant_id,
-                props=json.loads(e.props_json) if e.props_json else {},
+                props=_struct_to_dict(e.props),
                 created_at=e.created_at,
             )
             for e in response.edges
@@ -343,7 +417,7 @@ class ConsoleClient:
                 "source_node_id": item.source_node_id,
                 "thread_id": item.thread_id,
                 "ts": item.ts,
-                "state": json.loads(item.state_json) if item.state_json else {},
+                "state": _struct_to_dict(item.state),
                 "snippet": item.snippet,
             }
             for item in response.items
