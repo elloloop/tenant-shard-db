@@ -855,12 +855,20 @@ message TenantDetail {
     string name = 2;
     string status = 3;
     int64 created_at = 4;
+    // Geographic region the tenant's data is pinned to (e.g. "us-east-1",
+    // "eu-west-1"). Data-plane traffic for this tenant must land on a
+    // server configured for this region; cross-region requests are
+    // rejected with FAILED_PRECONDITION.
+    string region = 5;
 }
 
 message CreateTenantRequest {
     string actor = 1;
     string tenant_id = 2;
     string name = 3;
+    // Geographic region pin. When empty, the server defaults the tenant
+    // to its own served region.
+    string region = 4;
 }
 
 message CreateTenantResponse {
