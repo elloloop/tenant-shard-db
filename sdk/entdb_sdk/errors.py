@@ -239,11 +239,24 @@ class UniqueConstraintError(EntDbError):
     at the unique-index INSERT (authoritative race winner). Both
     paths are mapped into this typed error.
 
+    Composite (multi-field) unique violations from
+    ``(entdb.node).composite_unique`` map onto the same exception
+    type so callers only need a single ``except`` clause.
+    ``constraint_name`` / ``field_ids`` / ``values`` are populated for
+    the composite form; ``field_id`` / ``value`` are populated for
+    the single-field form. Single-field is the legacy / common case
+    so the simple attributes stay first-class.
+
     Attributes:
         tenant_id: Tenant where the collision occurred.
         type_id: Numeric node type id.
-        field_id: Numeric field id of the unique field.
-        value: The colliding scalar value.
+        field_id: Numeric field id of the unique field (single-field).
+        value: The colliding scalar value (single-field).
+        constraint_name: Composite-constraint name (composite only).
+        field_ids: Tuple of field ids participating in the composite
+            constraint (composite only).
+        values: Tuple of colliding values aligned with ``field_ids``
+            (composite only).
     """
 
     def __init__(
@@ -254,6 +267,9 @@ class UniqueConstraintError(EntDbError):
         type_id: int | None = None,
         field_id: int | None = None,
         value: Any = None,
+        constraint_name: str | None = None,
+        field_ids: tuple[int, ...] | None = None,
+        values: tuple[Any, ...] | None = None,
     ) -> None:
         super().__init__(
             message,
@@ -263,12 +279,23 @@ class UniqueConstraintError(EntDbError):
                 "type_id": type_id,
                 "field_id": field_id,
                 "value": value,
+                "constraint_name": constraint_name,
+                "field_ids": list(field_ids) if field_ids is not None else None,
+                "values": list(values) if values is not None else None,
             },
         )
         self.tenant_id = tenant_id
         self.type_id = type_id
         self.field_id = field_id
         self.value = value
+        self.constraint_name = constraint_name
+        self.field_ids = field_ids
+        self.values = values
+
+    @property
+    def is_composite(self) -> bool:
+        """``True`` when this is a composite (multi-field) violation."""
+        return self.constraint_name is not None
 
 
 class RateLimitError(EntDbError):

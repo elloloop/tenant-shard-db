@@ -370,6 +370,60 @@ def field(
 
 
 @dataclass(frozen=True)
+class CompositeUniqueDef:
+    """A composite (multi-field) unique constraint on a node type.
+
+    Declares that the tuple of values at ``field_ids`` must be unique
+    across all nodes of the containing type. Resolved from the proto-
+    level ``(entdb.node).composite_unique`` annotation at registration
+    time so that on-disk storage uses stable numeric ``field_id``
+    references (rename-safe, see CLAUDE.md "field ids, not names").
+
+    Attributes:
+        name: Stable identifier used in error messages and SQLite
+            index names. When the proto-level entry omits a name the
+            schema layer derives one from the field ids (``f1_f2``).
+        field_ids: Ordered tuple of ``field_id`` values that make up
+            the composite. Must contain at least 2 entries —
+            single-field uniqueness uses ``FieldDef.unique`` instead.
+
+    Invariants:
+        - ``field_ids`` references at least 2 fields
+        - All ``field_ids`` resolve to known fields on the parent type
+        - No duplicate ``field_id`` within a single constraint
+    """
+
+    name: str
+    field_ids: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("CompositeUniqueDef name cannot be empty")
+        if len(self.field_ids) < 2:
+            raise ValueError(
+                f"CompositeUniqueDef '{self.name}' must reference at least 2 fields, "
+                f"got {len(self.field_ids)}"
+            )
+        if len(set(self.field_ids)) != len(self.field_ids):
+            raise ValueError(
+                f"CompositeUniqueDef '{self.name}' has duplicate field_id in {self.field_ids}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "field_ids": list(self.field_ids),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CompositeUniqueDef:
+        return cls(
+            name=data["name"],
+            field_ids=tuple(int(x) for x in data["field_ids"]),
+        )
+
+
+@dataclass(frozen=True)
 class NodeTypeDef:
     """Definition of a node type in the graph.
 
@@ -390,11 +444,16 @@ class NodeTypeDef:
         data_policy: Data classification policy (defaults to None; PERSONAL at runtime)
         subject_field: Name of the field that identifies the data subject
         legal_basis: Legal basis for processing (required for some policies)
+        composite_unique: Composite (multi-field) unique constraints.
+            Each entry declares that the listed fields, taken as a
+            tuple, must be unique across all nodes of this type.
 
     Invariants:
         - type_id must be unique across all node types
         - type_id cannot be reused after deprecation
         - fields can be added but not removed (deprecate instead)
+        - every ``composite_unique`` entry references at least 2 known
+          fields and has a unique name within the type
 
     Example:
         >>> User = NodeTypeDef(
@@ -416,6 +475,7 @@ class NodeTypeDef:
     data_policy: DataPolicy | None = None
     subject_field: str | None = None
     legal_basis: str | None = None
+    composite_unique: tuple[CompositeUniqueDef, ...] = dataclass_field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Validate node type definition."""
@@ -435,6 +495,33 @@ class NodeTypeDef:
         field_names = [f.name for f in self.fields]
         if len(field_names) != len(set(field_names)):
             raise ValueError(f"Duplicate field name in node type '{self.name}'")
+
+        # Validate composite unique constraints reference known fields,
+        # have unique names within the type, and are not duplicates of
+        # each other (same set of field ids).
+        if self.composite_unique:
+            known_ids = set(field_ids)
+            seen_names: set[str] = set()
+            seen_signatures: set[tuple[int, ...]] = set()
+            for cu in self.composite_unique:
+                for fid in cu.field_ids:
+                    if fid not in known_ids:
+                        raise ValueError(
+                            f"composite_unique '{cu.name}' on node type "
+                            f"'{self.name}' references unknown field_id {fid}"
+                        )
+                if cu.name in seen_names:
+                    raise ValueError(
+                        f"Duplicate composite_unique name '{cu.name}' on node type '{self.name}'"
+                    )
+                seen_names.add(cu.name)
+                signature = tuple(sorted(cu.field_ids))
+                if signature in seen_signatures:
+                    raise ValueError(
+                        f"Duplicate composite_unique constraint on node type "
+                        f"'{self.name}': fields {signature} already declared"
+                    )
+                seen_signatures.add(signature)
 
     def get_field(self, name_or_id: str | int) -> FieldDef | None:
         """Get a field by name or ID.
@@ -515,6 +602,8 @@ class NodeTypeDef:
             result["subject_field"] = self.subject_field
         if self.legal_basis is not None:
             result["legal_basis"] = self.legal_basis
+        if self.composite_unique:
+            result["composite_unique"] = [cu.to_dict() for cu in self.composite_unique]
         return result
 
     @classmethod
@@ -524,6 +613,9 @@ class NodeTypeDef:
         default_acl = tuple(AclEntry.from_dict(a) for a in data.get("default_acl", []))
         dp_raw = data.get("data_policy")
         data_policy = DataPolicy(dp_raw) if dp_raw is not None else None
+        composite_unique = tuple(
+            CompositeUniqueDef.from_dict(c) for c in data.get("composite_unique", [])
+        )
         return cls(
             type_id=data["type_id"],
             name=data["name"],
@@ -534,6 +626,7 @@ class NodeTypeDef:
             data_policy=data_policy,
             subject_field=data.get("subject_field"),
             legal_basis=data.get("legal_basis"),
+            composite_unique=composite_unique,
         )
 
     def __hash__(self) -> int:

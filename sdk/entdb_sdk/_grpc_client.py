@@ -107,6 +107,12 @@ _UNIQUE_DETAIL_RE = re.compile(
     re.IGNORECASE,
 )
 
+_COMPOSITE_UNIQUE_DETAIL_RE = re.compile(
+    r"type_id=(?P<type_id>\d+)\s+constraint=(?P<constraint>.+?)\s+"
+    r"fields=(?P<fields>\[[^\]]*\])\s+values=(?P<values>\[.*\])\s+already exists",
+    re.IGNORECASE,
+)
+
 
 def _parse_unique_constraint_detail(detail: str) -> tuple[int | None, int | None, Any]:
     """Parse the server's ALREADY_EXISTS detail string into structured fields.
@@ -141,6 +147,52 @@ def _parse_unique_constraint_detail(detail: str) -> tuple[int | None, int | None
     except (ValueError, SyntaxError):
         parsed_value = raw_value
     return type_id, field_id, parsed_value
+
+
+def _parse_composite_unique_constraint_detail(
+    detail: str,
+) -> tuple[int | None, str | None, tuple[int, ...] | None, tuple[Any, ...] | None]:
+    """Parse a composite-unique ``ALREADY_EXISTS`` detail.
+
+    The server emits composite (multi-field) unique violations as::
+
+        Composite unique constraint violation: type_id=<int>
+        constraint=<repr> fields=[<int>, ...] values=[<repr>, ...]
+        already exists
+
+    Returns ``(type_id, constraint_name, field_ids, values)`` or
+    ``(None, None, None, None)`` if the detail doesn't match — single-
+    field violations parse via ``_parse_unique_constraint_detail``
+    instead.
+    """
+    if not detail:
+        return None, None, None, None
+    m = _COMPOSITE_UNIQUE_DETAIL_RE.search(detail)
+    if not m:
+        return None, None, None, None
+    import ast
+
+    type_id = int(m.group("type_id"))
+    raw_constraint = m.group("constraint").strip()
+    try:
+        constraint_name = ast.literal_eval(raw_constraint)
+    except (ValueError, SyntaxError):
+        constraint_name = raw_constraint
+    if not isinstance(constraint_name, str):
+        constraint_name = str(constraint_name)
+    raw_fields = m.group("fields").strip()
+    raw_values = m.group("values").strip()
+    try:
+        fields_parsed = ast.literal_eval(raw_fields)
+    except (ValueError, SyntaxError):
+        fields_parsed = []
+    try:
+        values_parsed = ast.literal_eval(raw_values)
+    except (ValueError, SyntaxError):
+        values_parsed = []
+    field_ids = tuple(int(f) for f in (fields_parsed or []))
+    values_t = tuple(values_parsed or [])
+    return type_id, constraint_name, field_ids, values_t
 
 
 logger = logging.getLogger(__name__)
@@ -636,6 +688,25 @@ class GrpcClient:
                 from .errors import UniqueConstraintError
 
                 detail = e.details() if hasattr(e, "details") else str(e)
+                # Try the composite (multi-field) shape first — it's
+                # more specific. Fall through to the single-field
+                # parser if the detail doesn't match the composite
+                # format.
+                (
+                    c_type_id,
+                    c_constraint,
+                    c_field_ids,
+                    c_values,
+                ) = _parse_composite_unique_constraint_detail(detail)
+                if c_constraint is not None:
+                    raise UniqueConstraintError(
+                        detail,
+                        tenant_id=tenant_id,
+                        type_id=c_type_id,
+                        constraint_name=c_constraint,
+                        field_ids=c_field_ids,
+                        values=c_values,
+                    ) from e
                 type_id_parsed, field_id_parsed, value_parsed = _parse_unique_constraint_detail(
                     detail
                 )

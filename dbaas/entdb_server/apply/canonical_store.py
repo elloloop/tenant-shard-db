@@ -437,6 +437,11 @@ class CanonicalStore:
         # ``IF NOT EXISTS`` clause keeps it idempotent.
         self._unique_index_cache: set[tuple[str, int]] = set()
         self._query_index_cache: set[tuple[str, int]] = set()
+        # Cache for composite (multi-field) unique expression indexes
+        # so each ``CREATE UNIQUE INDEX`` runs at most once per
+        # ``(physical_db_path, type_id)`` pair across the process
+        # lifetime. Same shape as ``_unique_index_cache``.
+        self._composite_unique_index_cache: set[tuple[str, int]] = set()
 
         # Lazy FTS5 virtual table creation cache. Same pattern as
         # ``_unique_index_cache``: keyed by ``(db_path, type_id)``,
@@ -1791,6 +1796,82 @@ class CanonicalStore:
             )
         self._unique_index_cache.add(cache_key)
 
+    def _ensure_composite_unique_indexes(
+        self,
+        conn: sqlite3.Connection,
+        tenant_id: str,
+        type_id: int,
+        constraints: list[tuple[str, tuple[int, ...]]],
+    ) -> None:
+        """Lazily create composite (multi-field) unique expression indexes.
+
+        Mirrors ``_ensure_unique_indexes`` but each index covers a
+        tuple of fields rather than a single field. Implements the
+        composite-unique feature introduced for the OAuthIdentity
+        ``(provider, provider_user_id)`` use case so that two
+        concurrent ``create_node`` calls cannot both pass a Find-then-
+        Create application-side check and both insert.
+
+        Each constraint becomes a partial unique expression index of
+        the form::
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_t<type>_c<name>
+                ON nodes(tenant_id,
+                         json_extract(payload_json, '$."<f1>"'),
+                         json_extract(payload_json, '$."<f2>"'),
+                         ...)
+                WHERE type_id = <type>
+
+        ``tenant_id`` is part of the indexed tuple to keep tenants
+        isolated on shared physical files (mailbox / public stores).
+        ``type_id`` and ``field_id`` values originate from the schema
+        registry, not user input, so SQL interpolation is safe.
+
+        Args:
+            conn: Open SQLite connection.
+            tenant_id: Tenant identifier (only used for cache keying).
+            type_id: Node type id.
+            constraints: List of ``(constraint_name, (field_id, ...))``
+                tuples to materialise. An empty list is a no-op.
+        """
+        if not constraints:
+            return
+
+        try:
+            row = conn.execute("PRAGMA database_list").fetchone()
+            if row is None:
+                db_path = f"tenant:{tenant_id}"
+            else:
+                db_path = row[2] if isinstance(row, tuple) else row["file"]
+                if not db_path:
+                    db_path = f"tenant:{tenant_id}"
+        except sqlite3.Error:
+            db_path = f"tenant:{tenant_id}"
+
+        cache_key = (db_path, int(type_id))
+        if cache_key in self._composite_unique_index_cache:
+            return
+
+        int_type_id = int(type_id)
+        for cname, fids in constraints:
+            # Constraint names come from the schema registry which has
+            # already validated them at registration time. Strip out
+            # anything that wouldn't survive as a SQLite identifier as
+            # a defence-in-depth check (alphanumerics + underscore).
+            safe_name = "".join(c if (c.isalnum() or c == "_") else "_" for c in cname)
+            if not safe_name:
+                # Fallback to a deterministic name derived from the
+                # field ids so we never emit an empty identifier.
+                safe_name = "f" + "_".join(str(int(f)) for f in fids)
+            index_name = f"idx_unique_t{int_type_id}_c{safe_name}"
+            extracts = ", ".join(f"json_extract(payload_json, '$.\"{int(f)}\"')" for f in fids)
+            conn.execute(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {index_name} "
+                f"ON nodes(tenant_id, {extracts}) "
+                f"WHERE type_id = {int_type_id}"
+            )
+        self._composite_unique_index_cache.add(cache_key)
+
     def _ensure_query_indexes(
         self,
         conn: sqlite3.Connection,
@@ -1864,10 +1945,12 @@ class CanonicalStore:
         type_id: int,
         unique_field_ids: list[int],
         indexed_field_ids: list[int],
+        composite_unique: list[tuple[str, tuple[int, ...]]] | None = None,
     ) -> None:
-        """Create both unique and non-unique expression indexes in one call.
+        """Create unique, composite-unique, and non-unique expression indexes.
 
-        Convenience wrapper that dispatches to ``_ensure_unique_indexes``
+        Convenience wrapper that dispatches to
+        ``_ensure_unique_indexes``, ``_ensure_composite_unique_indexes``,
         and ``_ensure_query_indexes``. Each method manages its own
         per-process cache independently so calling this repeatedly for
         the same type is cheap after the first invocation.
@@ -1879,9 +1962,14 @@ class CanonicalStore:
             unique_field_ids: Fields with ``unique = true``.
             indexed_field_ids: Fields with ``indexed = true`` (minus
                 those already covered by ``unique``).
+            composite_unique: ``(name, (field_id, ...))`` tuples
+                declared via ``(entdb.node).composite_unique``. May be
+                ``None`` or empty.
         """
         if unique_field_ids:
             self._ensure_unique_indexes(conn, tenant_id, type_id, unique_field_ids)
+        if composite_unique:
+            self._ensure_composite_unique_indexes(conn, tenant_id, type_id, composite_unique)
         if indexed_field_ids:
             self._ensure_query_indexes(conn, tenant_id, type_id, indexed_field_ids)
 
@@ -2136,6 +2224,68 @@ class CanonicalStore:
         indicated field.
         """
         return await self._run_sync(self._sync_get_node_by_key, tenant_id, type_id, field_id, value)
+
+    def _sync_get_node_by_composite_key(
+        self,
+        tenant_id: str,
+        type_id: int,
+        field_ids: tuple[int, ...],
+        values: tuple[Any, ...],
+    ) -> Node | None:
+        """Look up a node via a composite ``(field_id, value)`` tuple.
+
+        Mirrors ``_sync_get_node_by_key`` for multi-field unique
+        constraints. Used by the gRPC pre-check fast-fail path so the
+        common "obvious duplicate" case returns ``ALREADY_EXISTS``
+        without a WAL round trip. Race winners are still resolved by
+        the unique expression index at apply time.
+        """
+        if len(field_ids) != len(values) or not field_ids:
+            return None
+        clauses = " AND ".join(
+            f"json_extract(payload_json, '$.\"{int(fid)}\"') = ?" for fid in field_ids
+        )
+        params: list[Any] = [tenant_id, int(type_id)]
+        params.extend(values)
+        with self._get_connection(tenant_id) as conn:
+            cursor = conn.execute(
+                f"SELECT * FROM nodes WHERE tenant_id = ? AND type_id = ? AND {clauses} LIMIT 1",
+                tuple(params),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return Node.from_row(
+                tenant_id=row["tenant_id"],
+                node_id=row["node_id"],
+                type_id=row["type_id"],
+                payload_json=row["payload_json"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                owner_actor=row["owner_actor"],
+                acl_json=row["acl_blob"],
+            )
+
+    async def get_node_by_composite_key(
+        self,
+        tenant_id: str,
+        type_id: int,
+        field_ids: tuple[int, ...],
+        values: tuple[Any, ...],
+    ) -> Node | None:
+        """Look up a node by a composite unique key (multi-field tuple).
+
+        Returns ``None`` if no node carries the full tuple of values
+        on the indicated fields. Implemented for the gRPC pre-check
+        fast-fail path on composite ``(entdb.node).composite_unique``.
+        """
+        return await self._run_sync(
+            self._sync_get_node_by_composite_key,
+            tenant_id,
+            type_id,
+            field_ids,
+            values,
+        )
 
     async def delete_node(self, tenant_id: str, node_id: str) -> bool:
         """Delete a node and its edges.
