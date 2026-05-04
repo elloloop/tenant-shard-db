@@ -646,14 +646,15 @@ class DbClient:
             host = address
             port = 50051  # Default gRPC port
 
+        self.registry = registry or get_registry()
         self._grpc = GrpcClient(
             host=host,
             port=port,
             secure=secure,
             api_key=api_key,
             max_retries=max_retries,
+            registry=self.registry,
         )
-        self.registry = registry or get_registry()
         self._connected = False
         self._last_offsets: dict[str, str] = {}  # tenant_id -> stream_position
         self._schema_fingerprint: str | None = schema_fingerprint
