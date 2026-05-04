@@ -301,7 +301,32 @@ def _load_registry(
             return module.registry
         if hasattr(module, "get_registry"):
             return module.get_registry()
-        raise ValueError(f"Module {module_path} has no 'registry' or 'get_registry()'")
+
+        # Generated proto modules carry their types under ``DESCRIPTOR``
+        # plus an ``(entdb.node)`` / ``(entdb.edge)`` option. Auto-detect
+        # this shape and run ``register_proto_schema`` so callers don't
+        # need a hand-written adapter file just to feed protoc output
+        # into the CLI.
+        if hasattr(module, "DESCRIPTOR"):
+            try:
+                from sdk.entdb_sdk.codegen import register_proto_schema
+                from sdk.entdb_sdk.registry import (
+                    get_registry as _get_sdk_registry,
+                )
+                from sdk.entdb_sdk.registry import (
+                    reset_registry as _reset_sdk_registry,
+                )
+
+                _reset_sdk_registry()
+                register_proto_schema(module)
+                return _get_sdk_registry()
+            except ImportError:
+                pass
+
+        raise ValueError(
+            f"Module {module_path} has no 'registry', 'get_registry()', "
+            "or DESCRIPTOR (proto module)"
+        )
 
     # Return global registry
     from ..schema import get_registry
