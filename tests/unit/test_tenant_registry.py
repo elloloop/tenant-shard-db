@@ -682,3 +682,145 @@ class TestChangeMemberRoleHandler:
         )
 
         assert response.success is True
+
+
+# -- SDK admin surface: create_tenant region pinning -----------------------
+# These tests exercise the public SDK wrappers for create_tenant /
+# get_tenant — verifying that the new ``region`` kwarg is forwarded
+# to the wire CreateTenantRequest and that the resolved region from
+# TenantDetail is returned to callers. Wire shape coverage is the
+# point: a future proto edit that moves the field tag will break
+# them.
+
+
+class TestSDKCreateTenantRegion:
+    """SDK-side tests for region pinning on create_tenant."""
+
+    async def test_grpc_client_create_tenant_forwards_region(self) -> None:
+        """``GrpcClient.create_tenant`` writes ``region`` onto the
+        wire request and surfaces the resolved region back."""
+        from sdk.entdb_sdk._generated import (
+            CreateTenantResponse,
+            TenantDetail,
+        )
+        from sdk.entdb_sdk._grpc_client import GrpcClient
+
+        c = GrpcClient("localhost", 50051)
+        # Stand up a fake stub so we can inspect the request that
+        # _retry was given. _ensure_connected just unwraps _stub.
+        c._stub = MagicMock()
+        captured: dict[str, object] = {}
+
+        async def fake_retry(method, request, **_kwargs):
+            captured["request"] = request
+            return CreateTenantResponse(
+                success=True,
+                tenant=TenantDetail(
+                    tenant_id="acme-eu",
+                    name="Acme EU",
+                    status="active",
+                    region="eu-west-1",
+                    created_at=1_700_000_000_000,
+                ),
+            )
+
+        c._retry = fake_retry  # type: ignore[method-assign]
+
+        result = await c.create_tenant(
+            actor="system:admin",
+            tenant_id="acme-eu",
+            name="Acme EU",
+            region="eu-west-1",
+        )
+
+        # Wire request carries the region.
+        assert captured["request"].region == "eu-west-1"  # type: ignore[attr-defined]
+        # Tenant dict surfaces the resolved region.
+        assert result["success"] is True
+        assert result["tenant"]["region"] == "eu-west-1"
+
+    async def test_grpc_client_create_tenant_no_region_sends_empty(self) -> None:
+        """Omitting ``region`` sends an empty string on the wire so the
+        server can default to its own served region."""
+        from sdk.entdb_sdk._generated import CreateTenantResponse, TenantDetail
+        from sdk.entdb_sdk._grpc_client import GrpcClient
+
+        c = GrpcClient("localhost", 50051)
+        c._stub = MagicMock()
+        captured: dict[str, object] = {}
+
+        async def fake_retry(method, request, **_kwargs):
+            captured["request"] = request
+            return CreateTenantResponse(
+                success=True,
+                tenant=TenantDetail(
+                    tenant_id="acme",
+                    name="Acme",
+                    status="active",
+                    region="us-east-1",  # server defaulted
+                ),
+            )
+
+        c._retry = fake_retry  # type: ignore[method-assign]
+
+        result = await c.create_tenant(actor="system:admin", tenant_id="acme", name="Acme")
+
+        assert captured["request"].region == ""  # type: ignore[attr-defined]
+        # Even though caller didn't set it, the server's default is
+        # surfaced back in the tenant dict.
+        assert result["tenant"]["region"] == "us-east-1"
+
+    async def test_dbclient_create_tenant_passes_region_kwarg(self) -> None:
+        """The public ``DbClient.create_tenant`` wrapper forwards the
+        ``region`` kwarg to the underlying gRPC client."""
+        from sdk.entdb_sdk.client import DbClient
+
+        c = DbClient("localhost:50051")
+        c._connected = True
+        c._grpc = AsyncMock()
+        c._grpc.create_tenant = AsyncMock(
+            return_value={
+                "success": True,
+                "error": None,
+                "tenant": {
+                    "tenant_id": "acme-eu",
+                    "name": "Acme EU",
+                    "status": "active",
+                    "region": "eu-west-1",
+                    "created_at": 0,
+                },
+            }
+        )
+
+        result = await c.create_tenant("acme-eu", "Acme EU", region="eu-west-1")
+
+        c._grpc.create_tenant.assert_awaited_once()
+        kwargs = c._grpc.create_tenant.await_args.kwargs
+        assert kwargs["region"] == "eu-west-1"
+        assert kwargs["tenant_id"] == "acme-eu"
+        assert result["tenant"]["region"] == "eu-west-1"
+
+    async def test_grpc_client_get_tenant_returns_region(self) -> None:
+        """``get_tenant`` surfaces the persisted region back to callers."""
+        from sdk.entdb_sdk._generated import GetTenantResponse, TenantDetail
+        from sdk.entdb_sdk._grpc_client import GrpcClient
+
+        c = GrpcClient("localhost", 50051)
+        c._stub = MagicMock()
+
+        async def fake_retry(method, request, **_kwargs):
+            return GetTenantResponse(
+                found=True,
+                tenant=TenantDetail(
+                    tenant_id="acme-eu",
+                    name="Acme EU",
+                    status="active",
+                    region="eu-west-1",
+                ),
+            )
+
+        c._retry = fake_retry  # type: ignore[method-assign]
+
+        result = await c.get_tenant(actor="system:admin", tenant_id="acme-eu")
+        assert result is not None
+        assert result["region"] == "eu-west-1"

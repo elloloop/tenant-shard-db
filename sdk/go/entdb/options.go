@@ -135,3 +135,26 @@ func WithLimit(n int32) QueryOption {
 func WithOffset(n int32) QueryOption {
 	return func(c *queryConfig) { c.offset = n }
 }
+
+// ── Admin.CreateTenant options ─────────────────────────────────────
+
+// createTenantConfig holds optional parameters for
+// [Admin.CreateTenant].
+type createTenantConfig struct {
+	region string
+}
+
+// CreateTenantOption configures a single [Admin.CreateTenant] call.
+type CreateTenantOption func(*createTenantConfig)
+
+// WithRegion pins the new tenant to a specific geographic region
+// (e.g. ``"us-east-1"``, ``"eu-west-1"``). Once set, every request
+// that touches the tenant must hit a server that serves the same
+// region; cross-region calls are rejected with FAILED_PRECONDITION.
+//
+// When this option is omitted the server defaults the tenant's
+// region to its own served region, so single-region deployments do
+// not need to set it.
+func WithRegion(region string) CreateTenantOption {
+	return func(c *createTenantConfig) { c.region = region }
+}
