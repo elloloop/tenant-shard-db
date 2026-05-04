@@ -156,14 +156,16 @@ ENV PATH="/opt/venv/bin:$PATH"
 # Copy all code including examples
 COPY . /app/
 
-# Set Python path
-ENV PYTHONPATH="/app"
+# entdb_sdk lives at /app/sdk/entdb_sdk, dbaas at /app/dbaas. Both must
+# be on PYTHONPATH so `import entdb_sdk` and `import dbaas` work in
+# sample apps without each app having to set its own PYTHONPATH.
+ENV PYTHONPATH="/app:/app/sdk"
 
 # Switch to non-root user
 USER entdb
 
 # Default command for SDK stage
-CMD ["python", "-c", "print('EntDB SDK ready')"]
+CMD ["python", "-c", "import entdb_sdk; print(f'EntDB SDK {entdb_sdk.__version__} ready')"]
 
 # =============================================================================
 # Console stage - Read-only data browser
