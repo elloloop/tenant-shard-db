@@ -85,6 +85,70 @@ def setup_logging(config: ServerConfig) -> None:
     logging.getLogger("aiobotocore").setLevel(logging.WARNING)
 
 
+def _normalize_for_server(entry: dict) -> dict:
+    """Normalize an SDK-produced ``to_dict`` entry for the server's
+    ``from_dict``.
+
+    SDK and server use different enum-serialization conventions:
+    the SDK writes ``data_policy: "PERSONAL"`` (the enum *name*) while
+    the server's ``DataPolicy`` enum has values ``"personal"`` (the
+    lowercase form). Same story for ``subject_exit``. We lowercase
+    these on the way in so the roundtrip works without changing
+    either side's enum surface.
+    """
+    out = dict(entry)
+    for key in ("data_policy", "on_subject_exit", "subject_exit"):
+        v = out.get(key)
+        if isinstance(v, str) and v.isupper():
+            out[key] = v.lower()
+    return out
+
+
+def _legacy_node_to_dict_form(nt: dict) -> dict:
+    """Translate a legacy hand-written YAML node entry (``id``,
+    ``kind``, ...) into the ``NodeTypeDef.from_dict`` shape
+    (``field_id``, etc.)."""
+    fields_out = []
+    for f in nt.get("fields", []):
+        fd: dict = {
+            "field_id": f["id"],
+            "name": f["name"],
+            "kind": f["kind"],
+        }
+        if f.get("required"):
+            fd["required"] = True
+        if f.get("enum_values") or f.get("values"):
+            fd["enum_values"] = f.get("enum_values") or f.get("values")
+        if f.get("indexed"):
+            fd["indexed"] = True
+        if f.get("searchable"):
+            fd["searchable"] = True
+        if f.get("unique"):
+            fd["unique"] = True
+        fields_out.append(fd)
+    return {
+        "type_id": nt["type_id"],
+        "name": nt["name"],
+        "fields": fields_out,
+    }
+
+
+def _legacy_edge_to_dict_form(et: dict) -> dict:
+    """Translate a legacy hand-written YAML edge entry into the
+    ``EdgeTypeDef.from_dict`` shape."""
+    edge_dict: dict = {
+        "edge_id": et["edge_id"],
+        "name": et["name"],
+        "from_type_id": et["from_type"],
+        "to_type_id": et["to_type"],
+    }
+    if et.get("props"):
+        edge_dict["props"] = [
+            {"field_id": p["id"], "name": p["name"], "kind": p["kind"]} for p in et["props"]
+        ]
+    return edge_dict
+
+
 class Server:
     """EntDB Server orchestrator.
 
@@ -132,8 +196,6 @@ class Server:
     @staticmethod
     def _load_schema_file(registry: object, schema_file: str) -> None:
         """Load node/edge types from a YAML or JSON schema file into the registry."""
-        import yaml
-
         from .schema.types import EdgeTypeDef, NodeTypeDef
 
         path = Path(schema_file)
@@ -143,6 +205,12 @@ class Server:
 
         raw = path.read_text()
         if path.suffix in (".yaml", ".yml"):
+            # ``yaml`` is only required for the legacy YAML-format
+            # path; lazy-import so JSON schema files (the canonical
+            # ``entdb-schema snapshot`` output) load even in
+            # environments that don't have PyYAML installed.
+            import yaml
+
             data = yaml.safe_load(raw)
         else:
             import json
@@ -152,53 +220,45 @@ class Server:
         if not data:
             return
 
-        # Build a map of type_id -> NodeTypeDef for edge resolution
+        # Accept the wrapped form produced by ``entdb-schema snapshot``
+        # (``{"version": 1, "fingerprint": "...", "schema": {...}}``) so
+        # the CLI's output is directly bootable without an extra
+        # ``jq '.schema'`` step. Plain top-level form keeps working.
+        if "schema" in data and "node_types" not in data:
+            data = data["schema"]
+
+        # Two input shapes are accepted:
+        #
+        # 1. ``to_dict``-form (what ``entdb-schema snapshot`` produces and
+        #    what ``NodeTypeDef.from_dict`` expects natively): ``field_id``,
+        #    ``from_type_id``/``to_type_id``, kinds as ``"str"``/``"int"``.
+        #
+        # 2. Legacy hand-written-YAML form: ``id``, ``from_type``/``to_type``,
+        #    kinds the same. Kept working so existing deployments that
+        #    check a hand-edited ``schema.yaml`` into git don't break.
+        #
+        # Detection is per-field/per-edge via the presence of the
+        # canonical key.
         node_map: dict[int, NodeTypeDef] = {}
 
         for nt in data.get("node_types", []):
-            fields_data = []
-            for f in nt.get("fields", []):
-                fd: dict = {
-                    "field_id": f["id"],
-                    "name": f["name"],
-                    "kind": f["kind"],
-                }
-                if f.get("required"):
-                    fd["required"] = True
-                if f.get("enum_values") or f.get("values"):
-                    fd["enum_values"] = f.get("enum_values") or f.get("values")
-                if f.get("indexed"):
-                    fd["indexed"] = True
-                if f.get("searchable"):
-                    fd["searchable"] = True
-                if f.get("unique"):
-                    fd["unique"] = True
-                fields_data.append(fd)
-
-            node_dict = {
-                "type_id": nt["type_id"],
-                "name": nt["name"],
-                "fields": fields_data,
-            }
+            if nt.get("fields") and "field_id" in nt["fields"][0]:
+                node_dict = _normalize_for_server(nt)
+            else:
+                node_dict = _legacy_node_to_dict_form(nt)
             node_type = NodeTypeDef.from_dict(node_dict)
             registry.register_node_type(node_type)  # type: ignore[attr-defined]
-            node_map[nt["type_id"]] = node_type
-            logger.info(f"Registered node type: {nt['name']} (id={nt['type_id']})")
+            node_map[node_type.type_id] = node_type
+            logger.info(f"Registered node type: {node_type.name} (id={node_type.type_id})")
 
         for et in data.get("edge_types", []):
-            edge_dict = {
-                "edge_id": et["edge_id"],
-                "name": et["name"],
-                "from_type_id": et["from_type"],
-                "to_type_id": et["to_type"],
-            }
-            if et.get("props"):
-                edge_dict["props"] = [
-                    {"field_id": p["id"], "name": p["name"], "kind": p["kind"]} for p in et["props"]
-                ]
+            if "from_type_id" in et:
+                edge_dict = _normalize_for_server(et)
+            else:
+                edge_dict = _legacy_edge_to_dict_form(et)
             edge_type = EdgeTypeDef.from_dict(edge_dict)
             registry.register_edge_type(edge_type)  # type: ignore[attr-defined]
-            logger.info(f"Registered edge type: {et['name']} (id={et['edge_id']})")
+            logger.info(f"Registered edge type: {edge_type.name} (id={edge_type.edge_id})")
 
     async def start(self) -> None:
         """Start the server and all components."""
