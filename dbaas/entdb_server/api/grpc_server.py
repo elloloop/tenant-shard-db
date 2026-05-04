@@ -643,6 +643,57 @@ class EntDBServicer(EntDBServiceServicer):
                             f"field_id={fid} value={value!r} already exists",
                         )
 
+            # Fast-fail pre-check for composite (multi-field) unique
+            # constraints. Same semantics as the single-field path
+            # above — the unique expression index at apply time is
+            # the authoritative race winner; this just saves a WAL
+            # round trip for the common "obvious duplicate" case.
+            for op in ops:
+                if op.get("op") != "create_node":
+                    continue
+                type_id_int = int(op.get("type_id", 0) or 0)
+                if not type_id_int:
+                    continue
+                get_composite = getattr(
+                    self.schema_registry, "get_composite_unique_constraints", None
+                )
+                if not callable(get_composite):
+                    continue
+                try:
+                    composite_constraints = get_composite(type_id_int)
+                except Exception:
+                    composite_constraints = []
+                if (
+                    not isinstance(composite_constraints, (list, tuple))
+                    or not composite_constraints
+                ):
+                    continue
+                data = op.get("data") or {}
+                for cname, cfids in composite_constraints:
+                    values = tuple(data.get(str(fid)) for fid in cfids)
+                    # Skip the pre-check if any participating value is
+                    # missing — partial tuples cannot collide on the
+                    # unique index either.
+                    if any(v is None for v in values):
+                        continue
+                    get_composite_key = getattr(
+                        self.canonical_store, "get_node_by_composite_key", None
+                    )
+                    if not callable(get_composite_key):
+                        continue
+                    existing = await get_composite_key(
+                        ctx.tenant_id, type_id_int, tuple(cfids), values
+                    )
+                    if existing is not None:
+                        record_grpc_request("ExecuteAtomic", "error", time.perf_counter() - start)
+                        await context.abort(
+                            grpc.StatusCode.ALREADY_EXISTS,
+                            f"Composite unique constraint violation: "
+                            f"type_id={type_id_int} constraint={cname!r} "
+                            f"fields={list(cfids)} values={list(values)!r} "
+                            "already exists",
+                        )
+
             # Tenant role + status enforcement.
             # ExecuteAtomic is always a write. The status check is finer
             # grained: legal_hold rejects deletes (delete_node, delete_edge)

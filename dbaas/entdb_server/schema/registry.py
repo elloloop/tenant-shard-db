@@ -266,6 +266,28 @@ class SchemaRegistry:
             return []
         return [f.field_id for f in node_type.fields if f.unique and not f.deprecated]
 
+    def get_composite_unique_constraints(self, type_id: int) -> list[tuple[str, tuple[int, ...]]]:
+        """Return composite (multi-field) unique constraints for a type.
+
+        Each entry is ``(constraint_name, (field_id, ...))``. Mirrors
+        ``get_unique_field_ids`` but for the multi-field case introduced
+        for the OAuthIdentity ``(provider, provider_user_id)`` use case
+        (see ``docs/decisions/composite_unique.md``).
+
+        The applier consumes this on first write of a node type to
+        lazily create one SQLite unique expression index per
+        constraint.
+
+        Returns an empty list for unknown types (rather than raising)
+        to mirror the soft fall-through behaviour of
+        ``get_unique_field_ids`` — applier callers expect a list, not
+        a ``KeyError`` if a write somehow precedes registration.
+        """
+        node_type = self._node_types.get(type_id)
+        if node_type is None:
+            return []
+        return [(cu.name, tuple(cu.field_ids)) for cu in node_type.composite_unique]
+
     def get_indexed_field_ids(self, type_id: int) -> list[int]:
         """Return ids of fields declared ``indexed`` on a node type.
 

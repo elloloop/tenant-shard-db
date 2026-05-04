@@ -38,6 +38,7 @@ from .registry import SchemaRegistry, freeze_registry, get_registry
 from .types import (
     AclEntry,
     AclPermission,
+    CompositeUniqueDef,
     EdgeTypeDef,
     FieldDef,
     FieldKind,
@@ -55,6 +56,7 @@ __all__ = [
     "field",
     "AclEntry",
     "AclPermission",
+    "CompositeUniqueDef",
     "OnSubjectExit",
     # Data policy
     "DataPolicy",
