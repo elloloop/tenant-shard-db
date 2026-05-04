@@ -1390,16 +1390,64 @@ class EntDBServicer(EntDBServiceServicer):
         request: ListTenantsRequest,
         context: grpc_aio.ServicerContext,
     ) -> ListTenantsResponse:
-        """List all tenants that have data."""
+        """List tenants visible to the calling identity.
+
+        Visibility rules — the previous version returned every tenant on
+        the server with no auth check, allowing cross-tenant
+        enumeration by any authenticated caller. Now:
+
+        - ``system:*`` / ``__system__`` / ``admin:*`` callers see every
+          tenant on the node (sharding still applies).
+        - A regular ``user:<id>`` caller sees only the tenants they are
+          a member of (via ``global_store.get_user_tenants``).
+        - A request with no trusted identity (auth interceptor not
+          running) is rejected with ``PERMISSION_DENIED`` rather than
+          falling open. ``ListTenants`` cannot be safely served
+          anonymously.
+        """
+        from ..auth.auth_interceptor import get_current_identity
+
         start = time.perf_counter()
         try:
-            tenant_ids = self.canonical_store.list_tenants()
+            trusted = get_current_identity()
+            if trusted is None:
+                await context.abort(
+                    grpc.StatusCode.PERMISSION_DENIED,
+                    "ListTenants requires an authenticated caller",
+                )
+
+            is_admin = (
+                trusted == "__system__"
+                or trusted.startswith("system:")
+                or trusted.startswith("admin:")
+            )
+
+            all_tenant_ids = self.canonical_store.list_tenants()
             if self._sharding and self._sharding.is_multi_node:
-                tenant_ids = [tid for tid in tenant_ids if self._sharding.is_mine(tid)]
+                all_tenant_ids = [tid for tid in all_tenant_ids if self._sharding.is_mine(tid)]
+
+            if is_admin:
+                visible_ids = all_tenant_ids
+            elif self.global_store is not None:
+                # Regular user — filter to memberships. The
+                # ``user_id`` form is the bare id (no ``user:`` prefix);
+                # strip it if the trusted identity carries one.
+                user_id = trusted[len("user:") :] if trusted.startswith("user:") else trusted
+                memberships = await self.global_store.get_user_tenants(user_id)
+                member_set = {m["tenant_id"] for m in memberships}
+                visible_ids = [tid for tid in all_tenant_ids if tid in member_set]
+            else:
+                # No global_store wired (test harness) — for safety
+                # return empty rather than the full list.
+                visible_ids = []
+
             record_grpc_request("ListTenants", "ok", time.perf_counter() - start)
             return ListTenantsResponse(
-                tenants=[TenantInfo(tenant_id=tid) for tid in tenant_ids],
+                tenants=[TenantInfo(tenant_id=tid) for tid in visible_ids],
             )
+        except grpc.aio.AbortError:
+            record_grpc_request("ListTenants", "error", time.perf_counter() - start)
+            raise
         except Exception as e:
             record_grpc_request("ListTenants", "error", time.perf_counter() - start)
             logger.error(f"ListTenants failed: {e}", exc_info=True)
