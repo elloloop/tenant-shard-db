@@ -41,8 +41,13 @@ func (c *DbClient) Admin() *Admin {
 // Re-creating a tenant that already exists raises an underlying
 // uniqueness error from the global SQLite — there is no "create or
 // get" form by design.
-func (a *Admin) CreateTenant(ctx context.Context, actor, tenantID, name string) (*TenantDetail, error) {
-	return a.client.transport.CreateTenant(ctx, actor, tenantID, name)
+//
+// Pass [WithRegion] to pin the tenant to a specific geographic
+// region (e.g. ``WithRegion("eu-west-1")``); when omitted the
+// server defaults the tenant to its own served region. The pinned
+// region is reflected on [TenantDetail.Region].
+func (a *Admin) CreateTenant(ctx context.Context, actor, tenantID, name string, opts ...CreateTenantOption) (*TenantDetail, error) {
+	return a.client.transport.CreateTenant(ctx, actor, tenantID, name, opts...)
 }
 
 // CreateUser registers a new user in the global registry. ``email``

@@ -86,7 +86,7 @@ type Transport interface {
 	// CreateUser, GetUserTenants) or want raw ``user_id`` form to
 	// match the global registry's identifier shape.
 
-	CreateTenant(ctx context.Context, actor, tenantID, name string) (*TenantDetail, error)
+	CreateTenant(ctx context.Context, actor, tenantID, name string, opts ...CreateTenantOption) (*TenantDetail, error)
 	CreateUser(ctx context.Context, actor, userID, email, name string) (*UserInfo, error)
 	AddTenantMember(ctx context.Context, actor, tenantID, userID, role string) error
 	RemoveTenantMember(ctx context.Context, actor, tenantID, userID string) error
@@ -146,10 +146,19 @@ type DeletionScheduled struct {
 
 // TenantDetail mirrors ``pb.TenantDetail`` — the identity-layer
 // description of a tenant (not its quota, not its data).
+//
+// ``Region`` is the geographic region the tenant's data is pinned to
+// (e.g. ``"us-east-1"``, ``"eu-west-1"``). It is set when the tenant
+// is created — either explicitly via [WithRegion] on
+// [Admin.CreateTenant] or, when omitted, defaulted server-side to
+// the serving region. Cross-region requests are rejected with
+// FAILED_PRECONDITION; clients that need to talk to a tenant in
+// another region must connect to a server in that region.
 type TenantDetail struct {
 	TenantID  string
 	Name      string
 	Status    string
+	Region    string
 	CreatedAt int64
 }
 
@@ -651,16 +660,21 @@ func (t *grpcTransport) RemoveGroupMember(ctx context.Context, tenantID, actor, 
 
 // ── Admin (cross-tenant identity) wire methods ───────────────────────
 
-func (t *grpcTransport) CreateTenant(ctx context.Context, actor, tenantID, name string) (*TenantDetail, error) {
+func (t *grpcTransport) CreateTenant(ctx context.Context, actor, tenantID, name string, opts ...CreateTenantOption) (*TenantDetail, error) {
 	client, err := t.ensureReady()
 	if err != nil {
 		return nil, err
+	}
+	cfg := createTenantConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
 	}
 	var trailer metadata.MD
 	resp, err := client.CreateTenant(t.callContext(ctx), &pb.CreateTenantRequest{
 		Actor:    actor,
 		TenantId: tenantID,
 		Name:     name,
+		Region:   cfg.region,
 	}, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
@@ -673,6 +687,7 @@ func (t *grpcTransport) CreateTenant(ctx context.Context, actor, tenantID, name 
 		TenantID:  td.GetTenantId(),
 		Name:      td.GetName(),
 		Status:    td.GetStatus(),
+		Region:    td.GetRegion(),
 		CreatedAt: td.GetCreatedAt(),
 	}, nil
 }

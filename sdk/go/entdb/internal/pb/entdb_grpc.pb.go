@@ -1,3 +1,24 @@
+// ============================================================================
+// ⚠  INTERNAL TRANSPORT — DO NOT USE DIRECTLY  ⚠
+// ============================================================================
+//
+// This gRPC service is an INTERNAL transport between the EntDB server and the
+// official SDKs. It is NOT a stable public API.
+//
+//   ✗ DO NOT hand-roll a client against this proto (curl, grpcurl, custom
+//     stubs in any language). Doing so WILL break: field IDs, actor strings,
+//     ACL encoding, idempotency keys, schema fingerprints, and tenant
+//     routing have non-obvious invariants enforced by the SDKs.
+//   ✗ DO NOT treat the wire format as a public contract. RPCs, fields, and
+//     semantics may change without notice between releases.
+//
+//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb
+//   ✓ Use the Python SDK: pip install entdb-sdk
+//
+// If your language isn't supported, file an issue — don't reach for the
+// proto.
+// ============================================================================
+//
 // EntDB gRPC Service Definition
 //
 // This file defines the gRPC API for the EntDB database service.

@@ -1749,6 +1749,7 @@ class GrpcClient:
         tenant_id: str,
         name: str,
         *,
+        region: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Create a new tenant.
@@ -1757,10 +1758,16 @@ class GrpcClient:
             actor: Actor performing the operation
             tenant_id: Unique tenant identifier
             name: Tenant display name
+            region: Optional geographic region pin (e.g. ``"us-east-1"``,
+                ``"eu-west-1"``). When ``None`` the server defaults the
+                tenant to its own served region. Once the pin is set,
+                cross-region requests are rejected with
+                ``FAILED_PRECONDITION``.
             timeout: Per-call timeout in seconds
 
         Returns:
-            Dict with success, tenant, error fields
+            Dict with success, tenant (including the resolved region),
+            and error fields
         """
         stub = self._ensure_connected()
         metadata = self._build_metadata()
@@ -1769,6 +1776,7 @@ class GrpcClient:
             actor=actor,
             tenant_id=tenant_id,
             name=name,
+            region=region or "",
         )
 
         response = await self._retry(
@@ -1787,6 +1795,7 @@ class GrpcClient:
                 "tenant_id": response.tenant.tenant_id,
                 "name": response.tenant.name,
                 "status": response.tenant.status,
+                "region": response.tenant.region,
                 "created_at": response.tenant.created_at,
             }
         return result
@@ -1830,6 +1839,7 @@ class GrpcClient:
             "tenant_id": response.tenant.tenant_id,
             "name": response.tenant.name,
             "status": response.tenant.status,
+            "region": response.tenant.region,
             "created_at": response.tenant.created_at,
         }
 

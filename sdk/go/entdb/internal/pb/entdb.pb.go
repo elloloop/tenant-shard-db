@@ -1,3 +1,24 @@
+// ============================================================================
+// ⚠  INTERNAL TRANSPORT — DO NOT USE DIRECTLY  ⚠
+// ============================================================================
+//
+// This gRPC service is an INTERNAL transport between the EntDB server and the
+// official SDKs. It is NOT a stable public API.
+//
+//   ✗ DO NOT hand-roll a client against this proto (curl, grpcurl, custom
+//     stubs in any language). Doing so WILL break: field IDs, actor strings,
+//     ACL encoding, idempotency keys, schema fingerprints, and tenant
+//     routing have non-obvious invariants enforced by the SDKs.
+//   ✗ DO NOT treat the wire format as a public contract. RPCs, fields, and
+//     semantics may change without notice between releases.
+//
+//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb
+//   ✓ Use the Python SDK: pip install entdb-sdk
+//
+// If your language isn't supported, file an issue — don't reach for the
+// proto.
+// ============================================================================
+//
 // EntDB gRPC Service Definition
 //
 // This file defines the gRPC API for the EntDB database service.
@@ -4564,11 +4585,16 @@ func (x *ListUsersResponse) GetUsers() []*UserInfo {
 }
 
 type TenantDetail struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	TenantId      string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Status        string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
-	CreatedAt     int64                  `protobuf:"varint,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	TenantId  string                 `protobuf:"bytes,1,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Name      string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Status    string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	CreatedAt int64                  `protobuf:"varint,4,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	// Geographic region the tenant's data is pinned to (e.g. "us-east-1",
+	// "eu-west-1"). Data-plane traffic for this tenant must land on a
+	// server configured for this region; cross-region requests are
+	// rejected with FAILED_PRECONDITION.
+	Region        string `protobuf:"bytes,5,opt,name=region,proto3" json:"region,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4631,11 +4657,21 @@ func (x *TenantDetail) GetCreatedAt() int64 {
 	return 0
 }
 
+func (x *TenantDetail) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
 type CreateTenantRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Actor         string                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	TenantId      string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
-	Name          string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Actor    string                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	TenantId string                 `protobuf:"bytes,2,opt,name=tenant_id,json=tenantId,proto3" json:"tenant_id,omitempty"`
+	Name     string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
+	// Geographic region pin. When empty, the server defaults the tenant
+	// to its own served region.
+	Region        string `protobuf:"bytes,4,opt,name=region,proto3" json:"region,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4687,6 +4723,13 @@ func (x *CreateTenantRequest) GetTenantId() string {
 func (x *CreateTenantRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateTenantRequest) GetRegion() string {
+	if x != nil {
+		return x.Region
 	}
 	return ""
 }
@@ -7267,17 +7310,19 @@ const file_entdb_proto_rawDesc = "" +
 	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x04 \x01(\x05R\x06offset\"=\n" +
 	"\x11ListUsersResponse\x12(\n" +
-	"\x05users\x18\x01 \x03(\v2\x12.entdb.v1.UserInfoR\x05users\"v\n" +
+	"\x05users\x18\x01 \x03(\v2\x12.entdb.v1.UserInfoR\x05users\"\x8e\x01\n" +
 	"\fTenantDetail\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
 	"\x06status\x18\x03 \x01(\tR\x06status\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\x04 \x01(\x03R\tcreatedAt\"\\\n" +
+	"created_at\x18\x04 \x01(\x03R\tcreatedAt\x12\x16\n" +
+	"\x06region\x18\x05 \x01(\tR\x06region\"t\n" +
 	"\x13CreateTenantRequest\x12\x14\n" +
 	"\x05actor\x18\x01 \x01(\tR\x05actor\x12\x1b\n" +
 	"\ttenant_id\x18\x02 \x01(\tR\btenantId\x12\x12\n" +
-	"\x04name\x18\x03 \x01(\tR\x04name\"v\n" +
+	"\x04name\x18\x03 \x01(\tR\x04name\x12\x16\n" +
+	"\x06region\x18\x04 \x01(\tR\x06region\"v\n" +
 	"\x14CreateTenantResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12.\n" +
 	"\x06tenant\x18\x02 \x01(\v2\x16.entdb.v1.TenantDetailR\x06tenant\x12\x14\n" +
