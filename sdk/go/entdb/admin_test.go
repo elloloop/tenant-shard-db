@@ -52,6 +52,65 @@ func TestAdmin_CreateTenant_HappyPath(t *testing.T) {
 	}
 }
 
+func TestAdmin_CreateTenant_WithRegion(t *testing.T) {
+	svc := &fakeServer{
+		createTenantResp: &pb.CreateTenantResponse{
+			Success: true,
+			Tenant: &pb.TenantDetail{
+				TenantId:  "acme-eu",
+				Name:      "Acme EU",
+				Status:    "active",
+				Region:    "eu-west-1",
+				CreatedAt: 1_700_000_000_000,
+			},
+		},
+	}
+	tr := startFakeServer(t, svc)
+	c := newClientWithTransport("addr", tr)
+
+	td, err := c.Admin().CreateTenant(
+		context.Background(), "system:admin", "acme-eu", "Acme EU",
+		WithRegion("eu-west-1"),
+	)
+	if err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	if td.Region != "eu-west-1" {
+		t.Errorf("decoded tenant region mismatch: got %q, want %q", td.Region, "eu-west-1")
+	}
+	if svc.createTenantReq.GetRegion() != "eu-west-1" {
+		t.Errorf("request region wrong: got %q, want %q",
+			svc.createTenantReq.GetRegion(), "eu-west-1")
+	}
+}
+
+func TestAdmin_CreateTenant_NoRegionDefaultsToEmpty(t *testing.T) {
+	// No WithRegion option — server is responsible for defaulting to
+	// its own served_region. The wire request must carry an empty
+	// region string so the server can detect "unset".
+	svc := &fakeServer{
+		createTenantResp: &pb.CreateTenantResponse{
+			Success: true,
+			Tenant: &pb.TenantDetail{
+				TenantId: "acme",
+				Name:     "Acme",
+				Status:   "active",
+			},
+		},
+	}
+	tr := startFakeServer(t, svc)
+	c := newClientWithTransport("addr", tr)
+
+	_, err := c.Admin().CreateTenant(context.Background(), "system:admin", "acme", "Acme")
+	if err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	if svc.createTenantReq.GetRegion() != "" {
+		t.Errorf("expected empty region on wire when no option, got %q",
+			svc.createTenantReq.GetRegion())
+	}
+}
+
 func TestAdmin_CreateTenant_ServerSuccessFalseSurfacesAdminError(t *testing.T) {
 	svc := &fakeServer{
 		createTenantResp: &pb.CreateTenantResponse{

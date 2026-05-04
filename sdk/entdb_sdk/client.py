@@ -1694,6 +1694,7 @@ class DbClient:
         name: str,
         *,
         actor: str = "system:admin",
+        region: str | None = None,
         timeout: float | None = None,
     ) -> dict[str, Any]:
         """Create a new tenant in the global registry.
@@ -1702,6 +1703,10 @@ class DbClient:
             tenant_id: Unique tenant identifier
             name: Tenant display name
             actor: Actor performing the operation
+            region: Optional geographic region pin (e.g. ``"us-east-1"``,
+                ``"eu-west-1"``). When ``None`` the server defaults
+                the tenant to its own served region. The resolved
+                region is returned on the ``tenant`` dict.
             timeout: Per-call timeout in seconds
 
         Returns:
@@ -1712,6 +1717,7 @@ class DbClient:
             actor=actor,
             tenant_id=tenant_id,
             name=name,
+            region=region,
             timeout=timeout,
         )
 

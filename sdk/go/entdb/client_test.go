@@ -146,7 +146,7 @@ func (m *mockTransport) RemoveGroupMember(_ context.Context, _, _, _, _ string) 
 	return nil
 }
 
-func (m *mockTransport) CreateTenant(_ context.Context, _, _, _ string) (*TenantDetail, error) {
+func (m *mockTransport) CreateTenant(_ context.Context, _, _, _ string, _ ...CreateTenantOption) (*TenantDetail, error) {
 	return nil, nil
 }
 
