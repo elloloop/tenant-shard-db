@@ -3,7 +3,9 @@ package entdb
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
+	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -225,6 +227,21 @@ type UniqueConstraintError struct {
 	TypeID   int32
 	FieldID  int32
 	Value    any
+	// ConstraintName is non-empty when the violation came from a
+	// composite (multi-field) `(entdb.node).composite_unique`
+	// constraint. Single-field violations leave it empty and use
+	// `FieldID` / `Value` instead.
+	ConstraintName string
+	// FieldIDs / Values mirror the composite constraint coordinates.
+	// Both are nil for single-field violations.
+	FieldIDs []int32
+	Values   []any
+}
+
+// IsComposite reports whether this is a composite (multi-field)
+// unique-constraint violation as opposed to a single-field one.
+func (e *UniqueConstraintError) IsComposite() bool {
+	return e != nil && e.ConstraintName != ""
 }
 
 // NewUniqueConstraintError builds a typed UniqueConstraintError from
@@ -285,15 +302,110 @@ func parseUniqueConstraintFromStatus(err error, tenantID string) *UniqueConstrai
 	if !ok || st.Code() != codes.AlreadyExists {
 		return nil
 	}
+	msg := st.Message()
 	uce := &UniqueConstraintError{
 		EntDBError: EntDBError{
-			Message: st.Message(),
+			Message: msg,
 			Code:    "UNIQUE_CONSTRAINT",
 			Details: map[string]any{"tenant_id": tenantID},
 		},
 		TenantID: tenantID,
 	}
+	if cname, fids, vals := parseCompositeUniqueDetail(msg); cname != "" {
+		uce.ConstraintName = cname
+		uce.FieldIDs = fids
+		uce.Values = vals
+		uce.Details["constraint_name"] = cname
+		uce.Details["field_ids"] = fids
+		uce.Details["values"] = vals
+		if tid := parseTypeIDFromDetail(msg); tid != 0 {
+			uce.TypeID = tid
+			uce.Details["type_id"] = tid
+		}
+	}
 	return uce
+}
+
+// compositeUniqueDetailRE matches the server's composite-unique
+// ALREADY_EXISTS detail string. The message format is::
+//
+//	Composite unique constraint violation: type_id=<int>
+//	constraint='<name>' fields=[<int>, ...] values=[<repr>, ...]
+//	already exists
+//
+// Single-field violations use a different format (``field_id=<int>``)
+// and are intentionally left for future structured-error work.
+var compositeUniqueDetailRE = regexp.MustCompile(
+	`type_id=(\d+)\s+constraint=([^\s]+)\s+fields=\[([^\]]*)\]\s+values=\[(.*)\]\s+already exists`,
+)
+
+func parseCompositeUniqueDetail(detail string) (string, []int32, []any) {
+	if detail == "" {
+		return "", nil, nil
+	}
+	m := compositeUniqueDetailRE.FindStringSubmatch(detail)
+	if m == nil {
+		return "", nil, nil
+	}
+	rawConstraint := strings.Trim(m[2], "'\"")
+	fids := parseIntList(m[3])
+	// Values are best-effort: we expose the raw textual repr so
+	// callers can log it; we don't attempt to round-trip arbitrary
+	// Python repr() into Go scalars.
+	vals := splitRepeatedRepr(m[4])
+	return rawConstraint, fids, vals
+}
+
+func parseTypeIDFromDetail(detail string) int32 {
+	re := regexp.MustCompile(`type_id=(\d+)`)
+	m := re.FindStringSubmatch(detail)
+	if m == nil {
+		return 0
+	}
+	v, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return int32(v)
+}
+
+func parseIntList(s string) []int32 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]int32, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		v, err := strconv.Atoi(p)
+		if err != nil {
+			continue
+		}
+		out = append(out, int32(v))
+	}
+	return out
+}
+
+func splitRepeatedRepr(s string) []any {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	// Naive split — values are repr()'d Python scalars (strings
+	// quoted, numbers bare). For the typed-error surface we only
+	// need them for diagnostic display; callers that need the
+	// original Go-typed values should look at the corresponding
+	// field on the original payload.
+	parts := strings.Split(s, ",")
+	out := make([]any, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
 }
 
 // SchemaError indicates a schema-related problem.

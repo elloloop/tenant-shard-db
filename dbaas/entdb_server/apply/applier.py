@@ -70,6 +70,7 @@ class ValidationError(ApplierError):
 
 
 _UNIQUE_INDEX_NAME_RE = re.compile(r"idx_unique_t(\d+)_f(\d+)")
+_COMPOSITE_UNIQUE_INDEX_NAME_RE = re.compile(r"idx_unique_t(\d+)_c([A-Za-z0-9_]+)")
 
 
 def _parse_unique_index_name(msg: str) -> tuple[int, int] | None:
@@ -88,6 +89,25 @@ def _parse_unique_index_name(msg: str) -> tuple[int, int] | None:
     if m is None:
         return None
     return (int(m.group(1)), int(m.group(2)))
+
+
+def _parse_composite_unique_index_name(msg: str) -> tuple[int, str] | None:
+    """Extract ``(type_id, constraint_name)`` from a composite-unique error.
+
+    Mirrors ``_parse_unique_index_name`` for composite (multi-field)
+    constraints. The applier names composite indexes
+    ``idx_unique_t<type>_c<name>`` (see
+    ``CanonicalStore._ensure_composite_unique_indexes``).
+
+    Returns ``None`` when the IntegrityError message is not a
+    composite-unique violation. The single-field shape
+    ``idx_unique_t<type>_f<field>`` deliberately matches a separate
+    regex so the two error types don't cross-fire.
+    """
+    m = _COMPOSITE_UNIQUE_INDEX_NAME_RE.search(msg)
+    if m is None:
+        return None
+    return (int(m.group(1)), m.group(2))
 
 
 class UniqueConstraintError(ApplierError):
@@ -119,6 +139,63 @@ class UniqueConstraintError(ApplierError):
                 f"type_id={type_id} field_id={field_id} value={value!r} "
                 "already exists"
             )
+        )
+
+
+class CompositeUniqueConstraintError(UniqueConstraintError):
+    """A create/update op violated a declared composite unique constraint.
+
+    Raised by the applier when ``INSERT INTO nodes`` trips a
+    composite (multi-field) unique expression index defined via
+    ``(entdb.node).composite_unique``. Subclasses
+    ``UniqueConstraintError`` so callers that already catch the
+    single-field form (``isinstance(err, UniqueConstraintError)``)
+    keep working unchanged — only the structured fields differ.
+
+    Attributes:
+        tenant_id: Tenant where the collision occurred.
+        type_id: Node type id.
+        constraint_name: Name of the violated composite constraint
+            (matches the ``UniqueConstraint.name`` annotation).
+        field_ids: Tuple of field_ids that make up the constraint.
+        values: Tuple of colliding scalar values, aligned with
+            ``field_ids``. Entries may be ``None`` when the colliding
+            value cannot be recovered from the op payload.
+    """
+
+    def __init__(
+        self,
+        tenant_id: str,
+        type_id: int,
+        constraint_name: str,
+        field_ids: tuple[int, ...],
+        values: tuple[Any, ...],
+        *,
+        message: str | None = None,
+    ) -> None:
+        self.tenant_id = tenant_id
+        self.type_id = int(type_id)
+        self.constraint_name = constraint_name
+        self.field_ids = tuple(int(f) for f in field_ids)
+        self.values = tuple(values)
+        # Field id is filled with a sentinel 0 so existing
+        # UniqueConstraintError consumers don't crash on attribute
+        # access. The composite-aware path uses ``field_ids`` /
+        # ``values`` instead.
+        self.field_id = 0
+        self.value = self.values
+        # Skip the parent ``UniqueConstraintError.__init__`` because
+        # it would build a single-field message — call the grandparent
+        # ``ApplierError`` constructor directly.
+        ApplierError.__init__(
+            self,
+            message
+            or (
+                f"Composite unique constraint violation: tenant={tenant_id} "
+                f"type_id={type_id} constraint={constraint_name!r} "
+                f"fields={list(self.field_ids)} values={list(self.values)!r} "
+                "already exists"
+            ),
         )
 
 
@@ -861,9 +938,18 @@ class Applier:
                     registry = get_registry()
                     unique_fids = registry.get_unique_field_ids(type_id_int)
                     indexed_fids = registry.get_indexed_field_ids(type_id_int)
-                    if unique_fids or indexed_fids:
+                    composite_uniques: list[tuple[str, tuple[int, ...]]] = []
+                    get_composite = getattr(registry, "get_composite_unique_constraints", None)
+                    if callable(get_composite):
+                        composite_uniques = list(get_composite(type_id_int))
+                    if unique_fids or indexed_fids or composite_uniques:
                         self.canonical_store._ensure_field_indexes(
-                            conn, tenant_id, type_id_int, unique_fids, indexed_fids
+                            conn,
+                            tenant_id,
+                            type_id_int,
+                            unique_fids,
+                            indexed_fids,
+                            composite_unique=composite_uniques,
                         )
                     try:
                         node = self.canonical_store.create_node_raw(
@@ -877,6 +963,28 @@ class Applier:
                             created_at=event.ts_ms,
                         )
                     except sqlite3.IntegrityError as ie:
+                        parsed_composite = _parse_composite_unique_index_name(str(ie))
+                        if parsed_composite is not None:
+                            dup_type_id, dup_constraint_name = parsed_composite
+                            data_payload = op.get("data") or {}
+                            # Resolve the constraint to recover the
+                            # colliding tuple. The applier already has
+                            # ``composite_uniques`` for this type.
+                            constraint_fids: tuple[int, ...] = ()
+                            for cname, cfids in composite_uniques:
+                                if cname == dup_constraint_name:
+                                    constraint_fids = cfids
+                                    break
+                            dup_values = tuple(
+                                data_payload.get(str(fid)) for fid in constraint_fids
+                            )
+                            raise CompositeUniqueConstraintError(
+                                tenant_id,
+                                dup_type_id,
+                                dup_constraint_name,
+                                constraint_fids,
+                                dup_values,
+                            ) from ie
                         parsed = _parse_unique_index_name(str(ie))
                         if parsed is not None:
                             dup_type_id, dup_field_id = parsed
@@ -932,13 +1040,24 @@ class Applier:
                         # first touch a newly-declared unique/indexed
                         # field on an existing type still get enforced.
                         type_id_int = int(op.get("type_id", 0) or 0)
+                        composite_uniques_upd: list[tuple[str, tuple[int, ...]]] = []
                         if type_id_int:
                             registry = get_registry()
                             unique_fids = registry.get_unique_field_ids(type_id_int)
                             indexed_fids = registry.get_indexed_field_ids(type_id_int)
-                            if unique_fids or indexed_fids:
+                            get_composite = getattr(
+                                registry, "get_composite_unique_constraints", None
+                            )
+                            if callable(get_composite):
+                                composite_uniques_upd = list(get_composite(type_id_int))
+                            if unique_fids or indexed_fids or composite_uniques_upd:
                                 self.canonical_store._ensure_field_indexes(
-                                    conn, tenant_id, type_id_int, unique_fids, indexed_fids
+                                    conn,
+                                    tenant_id,
+                                    type_id_int,
+                                    unique_fids,
+                                    indexed_fids,
+                                    composite_unique=composite_uniques_upd,
                                 )
                         try:
                             conn.execute(
@@ -952,6 +1071,24 @@ class Applier:
                                 ),
                             )
                         except sqlite3.IntegrityError as ie:
+                            parsed_composite = _parse_composite_unique_index_name(str(ie))
+                            if parsed_composite is not None:
+                                dup_type_id, dup_constraint_name = parsed_composite
+                                constraint_fids = ()
+                                for cname, cfids in composite_uniques_upd:
+                                    if cname == dup_constraint_name:
+                                        constraint_fids = cfids
+                                        break
+                                dup_values = tuple(
+                                    existing.get(str(fid)) for fid in constraint_fids
+                                )
+                                raise CompositeUniqueConstraintError(
+                                    tenant_id,
+                                    dup_type_id,
+                                    dup_constraint_name,
+                                    constraint_fids,
+                                    dup_values,
+                                ) from ie
                             parsed = _parse_unique_index_name(str(ie))
                             if parsed is not None:
                                 dup_type_id, dup_field_id = parsed

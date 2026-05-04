@@ -417,6 +417,37 @@ def field(
 
 
 @dataclass(frozen=True)
+class CompositeUniqueDef:
+    """Composite (multi-field) unique constraint on a node type.
+
+    Mirrors the server-side ``CompositeUniqueDef`` and lets the SDK
+    surface the constraint metadata in schema dumps + diagnostic
+    messages. Field ids are resolved from proto field names at
+    registration time so storage stays rename-safe (CLAUDE.md "field
+    ids, not names").
+    """
+
+    name: str
+    field_ids: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("CompositeUniqueDef name cannot be empty")
+        if len(self.field_ids) < 2:
+            raise ValueError(
+                f"CompositeUniqueDef '{self.name}' must reference at least "
+                f"2 fields, got {len(self.field_ids)}"
+            )
+        if len(set(self.field_ids)) != len(self.field_ids):
+            raise ValueError(
+                f"CompositeUniqueDef '{self.name}' has duplicate field_id in {self.field_ids}"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"name": self.name, "field_ids": list(self.field_ids)}
+
+
+@dataclass(frozen=True)
 class NodeTypeDef:
     """Definition of a node type.
 
@@ -427,6 +458,7 @@ class NodeTypeDef:
         type_id: Stable numeric identifier (1-2^31)
         name: Human-readable name
         fields: Tuple of field definitions
+        composite_unique: Composite (multi-field) unique constraints.
         deprecated: Whether type is deprecated
         description: Documentation
 
@@ -451,6 +483,7 @@ class NodeTypeDef:
     legal_basis: str = ""
     deprecated: bool = False
     description: str = ""
+    composite_unique: tuple[CompositeUniqueDef, ...] = dataclass_field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         """Validate node type definition."""
@@ -463,6 +496,32 @@ class NodeTypeDef:
         field_ids = [f.field_id for f in self.fields]
         if len(field_ids) != len(set(field_ids)):
             raise ValueError(f"Duplicate field_id in node type '{self.name}'")
+
+        # Validate composite unique constraints reference known fields
+        # and have unique names within the type.
+        if self.composite_unique:
+            known_ids = set(field_ids)
+            seen_names: set[str] = set()
+            seen_signatures: set[tuple[int, ...]] = set()
+            for cu in self.composite_unique:
+                for fid in cu.field_ids:
+                    if fid not in known_ids:
+                        raise ValueError(
+                            f"composite_unique '{cu.name}' on node type "
+                            f"'{self.name}' references unknown field_id {fid}"
+                        )
+                if cu.name in seen_names:
+                    raise ValueError(
+                        f"Duplicate composite_unique name '{cu.name}' on node type '{self.name}'"
+                    )
+                seen_names.add(cu.name)
+                signature = tuple(sorted(cu.field_ids))
+                if signature in seen_signatures:
+                    raise ValueError(
+                        f"Duplicate composite_unique constraint on node type "
+                        f"'{self.name}': fields {signature} already declared"
+                    )
+                seen_signatures.add(signature)
 
     def get_field(self, name_or_id: str | int) -> FieldDef | None:
         """Get field by name or ID."""
@@ -515,6 +574,8 @@ class NodeTypeDef:
             result["retention_days"] = self.retention_days
         if self.legal_basis:
             result["legal_basis"] = self.legal_basis
+        if self.composite_unique:
+            result["composite_unique"] = [cu.to_dict() for cu in self.composite_unique]
         return result
 
     def new(self, **kwargs: Any) -> dict[str, Any]:
@@ -601,6 +662,33 @@ class NodeTypeDef:
                     fext = opts.Extensions[entdb_options_pb2.field]
             fields.append(FieldDef.from_descriptor(fd, fext))
 
+        # Resolve composite_unique entries (proto carries field
+        # *names*; storage uses field_id). Names that don't resolve
+        # raise loudly so a typo in the .proto fails fast at
+        # registration time rather than silently dropping the
+        # constraint.
+        name_to_fid = {f.name: f.field_id for f in fields}
+        composite_constraints: list[CompositeUniqueDef] = []
+        cu_entries = list(getattr(node_opts, "composite_unique", []) or [])
+        for cu in cu_entries:
+            fnames = list(cu.fields)
+            if len(fnames) < 2:
+                raise ValueError(
+                    f"composite_unique on node type '{msg.name}' must "
+                    f"reference at least 2 fields, got {fnames!r}"
+                )
+            resolved: list[int] = []
+            for fname in fnames:
+                fid = name_to_fid.get(fname)
+                if fid is None:
+                    raise ValueError(
+                        f"composite_unique on node type '{msg.name}' "
+                        f"references unknown field '{fname}'"
+                    )
+                resolved.append(fid)
+            cname = cu.name or "_".join(f"f{f}" for f in resolved)
+            composite_constraints.append(CompositeUniqueDef(name=cname, field_ids=tuple(resolved)))
+
         return cls(
             type_id=node_opts.type_id,
             name=msg.name,
@@ -616,6 +704,7 @@ class NodeTypeDef:
             legal_basis=node_opts.legal_basis,
             deprecated=node_opts.deprecated,
             description=node_opts.description,
+            composite_unique=tuple(composite_constraints),
         )
 
     def __hash__(self) -> int:

@@ -198,7 +198,9 @@ class TestNodeOptsMessage:
             "capability_implications",
             # Field 23 ("keys") is retired as of the 2026-04-14 SDK
             # v0.3 decision — unique constraints are declared at the
-            # field site now.
+            # field site now. Composite (multi-field) uniqueness lives
+            # in `composite_unique` (tag 24, PR-E).
+            "composite_unique",
         }
         assert expected == field_names
 
@@ -210,6 +212,9 @@ class TestNodeOptsMessage:
         assert nums["type_id"] == 1
         assert nums["data_policy"] == 6
         assert nums["deprecated"] == 11
+        # Composite unique constraints (PR-E, 2026-05-04). Tag 24
+        # because tag 23 stays reserved for the retired ``keys`` map.
+        assert nums["composite_unique"] == 24
 
 
 # ── Test 6: EdgeOpts message fields ─────────────────────────────────
