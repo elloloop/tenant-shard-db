@@ -31,9 +31,7 @@ from grpc import aio as grpc_aio
 
 from ..metrics import record_grpc_request
 from ..schema.field_id_translation import (
-    id_to_name_keys,
     name_to_id_keys,
-    translate_payload_json_to_names,
 )
 from ..sharding import ShardingConfig
 from .generated import (
@@ -789,18 +787,6 @@ class EntDBServicer(EntDBServiceServicer):
 
         return result
 
-    def _payload_id_to_name_dict(self, n: Any) -> dict[str, Any]:
-        """Egress helper: return the stored payload keyed by field name.
-
-        Reads ``node.payload`` (id-keyed on disk) and uses the schema
-        registry to remap keys.  See :func:`id_to_name_keys`.
-        """
-        return id_to_name_keys(n.payload, n.type_id, self.schema_registry)
-
-    def _payload_id_to_name_json(self, n: Any) -> str:
-        """Egress helper: return a JSON string payload keyed by field name."""
-        return translate_payload_json_to_names(n.payload_json, n.type_id, self.schema_registry)
-
     def _convert_node_ref(self, ref: Any) -> Any:
         """Convert protobuf node reference to internal format."""
         ref_type = ref.WhichOneof("ref")
@@ -928,7 +914,7 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=node.tenant_id,
                     node_id=node.node_id,
                     type_id=node.type_id,
-                    payload=_dict_to_struct(self._payload_id_to_name_dict(node)),
+                    payload=_dict_to_struct(node.payload),
                     created_at=node.created_at,
                     updated_at=node.updated_at,
                     owner_actor=node.owner_actor,
@@ -1070,7 +1056,7 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=n.tenant_id,
                     node_id=n.node_id,
                     type_id=n.type_id,
-                    payload=_dict_to_struct(self._payload_id_to_name_dict(n)),
+                    payload=_dict_to_struct(n.payload),
                     created_at=n.created_at,
                     updated_at=n.updated_at,
                     owner_actor=n.owner_actor,
@@ -1148,7 +1134,7 @@ class EntDBServicer(EntDBServiceServicer):
                         tenant_id=node.tenant_id,
                         node_id=node.node_id,
                         type_id=node.type_id,
-                        payload=_dict_to_struct(self._payload_id_to_name_dict(node)),
+                        payload=_dict_to_struct(node.payload),
                         created_at=node.created_at,
                         updated_at=node.updated_at,
                         owner_actor=node.owner_actor,
@@ -1234,7 +1220,7 @@ class EntDBServicer(EntDBServiceServicer):
                     tenant_id=n.tenant_id,
                     node_id=n.node_id,
                     type_id=n.type_id,
-                    payload=_dict_to_struct(self._payload_id_to_name_dict(n)),
+                    payload=_dict_to_struct(n.payload),
                     created_at=n.created_at,
                     updated_at=n.updated_at,
                     owner_actor=n.owner_actor,
@@ -1565,18 +1551,20 @@ class EntDBServicer(EntDBServiceServicer):
     def _node_to_proto(self, n: Any) -> Node:
         """Convert an internal Node to a protobuf Node message.
 
-        Egress translates the stored id-keyed payload back to name-keyed
-        JSON so clients always see field names (issue #104).
+        Per CLAUDE.md invariant #6 the wire format is field-id-keyed:
+        ``Node.payload`` carries the on-disk dict (e.g. ``{"1": "x"}``)
+        without translation. Clients (Python/Go SDKs) name-translate at
+        the SDK boundary using their own schema registry.
         """
         return Node(
             tenant_id=n.tenant_id,
             node_id=n.node_id,
             type_id=n.type_id,
-            payload_json=self._payload_id_to_name_json(n),
+            payload=_dict_to_struct(n.payload),
             created_at=n.created_at,
             updated_at=n.updated_at,
             owner_actor=n.owner_actor,
-            acl_json=n.acl_json,
+            acl=_acl_list_to_proto(n.acl),
         )
 
     async def GetConnectedNodes(
