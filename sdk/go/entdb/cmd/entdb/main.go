@@ -53,8 +53,13 @@ Usage:
 Schema commands:
   version                          Print version + git SHA
   help                             Print this help
-  lint   <schema.proto>            Validate proto has at least one (entdb.node)
-  check  <schema.proto>            Compile proto via protoc and list node fields
+  lint       <schema.proto>        Validate proto has at least one (entdb.node)
+  check      <schema.proto>        Compile proto via protoc and list node fields
+  snapshot   --proto-descriptor=FILE [-o FILE]
+                                   Render a compiled FileDescriptorSet as the
+                                   server-bootable schema.lock.json (same format
+                                   and verb as 'entdb-schema snapshot' in Python).
+                                   Pure conversion — no server contact.
 
 Server commands:
   ping   <address>                 Connect and verify server responds
@@ -94,6 +99,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdLint(rest, stdout, stderr)
 	case "check":
 		return cmdCheck(rest, stdout, stderr)
+	case "snapshot":
+		return cmdSnapshot(rest, stdout, stderr)
 	case "ping":
 		return cmdPing(rest, stdout, stderr)
 	case "get":
@@ -270,6 +277,63 @@ type serverFlags struct {
 	typeName   string
 	nodeID     string
 	jsonSource string
+}
+
+// cmdSnapshot reads a compiled FileDescriptorSet and emits a JSON
+// schema file the EntDB server can load via SCHEMA_FILE at boot.
+//
+// Pure local conversion — no server contact, no protoc invocation
+// (the caller compiled the .proto already with
+// ``protoc --descriptor_set_out=...``). The output verb-matches the
+// Python ``entdb-schema snapshot`` CLI so a polyglot project can use
+// either side.
+func cmdSnapshot(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var (
+		descriptorPath string
+		outputPath     string
+	)
+	fs.StringVar(&descriptorPath, "proto-descriptor", "",
+		"Compiled FileDescriptorSet (protoc --descriptor_set_out=FILE)")
+	fs.StringVar(&outputPath, "output", "", "Output file (default: stdout)")
+	fs.StringVar(&outputPath, "o", "", "Output file (shorthand)")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if descriptorPath == "" {
+		fmt.Fprintln(stderr, "entdb snapshot: --proto-descriptor=FILE is required")
+		return 2
+	}
+
+	data, err := os.ReadFile(descriptorPath)
+	if err != nil {
+		fmt.Fprintf(stderr, "entdb snapshot: read descriptor: %v\n", err)
+		return 1
+	}
+	var fds descriptorpb.FileDescriptorSet
+	if err := proto.Unmarshal(data, &fds); err != nil {
+		fmt.Fprintf(stderr, "entdb snapshot: parse descriptor: %v\n", err)
+		return 1
+	}
+
+	jsonBytes, err := entdb.ExtractSchemaJSON(&fds)
+	if err != nil {
+		fmt.Fprintf(stderr, "entdb snapshot: %v\n", err)
+		return 1
+	}
+
+	if outputPath == "" {
+		_, _ = stdout.Write(jsonBytes)
+		_, _ = fmt.Fprintln(stdout)
+		return 0
+	}
+	if err := os.WriteFile(outputPath, append(jsonBytes, '\n'), 0o644); err != nil {
+		fmt.Fprintf(stderr, "entdb snapshot: write %s: %v\n", outputPath, err)
+		return 1
+	}
+	fmt.Fprintf(stderr, "Schema exported to %s\n", outputPath)
+	return 0
 }
 
 // registerServerFlags attaches server flags to fs. All are optional; the
