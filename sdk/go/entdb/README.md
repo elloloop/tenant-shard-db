@@ -6,6 +6,12 @@ Official Go client for **EntDB** — a multi-tenant, event-sourced graph
 database with typed ACL, GDPR primitives, and built-in compliance
 exports.
 
+> **This SDK is the supported way to talk to EntDB from Go.** The
+> underlying gRPC transport is internal and not a stable public
+> contract — do not generate your own stubs against `entdb.proto`.
+> Field IDs, actor strings, ACL encoding, idempotency keys, and schema
+> fingerprints all have invariants the SDK enforces for you.
+
 The SDK ships a **single-shape API**: there is exactly one way to
 perform every operation. Nodes are created from generated proto
 messages, unique-key lookups go through typed `UniqueKey[T]` tokens

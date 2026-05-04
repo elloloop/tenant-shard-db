@@ -1,5 +1,15 @@
 # EntDB - Production-Grade Database-as-a-Service
 
+> ## ⚠ Use an SDK — do not call gRPC directly
+>
+> The gRPC API is an **internal transport** between the server and the official SDKs. The wire format is not a stable public contract; field IDs, actor strings, ACL encoding, idempotency keys, schema fingerprints, and tenant routing all have non-obvious invariants the SDKs enforce.
+>
+> **Sanctioned clients:**
+> - **Go:** [`github.com/elloloop/tenant-shard-db/sdk/go/entdb`](sdk/go/entdb)
+> - **Python:** `pip install entdb-sdk`
+>
+> Hand-rolled clients (curl, grpcurl, custom stubs) **will break** and are unsupported. If your language isn't covered, please [open an issue](https://github.com/elloloop/tenant-shard-db/issues) — don't reach for the proto.
+
 EntDB is a production-ready multi-tenant database service built on event sourcing principles. It provides strong durability guarantees, flexible schema evolution, and built-in support for graph data models with nodes and edges.
 
 ## Features
@@ -12,8 +22,7 @@ EntDB is a production-ready multi-tenant database service built on event sourcin
 - **Full-Text Search**: SQLite FTS5 for mailbox search
 - **ACL System**: Principal-based visibility (user:X, role:X, tenant:*)
 - **Idempotent Operations**: Deduplication via idempotency keys
-- **gRPC API**: High-performance binary protocol (HTTP/REST via gateway sidecar)
-- **Python SDK**: Type-safe client with Plan builder
+- **Official SDKs**: Type-safe Go and Python clients with Plan builder (the only sanctioned entry points; gRPC is an internal transport)
 
 ## Quick Start
 
