@@ -32,6 +32,11 @@ Example::
 See ``docs/decisions/sdk_api.md`` for the design rationale.
 """
 
+from ._redirect_cache import (
+    DNSTemplateResolver,
+    NodeResolver,
+    StaticMapResolver,
+)
 from ._version import __version__
 from .client import DbClient, Plan, Receipt
 from .codegen import register_proto_schema
@@ -112,4 +117,8 @@ __all__ = [
     "Mailbox",
     "Public",
     "Storage",
+    # Tenant redirect cache (Option D, PR-C)
+    "NodeResolver",
+    "DNSTemplateResolver",
+    "StaticMapResolver",
 ]
