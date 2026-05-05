@@ -1,0 +1,33 @@
+version: v2
+
+# Two modules: the upstream entdb.v1 proto (re-used as message types by the
+# console proto) and the console-specific service definition. Listing them
+# both as modules in a single workspace lets `import "entdb.proto";` resolve
+# without per-file `--proto_path` flags.
+modules:
+  - path: dbaas/entdb_server/api/proto
+  - path: proto/console/v1
+
+lint:
+  use:
+    - STANDARD
+  except:
+    # The upstream `entdb.proto` was authored before strict naming rules
+    # (file is `entdb.proto`, not `entdb/v1/entdb.proto`; package is
+    # `entdb.v1`). It's the canonical SDK transport — renaming it would
+    # break every existing generated client. Suppress directory/name
+    # rules for the upstream module only.
+    - DIRECTORY_SAME_PACKAGE
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX
+    - FILE_LOWER_SNAKE_CASE
+    - SERVICE_SUFFIX
+    - RPC_RESPONSE_STANDARD_NAME
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - ENUM_VALUE_PREFIX
+    - ENUM_ZERO_VALUE_SUFFIX
+
+breaking:
+  use:
+    - FILE

@@ -1,0 +1,14 @@
+node_modules/
+.vite/
+*.local
+
+# Vite build output. We keep ONE checked-in file (`dist/_placeholder`)
+# so `//go:embed all:frontend/dist` in the Go binary works even on
+# fresh checkouts. Everything else under dist/ is generated.
+dist/*
+!dist/_placeholder
+
+# TS build artifacts (`tsc -b` writes these next to tsconfig.json).
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
