@@ -1,0 +1,65 @@
+# GoReleaser config for the entdbctl CLI.
+#
+# Invoked from .github/workflows/release.yml with the repo's
+# release tag. Produces darwin/linux/windows × amd64/arm64
+# static binaries plus an SHA256 checksums file, all attached
+# to the GitHub Release that the create-release job already
+# publishes.
+
+version: 2
+
+project_name: entdbctl
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: entdbctl
+    main: ./cmd/entdbctl
+    binary: entdbctl
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: entdbctl
+    name_template: "entdbctl_{{ .Os }}_{{ .Arch }}"
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - src: cmd/entdbctl/README.md
+        dst: README.md
+      - src: ../../../LICENSE
+        dst: LICENSE
+        # Optional — drop silently if the repo doesn't ship one.
+        info:
+          mode: 0644
+
+checksum:
+  name_template: "entdbctl_checksums.txt"
+  algorithm: sha256
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  disable: true
+
+release:
+  # Attach the entdbctl artifacts to the same GitHub Release
+  # the create-release job in release.yml produces. We don't
+  # let goreleaser create or replace the release.
+  mode: append
