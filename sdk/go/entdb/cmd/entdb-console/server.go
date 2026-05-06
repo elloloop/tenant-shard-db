@@ -2,12 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"connectrpc.com/connect"
 	consolev1 "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1"
 	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1/consolev1connect"
 	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
 )
+
+// sandboxWaitTimeoutMs is the wait-applied timeout sent on every
+// sandbox `ExecuteAtomicRequest`. With this set the upstream RPC only
+// returns after the WAL event has been applied to SQLite, so when the
+// SPA's "Create" button shows success the data is actually queryable.
+// Five seconds matches what the existing FastAPI playground uses.
+const sandboxWaitTimeoutMs = 5000
 
 // upstreamStub is the subset of pb.EntDBServiceClient the console
 // actually calls. Defined as a private interface so handler tests can
@@ -29,6 +37,12 @@ type upstreamStub interface {
 	GetEdgesTo(ctx context.Context, in *pb.GetEdgesRequest, opts ...grpcCallOpt) (*pb.GetEdgesResponse, error)
 	GetConnectedNodes(ctx context.Context, in *pb.GetConnectedNodesRequest, opts ...grpcCallOpt) (*pb.GetConnectedNodesResponse, error)
 	SearchMailbox(ctx context.Context, in *pb.SearchMailboxRequest, opts ...grpcCallOpt) (*pb.SearchMailboxResponse, error)
+
+	// ExecuteAtomic is the upstream write entry-point. The console
+	// uses it ONLY to forward sandbox-create RPCs after gating; the
+	// browser cannot reach it directly because the curated console
+	// proto exposes no `ExecuteAtomic` RPC.
+	ExecuteAtomic(ctx context.Context, in *pb.ExecuteAtomicRequest, opts ...grpcCallOpt) (*pb.ExecuteAtomicResponse, error)
 }
 
 // consoleServer implements the ConnectRPC Console handler. Every
@@ -42,14 +56,21 @@ type consoleServer struct {
 	upstream     upstreamStub
 	authedCtx    func(ctx context.Context) context.Context
 	binaryHealth func() *pb.HealthResponse // optional override for /Health
+
+	// sandboxTenant is the single tenant id that sandbox-write RPCs
+	// are allowed against. Empty means sandbox writes are disabled
+	// (handlers return `unimplemented`). Set from `--sandbox-tenant`
+	// at startup and never mutated thereafter.
+	sandboxTenant string
 }
 
 // newConsoleServer wires a real upstreamClient into the handler. Tests
 // use newConsoleServerForTest with a fake stub instead.
-func newConsoleServer(uc *upstreamClient) *consoleServer {
+func newConsoleServer(uc *upstreamClient, sandboxTenant string) *consoleServer {
 	return &consoleServer{
-		upstream:  realStub{stub: uc.stub},
-		authedCtx: uc.authedCtx,
+		upstream:      realStub{stub: uc.stub},
+		authedCtx:     uc.authedCtx,
+		sandboxTenant: sandboxTenant,
 	}
 }
 
@@ -168,6 +189,121 @@ func (s *consoleServer) SearchMailbox(
 		return nil, mapErr(err)
 	}
 	return connect.NewResponse(resp), nil
+}
+
+// SandboxCreateNode forwards a single-op create-node `ExecuteAtomic`
+// to upstream after gating on the configured sandbox tenant. See the
+// proto-level comment on the RPC for the gating rules; we also
+// deliberately do NOT echo the requested tenant id in the
+// permission-denied message so the binary doesn't act as an oracle
+// for "which tenant ids exist."
+func (s *consoleServer) SandboxCreateNode(
+	ctx context.Context,
+	req *connect.Request[consolev1.SandboxCreateNodeRequest],
+) (*connect.Response[consolev1.SandboxCreateNodeResponse], error) {
+	if s.sandboxTenant == "" {
+		return nil, connect.NewError(
+			connect.CodeUnimplemented,
+			errors.New("sandbox writes are disabled (--sandbox-tenant not configured)"),
+		)
+	}
+	if req.Msg.GetTenantId() != s.sandboxTenant {
+		return nil, connect.NewError(
+			connect.CodePermissionDenied,
+			errors.New("sandbox writes only allowed against tenant "+s.sandboxTenant),
+		)
+	}
+
+	upstreamReq := &pb.ExecuteAtomicRequest{
+		Context: &pb.RequestContext{
+			TenantId: req.Msg.GetTenantId(),
+			Actor:    req.Msg.GetActor(),
+		},
+		IdempotencyKey: req.Msg.GetIdempotencyKey(),
+		Operations: []*pb.Operation{
+			{
+				Op: &pb.Operation_CreateNode{
+					CreateNode: &pb.CreateNodeOp{
+						TypeId: req.Msg.GetTypeId(),
+						Data:   req.Msg.GetPayload(),
+					},
+				},
+			},
+		},
+		WaitApplied:   true,
+		WaitTimeoutMs: sandboxWaitTimeoutMs,
+	}
+
+	resp, err := s.upstream.ExecuteAtomic(s.authedCtx(ctx), upstreamReq)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+
+	out := &consolev1.SandboxCreateNodeResponse{}
+	if r := resp.GetReceipt(); r != nil {
+		out.IdempotencyKey = r.GetIdempotencyKey()
+		out.StreamPosition = r.GetStreamPosition()
+	}
+	if ids := resp.GetCreatedNodeIds(); len(ids) > 0 {
+		out.NodeId = ids[0]
+	}
+	return connect.NewResponse(out), nil
+}
+
+// SandboxCreateEdge mirrors SandboxCreateNode for a single-op
+// create-edge `ExecuteAtomic`. Edges are addressed by direct node id;
+// the curated request type does not allow alias references (those are
+// a multi-op transaction shape we don't expose to the browser).
+func (s *consoleServer) SandboxCreateEdge(
+	ctx context.Context,
+	req *connect.Request[consolev1.SandboxCreateEdgeRequest],
+) (*connect.Response[consolev1.SandboxCreateEdgeResponse], error) {
+	if s.sandboxTenant == "" {
+		return nil, connect.NewError(
+			connect.CodeUnimplemented,
+			errors.New("sandbox writes are disabled (--sandbox-tenant not configured)"),
+		)
+	}
+	if req.Msg.GetTenantId() != s.sandboxTenant {
+		return nil, connect.NewError(
+			connect.CodePermissionDenied,
+			errors.New("sandbox writes only allowed against tenant "+s.sandboxTenant),
+		)
+	}
+
+	upstreamReq := &pb.ExecuteAtomicRequest{
+		Context: &pb.RequestContext{
+			TenantId: req.Msg.GetTenantId(),
+			Actor:    req.Msg.GetActor(),
+		},
+		IdempotencyKey: req.Msg.GetIdempotencyKey(),
+		Operations: []*pb.Operation{
+			{
+				Op: &pb.Operation_CreateEdge{
+					CreateEdge: &pb.CreateEdgeOp{
+						EdgeId: req.Msg.GetEdgeTypeId(),
+						From:   &pb.NodeRef{Ref: &pb.NodeRef_Id{Id: req.Msg.GetFromNodeId()}},
+						To:     &pb.NodeRef{Ref: &pb.NodeRef_Id{Id: req.Msg.GetToNodeId()}},
+						Props:  req.Msg.GetProps(),
+					},
+				},
+			},
+		},
+		WaitApplied:   true,
+		WaitTimeoutMs: sandboxWaitTimeoutMs,
+	}
+
+	resp, err := s.upstream.ExecuteAtomic(s.authedCtx(ctx), upstreamReq)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+
+	out := &consolev1.SandboxCreateEdgeResponse{}
+	if r := resp.GetReceipt(); r != nil {
+		out.IdempotencyKey = r.GetIdempotencyKey()
+		out.StreamPosition = r.GetStreamPosition()
+	}
+	return connect.NewResponse(out), nil
 }
 
 // Compile-time assertion: consoleServer must implement the generated

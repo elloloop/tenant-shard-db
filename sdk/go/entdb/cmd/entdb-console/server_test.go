@@ -9,10 +9,12 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	consolev1 "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1"
 	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1/consolev1connect"
 	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // fakeServer implements the upstreamStub interface so handler tests can
@@ -34,6 +36,13 @@ type fakeServer struct {
 	connectedNodes *pb.GetConnectedNodesResponse
 	searchMailbox  *pb.SearchMailboxResponse
 	forceErr       error // if set, every method returns this
+
+	// ExecuteAtomic capture (PR 2 sandbox writes). When set, the
+	// faked response is returned; otherwise a default success
+	// receipt with one created node id is synthesised.
+	gotExecuteAtomic []*pb.ExecuteAtomicRequest
+	executeAtomic    *pb.ExecuteAtomicResponse
+	executeErr       error
 }
 
 func (f *fakeServer) record(name string) {
@@ -153,14 +162,62 @@ func (f *fakeServer) SearchMailbox(_ context.Context, _ *pb.SearchMailboxRequest
 	return &pb.SearchMailboxResponse{}, nil
 }
 
+func (f *fakeServer) ExecuteAtomic(_ context.Context, in *pb.ExecuteAtomicRequest, _ ...grpcCallOpt) (*pb.ExecuteAtomicResponse, error) {
+	f.record("ExecuteAtomic")
+	f.gotExecuteAtomic = append(f.gotExecuteAtomic, in)
+	if f.forceErr != nil {
+		return nil, f.forceErr
+	}
+	if f.executeErr != nil {
+		return nil, f.executeErr
+	}
+	if f.executeAtomic != nil {
+		return f.executeAtomic, nil
+	}
+	// Default: synthesise a success response. If the request was a
+	// create-node we surface a created node id so handler tests can
+	// assert the response wiring; create-edge ops produce no ids.
+	resp := &pb.ExecuteAtomicResponse{
+		Success: true,
+		Receipt: &pb.Receipt{
+			TenantId:       in.GetContext().GetTenantId(),
+			IdempotencyKey: orDefault(in.GetIdempotencyKey(), "fake-idem"),
+			StreamPosition: "fake-pos-1",
+		},
+	}
+	for _, op := range in.GetOperations() {
+		if op.GetCreateNode() != nil {
+			resp.CreatedNodeIds = append(resp.CreatedNodeIds, "fake-node-id")
+		}
+	}
+	return resp, nil
+}
+
+func orDefault(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
+}
+
 // newTestServer builds a httptest.Server wired to a fakeServer, with a
 // matching Connect client. Tests then call client methods directly and
 // assert against fake.gotCalls / responses.
 func newTestServer(t *testing.T, fake *fakeServer, apiKey string) (consolev1connect.ConsoleClient, func()) {
 	t.Helper()
+	return newTestServerWithSandbox(t, fake, apiKey, "")
+}
+
+// newTestServerWithSandbox is like newTestServer but lets the caller
+// configure the sandbox tenant id the consoleServer uses for gating
+// the SandboxCreate* RPCs. PR 2 tests use this to exercise the
+// "disabled" / "wrong tenant" / "happy path" branches.
+func newTestServerWithSandbox(t *testing.T, fake *fakeServer, apiKey, sandboxTenant string) (consolev1connect.ConsoleClient, func()) {
+	t.Helper()
 	srv := &consoleServer{
-		upstream:  fake,
-		authedCtx: func(ctx context.Context) context.Context { return ctx },
+		upstream:      fake,
+		authedCtx:     func(ctx context.Context) context.Context { return ctx },
+		sandboxTenant: sandboxTenant,
 	}
 	mux := http.NewServeMux()
 	path, handler := consolev1connect.NewConsoleHandler(srv)
@@ -387,5 +444,271 @@ func TestAuthHeaderForwarded(t *testing.T) {
 	client, _ := newTestServer(t, fake, "secret-key")
 	if _, err := client.Health(context.Background(), connect.NewRequest(&pb.HealthRequest{})); err != nil {
 		t.Fatalf("Health: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------
+// Sandbox-write tests (PR 2). The handlers for SandboxCreateNode and
+// SandboxCreateEdge translate narrow Console requests into a single-op
+// upstream ExecuteAtomicRequest, gate on the configured sandbox tenant,
+// and translate the upstream Receipt back. These tests cover:
+//
+//   - sandbox tenant not configured        → CodeUnimplemented
+//   - request tenant_id ≠ sandbox tenant   → CodePermissionDenied
+//   - happy path: upstream gets the right ExecuteAtomicRequest shape
+//   - upstream Unavailable / FailedPrecondition propagate by code
+//
+// We deliberately don't echo the requested tenant_id in the
+// permission-denied message (would be a tenant-existence oracle); the
+// tests assert that the configured sandbox tenant is the only one
+// mentioned.
+// ---------------------------------------------------------------------
+
+func newSandboxNodeReq(tenant string) *consolev1.SandboxCreateNodeRequest {
+	return &consolev1.SandboxCreateNodeRequest{
+		TenantId: tenant,
+		Actor:    "user:demo",
+		TypeId:   1,
+		Payload: structPB(map[string]any{
+			"1": "hello",
+			"2": float64(42),
+		}),
+		IdempotencyKey: "test-idem",
+	}
+}
+
+func newSandboxEdgeReq(tenant string) *consolev1.SandboxCreateEdgeRequest {
+	return &consolev1.SandboxCreateEdgeRequest{
+		TenantId:       tenant,
+		Actor:          "user:demo",
+		EdgeTypeId:     7,
+		FromNodeId:     "node-A",
+		ToNodeId:       "node-B",
+		Props:          structPB(map[string]any{"3": "edge-prop"}),
+		IdempotencyKey: "edge-idem",
+	}
+}
+
+func structPB(m map[string]any) *structpb.Struct {
+	s, err := structpb.NewStruct(m)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+func TestSandboxCreateNode_DisabledWhenNoSandboxTenant(t *testing.T) {
+	fake := &fakeServer{}
+	client, _ := newTestServerWithSandbox(t, fake, "", "")
+	_, err := client.SandboxCreateNode(context.Background(), connect.NewRequest(newSandboxNodeReq("playground")))
+	if err == nil {
+		t.Fatalf("expected error when sandbox is disabled")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T %v", err, err)
+	}
+	if ce.Code() != connect.CodeUnimplemented {
+		t.Errorf("code: got %v, want Unimplemented", ce.Code())
+	}
+	if len(fake.gotExecuteAtomic) != 0 {
+		t.Errorf("ExecuteAtomic must NOT be called when sandbox is disabled, got %d calls", len(fake.gotExecuteAtomic))
+	}
+}
+
+func TestSandboxCreateEdge_DisabledWhenNoSandboxTenant(t *testing.T) {
+	fake := &fakeServer{}
+	client, _ := newTestServerWithSandbox(t, fake, "", "")
+	_, err := client.SandboxCreateEdge(context.Background(), connect.NewRequest(newSandboxEdgeReq("playground")))
+	if err == nil {
+		t.Fatalf("expected error when sandbox is disabled")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T %v", err, err)
+	}
+	if ce.Code() != connect.CodeUnimplemented {
+		t.Errorf("code: got %v, want Unimplemented", ce.Code())
+	}
+}
+
+func TestSandboxCreateNode_RejectsWrongTenant(t *testing.T) {
+	fake := &fakeServer{}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	// Request targets a different tenant.
+	_, err := client.SandboxCreateNode(context.Background(), connect.NewRequest(newSandboxNodeReq("real-prod-tenant")))
+	if err == nil {
+		t.Fatalf("expected permission_denied")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T", err)
+	}
+	if ce.Code() != connect.CodePermissionDenied {
+		t.Errorf("code: got %v, want PermissionDenied", ce.Code())
+	}
+	if strings.Contains(ce.Message(), "real-prod-tenant") {
+		t.Errorf("message must NOT echo the requested tenant id (oracle leak): %q", ce.Message())
+	}
+	if len(fake.gotExecuteAtomic) != 0 {
+		t.Errorf("ExecuteAtomic must NOT be called for rejected tenant, got %d calls", len(fake.gotExecuteAtomic))
+	}
+}
+
+func TestSandboxCreateEdge_RejectsWrongTenant(t *testing.T) {
+	fake := &fakeServer{}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	_, err := client.SandboxCreateEdge(context.Background(), connect.NewRequest(newSandboxEdgeReq("other")))
+	if err == nil {
+		t.Fatalf("expected permission_denied")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T", err)
+	}
+	if ce.Code() != connect.CodePermissionDenied {
+		t.Errorf("code: got %v, want PermissionDenied", ce.Code())
+	}
+}
+
+func TestSandboxCreateNode_HappyPath_BuildsSingleCreateNodeOp(t *testing.T) {
+	fake := &fakeServer{}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	resp, err := client.SandboxCreateNode(context.Background(), connect.NewRequest(newSandboxNodeReq("playground")))
+	if err != nil {
+		t.Fatalf("SandboxCreateNode: %v", err)
+	}
+
+	// Response wiring.
+	if resp.Msg.GetNodeId() != "fake-node-id" {
+		t.Errorf("node_id: got %q, want fake-node-id", resp.Msg.GetNodeId())
+	}
+	if resp.Msg.GetIdempotencyKey() != "test-idem" {
+		t.Errorf("idempotency_key: got %q, want test-idem", resp.Msg.GetIdempotencyKey())
+	}
+	if resp.Msg.GetStreamPosition() != "fake-pos-1" {
+		t.Errorf("stream_position: got %q", resp.Msg.GetStreamPosition())
+	}
+
+	// Upstream request shape.
+	if got := len(fake.gotExecuteAtomic); got != 1 {
+		t.Fatalf("ExecuteAtomic called %d times, want 1", got)
+	}
+	in := fake.gotExecuteAtomic[0]
+	if !in.GetWaitApplied() {
+		t.Errorf("wait_applied must be true so success means applied")
+	}
+	if in.GetWaitTimeoutMs() <= 0 {
+		t.Errorf("wait_timeout_ms must be > 0, got %d", in.GetWaitTimeoutMs())
+	}
+	if in.GetContext().GetTenantId() != "playground" || in.GetContext().GetActor() != "user:demo" {
+		t.Errorf("context mismatch: %+v", in.GetContext())
+	}
+	if in.GetIdempotencyKey() != "test-idem" {
+		t.Errorf("idempotency forwarded wrong: %q", in.GetIdempotencyKey())
+	}
+	if got := len(in.GetOperations()); got != 1 {
+		t.Fatalf("operations: got %d, want 1", got)
+	}
+	cn := in.GetOperations()[0].GetCreateNode()
+	if cn == nil {
+		t.Fatalf("operation is not create_node: %+v", in.GetOperations()[0])
+	}
+	if cn.GetTypeId() != 1 {
+		t.Errorf("create_node.type_id: got %d, want 1", cn.GetTypeId())
+	}
+	if cn.GetData() == nil || cn.GetData().GetFields()["1"].GetStringValue() != "hello" {
+		t.Errorf("create_node.data missing/wrong: %+v", cn.GetData())
+	}
+}
+
+func TestSandboxCreateEdge_HappyPath_BuildsSingleCreateEdgeOp(t *testing.T) {
+	fake := &fakeServer{}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	resp, err := client.SandboxCreateEdge(context.Background(), connect.NewRequest(newSandboxEdgeReq("playground")))
+	if err != nil {
+		t.Fatalf("SandboxCreateEdge: %v", err)
+	}
+
+	if resp.Msg.GetIdempotencyKey() != "edge-idem" {
+		t.Errorf("idempotency_key: got %q, want edge-idem", resp.Msg.GetIdempotencyKey())
+	}
+	if resp.Msg.GetStreamPosition() != "fake-pos-1" {
+		t.Errorf("stream_position: got %q", resp.Msg.GetStreamPosition())
+	}
+
+	if got := len(fake.gotExecuteAtomic); got != 1 {
+		t.Fatalf("ExecuteAtomic called %d times, want 1", got)
+	}
+	in := fake.gotExecuteAtomic[0]
+	if !in.GetWaitApplied() {
+		t.Errorf("wait_applied must be true")
+	}
+	if got := len(in.GetOperations()); got != 1 {
+		t.Fatalf("operations: got %d, want 1", got)
+	}
+	ce := in.GetOperations()[0].GetCreateEdge()
+	if ce == nil {
+		t.Fatalf("operation is not create_edge: %+v", in.GetOperations()[0])
+	}
+	if ce.GetEdgeId() != 7 {
+		t.Errorf("create_edge.edge_id (=edge_type_id wire field): got %d, want 7", ce.GetEdgeId())
+	}
+	if ce.GetFrom().GetId() != "node-A" {
+		t.Errorf("create_edge.from.id: got %q, want node-A", ce.GetFrom().GetId())
+	}
+	if ce.GetTo().GetId() != "node-B" {
+		t.Errorf("create_edge.to.id: got %q, want node-B", ce.GetTo().GetId())
+	}
+	if ce.GetProps() == nil || ce.GetProps().GetFields()["3"].GetStringValue() != "edge-prop" {
+		t.Errorf("create_edge.props missing/wrong: %+v", ce.GetProps())
+	}
+}
+
+func TestSandboxCreateNode_PropagatesUpstreamUnavailable(t *testing.T) {
+	fake := &fakeServer{executeErr: status.Error(codes.Unavailable, "applier down")}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	_, err := client.SandboxCreateNode(context.Background(), connect.NewRequest(newSandboxNodeReq("playground")))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T", err)
+	}
+	if ce.Code() != connect.CodeUnavailable {
+		t.Errorf("code: got %v, want Unavailable", ce.Code())
+	}
+}
+
+func TestSandboxCreateNode_PropagatesFailedPrecondition(t *testing.T) {
+	fake := &fakeServer{executeErr: status.Error(codes.FailedPrecondition, "schema fingerprint mismatch")}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	_, err := client.SandboxCreateNode(context.Background(), connect.NewRequest(newSandboxNodeReq("playground")))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T", err)
+	}
+	if ce.Code() != connect.CodeFailedPrecondition {
+		t.Errorf("code: got %v, want FailedPrecondition", ce.Code())
+	}
+}
+
+func TestSandboxCreateEdge_PropagatesFailedPrecondition(t *testing.T) {
+	fake := &fakeServer{executeErr: status.Error(codes.FailedPrecondition, "edge schema unknown")}
+	client, _ := newTestServerWithSandbox(t, fake, "", "playground")
+	_, err := client.SandboxCreateEdge(context.Background(), connect.NewRequest(newSandboxEdgeReq("playground")))
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		t.Fatalf("error is not connect.Error: %T", err)
+	}
+	if ce.Code() != connect.CodeFailedPrecondition {
+		t.Errorf("code: got %v, want FailedPrecondition", ce.Code())
 	}
 }

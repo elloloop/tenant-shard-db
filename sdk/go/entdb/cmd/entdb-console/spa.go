@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
@@ -9,6 +10,22 @@ import (
 	"path"
 	"strings"
 )
+
+// spaConfig is the runtime configuration the Go server stamps into the
+// SPA's index.html so the React app can read it before any RPC fires.
+//
+// The SPA reads these values from `window.__ENTDB_SANDBOX_TENANT__` /
+// `__ENTDB_SANDBOX_DEFAULT_ACTOR__` to decide whether to show the
+// Sandbox tab and what to pre-fill in the create forms. The values
+// are server-configured (not user secrets) so stamping them into the
+// served HTML is a natural fit; `APIKey` exists on this struct only
+// because PR 1 reserved it for future server-side stamping (the v1
+// frontend reads the API key from localStorage, not this stamp).
+type spaConfig struct {
+	APIKey              string
+	SandboxTenant       string
+	SandboxDefaultActor string
+}
 
 // newSPAHandler returns an http.Handler that serves the embedded React
 // SPA. The behaviour is the standard SPA fallback:
@@ -26,18 +43,23 @@ import (
 // same mux, so that prefix is matched before this fallback ever runs;
 // we don't need to handle the API path here.
 //
-// `apiKey` is currently unused by the server-side stamping path —
-// PR 1's frontend reads the key from localStorage, set via a tiny
-// settings dialog. The parameter is kept on the signature so a future
-// PR can introduce server-side stamping (e.g. `__ENTDB_API_KEY__`
-// templated into index.html) without changing call sites.
-func newSPAHandler(apiKey string) (http.Handler, error) {
+// PR 1's frontend reads the API key from localStorage so `cfg.APIKey`
+// is currently unused — kept on the struct for symmetry and so future
+// PRs can stamp it into index.html without changing call sites.
+//
+// `cfg.SandboxTenant` and `cfg.SandboxDefaultActor` ARE stamped into
+// index.html (PR 2): the SPA reads them from `window.__ENTDB_*` to
+// decide whether to render the Sandbox tab and what to pre-fill in
+// the create forms. This is the right channel for server-configured
+// values — localStorage would be wrong because these are not
+// per-user secrets, they're per-deployment config.
+func newSPAHandler(cfg spaConfig) (http.Handler, error) {
 	dist, err := fs.Sub(frontendDist, "frontend/dist")
 	if err != nil {
 		return nil, err
 	}
 
-	indexBytes, err := readIndex(dist)
+	rawIndex, err := readIndex(dist)
 	if err != nil {
 		// Index missing means the frontend wasn't built. Don't fail
 		// startup — running the binary with --addr just to test the
@@ -46,8 +68,8 @@ func newSPAHandler(apiKey string) (http.Handler, error) {
 		return placeholderHandler(err), nil
 	}
 
+	indexBytes := stampIndex(rawIndex, cfg)
 	fileServer := http.FileServer(http.FS(dist))
-	_ = apiKey // reserved for future server-side stamping
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only GET/HEAD make sense for static assets.
@@ -80,6 +102,38 @@ func newSPAHandler(apiKey string) (http.Handler, error) {
 		// Path doesn't map to a real file — SPA route.
 		serveIndex(w, r, indexBytes)
 	}), nil
+}
+
+// stampIndex injects a `<script>window.__ENTDB_* = …;</script>` block
+// into index.html just before `</head>` so the SPA sees the values on
+// its very first render — no RPC required, no flicker between "tab
+// hidden" and "tab visible." If `</head>` is missing (placeholder /
+// custom index) the function returns the original bytes unchanged.
+//
+// Values are JSON-encoded so quotes / Unicode in tenant or actor
+// strings are escaped safely. Empty strings are stamped as `""`,
+// which the SPA reads and treats as "sandbox disabled."
+func stampIndex(raw []byte, cfg spaConfig) []byte {
+	headClose := []byte("</head>")
+	idx := bytes.Index(raw, headClose)
+	if idx < 0 {
+		return raw
+	}
+	tenant, _ := json.Marshal(cfg.SandboxTenant)
+	actor, _ := json.Marshal(cfg.SandboxDefaultActor)
+	apiKey, _ := json.Marshal(cfg.APIKey)
+	var b bytes.Buffer
+	b.Grow(len(raw) + 256)
+	b.Write(raw[:idx])
+	b.WriteString("    <script>window.__ENTDB_SANDBOX_TENANT__=")
+	b.Write(tenant)
+	b.WriteString(";window.__ENTDB_SANDBOX_DEFAULT_ACTOR__=")
+	b.Write(actor)
+	b.WriteString(";window.__ENTDB_API_KEY__=")
+	b.Write(apiKey)
+	b.WriteString(";</script>\n  ")
+	b.Write(raw[idx:])
+	return b.Bytes()
 }
 
 func readIndex(dist fs.FS) ([]byte, error) {
