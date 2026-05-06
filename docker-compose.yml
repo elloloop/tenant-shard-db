@@ -180,6 +180,14 @@ services:
     environment:
       - ENTDB_CONSOLE_ADDR=0.0.0.0:8080
       - ENTDB_UPSTREAM=server:50051
+      # Sandbox writes (PR 2). The console hosts a single tenant id
+      # `playground` for create-node / create-edge from the SPA's
+      # Sandbox tab — same name as the existing FastAPI playground
+      # service so both run side-by-side during the rollout. The
+      # tenant must be set up out-of-band (SDK / entdbctl); the
+      # console binary is schema-agnostic and registers nothing.
+      - CONSOLE_SANDBOX_TENANT=playground
+      - CONSOLE_SANDBOX_ACTOR=user:demo
     depends_on:
       server:
         condition: service_healthy

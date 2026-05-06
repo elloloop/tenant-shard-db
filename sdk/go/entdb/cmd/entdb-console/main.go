@@ -27,6 +27,17 @@ func main() {
 	addr := flag.String("addr", envOr("ENTDB_CONSOLE_ADDR", ":8080"), "HTTP listen address")
 	upstream := flag.String("upstream", envOr("ENTDB_UPSTREAM", "localhost:50051"), "upstream entdb-server gRPC address (host:port)")
 	apiKey := flag.String("api-key", os.Getenv("ENTDB_API_KEY"), "API key forwarded to upstream as `authorization: Bearer …`")
+	// Sandbox writes (PR 2) are gated to a single tenant id. When this
+	// is empty, the SandboxCreateNode/SandboxCreateEdge handlers return
+	// `unimplemented` and the SPA hides the Sandbox tab. There is no
+	// "any tenant" mode by design — sandbox writes targeting a real
+	// tenant must be a multi-step config change, not a default.
+	sandboxTenant := flag.String("sandbox-tenant", os.Getenv("CONSOLE_SANDBOX_TENANT"), "tenant id sandbox writes are allowed against; empty disables sandbox writes")
+	// Display-only default for the SPA's create form. Server handlers
+	// always use req.Msg.Actor — this flag never substitutes a value
+	// on the server side. It exists so the user doesn't have to type
+	// `user:demo` every time they refresh the page.
+	sandboxDefaultActor := flag.String("sandbox-default-actor", os.Getenv("CONSOLE_SANDBOX_ACTOR"), "default actor pre-filled in the SPA sandbox forms (display only — server never uses this)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 15*time.Second, "graceful shutdown timeout")
 	flag.Parse()
 
@@ -43,7 +54,13 @@ func main() {
 	}
 	defer func() { _ = uc.Close() }()
 
-	srv := newConsoleServer(uc)
+	srv := newConsoleServer(uc, *sandboxTenant)
+
+	if *sandboxTenant == "" {
+		log.Printf("entdb-console: sandbox writes disabled (set --sandbox-tenant to enable)")
+	} else {
+		log.Printf("entdb-console: sandbox writes enabled against tenant %q", *sandboxTenant)
+	}
 
 	mux := http.NewServeMux()
 
@@ -54,7 +71,11 @@ func main() {
 	mux.Handle(connectPath, connectHandler)
 
 	// SPA fallback for everything else.
-	spa, err := newSPAHandler(*apiKey)
+	spa, err := newSPAHandler(spaConfig{
+		APIKey:              *apiKey,
+		SandboxTenant:       *sandboxTenant,
+		SandboxDefaultActor: *sandboxDefaultActor,
+	})
 	if err != nil {
 		log.Fatalf("entdb-console: build SPA handler: %v", err)
 	}

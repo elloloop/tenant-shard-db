@@ -1,9 +1,10 @@
 import { ReactNode, useState } from 'react'
 import { Link, useLocation, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { Database, Search as SearchIcon, Menu, X, Settings } from 'lucide-react'
+import { Database, FlaskConical, Search as SearchIcon, Menu, X, Settings } from 'lucide-react'
 import { consoleClient } from '../api'
 import { cn } from '../lib/utils'
+import { sandboxEnabled } from '../env'
 import { SettingsDialog } from './SettingsDialog'
 
 interface LayoutProps {
@@ -96,6 +97,27 @@ export default function Layout({ children }: LayoutProps) {
               >
                 <SearchIcon className="w-4 h-4" />
                 Search mailbox
+              </Link>
+            </div>
+          )}
+
+          {/* Sandbox tab is rendered ONLY when the Go server stamped a
+              non-empty __ENTDB_SANDBOX_TENANT__ into index.html. The
+              decision is taken once at first render — no flicker —
+              because the value lands on `window` before React mounts. */}
+          {sandboxEnabled() && (
+            <div className="px-3 mt-6">
+              <Link
+                to="/sandbox"
+                className={cn(
+                  'flex items-center gap-3 px-3 py-2 rounded-md text-sm',
+                  isActive('/sandbox')
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                )}
+              >
+                <FlaskConical className="w-4 h-4" />
+                {sidebarOpen && <span>Sandbox</span>}
               </Link>
             </div>
           )}

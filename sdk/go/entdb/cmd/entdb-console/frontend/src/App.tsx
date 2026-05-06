@@ -7,6 +7,7 @@ import { NodesPage } from './pages/NodesPage'
 import { NodeDetailPage } from './pages/NodeDetailPage'
 import { GraphPage } from './pages/GraphPage'
 import { SearchPage } from './pages/SearchPage'
+import { SandboxPage } from './pages/SandboxPage'
 
 export default function App() {
   return (
@@ -20,6 +21,10 @@ export default function App() {
         <Route path="/tenants/:tenantId/nodes/:nodeId" element={<NodeDetailPage />} />
         <Route path="/tenants/:tenantId/nodes/:nodeId/graph" element={<GraphPage />} />
         <Route path="/tenants/:tenantId/search" element={<SearchPage />} />
+        {/* Sandbox writes (PR 2). Always routable; the page itself
+            renders a "disabled" message when --sandbox-tenant is unset
+            so deep links don't 404. */}
+        <Route path="/sandbox" element={<SandboxPage />} />
         <Route path="*" element={<Navigate to="/tenants" replace />} />
       </Routes>
     </Layout>
