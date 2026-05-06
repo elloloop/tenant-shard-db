@@ -1,8 +1,9 @@
 """Tests for entdb_options.proto — v2 custom options.
 
-Validates that the options proto compiles, the playground schema compiles
-with those options, and the generated descriptors carry the expected
-custom option values (data_policy, pii, subject_field, etc.).
+Validates that the options proto compiles, the bundled playground sample
+schema compiles with those options, and the generated descriptors carry
+the expected custom option values (data_policy, pii, subject_field, etc.).
+The sample schema lives at ``tests/_test_schemas/playground_schema.proto``.
 """
 
 from __future__ import annotations
@@ -17,9 +18,9 @@ from google.protobuf import descriptor_pb2
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PROTO_DIR = os.path.join(ROOT, "sdk", "entdb_sdk", "proto")
-PLAYGROUND_DIR = os.path.join(ROOT, "playground")
+PLAYGROUND_DIR = os.path.join(ROOT, "tests", "_test_schemas")
 OPTIONS_PROTO = os.path.join(PROTO_DIR, "entdb_options.proto")
-SCHEMA_PROTO = os.path.join(PLAYGROUND_DIR, "schema.proto")
+SCHEMA_PROTO = os.path.join(PLAYGROUND_DIR, "playground_schema.proto")
 
 
 def _compile_proto(*args: str) -> subprocess.CompletedProcess:
@@ -118,7 +119,7 @@ class TestPlaygroundCompiles:
     def test_schema_file_present(self, playground_descriptor):
         """The descriptor set contains schema.proto."""
         names = [f.name for f in playground_descriptor.file]
-        assert "schema.proto" in names
+        assert "playground_schema.proto" in names
 
     def test_options_imported(self, playground_descriptor):
         """schema.proto imports entdb_options.proto."""
@@ -320,25 +321,25 @@ class TestExtensions:
 class TestPlaygroundNodeOptions:
     def test_user_has_options(self, playground_descriptor):
         """User message has non-empty options (custom extension data)."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "User")
         assert mt.options.ByteSize() > 0
 
     def test_project_has_options(self, playground_descriptor):
         """Project message has non-empty options."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "Project")
         assert mt.options.ByteSize() > 0
 
     def test_task_has_options(self, playground_descriptor):
         """Task message has non-empty options."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "Task")
         assert mt.options.ByteSize() > 0
 
     def test_comment_has_options(self, playground_descriptor):
         """Comment message has non-empty options."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "Comment")
         assert mt.options.ByteSize() > 0
 
@@ -349,13 +350,13 @@ class TestPlaygroundNodeOptions:
 class TestPlaygroundEdgeOptions:
     def test_owns_has_options(self, playground_descriptor):
         """Owns edge message has non-empty options."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "Owns")
         assert mt.options.ByteSize() > 0
 
     def test_comment_on_has_subject_exit_data(self, playground_descriptor):
         """CommentOn edge carries on_subject_exit option data."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "CommentOn")
         # The raw option bytes should be non-trivial (contains data_policy + on_subject_exit)
         raw = mt.options.SerializeToString()
@@ -363,7 +364,7 @@ class TestPlaygroundEdgeOptions:
 
     def test_all_edge_messages_present(self, playground_descriptor):
         """All 5 edge types are present in the compiled schema."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         names = {mt.name for mt in fd.message_type}
         for edge_name in ("Owns", "Contains", "AssignedTo", "CommentOn", "CommentBy"):
             assert edge_name in names
@@ -375,21 +376,21 @@ class TestPlaygroundEdgeOptions:
 class TestPlaygroundFieldOptions:
     def test_user_email_has_pii(self, playground_descriptor):
         """User.email field has pii option set (raw bytes contain pii flag)."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "User")
         f = _find_field(mt, "email")
         assert f.options.ByteSize() > 0
 
     def test_comment_body_has_pii(self, playground_descriptor):
         """Comment.body field has pii option set."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "Comment")
         f = _find_field(mt, "body")
         assert f.options.ByteSize() > 0
 
     def test_user_role_has_pii_false(self, playground_descriptor):
         """User.role field has pii_false option set."""
-        fd = _find_file(playground_descriptor, "schema.proto")
+        fd = _find_file(playground_descriptor, "playground_schema.proto")
         mt = _find_message(fd, "User")
         f = _find_field(mt, "role")
         # role has pii_false: true, enum_values, default_value — should be non-trivial

@@ -9,8 +9,9 @@ These tests make sure:
 
 1. ``entdb_options_pb2`` is shipped in the SDK's ``_generated`` package
    and that its ``node``, ``edge`` and ``field`` extensions are importable.
-2. Running codegen against the ``playground/schema.proto`` still produces
-   the expected NodeInfo / EdgeInfo structures.
+2. Running codegen against the bundled playground sample schema still
+   produces the expected NodeInfo / EdgeInfo structures. The schema lives
+   at ``tests/_test_schemas/playground_schema.proto``.
 3. The generated Python and Go output is stable (no regression vs. the
    baseline captured when the pure-wire-format parser was in use).
 4. The hand-rolled varint / wire-format helpers have been removed from
@@ -24,7 +25,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAYGROUND_PROTO = REPO_ROOT / "playground" / "schema.proto"
+PLAYGROUND_PROTO = REPO_ROOT / "tests" / "_test_schemas" / "playground_schema.proto"
 
 
 # ---------------------------------------------------------------------------

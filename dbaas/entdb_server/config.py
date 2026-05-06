@@ -656,8 +656,7 @@ class ServerConfig:
 
     This aggregates all configuration sections and provides validation.
 
-    For HTTP/REST access, use the EntDB Console.
-    See console/
+    For a web-based data browser, see `sdk/go/entdb/cmd/entdb-console/`.
 
     Attributes:
         wal_backend: Which WAL backend to use

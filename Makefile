@@ -11,7 +11,7 @@
 #   make build       Build Docker images
 #
 
-.PHONY: help dev stop test e2e e2e-logs build clean proto playwright playwright-install playwright-console playwright-playground
+.PHONY: help dev stop test e2e e2e-logs build clean proto
 
 # Default target
 help:
@@ -19,7 +19,7 @@ help:
 	@echo "=========================="
 	@echo ""
 	@echo "Development:"
-	@echo "  make dev          Start development environment (server, console, playground)"
+	@echo "  make dev          Start development environment (server + entdb-console on :8080)"
 	@echo "  make stop         Stop development environment"
 	@echo "  make logs         Show development logs"
 	@echo ""
@@ -27,12 +27,6 @@ help:
 	@echo "  make test         Run unit tests"
 	@echo "  make e2e          Run end-to-end tests"
 	@echo "  make e2e-logs     Run e2e tests and show logs on failure"
-	@echo ""
-	@echo "Playwright:"
-	@echo "  make playwright           Run all Playwright tests (requires stack running)"
-	@echo "  make playwright-install   Install Playwright dependencies"
-	@echo "  make playwright-console   Run Console Playwright tests only"
-	@echo "  make playwright-playground Run Playground Playwright tests only"
 	@echo ""
 	@echo "Build:"
 	@echo "  make build        Build all Docker images"
@@ -51,9 +45,8 @@ dev:
 	docker compose up -d --build
 	@echo ""
 	@echo "Services:"
-	@echo "  Console:    http://localhost:8080"
-	@echo "  Playground: http://localhost:8081"
-	@echo "  gRPC:       localhost:50051"
+	@echo "  EntDB Console: http://localhost:8080  (Go binary, embedded SPA)"
+	@echo "  gRPC:          localhost:50051"
 	@echo ""
 	@echo "Use 'make logs' to view logs, 'make stop' to stop"
 
@@ -83,26 +76,6 @@ e2e-logs:
 e2e-keep:
 	@echo "Running end-to-end tests (keeping containers)..."
 	./tests/e2e/run-e2e.sh --keep
-
-# =============================================================================
-# Playwright
-# =============================================================================
-
-playwright-install:
-	@echo "Installing Playwright dependencies..."
-	cd tests/playwright && npm install && npx playwright install --with-deps chromium
-
-playwright: playwright-install
-	@echo "Running all Playwright tests..."
-	cd tests/playwright && npx playwright test
-
-playwright-console: playwright-install
-	@echo "Running Console Playwright tests..."
-	cd tests/playwright && npx playwright test --project=console
-
-playwright-playground: playwright-install
-	@echo "Running Playground Playwright tests..."
-	cd tests/playwright && npx playwright test --project=playground
 
 # =============================================================================
 # Build

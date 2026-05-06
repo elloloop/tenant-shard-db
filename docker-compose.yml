@@ -8,8 +8,8 @@ version: "3.8"
 #   docker compose up -d
 #
 # FRONTENDS (open in browser):
-#   - Console:    http://localhost:8080  (read-only data browser)
-#   - Playground: http://localhost:8081  (interactive SDK sandbox)
+#   - EntDB Console: http://localhost:8080  (single Go binary — read-only
+#     data browser + sandbox writes in one tool, embedded React SPA)
 #
 # BACKEND SERVICES:
 #   - EntDB gRPC: localhost:50051 (for SDK connections)
@@ -19,9 +19,10 @@ version: "3.8"
 #   - MinIO Console:    http://localhost:9001  (S3 UI, user: minioadmin/minioadmin)
 #
 # WORKFLOW:
-#   1. Open Playground (http://localhost:8081) to create schemas and data
-#   2. Open Console (http://localhost:8080) to browse created data
-#   3. Use the generated SDK code in your own applications
+#   1. Open the Console (http://localhost:8080), use the Sandbox tab
+#      to create nodes/edges in the `playground` tenant.
+#   2. Browse created data in the Tenants / Nodes / Graph tabs.
+#   3. Use the SDK in your own applications.
 #
 # STOPPING:
 #   docker compose down
@@ -117,58 +118,10 @@ services:
       start_period: 10s
 
   # ==========================================================================
-  # EntDB Console (Read-Only Data Browser)
-  # ==========================================================================
-  console:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: console
-    ports:
-      - "8080:8080"
-    environment:
-      - CONSOLE_ENTDB_HOST=server
-      - CONSOLE_ENTDB_PORT=50051
-      - CONSOLE_DEFAULT_TENANT_ID=playground
-    depends_on:
-      server:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-  # ==========================================================================
-  # EntDB Playground (Interactive SDK Sandbox)
-  # ==========================================================================
-  playground:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: playground
-    ports:
-      - "8081:8081"
-    environment:
-      - PLAYGROUND_ENTDB_HOST=server
-      - PLAYGROUND_ENTDB_PORT=50051
-      - PLAYGROUND_SANDBOX_TENANT=playground
-    depends_on:
-      server:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 5s
-
-  # ==========================================================================
-  # EntDB Console (Go) — single-binary Go server replacing the FastAPI
-  # console. Read-only RPCs only in this PR. Different host port (8082)
-  # so it can run side-by-side with the FastAPI console (8080) during
-  # the rollout.
+  # EntDB Console (Go) — single-binary Go server with embedded React SPA.
+  # Replaces the prior FastAPI `console` (read-only browser) and
+  # `playground` (sandbox writes) services with one tool on :8080.
+  # See docs/decisions/console.md.
   # ==========================================================================
   entdb-console:
     build:
@@ -176,16 +129,14 @@ services:
       dockerfile: Dockerfile
       target: entdb-console
     ports:
-      - "8082:8080"
+      - "8080:8080"
     environment:
       - ENTDB_CONSOLE_ADDR=0.0.0.0:8080
       - ENTDB_UPSTREAM=server:50051
-      # Sandbox writes (PR 2). The console hosts a single tenant id
-      # `playground` for create-node / create-edge from the SPA's
-      # Sandbox tab — same name as the existing FastAPI playground
-      # service so both run side-by-side during the rollout. The
-      # tenant must be set up out-of-band (SDK / entdbctl); the
-      # console binary is schema-agnostic and registers nothing.
+      # Sandbox writes (SandboxCreateNode / SandboxCreateEdge) are gated
+      # to a single tenant id. The tenant must be created out-of-band
+      # (SDK / entdbctl); the console binary is schema-agnostic and
+      # registers nothing.
       - CONSOLE_SANDBOX_TENANT=playground
       - CONSOLE_SANDBOX_ACTOR=user:demo
     depends_on:
