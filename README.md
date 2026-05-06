@@ -116,8 +116,9 @@ async with DbClient(
                             └─────────────────────┘
 ```
 
-The [EntDB Console](console/) provides a web UI and REST API for data browsing,
-similar to phpMyAdmin or DBeaver.
+The [EntDB Console](sdk/go/entdb/cmd/entdb-console/) is a single Go binary
+with an embedded React SPA that provides a web data browser and a sandbox
+for interactive writes against a configured tenant.
 
 ## Documentation
 
@@ -144,11 +145,9 @@ similar to phpMyAdmin or DBeaver.
 │       ├── snapshot/        # SQLite snapshots
 │       ├── tools/           # CLI tools
 │       └── diagrams/        # Mermaid diagrams
-├── console/                 # EntDB Console (Web UI + REST API)
-│   ├── gateway/             # FastAPI backend
-│   └── frontend/            # React frontend
 ├── sdk/
-│   └── entdb_sdk/           # Python SDK
+│   ├── entdb_sdk/           # Python SDK
+│   └── go/entdb/            # Go SDK + entdb-console (single-binary web console)
 ├── examples/
 │   └── fastapi_app/         # Sample FastAPI application
 ├── tests/
