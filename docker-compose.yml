@@ -165,6 +165,26 @@ services:
       start_period: 5s
 
   # ==========================================================================
+  # EntDB Console (Go) — single-binary Go server replacing the FastAPI
+  # console. Read-only RPCs only in this PR. Different host port (8082)
+  # so it can run side-by-side with the FastAPI console (8080) during
+  # the rollout.
+  # ==========================================================================
+  entdb-console:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: entdb-console
+    ports:
+      - "8082:8080"
+    environment:
+      - ENTDB_CONSOLE_ADDR=0.0.0.0:8080
+      - ENTDB_UPSTREAM=server:50051
+    depends_on:
+      server:
+        condition: service_healthy
+
+  # ==========================================================================
   # Redpanda Console (Kafka UI)
   # ==========================================================================
   redpanda-console:

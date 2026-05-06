@@ -1,0 +1,62 @@
+// EntDB Console — curated, browser-facing API.
+//
+// This proto file is the LITERAL access policy for the entdb-console binary.
+// Every RPC the browser is allowed to call MUST be declared here. Anything
+// not listed is unreachable from the SPA — the ConnectRPC handler has no
+// route for it, full stop. This is intentional: the proto is the security
+// boundary, not a stylistic choice.
+//
+// Each RPC reuses the request/response messages from the upstream
+// `entdb.v1.EntDBService` proto so each Console handler is a one-line
+// pass-through to the upstream gRPC client. Adding a new RPC therefore
+// requires touching this file (and getting it through review) rather
+// than just exposing whatever the upstream happens to support.
+//
+// Scope (PR 1): READ-ONLY RPCs only. Sandbox writes ship in PR 2.
+
+syntax = "proto3";
+
+package entdb.console.v1;
+
+import "entdb.proto";
+
+option go_package = "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1;consolev1";
+
+// Console — curated read-only surface for the EntDB web console.
+//
+// All RPCs forward to the upstream `entdb.v1.EntDBService` after the
+// console binary attaches the configured API key as a Bearer token on
+// the outgoing gRPC metadata. The console NEVER calls upstream RPCs
+// not listed here.
+service Console {
+  // Liveness/readiness probe for the console binary itself. Forwards to
+  // upstream Health so the response also reflects upstream availability.
+  rpc Health(entdb.v1.HealthRequest) returns (entdb.v1.HealthResponse);
+
+  // List tenants the configured caller can see.
+  rpc ListTenants(entdb.v1.ListTenantsRequest) returns (entdb.v1.ListTenantsResponse);
+
+  // Get a tenant by id.
+  rpc GetTenant(entdb.v1.GetTenantRequest) returns (entdb.v1.GetTenantResponse);
+
+  // Get the active schema (optionally for a specific type).
+  rpc GetSchema(entdb.v1.GetSchemaRequest) returns (entdb.v1.GetSchemaResponse);
+
+  // Query nodes by type with typed filters + pagination.
+  rpc QueryNodes(entdb.v1.QueryNodesRequest) returns (entdb.v1.QueryNodesResponse);
+
+  // Get a single node by id.
+  rpc GetNode(entdb.v1.GetNodeRequest) returns (entdb.v1.GetNodeResponse);
+
+  // Outgoing edges from a node.
+  rpc GetEdgesFrom(entdb.v1.GetEdgesRequest) returns (entdb.v1.GetEdgesResponse);
+
+  // Incoming edges to a node.
+  rpc GetEdgesTo(entdb.v1.GetEdgesRequest) returns (entdb.v1.GetEdgesResponse);
+
+  // Connected nodes (ACL-filtered) for a graph view.
+  rpc GetConnectedNodes(entdb.v1.GetConnectedNodesRequest) returns (entdb.v1.GetConnectedNodesResponse);
+
+  // Search a user mailbox.
+  rpc SearchMailbox(entdb.v1.SearchMailboxRequest) returns (entdb.v1.SearchMailboxResponse);
+}

@@ -1,0 +1,5 @@
+This file exists so `//go:embed all:frontend/dist` works on fresh
+checkouts before `npm run build` has run. Vite's `emptyOutDir: true`
+clears `dist/` on each build, so the file must be re-staged after
+running `npm run build`. The build pipeline (Dockerfile + CI) does
+this automatically.

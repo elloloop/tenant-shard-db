@@ -247,6 +247,74 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
 CMD ["uvicorn", "playground.app:app", "--host", "0.0.0.0", "--port", "8081"]
 
 # =============================================================================
+# entdb-console (Go) frontend builder — builds the React SPA that gets
+# embedded into the Go binary via //go:embed. Must run before the Go
+# build stage so frontend/dist exists at compile time.
+# =============================================================================
+FROM node:20-slim AS entdb-console-frontend-builder
+
+WORKDIR /build
+
+COPY sdk/go/entdb/cmd/entdb-console/frontend/package*.json sdk/go/entdb/cmd/entdb-console/frontend/
+RUN cd sdk/go/entdb/cmd/entdb-console/frontend && \
+    (npm ci 2>/dev/null || npm install)
+
+COPY sdk/go/entdb/cmd/entdb-console/frontend/ sdk/go/entdb/cmd/entdb-console/frontend/
+RUN cd sdk/go/entdb/cmd/entdb-console/frontend && npm run build
+
+# =============================================================================
+# entdb-console (Go) Go builder — compiles the single binary with the
+# SPA already baked into frontend/dist by the previous stage.
+# =============================================================================
+FROM golang:1.25-bookworm AS entdb-console-builder
+
+WORKDIR /src
+
+# Cache modules layer separately from source.
+COPY sdk/go/entdb/go.mod sdk/go/entdb/go.sum ./sdk/go/entdb/
+RUN cd sdk/go/entdb && go mod download
+
+# Bring in the rest of the Go SDK source.
+COPY sdk/go/entdb/ ./sdk/go/entdb/
+
+# Replace the placeholder dist/ with the real built SPA.
+COPY --from=entdb-console-frontend-builder \
+    /build/sdk/go/entdb/cmd/entdb-console/frontend/dist \
+    ./sdk/go/entdb/cmd/entdb-console/frontend/dist
+
+RUN cd sdk/go/entdb && \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" \
+    -o /entdb-console ./cmd/entdb-console
+
+# =============================================================================
+# entdb-console runtime — distroless static, just the binary.
+# =============================================================================
+FROM gcr.io/distroless/static-debian12:nonroot AS entdb-console
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+
+LABEL org.opencontainers.image.title="EntDB Console (Go)" \
+      org.opencontainers.image.description="Single-binary read-only console + embedded React SPA" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${COMMIT}" \
+      org.opencontainers.image.source="https://github.com/elloloop/tenant-shard-db" \
+      org.opencontainers.image.licenses="MIT"
+
+COPY --from=entdb-console-builder /entdb-console /entdb-console
+
+# Default flags. Override via ENTDB_CONSOLE_ADDR / ENTDB_UPSTREAM /
+# ENTDB_API_KEY environment variables.
+ENV ENTDB_CONSOLE_ADDR="0.0.0.0:8080" \
+    ENTDB_UPSTREAM="server:50051"
+
+EXPOSE 8080
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/entdb-console"]
+
+# =============================================================================
 # Test stage - for running tests
 # =============================================================================
 FROM builder AS test

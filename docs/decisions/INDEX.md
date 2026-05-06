@@ -26,6 +26,9 @@ One line per decision. Newest within each topic first. Rebuilt on each freeze.
 ### search
 - **2026-04-19** — [FTS5-backed full-text search via (entdb.field).searchable](fts.md#2026-04-19-fts5-backed-full-text-search-via-entdbfieldsearchable) — frozen
 
+### console
+- **2026-05-06** — [Single Go binary `entdb-console` with curated Connect proto, replacing FastAPI console + playground](console.md#2026-05-06-single-go-binary-entdb-console-with-curated-connect-proto-replacing-fastapi-console--playground) — frozen
+
 ---
 
 _Powered by the [`freeze-decision` skill](../../.claude/skills/freeze-decision/SKILL.md)._
