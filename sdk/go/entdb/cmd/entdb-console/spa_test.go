@@ -14,7 +14,7 @@ func TestSPAHandler_ServesIndexAtRoot(t *testing.T) {
 	// don't assert on body text because the same binary supports
 	// both states (build vs no-build) and we don't want the test
 	// to fail just because the frontend got rebuilt.
-	h, err := newSPAHandler("")
+	h, err := newSPAHandler(spaConfig{})
 	if err != nil {
 		t.Fatalf("newSPAHandler: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestSPAHandler_FallsBackForUnknownPath(t *testing.T) {
 	// React Router relies on every unknown path returning index.html
 	// so the client-side router can take over. Verify that the SPA
 	// handler does that (and doesn't 404).
-	h, err := newSPAHandler("")
+	h, err := newSPAHandler(spaConfig{})
 	if err != nil {
 		t.Fatalf("newSPAHandler: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestSPAHandler_RejectsPost(t *testing.T) {
 	// hit the method-allow check; with the placeholder branch the
 	// request is unconditionally accepted as static HTML. We only
 	// assert that the placeholder doesn't 500.
-	h, err := newSPAHandler("")
+	h, err := newSPAHandler(spaConfig{})
 	if err != nil {
 		t.Fatalf("newSPAHandler: %v", err)
 	}

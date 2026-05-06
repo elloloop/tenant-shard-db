@@ -59,3 +59,7 @@ func (r realStub) GetConnectedNodes(ctx context.Context, in *pb.GetConnectedNode
 func (r realStub) SearchMailbox(ctx context.Context, in *pb.SearchMailboxRequest, opts ...grpcCallOpt) (*pb.SearchMailboxResponse, error) {
 	return r.stub.SearchMailbox(ctx, in, opts...)
 }
+
+func (r realStub) ExecuteAtomic(ctx context.Context, in *pb.ExecuteAtomicRequest, opts ...grpcCallOpt) (*pb.ExecuteAtomicResponse, error) {
+	return r.stub.ExecuteAtomic(ctx, in, opts...)
+}
