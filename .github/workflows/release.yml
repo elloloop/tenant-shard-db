@@ -307,6 +307,35 @@ jobs:
         with:
           packages-dir: sdk/dist/
 
+  build-cli-binaries:
+    name: Build entdbctl release binaries
+    runs-on: ubuntu-latest
+    # Run after create-release so the GitHub Release exists by
+    # the time goreleaser tries to attach assets to it (mode:
+    # append in .goreleaser.yaml).
+    needs: [create-release]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          workdir: sdk/go/entdb
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
