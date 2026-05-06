@@ -10,20 +10,43 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
-  build-and-push:
-    name: Build and Push Images
-    runs-on: ubuntu-latest
+  # Build each (target × platform) on its native runner — no QEMU. Each
+  # leg runs in parallel; wall-clock = max(slowest native build), not
+  # max(slowest emulated build). Each leg builds, smoke-tests on its
+  # native arch, and pushes the resulting image *by digest* (no tag).
+  # The merge job then stitches the per-platform digests into a single
+  # multi-arch manifest under the semver tags.
+  build:
+    name: Build (${{ matrix.target }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
 
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: server
             suffix: ""
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - target: server
+            suffix: ""
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
           - target: sdk
             suffix: "-sdk"
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - target: sdk
+            suffix: "-sdk"
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -35,8 +58,123 @@ jobs:
           echo "__version__ = \"$VER\"" > sdk/entdb_sdk/_version.py
           echo "__version__ = \"$VER\"" > dbaas/entdb_server/_version.py
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Stage 1: build a loadable single-platform image and run a real
+      # smoke test on the same native runner. This catches startup-time
+      # regressions (e.g. missing dep, broken import, broken CMD) and
+      # arch-specific issues — each platform's smoke runs on its own
+      # native arch, not under emulation.
+      - name: Build (smoke, load only)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          target: ${{ matrix.target }}
+          tags: entdb-smoke:${{ matrix.target }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+
+      - name: Smoke test - server image boots and healthcheck reports SERVING
+        if: matrix.target == 'server'
+        run: |
+          set -euo pipefail
+          docker run -d --name entdb-smoke \
+            -e WAL_BACKEND=local \
+            -p 50051:50051 \
+            entdb-smoke:server-${{ matrix.arch }}
+          for i in $(seq 1 30); do
+            if docker exec entdb-smoke \
+                python -m dbaas.entdb_server.healthcheck --addr=localhost:50051; then
+              echo "::notice::Server (${{ matrix.arch }}) healthy after ${i} attempts"
+              docker rm -f entdb-smoke
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Server (${{ matrix.arch }}) did not become healthy within 60s"
+          docker logs entdb-smoke
+          docker rm -f entdb-smoke
+          exit 1
+
+      - name: Smoke test - SDK image imports entdb_sdk
+        if: matrix.target == 'sdk'
+        run: |
+          set -euo pipefail
+          docker run --rm entdb-smoke:sdk-${{ matrix.arch }} \
+            python -c "import entdb_sdk; print('entdb_sdk', entdb_sdk.__version__, 'on ${{ matrix.arch }}')"
+
+      # Stage 2: smoke passed — push the same image to the registry by
+      # digest only (no tag). Buildkit reuses the cached layers from the
+      # smoke build via the gha cache scope above.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          push: true
+          target: ${{ matrix.target }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.target }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}-${{ matrix.arch }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ matrix.target }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Combine the per-platform digests for each target into a single
+  # multi-arch manifest list, applying the semver / latest / sha tags
+  # from docker/metadata-action.
+  merge:
+    name: Merge multi-arch manifest (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: server
+            suffix: ""
+          - target: sdk
+            suffix: "-sdk"
+
+    steps:
+      - name: Download per-platform digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-${{ matrix.target }}-*
+          merge-multiple: true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -63,79 +201,22 @@ jobs:
             # SHA
             type=sha,prefix=sha-
 
-      # Stage 1: build a single-arch image into the local docker daemon so
-      # we can boot it and run a real smoke test BEFORE pushing anything
-      # to the registry. This catches the "image fails at startup" class
-      # of bug (e.g. missing runtime dep) that the multi-arch push step
-      # cannot, since `load: true` is incompatible with multi-platform.
-      - name: Build (smoke, linux/amd64, load only)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64
-          load: true
-          push: false
-          target: ${{ matrix.target }}
-          tags: entdb-smoke:${{ matrix.target }}
-          cache-from: type=gha
-          # Don't write smoke build to cache — let the multi-arch push
-          # step own the cache so its layers are reused.
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
-
-      - name: Smoke test - server image boots and healthcheck reports SERVING
-        if: matrix.target == 'server'
+      - name: Create and push multi-arch manifest
+        working-directory: /tmp/digests
         run: |
-          set -euo pipefail
-          docker run -d --name entdb-smoke \
-            -e WAL_BACKEND=local \
-            -p 50051:50051 \
-            entdb-smoke:server
-          # Poll the in-image healthcheck (the same one Docker / k8s use).
-          # Wait up to 60s for the server to come up.
-          for i in $(seq 1 30); do
-            if docker exec entdb-smoke \
-                python -m dbaas.entdb_server.healthcheck --addr=localhost:50051; then
-              echo "::notice::Server healthy after ${i} attempts"
-              docker rm -f entdb-smoke
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Server did not become healthy within 60s — refusing to publish image"
-          docker logs entdb-smoke
-          docker rm -f entdb-smoke
-          exit 1
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}@sha256:%s ' *)
 
-      - name: Smoke test - SDK image imports entdb_sdk
-        if: matrix.target == 'sdk'
+      - name: Inspect resulting manifest
         run: |
-          set -euo pipefail
-          docker run --rm entdb-smoke:sdk \
-            python -c "import entdb_sdk; print('entdb_sdk', entdb_sdk.__version__)"
-
-      # Stage 2: smoke passed — now build the multi-arch image and push.
-      # Buildkit reuses layers from the smoke build via gha cache.
-      - name: Build and push (multi-arch)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          target: ${{ matrix.target }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          build-args: |
-            VERSION=${{ github.ref_name }}
-            COMMIT=${{ github.sha }}
+          docker buildx imagetools inspect \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}:${{ steps.meta.outputs.version }}
 
   publish-go-sdk:
     name: Publish Go SDK
     runs-on: ubuntu-latest
-    needs: [build-and-push]
+    needs: [merge]
     permissions:
       contents: write
     steps:
@@ -179,7 +260,7 @@ jobs:
   publish-pypi:
     name: Publish SDK to PyPI
     runs-on: ubuntu-latest
-    needs: [build-and-push]
+    needs: [merge]
     permissions:
       id-token: write
 
@@ -229,7 +310,7 @@ jobs:
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [build-and-push]
+    needs: [merge]
     permissions:
       contents: write
 

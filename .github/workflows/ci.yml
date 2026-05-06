@@ -12,6 +12,54 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # Compute which kinds of files changed so heavy jobs can skip when
+  # they're irrelevant (e.g. unit tests on a Dockerfile-only change).
+  # Path-filter is fast (~5s); the savings on the heavy jobs are large.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      go: ${{ steps.filter.outputs.go }}
+      docker: ${{ steps.filter.outputs.docker }}
+      ci: ${{ steps.filter.outputs.ci }}
+      schema: ${{ steps.filter.outputs.schema }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # On `push` events to main/develop the action diffs against
+          # the previous commit; on PRs it diffs against the base ref.
+          # `pyproject.toml` is in every filter because it can change
+          # what gets installed in any environment.
+          filters: |
+            python:
+              - 'dbaas/**'
+              - 'sdk/entdb_sdk/**'
+              - 'console/**'
+              - 'playground/**'
+              - 'tests/**'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+            go:
+              - 'sdk/go/**'
+              - '.github/workflows/ci.yml'
+            docker:
+              - 'Dockerfile'
+              - 'docker-compose*.yml'
+              - 'tests/e2e/**'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+            ci:
+              - '.github/workflows/**'
+            schema:
+              - 'dbaas/entdb_server/schema/**'
+              - 'dbaas/entdb_server/api/**.proto'
+              - 'sdk/entdb_sdk/schema*'
+              - '.schema-snapshot.json'
+              - '.github/workflows/ci.yml'
+
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -29,6 +77,8 @@ jobs:
   type-check:
     name: Type Check
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -42,6 +92,8 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -59,6 +111,8 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -71,6 +125,8 @@ jobs:
   schema-compat:
     name: Schema Compatibility Check
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.schema == 'true' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -90,6 +146,8 @@ jobs:
   docker-build:
     name: Build Docker Image
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -105,7 +163,8 @@ jobs:
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [docker-build]
+    needs: [changes, docker-build]
+    if: needs.changes.outputs.docker == 'true' || needs.changes.outputs.python == 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -126,9 +185,23 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
 
+  # Aggregator job for branch protection. `if: always()` so it runs even
+  # when upstream jobs were skipped by path filters; the script then
+  # fails only if a non-skipped job didn't succeed. Skipped == OK.
   all-checks:
     name: All Checks Passed
     runs-on: ubuntu-latest
-    needs: [lint, unit-tests, integration-tests, docker-build, e2e-tests]
+    if: always()
+    needs: [lint, type-check, unit-tests, integration-tests, schema-compat, docker-build, e2e-tests, security-scan]
     steps:
-      - run: echo "All CI checks passed!"
+      - name: Verify required checks
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          echo "$NEEDS" | jq .
+          if echo "$NEEDS" | jq -e 'to_entries | any(.value.result == "failure" or .value.result == "cancelled")' >/dev/null; then
+            echo "::error::At least one upstream job failed or was cancelled"
+            exit 1
+          fi
+          echo "All required checks passed (skipped checks counted as success)"
