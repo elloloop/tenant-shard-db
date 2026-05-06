@@ -10,7 +10,7 @@
 #   docker build -t entdb-server .
 #
 # Run:
-#   docker run -p 50051:50051 -p 8081:8081 entdb-server
+#   docker run -p 50051:50051 entdb-server
 
 # =============================================================================
 # Base stage with Python and dependencies
@@ -32,27 +32,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Set working directory
 WORKDIR /app
-
-# =============================================================================
-# Frontend builder - Build React frontends
-# =============================================================================
-FROM node:20-slim AS frontend-builder
-
-WORKDIR /build
-
-# Build Console frontend
-COPY console/frontend/package*.json console/frontend/
-RUN cd console/frontend && npm install --frozen-lockfile 2>/dev/null || npm install
-
-COPY console/frontend/ console/frontend/
-RUN cd console/frontend && npm run build
-
-# Build Playground frontend
-COPY playground/frontend/package*.json playground/frontend/
-RUN cd playground/frontend && npm install --frozen-lockfile 2>/dev/null || npm install
-
-COPY playground/frontend/ playground/frontend/
-RUN cd playground/frontend && npm run build
 
 # =============================================================================
 # Builder stage - install dependencies via uv from pyproject.toml
@@ -88,7 +67,7 @@ ENV VIRTUAL_ENV=/opt/venv \
 COPY pyproject.toml README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip compile pyproject.toml \
-        --extra server --extra console --extra playground \
+        --extra server \
         -o /tmp/requirements.txt && \
     uv pip install --no-cache -r /tmp/requirements.txt
 
@@ -166,85 +145,6 @@ USER entdb
 
 # Default command for SDK stage
 CMD ["python", "-c", "import entdb_sdk; print(f'EntDB SDK {entdb_sdk.__version__} ready')"]
-
-# =============================================================================
-# Console stage - Read-only data browser
-# =============================================================================
-FROM base AS console
-
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy application code
-COPY dbaas/ /app/dbaas/
-COPY sdk/ /app/sdk/
-COPY console/gateway/ /app/console/gateway/
-COPY console/__init__.py /app/console/
-
-# Copy built frontend
-COPY --from=frontend-builder /build/console/frontend/dist /app/console/static
-
-# Switch to non-root user
-USER entdb
-
-# Set Python path (include /app/sdk for entdb_sdk imports)
-ENV PYTHONPATH="/app:/app/sdk"
-
-# Console configuration
-ENV CONSOLE_HOST="0.0.0.0"
-ENV CONSOLE_PORT="8080"
-ENV CONSOLE_ENTDB_HOST="server"
-ENV CONSOLE_ENTDB_PORT="50051"
-ENV CONSOLE_DEFAULT_TENANT_ID="default"
-
-# Expose port
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
-
-# Default command
-CMD ["uvicorn", "console.gateway.app:app", "--host", "0.0.0.0", "--port", "8080"]
-
-# =============================================================================
-# Playground stage - Interactive SDK sandbox
-# =============================================================================
-FROM base AS playground
-
-# Copy virtual environment from builder
-COPY --from=builder /opt/venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-# Copy application code
-COPY playground/*.py /app/playground/
-
-# Copy built frontend
-COPY --from=frontend-builder /build/playground/frontend/dist /app/playground/static
-
-# Switch to non-root user
-USER entdb
-
-# Set Python path
-ENV PYTHONPATH="/app"
-
-# Playground configuration
-ENV PLAYGROUND_HOST="0.0.0.0"
-ENV PLAYGROUND_PORT="8081"
-ENV PLAYGROUND_ENTDB_HOST="server"
-ENV PLAYGROUND_ENTDB_PORT="50051"
-ENV PLAYGROUND_SANDBOX_TENANT="playground"
-
-# Expose port
-EXPOSE 8081
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8081/health || exit 1
-
-# Default command
-CMD ["uvicorn", "playground.app:app", "--host", "0.0.0.0", "--port", "8081"]
 
 # =============================================================================
 # entdb-console (Go) frontend builder — builds the React SPA that gets
