@@ -84,7 +84,7 @@ LABEL org.opencontainers.image.title="EntDB Server" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.source="https://github.com/elloloop/tenant-shard-db" \
-      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
       org.opencontainers.image.vendor="elloloop"
 
 # Copy virtual environment from builder
@@ -199,7 +199,7 @@ LABEL org.opencontainers.image.title="EntDB Console (Go)" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.source="https://github.com/elloloop/tenant-shard-db" \
-      org.opencontainers.image.licenses="MIT"
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 
 COPY --from=entdb-console-builder /entdb-console /entdb-console
 
