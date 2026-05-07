@@ -1,6 +1,2 @@
 # Goreleaser output
 /dist/
-
-# Staged by .goreleaser.yaml's `before` hook so archive includes the
-# repo-root LICENSE. Regenerated each release; not committed.
-/LICENSE
