@@ -13,10 +13,6 @@ project_name: entdbctl
 before:
   hooks:
     - go mod tidy
-    # Copy the repo-root LICENSE into the goreleaser workdir so the
-    # archives.files entry can reference it without a `..` path.
-    # Goreleaser refuses src paths that escape the project_dir.
-    - sh -c 'cp ../../LICENSE LICENSE'
 
 builds:
   - id: entdbctl
@@ -46,8 +42,11 @@ archives:
     files:
       - src: cmd/entdbctl/README.md
         dst: README.md
-      - src: LICENSE
-        dst: LICENSE
+      # LICENSE is not bundled in the archive. The repo-root LICENSE
+      # applies; GitHub Release page links to the source. Goreleaser
+      # refuses files.src paths that escape the project_dir, and a
+      # before-hook copy isn't reliable across goreleaser-action's
+      # workdir handling. Keeping the archive minimal.
 
 checksum:
   name_template: "entdbctl_checksums.txt"
