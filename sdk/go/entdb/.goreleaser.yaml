@@ -13,6 +13,10 @@ project_name: entdbctl
 before:
   hooks:
     - go mod tidy
+    # Copy the repo-root LICENSE into the goreleaser workdir so the
+    # archives.files entry can reference it without a `..` path.
+    # Goreleaser refuses src paths that escape the project_dir.
+    - sh -c 'cp ../../LICENSE LICENSE'
 
 builds:
   - id: entdbctl
@@ -42,11 +46,8 @@ archives:
     files:
       - src: cmd/entdbctl/README.md
         dst: README.md
-      - src: ../../../LICENSE
+      - src: LICENSE
         dst: LICENSE
-        # Optional — drop silently if the repo doesn't ship one.
-        info:
-          mode: 0644
 
 checksum:
   name_template: "entdbctl_checksums.txt"
