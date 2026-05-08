@@ -43,3 +43,7 @@ logs/
 .env
 .env.local
 .claude/worktrees/
+
+# Private notes / red-team review drafts. Never commit.
+/report.md
+/review_prompt.txt
