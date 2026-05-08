@@ -61,4 +61,17 @@ When opening your first pull request, you will be prompted to sign via GitHub, p
 
 ## License
 
-By contributing to EntDB, you agree that your contributions will be licensed under the [AGPL-3.0 License](LICENSE).
+EntDB is **dual-licensed**. Your contribution will be licensed under the
+license that applies to the directory you're contributing to:
+
+| Where you're contributing | License | LICENSE file |
+|---|---|---|
+| Server: `dbaas/`, `tests/` | **GNU AGPL-3.0** | repo-root [`LICENSE`](LICENSE) |
+| Python SDK: `sdk/entdb_sdk/` | **MIT** | [`sdk/LICENSE`](sdk/LICENSE) |
+| Go SDK + CLIs: `sdk/go/entdb/` (incl. `cmd/entdbctl/`, `cmd/entdb-console/`) | **MIT** | [`sdk/go/entdb/LICENSE`](sdk/go/entdb/LICENSE) |
+
+By submitting a pull request, you agree your contribution is licensed under the
+LICENSE file that lives nearest to the files you've changed. Source files
+carry an `SPDX-License-Identifier:` header to make this explicit per file.
+See the [README License section](README.md#license) for the rationale behind
+the dual licensing.

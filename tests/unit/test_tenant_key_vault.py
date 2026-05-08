@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for ``TenantKeyVault`` — the SQLite-backed wrap-and-stash
 store for per-tenant data-encryption keys (DEKs).

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Encryption support for EntDB tenant SQLite files.
 

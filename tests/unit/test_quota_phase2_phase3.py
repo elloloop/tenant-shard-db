@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for Phase 2 (tenant RPS) and Phase 3 (per-user RPS) quotas.
 
 Covers the extension of the quota interceptor with in-memory token

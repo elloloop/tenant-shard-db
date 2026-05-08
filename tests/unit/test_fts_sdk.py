@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 SDK tests for FTS search (2026-04-19 decision).
 

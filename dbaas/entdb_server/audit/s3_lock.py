@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """S3 Object Lock configuration for WAL compliance.
 
 S3 Object Lock in Compliance mode provides WORM (Write Once Read Many)

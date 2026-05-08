@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Regression tests for validate.py missing FieldKind branches.
 
 Bug: _validate_field_value() in validate.py was missing branches for JSON,

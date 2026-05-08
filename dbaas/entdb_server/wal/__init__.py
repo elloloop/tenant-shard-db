@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Write-Ahead Log (WAL) Stream abstraction for EntDB.
 

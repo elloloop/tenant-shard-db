@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 # mypy: ignore-errors
 """
 AWS Kinesis WAL stream implementation.

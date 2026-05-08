@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Typed capability registry for the EntDB ACL v2 engine.
 

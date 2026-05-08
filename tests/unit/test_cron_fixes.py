@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Tests for bug fixes: path traversal, _check_tenant await, health check,
 query_nodes pagination, _run_sync delegation, and rate limiter bounds.

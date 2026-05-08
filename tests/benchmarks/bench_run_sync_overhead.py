@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Benchmark: _run_sync metrics overhead on the SQLite hot path.
 

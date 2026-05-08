@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for applier halt-on-failure semantics and the asyncio
 event-loop offload of synchronous SQLite work.

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for cross-tenant read path (Issue #63).
 
 Covers:

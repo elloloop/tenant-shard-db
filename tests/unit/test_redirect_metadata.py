@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Server-side trailing metadata for tenant redirect hints.
 

@@ -24,7 +24,7 @@ By submitting a contribution, you confirm that:
 
 - The contribution is your original work, or you have the right to submit it under the stated terms.
 - You are legally entitled to grant this license.
-- You understand and agree that your contribution becomes part of the open-source project and may be publicly available under the AGPL-3.0 license, even if the Project Maintainer uses it under a different license.
+- You understand and agree that your contribution becomes part of the open-source project and may be publicly available under the license that applies to the directory in which your contribution lands. EntDB is dual-licensed: the server (`dbaas/`) is under **GNU AGPL-3.0**, while the SDKs and client tooling (`sdk/entdb_sdk/`, `sdk/go/entdb/`, including `cmd/entdbctl/` and `cmd/entdb-console/`) are under **MIT**. The Project Maintainer may also use your contribution under a different license.
 - You agree not to submit code that is subject to a license that conflicts with the terms above.
 
 ---

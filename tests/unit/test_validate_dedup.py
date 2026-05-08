@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for validate.py → FieldDef.validate_value delegation (Issue #105, step 1).
 
 The old validate.py had its own ``_validate_field_value`` that duplicated

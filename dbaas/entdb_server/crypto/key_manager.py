@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 HKDF-based key management for EntDB encryption at rest.
 

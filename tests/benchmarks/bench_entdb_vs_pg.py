@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 EntDB (full stack) vs PostgreSQL — End-to-End Benchmark.
 

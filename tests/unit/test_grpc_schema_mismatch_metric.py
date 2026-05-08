@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Regression test: ExecuteAtomic schema mismatch must record metric as "error".
 

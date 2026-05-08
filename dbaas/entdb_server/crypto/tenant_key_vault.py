@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 SQLite-backed vault for per-tenant encryption keys.
 

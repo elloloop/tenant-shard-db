@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Proto-to-EntDB schema code generator.
 
 Reads a compiled .proto FileDescriptorSet and generates Python/Go

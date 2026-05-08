@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Integration tests for typed ACL grants persisted in ``node_access``.
 
 These exercise the end-to-end path: share a node with typed caps,

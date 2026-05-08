@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for cross-tenant shared_index integration (Issue #49).
 
 Covers:

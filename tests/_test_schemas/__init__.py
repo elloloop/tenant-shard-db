@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Test fixtures: proto schemas used by the SDK v0.3 test suite and codegen tests.
 
 The tests under ``tests/`` exercise the single-shape SDK API which

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Regression tests for Plan double-commit guard and FieldDef type validation.
 
 Issue 1: Plan.commit() could be called multiple times, replaying all

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Workplace communication tests: Chat Messages, Channels, Threads.
 

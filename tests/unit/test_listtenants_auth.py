@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Regression tests for [SEC-3] — ListTenants must not enumerate every
 tenant on the server to any authenticated caller.

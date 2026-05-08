@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for the MongoDB-style query-operator translator introduced
 by the 2026-04-14 SDK v0.3 decision.

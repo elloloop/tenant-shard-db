@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Tenant-to-endpoint redirect cache for the Python EntDB SDK.
 

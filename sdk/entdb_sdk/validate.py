@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Payload validation for EntDB SDK.
 

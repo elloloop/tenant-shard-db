@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 EntDB Python SDK — single-shape v0.3 API.
 

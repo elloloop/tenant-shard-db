@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Internal gRPC client for EntDB SDK.
 

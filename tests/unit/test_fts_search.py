@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for FTS5-backed full-text search (2026-04-19 decision).
 

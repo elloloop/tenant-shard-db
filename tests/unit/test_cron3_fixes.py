@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Tests for cron cycle #3 fixes:
   Server.stop() cleanup of partially-started components.

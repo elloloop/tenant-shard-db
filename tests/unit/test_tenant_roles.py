@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for tenant role-based and status-based access control in
 the gRPC server (Issue #56).

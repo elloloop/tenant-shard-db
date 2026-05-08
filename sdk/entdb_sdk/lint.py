@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """EntDB schema linter — strict semantic validation.
 
 Second-pass validation gate: catches every schema mistake that protoc

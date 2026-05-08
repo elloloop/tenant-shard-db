@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """EntDB CLI — schema generation, validation, and linting.
 
 Commands:

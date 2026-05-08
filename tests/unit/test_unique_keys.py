@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for the unique-field / GetNodeByKey feature
 (2026-04-14 SDK v0.3 decision, supersedes the 2026-04-13 ``node_keys``

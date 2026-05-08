@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Region pinning rejection in EntDBServicer._check_tenant.
 

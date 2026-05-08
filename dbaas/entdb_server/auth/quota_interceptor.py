@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Three-layer rate limit interceptor.
 
 Implements the quota model frozen in ``docs/decisions/quotas.md``:

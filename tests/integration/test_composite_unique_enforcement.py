@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Integration tests for composite (multi-field) unique enforcement.
 
 These tests run the real applier + canonical_store stack on a

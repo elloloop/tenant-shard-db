@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Command entdb is the Go CLI for the EntDB SDK.
 //
 // Since the 2026-04-14 SDK v0.3 decision the data-plane commands

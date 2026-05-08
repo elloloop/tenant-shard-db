@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for the security/durability hardening batch.
 
 Covers four independent fixes landed in a single PR:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Strongly-typed primitives for the EntDB SDK.
 
 All user-facing types live here: ``Actor``, ``Permission``,

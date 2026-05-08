@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package entdb provides a Go client SDK for the EntDB multi-tenant graph database.
 package entdb
 

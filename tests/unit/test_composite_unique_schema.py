@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Schema-layer tests for composite (multi-field) unique constraints.
 
 Covers the registration / validation surface introduced for

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """ACL v2 benchmarks: access check, inheritance, groups, connected nodes."""
 
 import time

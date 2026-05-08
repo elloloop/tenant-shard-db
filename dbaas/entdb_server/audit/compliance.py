@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """WAL-based audit trail export for compliance.
 
 The WAL is the source of truth for all mutations. This module reads

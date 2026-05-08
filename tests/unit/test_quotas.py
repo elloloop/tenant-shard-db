@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for Phase 1 of the quota system (monthly write quota).
 
 Covers:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Schema types for EntDB SDK.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for entdb_sdk.lint — strict semantic validation.
 
 One test per lint rule, plus integration tests for clean schemas,

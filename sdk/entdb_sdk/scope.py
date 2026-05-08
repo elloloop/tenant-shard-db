@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """Hierarchical scope API for EntDB SDK.
 
 Provides a builder pattern that captures tenant and actor context:

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Global SQLite store for cross-tenant state in EntDB.
 

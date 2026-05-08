@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 End-to-end integration test for SDK-side tenant redirect caching.
 

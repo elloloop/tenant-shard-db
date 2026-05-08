@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for ``CanonicalStore.migrate_payloads_to_field_ids``.
 

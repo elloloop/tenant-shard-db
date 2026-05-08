@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Admin operation handlers for EntDB (Issues #90, #91, #92).
 
 ARCHITECTURE: Per-tenant mutations (transfer ownership, revoke ACL)

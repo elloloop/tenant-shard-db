@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Extended ACL v2 tests for edge cases, regression, and benchmarks.
 
 Covers:

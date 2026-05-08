@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Unit tests for ``_field_filters_to_filter_dict`` — the wire-level
 translation that turns a list of ``FieldFilter`` proto messages into the

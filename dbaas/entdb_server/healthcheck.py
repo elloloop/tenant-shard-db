@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Healthcheck CLI — calls the standard gRPC Health Checking RPC.
 

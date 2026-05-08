@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 API key management with scoping and rotation for EntDB.
 

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Round-trip integration test for the Python SDK over gRPC.
 

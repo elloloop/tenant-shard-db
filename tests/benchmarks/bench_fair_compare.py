@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """
 Fair comparison: EntDB vs PostgreSQL — same container specs.
 

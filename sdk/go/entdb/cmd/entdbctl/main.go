@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Command entdbctl is the kubectl-style read CLI for EntDB.
 //
 // It is a thin wrapper around the raw gRPC client at

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for ACL v2: inheritance-based access control.
 
 Covers:

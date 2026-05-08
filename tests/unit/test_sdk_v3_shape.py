@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Canonical end-to-end test for the SDK v0.3 single-shape API.
 
 This file is the executable form of the example block in

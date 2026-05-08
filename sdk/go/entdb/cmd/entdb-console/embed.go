@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 // Package main — entdb-console: single-binary Go server that ships the
 // React SPA via go:embed and exposes a curated, read-only ConnectRPC
 // surface that pass-through-proxies to the upstream entdb-server.

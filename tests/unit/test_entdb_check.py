@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for entdb check — backward compatibility checker.
 
 Tests the _check_compat function and CLI commands (init, check)

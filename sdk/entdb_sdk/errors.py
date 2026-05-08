@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Error types for EntDB SDK.
 

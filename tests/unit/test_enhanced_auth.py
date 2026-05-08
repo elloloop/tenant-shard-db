@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the enhanced authentication system (issues #86, #87, #88).
 
 Covers:

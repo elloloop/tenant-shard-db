@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 """
 Schema registry for EntDB SDK.
 

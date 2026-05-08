@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Tests for entdb_options.proto — v2 custom options.
 
 Validates that the options proto compiles, the bundled playground sample

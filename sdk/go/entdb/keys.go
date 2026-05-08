@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: MIT
 package entdb
 
 // UniqueKey is a typed reference to a unique field on a node type.

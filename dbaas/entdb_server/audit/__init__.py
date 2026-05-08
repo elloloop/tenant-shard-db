@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Audit compliance module.
 
 The WAL (S3/Kafka/Kinesis) is the primary audit log — immutable,

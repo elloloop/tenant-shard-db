@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """Unit tests for the typed capability registry.
 
 Covers the 2026-04-13 ACL decision: ``CoreCapability`` hierarchy,
