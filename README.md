@@ -236,7 +236,29 @@ Environment variables:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+EntDB is dual-licensed. The split follows the standard open-source database
+pattern (e.g. MongoDB pre-2018, MariaDB): the server is copyleft so derivative
+servers stay open, the client SDKs are permissive so applications using the
+SDKs aren't forced to be copyleft.
+
+| Component | License | Path | License file |
+|---|---|---|---|
+| **Server** (`entdb` / `dbaas/`) | **GNU AGPL v3** | `dbaas/` | repo-root [`LICENSE`](LICENSE) |
+| **Python SDK** (`entdb-sdk`) | **MIT** | `sdk/entdb_sdk/` | [`sdk/LICENSE`](sdk/LICENSE) |
+| **Go SDK** | **MIT** | `sdk/go/entdb/` | [`sdk/go/entdb/LICENSE`](sdk/go/entdb/LICENSE) |
+| **`entdbctl` CLI** | **MIT** | `sdk/go/entdb/cmd/entdbctl/` | covered by `sdk/go/entdb/LICENSE` |
+| **`entdb-console` debug binary** | **MIT** | `sdk/go/entdb/cmd/entdb-console/` | covered by `sdk/go/entdb/LICENSE` |
+
+Practical implications:
+
+- Running EntDB *server* in production is fine. Modifying the server and
+  offering it as a network service (SaaS) requires you to publish your
+  changes under AGPL.
+- Building an application against `entdb-sdk` (Python) or
+  `github.com/elloloop/tenant-shard-db/sdk/go/entdb` (Go) imposes **no**
+  copyleft obligations on your application — it's MIT.
+- Forking `entdbctl` or `entdb-console` and shipping a derivative is fine
+  under MIT; attribution required.
 
 ## Contributing
 
