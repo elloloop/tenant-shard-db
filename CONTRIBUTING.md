@@ -19,10 +19,10 @@ Thank you for considering contributing to EntDB! This document explains how to c
 
 ```bash
 # Unit tests
-pytest tests/unit -v
+pytest tests/python/unit -v
 
 # Integration tests
-pytest tests/integration -v
+pytest tests/python/integration -v
 
 # E2E tests (requires Docker)
 make e2e
@@ -31,7 +31,7 @@ make e2e
 make playwright
 
 # Benchmarks
-pytest tests/benchmarks -v --benchmark-only
+pytest tests/python/benchmarks -v --benchmark-only
 ```
 
 ### Code Quality
@@ -42,7 +42,7 @@ ruff check .
 ruff format --check .
 
 # Type check
-mypy dbaas sdk --exclude '(_generated|api/generated)'
+mypy server/python sdk/python --exclude '(_generated|api/generated)'
 ```
 
 ## Pull Request Process
@@ -66,8 +66,8 @@ license that applies to the directory you're contributing to:
 
 | Where you're contributing | License | LICENSE file |
 |---|---|---|
-| Server: `dbaas/`, `tests/` | **GNU AGPL-3.0** | repo-root [`LICENSE`](LICENSE) |
-| Python SDK: `sdk/entdb_sdk/` | **MIT** | [`sdk/LICENSE`](sdk/LICENSE) |
+| Server: `server/python/`, `tests/python/` | **GNU AGPL-3.0** | repo-root [`LICENSE`](LICENSE) |
+| Python SDK: `sdk/python/entdb_sdk/` | **MIT** | [`sdk/python/LICENSE`](sdk/python/LICENSE) |
 | Go SDK + CLIs: `sdk/go/entdb/` (incl. `cmd/entdbctl/`, `cmd/entdb-console/`) | **MIT** | [`sdk/go/entdb/LICENSE`](sdk/go/entdb/LICENSE) |
 
 By submitting a pull request, you agree your contribution is licensed under the

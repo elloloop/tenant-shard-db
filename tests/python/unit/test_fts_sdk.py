@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from entdb_sdk.client import DbClient
 from entdb_server.schema.registry import get_registry, reset_registry
 from entdb_server.schema.types import NodeTypeDef, field
-from entdb_sdk.client import DbClient
 
 TYPE_PRODUCT = 201
 

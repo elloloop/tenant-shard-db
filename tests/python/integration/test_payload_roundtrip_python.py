@@ -23,6 +23,9 @@ import tempfile
 import pytest
 from grpc import aio as grpc_aio
 
+from entdb_sdk import register_proto_schema
+from entdb_sdk.client import DbClient
+from entdb_sdk.registry import get_registry, reset_registry
 from entdb_server.api.generated import add_EntDBServiceServicer_to_server
 from entdb_server.api.grpc_server import EntDBServicer
 from entdb_server.apply.applier import Applier, MailboxFanoutConfig
@@ -33,9 +36,6 @@ from entdb_server.schema.types import FieldDef as ServerFieldDef
 from entdb_server.schema.types import FieldKind as ServerFieldKind
 from entdb_server.schema.types import NodeTypeDef as ServerNodeTypeDef
 from entdb_server.wal.memory import InMemoryWalStream
-from entdb_sdk import register_proto_schema
-from entdb_sdk.client import DbClient
-from entdb_sdk.registry import get_registry, reset_registry
 from tests.python._test_schemas import test_schema_pb2 as ts
 
 

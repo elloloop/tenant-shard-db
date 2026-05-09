@@ -13,9 +13,7 @@ import sys
 
 # Ensure the local sdk/ tree is importable (it has codegen, lint, cli).
 _SDK_ROOT = os.path.join(
-    os.path.dirname(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    ),
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))),
     "sdk",
     "python",
 )

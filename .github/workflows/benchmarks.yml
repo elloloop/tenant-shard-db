@@ -22,23 +22,28 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv python install ${{ env.PYTHON_VERSION }}
-      - run: uv venv && uv pip install -e ".[dev]" pytest-benchmark==5.2.3
+      - run: |
+          uv venv
+          uv pip install -e ./server/python -e ./sdk/python \
+            "pytest>=8.0.0" "pytest-asyncio>=0.23.0" "pytest-cov>=4.1.0" \
+            "pytest-timeout>=2.2.0" "ruff>=0.15.0" "mypy>=1.8.0" "httpx>=0.26.0" \
+            "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3
 
       - name: Run benchmarks
         run: |
-          uv run pytest tests/benchmarks/ -v \
+          uv run pytest tests/python/benchmarks/ -v \
             --benchmark-only \
             --benchmark-json=benchmark-results.json \
             --benchmark-min-rounds=5
 
       - name: Run cost model
         run: |
-          uv run pytest tests/benchmarks/bench_archiver.py::TestCostModel -v -s \
+          uv run pytest tests/python/benchmarks/bench_archiver.py::TestCostModel -v -s \
             --no-header 2>&1 | tee cost-report.txt
 
       - name: Run compression analysis
         run: |
-          uv run pytest tests/benchmarks/bench_archiver.py::TestCompressionRatio -v -s \
+          uv run pytest tests/python/benchmarks/bench_archiver.py::TestCompressionRatio -v -s \
             --no-header 2>&1 | tee compression-report.txt
 
       - name: Store benchmark results

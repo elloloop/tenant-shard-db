@@ -17,9 +17,7 @@ import tempfile
 import pytest
 from google.protobuf import descriptor_pb2
 
-ROOT = os.path.dirname(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-)
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 PROTO_DIR = os.path.join(ROOT, "sdk", "python", "entdb_sdk", "proto")
 PLAYGROUND_DIR = os.path.join(ROOT, "tests", "python", "_test_schemas")
 OPTIONS_PROTO = os.path.join(PROTO_DIR, "entdb_options.proto")

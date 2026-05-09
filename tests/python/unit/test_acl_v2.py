@@ -23,6 +23,11 @@ import time
 
 import pytest
 
+from entdb_sdk.schema import (
+    AclDefaults,
+    EdgeTypeDef,
+    NodeTypeDef,
+)
 from entdb_server.apply.acl import AclManager, Permission
 from entdb_server.apply.canonical_store import CanonicalStore
 from entdb_server.schema.compat import (
@@ -30,11 +35,6 @@ from entdb_server.schema.compat import (
     check_compatibility,
 )
 from entdb_server.schema.registry import SchemaRegistry
-from entdb_sdk.schema import (
-    AclDefaults,
-    EdgeTypeDef,
-    NodeTypeDef,
-)
 
 TENANT = "test_tenant"
 ALICE = "user:alice"

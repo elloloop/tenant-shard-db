@@ -21,9 +21,9 @@ import uuid
 
 import pytest
 
+from entdb_sdk.schema import AclDefaults, EdgeTypeDef, NodeTypeDef
 from entdb_server.apply.acl import AclManager, Permission
 from entdb_server.apply.canonical_store import CanonicalStore
-from entdb_sdk.schema import AclDefaults, EdgeTypeDef, NodeTypeDef
 
 TENANT = "test_extended"
 ALICE = "user:alice"
