@@ -415,6 +415,27 @@ class EntDBServicer(EntDBServiceServicer):
             return actor[5:]
         return actor
 
+    def _trusted_actor(self, request_actor: str) -> str:
+        """Return the actor string a handler should use for everything
+        downstream of the gRPC ingress boundary.
+
+        The trusted identity from :class:`AuthInterceptor` ALWAYS wins
+        when present. The caller-supplied ``actor`` is only honoured
+        when the interceptor did not run (no-auth deployments and
+        unit tests). This is the belt-and-suspenders companion to the
+        choke-point fixes inside :meth:`_is_admin_or_system`,
+        :meth:`_check_tenant_access` and :meth:`_check_cross_tenant_read`
+        — every handler should immediately rebind its ``actor``
+        variable to the trusted value so a future authorization
+        helper added in the chain cannot honour a forged claim.
+
+        See ``dbaas/entdb_server/auth/auth_interceptor.py`` for
+        details on the underlying ``ContextVar``.
+        """
+        from ..auth.auth_interceptor import get_authoritative_actor
+
+        return get_authoritative_actor(request_actor)
+
     async def _check_tenant_access(
         self,
         tenant_id: str,
@@ -444,7 +465,14 @@ class EntDBServicer(EntDBServiceServicer):
 
         Args:
             tenant_id:    Tenant identifier to check.
-            actor:        Actor string (``user:<id>``, ``system:*`` etc).
+            actor:        Actor string (``user:<id>``, ``system:*`` etc)
+                          taken from the request payload. The helper
+                          ALWAYS substitutes the trusted identity from
+                          :class:`AuthInterceptor` before deciding —
+                          a payload claim of ``"system:admin"`` from a
+                          regular ``user:eve`` is downgraded to
+                          ``user:eve``. This is the defence-in-depth
+                          fix for the actor-trust privilege escalation.
             context:      gRPC servicer context for ``abort()``.
             require_write: If True, the caller is requesting a write op.
             op_kind:      One of ``"read"``, ``"create"``, ``"write"``,
@@ -457,6 +485,13 @@ class EntDBServicer(EntDBServiceServicer):
             ``None`` only when the call has been aborted (the abort raises,
             so callers will not actually receive ``None`` in practice).
         """
+        # Substitute the trusted identity so a careless caller cannot
+        # bypass the privilege check by sending a privileged-looking
+        # actor string in the request payload.
+        from ..auth.auth_interceptor import get_authoritative_actor
+
+        actor = get_authoritative_actor(actor)
+
         if self.global_store is None:
             return "system"
 
@@ -537,9 +572,21 @@ class EntDBServicer(EntDBServiceServicer):
         entry in the tenant, returns "cross_tenant".
         Otherwise aborts with PERMISSION_DENIED.
 
+        ``actor`` is taken from the request payload but the helper
+        substitutes the trusted identity from :class:`AuthInterceptor`
+        before checking — a payload claim of ``"system:admin"`` from a
+        regular ``user:eve`` is downgraded to ``user:eve``. This is
+        the defence-in-depth fix for the actor-trust privilege
+        escalation; without it any authenticated user could short-
+        circuit through the ``startswith("system:")`` branch below.
+
         Returns:
             "local" (no global_store), "member", or "cross_tenant".
         """
+        from ..auth.auth_interceptor import get_authoritative_actor
+
+        actor = get_authoritative_actor(actor)
+
         if not self.global_store:
             return "local"
 
@@ -588,6 +635,14 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "actor is required")
             if not request.operations:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "operations list is empty")
+
+            # SECURITY: replace the request-supplied actor with the
+            # trusted identity from AuthInterceptor for the rest of
+            # the handler. The persisted WAL event MUST record who
+            # actually performed the action, not whatever string the
+            # caller put on the wire — otherwise audit and GDPR
+            # exports both lie about provenance.
+            trusted_actor = self._trusted_actor(ctx.actor)
 
             # Generate idempotency key if not provided
             idempotency_key = request.idempotency_key or str(uuid.uuid4())
@@ -702,7 +757,7 @@ class EntDBServicer(EntDBServiceServicer):
             has_delete = any(op.get("op") in ("delete_node", "delete_edge") for op in ops)
             await self._check_tenant_access(
                 tenant_id=ctx.tenant_id,
-                actor=ctx.actor,
+                actor=trusted_actor,
                 context=context,
                 require_write=True,
                 op_kind="delete" if has_delete else "write",
@@ -716,10 +771,13 @@ class EntDBServicer(EntDBServiceServicer):
                         op["id"] = str(uuid.uuid4())
                     created_node_ids.append(op["id"])
 
-            # Build transaction event
+            # Build transaction event. The persisted ``actor`` is
+            # the trusted identity, NOT the (possibly forged) string
+            # the client claimed. This is the audit-truth invariant
+            # the privilege-escalation fix preserves.
             event = {
                 "tenant_id": ctx.tenant_id,
-                "actor": ctx.actor,
+                "actor": trusted_actor,
                 "idempotency_key": idempotency_key,
                 "schema_fingerprint": self.schema_registry.fingerprint,
                 "ts_ms": int(time.time() * 1000),
@@ -947,9 +1005,10 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            trusted_actor = self._trusted_actor(request.context.actor)
             role = await self._check_cross_tenant_read(
                 request.context.tenant_id,
-                request.context.actor,
+                trusted_actor,
                 context,
             )
 
@@ -972,7 +1031,7 @@ class EntDBServicer(EntDBServiceServicer):
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
                     request.context.tenant_id,
-                    request.context.actor,
+                    trusted_actor,
                 )
                 has_access = await self.canonical_store.can_access(
                     request.context.tenant_id,
@@ -1047,13 +1106,15 @@ class EntDBServicer(EntDBServiceServicer):
                 return GetNodeByKeyResponse(found=False)
 
             # Delegate to GetNode so ACL / cross-tenant / capability
-            # checks stay centralised.
+            # checks stay centralised. Forward the trusted identity
+            # so a forged ``request.actor`` cannot ride the inner
+            # call.
             from .generated import RequestContext as _RequestContext
 
             get_req = GetNodeRequest(
                 context=_RequestContext(
                     tenant_id=request.tenant_id,
-                    actor=request.actor,
+                    actor=self._trusted_actor(request.actor),
                 ),
                 type_id=int(request.type_id),
                 node_id=node.node_id,
@@ -1109,15 +1170,16 @@ class EntDBServicer(EntDBServiceServicer):
             )
 
             # ACL filtering: same pattern as QueryNodes
+            trusted_actor = self._trusted_actor(request.actor)
             role = await self._check_cross_tenant_read(
                 request.tenant_id,
-                request.actor,
+                trusted_actor,
                 context,
             )
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
                     request.tenant_id,
-                    request.actor,
+                    trusted_actor,
                 )
                 accessible = []
                 for n in nodes:
@@ -1163,9 +1225,10 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            trusted_actor = self._trusted_actor(request.context.actor)
             role = await self._check_cross_tenant_read(
                 request.context.tenant_id,
-                request.context.actor,
+                trusted_actor,
                 context,
             )
 
@@ -1181,7 +1244,7 @@ class EntDBServicer(EntDBServiceServicer):
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
                     request.context.tenant_id,
-                    request.context.actor,
+                    trusted_actor,
                 )
 
             nodes = []
@@ -1240,9 +1303,10 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            trusted_actor = self._trusted_actor(request.context.actor)
             role = await self._check_cross_tenant_read(
                 request.context.tenant_id,
-                request.context.actor,
+                trusted_actor,
                 context,
             )
 
@@ -1281,7 +1345,7 @@ class EntDBServicer(EntDBServiceServicer):
             if role == "cross_tenant":
                 actor_ids = await self.canonical_store.resolve_actor_groups(
                     request.context.tenant_id,
-                    request.context.actor,
+                    trusted_actor,
                 )
                 accessible = []
                 for n in nodes:
@@ -1654,9 +1718,10 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            trusted_actor = self._trusted_actor(request.context.actor)
             actor_ids = await self.canonical_store.resolve_actor_groups(
                 request.context.tenant_id,
-                request.context.actor,
+                trusted_actor,
             )
             limit = request.limit or 100
             nodes = await self.canonical_store.get_connected_nodes(
@@ -1695,9 +1760,10 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            trusted_actor = self._trusted_actor(request.context.actor)
             await self._check_tenant_access(
                 request.context.tenant_id,
-                request.context.actor,
+                trusted_actor,
                 context,
                 require_write=True,
             )
@@ -1716,7 +1782,7 @@ class EntDBServicer(EntDBServiceServicer):
             try:
                 await self._check_capability(
                     tenant_id,
-                    request.context.actor,
+                    trusted_actor,
                     request.node_id,
                     type_id,
                     "ShareNode",
@@ -1730,7 +1796,7 @@ class EntDBServicer(EntDBServiceServicer):
                 node_id=request.node_id,
                 actor_id=actor_id,
                 permission=permission,
-                granted_by=request.context.actor,
+                granted_by=trusted_actor,
                 actor_type=request.actor_type or "user",
                 expires_at=expires_at,
                 type_id=type_id,
@@ -1768,12 +1834,13 @@ class EntDBServicer(EntDBServiceServicer):
         start = time.perf_counter()
         try:
             await self._check_tenant(request.context.tenant_id, context)
+            trusted_actor = self._trusted_actor(request.context.actor)
             tenant_id = request.context.tenant_id
             actor_id = request.actor_id
             try:
                 await self._check_capability(
                     tenant_id,
-                    request.context.actor,
+                    trusted_actor,
                     request.node_id,
                     0,
                     "RevokeAccess",
@@ -1821,7 +1888,7 @@ class EntDBServicer(EntDBServiceServicer):
         try:
             await self._check_tenant(request.context.tenant_id, context)
             tenant_id = request.context.tenant_id
-            actor = request.context.actor
+            actor = self._trusted_actor(request.context.actor)
             actor_ids = await self.canonical_store.resolve_actor_groups(
                 tenant_id,
                 actor,
@@ -1984,12 +2051,39 @@ class EntDBServicer(EntDBServiceServicer):
     # --- User registry handlers ---
 
     def _is_admin_or_system(self, actor: str) -> bool:
-        """Check if actor is admin or system."""
-        return actor.startswith("system:") or actor.startswith("admin:") or actor == "__system__"
+        """Check if actor is admin or system.
+
+        ``actor`` is the raw request payload value; the helper
+        substitutes the trusted identity from :class:`AuthInterceptor`
+        before doing the privilege string check. Without this
+        substitution any authenticated user could send
+        ``actor="system:admin"`` and elevate themselves on the
+        privilege checks done by callers like ``CreateUser`` and the
+        tenant-admin handlers.
+        """
+        from ..auth.auth_interceptor import get_authoritative_actor
+
+        trusted = get_authoritative_actor(actor)
+        return (
+            trusted.startswith("system:") or trusted.startswith("admin:") or trusted == "__system__"
+        )
 
     def _is_self_or_admin(self, actor: str, user_id: str) -> bool:
-        """Check if actor is the user themselves or an admin/system."""
-        return self._is_admin_or_system(actor) or actor == f"user:{user_id}" or actor == user_id
+        """Check if actor is the user themselves or an admin/system.
+
+        Like :meth:`_is_admin_or_system`, the privilege decision is
+        made on the trusted identity from :class:`AuthInterceptor`,
+        not the request payload. The "self" arm compares the trusted
+        identity against ``user_id`` so a malicious caller cannot
+        smuggle a privileged actor string past the ``startswith``
+        check.
+        """
+        from ..auth.auth_interceptor import get_authoritative_actor
+
+        trusted = get_authoritative_actor(actor)
+        if trusted.startswith("system:") or trusted.startswith("admin:") or trusted == "__system__":
+            return True
+        return trusted == f"user:{user_id}" or trusted == user_id
 
     def _user_dict_to_proto(self, user: dict) -> UserInfo:
         """Convert a user dict to a UserInfo proto message."""
@@ -2228,6 +2322,12 @@ class EntDBServicer(EntDBServiceServicer):
             if not request.name:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "name is required")
 
+            # SECURITY: bind to the trusted identity so the creator
+            # recorded as owner cannot be forged by sending
+            # ``actor=user:carol`` from a session authenticated as
+            # ``user:eve``.
+            trusted_actor = self._trusted_actor(request.actor)
+
             # Empty region defaults to the server's served region (or
             # 'us-east-1' when this node has no region configured —
             # single-region back-compat).
@@ -2240,7 +2340,7 @@ class EntDBServicer(EntDBServiceServicer):
             await self.canonical_store.initialize_tenant(request.tenant_id)
 
             # Add the creator as owner
-            creator_user_id = self._actor_user_id(request.actor)
+            creator_user_id = self._actor_user_id(trusted_actor)
             await self.global_store.add_member(request.tenant_id, creator_user_id, role="owner")
 
             record_grpc_request("CreateTenant", "ok", time.perf_counter() - start)
@@ -2313,9 +2413,12 @@ class EntDBServicer(EntDBServiceServicer):
             if not request.tenant_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
 
-            # Only owner or system can archive
-            actor_uid = self._actor_user_id(request.actor)
-            if not self._is_admin_or_system(request.actor):
+            # Only owner or system can archive. Bind to the trusted
+            # identity so a forged ``actor`` payload cannot pose as
+            # the tenant owner.
+            trusted_actor = self._trusted_actor(request.actor)
+            actor_uid = self._actor_user_id(trusted_actor)
+            if not self._is_admin_or_system(trusted_actor):
                 role = await self._get_member_role(request.tenant_id, actor_uid)
                 if role != "owner":
                     await context.abort(
@@ -2357,9 +2460,12 @@ class EntDBServicer(EntDBServiceServicer):
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
 
-            # Enforce: only owner/admin can add members
-            actor_uid = self._actor_user_id(request.actor)
-            if not self._is_admin_or_system(request.actor):
+            # Enforce: only owner/admin can add members. Bind to the
+            # trusted identity so a forged ``actor`` cannot bypass
+            # the role check.
+            trusted_actor = self._trusted_actor(request.actor)
+            actor_uid = self._actor_user_id(trusted_actor)
+            if not self._is_admin_or_system(trusted_actor):
                 role = await self._get_member_role(request.tenant_id, actor_uid)
                 if role not in ("owner", "admin"):
                     await context.abort(
@@ -2515,9 +2621,12 @@ class EntDBServicer(EntDBServiceServicer):
             if not request.new_role:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "new_role is required")
 
-            # Enforce: only owner can change roles
-            actor_uid = self._actor_user_id(request.actor)
-            if not self._is_admin_or_system(request.actor):
+            # Enforce: only owner can change roles. Bind to the
+            # trusted identity so a forged ``actor`` cannot pose as
+            # the tenant owner.
+            trusted_actor = self._trusted_actor(request.actor)
+            actor_uid = self._actor_user_id(trusted_actor)
+            if not self._is_admin_or_system(trusted_actor):
                 role = await self._get_member_role(request.tenant_id, actor_uid)
                 if role != "owner":
                     await context.abort(
@@ -2711,12 +2820,12 @@ class EntDBServicer(EntDBServiceServicer):
                 )
             if not request.tenant_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
-            await self._require_admin_or_owner(
+            trusted_actor = await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "SetLegalHold"
             )
 
             updated = await self.global_store.set_legal_hold(
-                request.tenant_id, bool(request.enabled), request.actor
+                request.tenant_id, bool(request.enabled), trusted_actor
             )
             if not updated:
                 record_grpc_request("SetLegalHold", "ok", time.perf_counter() - start)
@@ -2729,7 +2838,7 @@ class EntDBServicer(EntDBServiceServicer):
             try:
                 await self.canonical_store.append_audit(
                     tenant_id=request.tenant_id,
-                    actor_id=request.actor,
+                    actor_id=trusted_actor,
                     action="set_legal_hold",
                     target_type="tenant",
                     target_id=request.tenant_id,
@@ -2765,14 +2874,14 @@ class EntDBServicer(EntDBServiceServicer):
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "tenant_id is required")
             if not request.user_id:
                 await context.abort(grpc.StatusCode.INVALID_ARGUMENT, "user_id is required")
-            await self._require_admin_or_owner(
+            trusted_actor = await self._require_admin_or_owner(
                 request.tenant_id, request.actor, context, "RevokeAllUserAccess"
             )
 
             result = await self.canonical_store.revoke_user_access(
                 tenant_id=request.tenant_id,
                 user_id=request.user_id,
-                actor=request.actor,
+                actor=trusted_actor,
             )
 
             # Cleanup cross-tenant shared_index entries that originated
