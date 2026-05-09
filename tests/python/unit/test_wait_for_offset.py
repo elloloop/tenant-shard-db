@@ -13,7 +13,7 @@ import asyncio
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import (
+from entdb_server.apply.canonical_store import (
     CanonicalStore,
     _compare_stream_pos,
     _parse_stream_offset,

@@ -15,7 +15,7 @@ import sqlite3
 
 import pytest
 
-from dbaas.entdb_server.tools.recovery_strategy import (
+from entdb_server.tools.recovery_strategy import (
     RecoveryStrategy,
     RecoveryTier,
 )

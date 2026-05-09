@@ -141,10 +141,10 @@ def shred_tenant(data_dir: str, tenant_id: str) -> bool:
     This is the file-deletion half of crypto-shred. For the full
     durable shred — which makes the data unrecoverable even if the
     SQLite ciphertext is restored from a backup — wire a
-    :class:`~dbaas.entdb_server.crypto.tenant_key_vault.TenantKeyVault`
-    into your :class:`~dbaas.entdb_server.crypto.key_manager.KeyManager`
+    :class:`~entdb_server.crypto.tenant_key_vault.TenantKeyVault`
+    into your :class:`~entdb_server.crypto.key_manager.KeyManager`
     and call
-    :func:`~dbaas.entdb_server.crypto.crypto_shred.crypto_shred_tenant`.
+    :func:`~entdb_server.crypto.crypto_shred.crypto_shred_tenant`.
     With the vault configured, the per-tenant DEK is destroyed in the
     vault tombstone so re-deriving it is impossible.
 

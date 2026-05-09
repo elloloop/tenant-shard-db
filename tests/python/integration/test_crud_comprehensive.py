@@ -28,12 +28,12 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import Applier, MailboxFanoutConfig, TransactionEvent
-from dbaas.entdb_server.apply.canonical_store import (
+from entdb_server.apply.applier import Applier, MailboxFanoutConfig, TransactionEvent
+from entdb_server.apply.canonical_store import (
     CanonicalStore,
     TenantNotFoundError,
 )
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 def _get_or_create_loop():

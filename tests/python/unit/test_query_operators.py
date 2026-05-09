@@ -25,16 +25,16 @@ import tempfile
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.apply.query_filter import (
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.query_filter import (
     QueryFilterError,
     compile_query_filter,
 )
-from dbaas.entdb_server.schema.registry import (
+from entdb_server.schema.registry import (
     get_registry,
     reset_registry,
 )
-from dbaas.entdb_server.schema.types import NodeTypeDef, field
+from entdb_server.schema.types import NodeTypeDef, field
 
 TENANT = "t-qo"
 TYPE_PRODUCT = 201

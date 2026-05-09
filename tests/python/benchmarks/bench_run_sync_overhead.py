@@ -21,7 +21,7 @@ import asyncio
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.canonical_store import CanonicalStore
 
 
 @pytest.fixture
@@ -118,7 +118,7 @@ class TestRunSyncOverhead:
         This should be negligible (~20-50ns per call) — confirms the guard
         is cheaper than what it replaces.
         """
-        from dbaas.entdb_server.metrics import metrics_enabled
+        from entdb_server.metrics import metrics_enabled
 
         def run():
             total = 0

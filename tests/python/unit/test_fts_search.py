@@ -23,20 +23,20 @@ from unittest.mock import AsyncMock, MagicMock
 import grpc
 import pytest
 
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
     TransactionEvent,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
-from dbaas.entdb_server.schema.registry import (
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
+from entdb_server.schema.registry import (
     get_registry,
     reset_registry,
 )
-from dbaas.entdb_server.schema.types import NodeTypeDef, field
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.schema.types import NodeTypeDef, field
+from entdb_server.wal.memory import InMemoryWalStream
 
 TENANT = "tenant-fts-tests"
 ALICE = "user:alice"
@@ -541,7 +541,7 @@ async def test_grpc_search_empty_query(store, global_store):
     servicer = _make_servicer(store, global_store)
     ctx = _FakeContext()
 
-    from dbaas.entdb_server.api.generated import SearchNodesRequest
+    from entdb_server.api.generated import SearchNodesRequest
 
     req = SearchNodesRequest(
         tenant_id=TENANT,
@@ -574,7 +574,7 @@ async def test_grpc_search_returns_results(store, global_store):
         )
     )
 
-    from dbaas.entdb_server.api.generated import SearchNodesRequest
+    from entdb_server.api.generated import SearchNodesRequest
 
     req = SearchNodesRequest(
         tenant_id=TENANT,

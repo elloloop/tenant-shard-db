@@ -17,24 +17,24 @@ import asyncio
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     CompositeUniqueConstraintError,
     MailboxFanoutConfig,
     TransactionEvent,
     UniqueConstraintError,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.schema.registry import (
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.schema.registry import (
     get_registry,
     reset_registry,
 )
-from dbaas.entdb_server.schema.types import (
+from entdb_server.schema.types import (
     CompositeUniqueDef,
     NodeTypeDef,
     field,
 )
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.wal.memory import InMemoryWalStream
 
 TENANT = "tenant-cu-tests"
 ALICE = "user:alice"

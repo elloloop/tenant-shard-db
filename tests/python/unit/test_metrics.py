@@ -14,8 +14,8 @@ from unittest import mock
 
 import pytest
 
-from dbaas.entdb_server import metrics
-from dbaas.entdb_server.metrics import (
+from entdb_server import metrics
+from entdb_server.metrics import (
     init_metrics,
     record_applier_event,
     record_grpc_request,

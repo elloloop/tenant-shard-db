@@ -3,7 +3,7 @@
 Unit tests for field-ID based payload translation.
 
 Covers the helpers in
-``dbaas.entdb_server.schema.field_id_translation`` which translate
+``entdb_server.schema.field_id_translation`` which translate
 between name-keyed (client/SDK ingress) and id-keyed (on-disk and
 on-the-wire) payloads, including:
 
@@ -25,15 +25,15 @@ from __future__ import annotations
 
 import json
 
-from dbaas.entdb_server.schema.field_id_translation import (
+from entdb_server.schema.field_id_translation import (
     id_to_name_keys,
     looks_id_keyed,
     name_to_id_keys,
     translate_filter_name_to_id,
     translate_payload_json_to_names,
 )
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import NodeTypeDef, field
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import NodeTypeDef, field
 
 
 def _make_task_registry() -> SchemaRegistry:

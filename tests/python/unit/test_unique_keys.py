@@ -30,30 +30,30 @@ import grpc
 import pytest
 from google.protobuf.struct_pb2 import Struct, Value
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CreateNodeOp,
     ExecuteAtomicRequest,
     GetNodeByKeyRequest,
     Operation,
     RequestContext,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
     TransactionEvent,
     UniqueConstraintError,
     _parse_unique_index_name,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
-from dbaas.entdb_server.schema.registry import (
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
+from entdb_server.schema.registry import (
     SchemaRegistry,
     get_registry,
     reset_registry,
 )
-from dbaas.entdb_server.schema.types import NodeTypeDef, field
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.schema.types import NodeTypeDef, field
+from entdb_server.wal.memory import InMemoryWalStream
 
 TENANT = "tenant-uk-tests"
 ALICE = "user:alice"
@@ -704,7 +704,7 @@ class TestProtoSurface:
         assert r2.value.string_value == "alice@example.com"
 
     def test_get_node_by_key_default_op_is_read(self):
-        from dbaas.entdb_server.auth.capability_registry import (
+        from entdb_server.auth.capability_registry import (
             DEFAULT_OP_REQUIREMENTS,
             CoreCapability,
         )

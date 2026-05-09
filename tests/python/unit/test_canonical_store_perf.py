@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.canonical_store import CanonicalStore
 
 TENANT = "perf-test-tenant"
 TYPE_ID = 1
@@ -151,7 +151,7 @@ class TestQueryNodesSQLPushdown:
         rejected with ``QueryFilterError`` rather than silently
         returning no rows.
         """
-        from dbaas.entdb_server.apply.query_filter import QueryFilterError
+        from entdb_server.apply.query_filter import QueryFilterError
 
         malicious_key = '"; DROP TABLE nodes; --'
         with pytest.raises(QueryFilterError):

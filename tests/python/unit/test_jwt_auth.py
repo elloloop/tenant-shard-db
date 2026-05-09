@@ -12,11 +12,11 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from dbaas.entdb_server.api.auth import (
+from entdb_server.api.auth import (
     AuthInterceptor,
     _looks_like_jwt,
 )
-from dbaas.entdb_server.api.jwt_auth import (
+from entdb_server.api.jwt_auth import (
     GOOGLE_OIDC,
     MICROSOFT_OIDC,
     AuthError,

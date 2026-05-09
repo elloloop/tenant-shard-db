@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.canonical_store import CanonicalStore
 
 TENANT = "workspace-tasks"
 USER_TYPE = 1

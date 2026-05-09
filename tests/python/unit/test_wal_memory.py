@@ -13,8 +13,8 @@ import asyncio
 
 import pytest
 
-from dbaas.entdb_server.wal.base import WalConnectionError
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.wal.base import WalConnectionError
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 class TestInMemoryWalStream:

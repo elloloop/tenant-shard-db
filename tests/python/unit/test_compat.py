@@ -10,14 +10,14 @@ Tests cover:
 
 import pytest
 
-from dbaas.entdb_server.schema.compat import (
+from entdb_server.schema.compat import (
     ChangeKind,
     CompatibilityError,
     check_compatibility,
     validate_breaking_changes,
 )
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
 
 
 def make_registry(*node_types, edge_types=None):

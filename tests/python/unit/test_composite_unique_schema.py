@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import pytest
 
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import (
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import (
     CompositeUniqueDef,
     NodeTypeDef,
     field,

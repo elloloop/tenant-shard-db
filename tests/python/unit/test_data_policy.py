@@ -23,10 +23,10 @@ from pathlib import Path
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.data_policy import REQUIRES_LEGAL_BASIS, DataPolicy
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import NodeTypeDef, field
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.data_policy import REQUIRES_LEGAL_BASIS, DataPolicy
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import NodeTypeDef, field
 
 # ---------------------------------------------------------------------------
 # DataPolicy enum
@@ -97,7 +97,7 @@ class TestGetDataPolicy:
         User = NodeTypeDef(type_id=1, name="User")
         registry.register_node_type(User)
 
-        with caplog.at_level(logging.WARNING, logger="dbaas.entdb_server.schema.registry"):
+        with caplog.at_level(logging.WARNING, logger="entdb_server.schema.registry"):
             policy = registry.get_data_policy(1)
 
         assert policy == DataPolicy.PERSONAL
@@ -343,7 +343,7 @@ class TestWarningForUnclassifiedTypes:
         Widget = NodeTypeDef(type_id=50, name="Widget")
         registry.register_node_type(Widget)
 
-        with caplog.at_level(logging.WARNING, logger="dbaas.entdb_server.schema.registry"):
+        with caplog.at_level(logging.WARNING, logger="entdb_server.schema.registry"):
             policy = registry.get_data_policy(50)
 
         assert policy == DataPolicy.PERSONAL

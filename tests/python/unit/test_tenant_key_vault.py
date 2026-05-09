@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from dbaas.entdb_server.crypto.tenant_key_vault import (
+from entdb_server.crypto.tenant_key_vault import (
     TenantKeyAlreadyProvisionedError,
     TenantKeyVault,
     TenantKeyVaultError,

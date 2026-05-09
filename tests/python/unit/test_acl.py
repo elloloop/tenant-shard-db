@@ -11,7 +11,7 @@ Tests cover:
 
 import pytest
 
-from dbaas.entdb_server.apply.acl import (
+from entdb_server.apply.acl import (
     AclManager,
     Permission,
     Principal,

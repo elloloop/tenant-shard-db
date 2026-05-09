@@ -3,7 +3,7 @@
 
 import pytest
 
-from dbaas.entdb_server.config import PubSubConfig, WalBackend
+from entdb_server.config import PubSubConfig, WalBackend
 
 
 @pytest.mark.unit

@@ -21,8 +21,8 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec, rsa
 
-from dbaas.entdb_server.auth.api_key_manager import VALID_SCOPES, ApiKeyError, ApiKeyManager
-from dbaas.entdb_server.auth.auth_interceptor import (
+from entdb_server.auth.api_key_manager import VALID_SCOPES, ApiKeyError, ApiKeyManager
+from entdb_server.auth.auth_interceptor import (
     AuthContext,
     AuthInterceptor,
     get_authoritative_actor,
@@ -30,8 +30,8 @@ from dbaas.entdb_server.auth.auth_interceptor import (
     reset_current_identity,
     set_current_identity,
 )
-from dbaas.entdb_server.auth.oauth_validator import AuthenticationError, OAuthValidator
-from dbaas.entdb_server.auth.session_manager import SessionError, SessionManager
+from entdb_server.auth.oauth_validator import AuthenticationError, OAuthValidator
+from entdb_server.auth.session_manager import SessionError, SessionManager
 
 # ---------------------------------------------------------------------------
 # Helpers: RSA and EC key pairs, mock JWKS, JWT encoding
@@ -827,9 +827,9 @@ class TestRequireAdminOrOwnerAuthz:
         """A client claiming ``system:admin`` is downgraded to the trusted user."""
         import tempfile
 
-        from dbaas.entdb_server.api.grpc_server import EntDBServicer
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-        from dbaas.entdb_server.global_store import GlobalStore
+        from entdb_server.api.grpc_server import EntDBServicer
+        from entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.global_store import GlobalStore
 
         with tempfile.TemporaryDirectory() as gs_dir:
             gs = GlobalStore(gs_dir)
@@ -884,9 +884,9 @@ class TestRequireAdminOrOwnerAuthz:
         """When the trusted identity is admin, the call passes."""
         import tempfile
 
-        from dbaas.entdb_server.api.grpc_server import EntDBServicer
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-        from dbaas.entdb_server.global_store import GlobalStore
+        from entdb_server.api.grpc_server import EntDBServicer
+        from entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.global_store import GlobalStore
 
         with tempfile.TemporaryDirectory() as gs_dir:
             gs = GlobalStore(gs_dir)

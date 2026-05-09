@@ -19,17 +19,17 @@ import uuid
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     ApplyResult,
     MailboxFanoutConfig,
     TransactionEvent,
 )
-from dbaas.entdb_server.apply.canonical_store import (
+from entdb_server.apply.canonical_store import (
     CanonicalStore,
     TenantNotFoundError,
 )
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.wal.memory import InMemoryWalStream
 
 # ---------------------------------------------------------------------------
 # Helpers

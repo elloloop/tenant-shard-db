@@ -21,12 +21,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from dbaas.entdb_server.crypto.crypto_shred import crypto_shred_tenant
-from dbaas.entdb_server.crypto.encrypted_connection import (
+from entdb_server.crypto.crypto_shred import crypto_shred_tenant
+from entdb_server.crypto.encrypted_connection import (
     is_sqlcipher_available,
     open_encrypted_db,
 )
-from dbaas.entdb_server.crypto.key_manager import KeyManager
+from entdb_server.crypto.key_manager import KeyManager
 
 # A valid 32-byte master key (64 hex chars)
 MASTER_KEY_HEX = "a" * 64
@@ -294,7 +294,7 @@ class TestOpenEncryptedDbFallback:
             db_path = os.path.join(tmpdir, "warn.db")
             with caplog.at_level(
                 logging.WARNING,
-                logger="dbaas.entdb_server.crypto.encrypted_connection",
+                logger="entdb_server.crypto.encrypted_connection",
             ):
                 conn = open_encrypted_db(db_path, MASTER_KEY_BYTES)
                 conn.close()
@@ -318,11 +318,11 @@ class TestOpenEncryptedDbPragma:
 
         with (
             patch(
-                "dbaas.entdb_server.crypto.encrypted_connection._sqlcipher_available",
+                "entdb_server.crypto.encrypted_connection._sqlcipher_available",
                 True,
             ),
             patch(
-                "dbaas.entdb_server.crypto.encrypted_connection._sqlcipher_module",
+                "entdb_server.crypto.encrypted_connection._sqlcipher_module",
                 mock_module,
             ),
         ):
@@ -343,11 +343,11 @@ class TestOpenEncryptedDbPragma:
 
         with (
             patch(
-                "dbaas.entdb_server.crypto.encrypted_connection._sqlcipher_available",
+                "entdb_server.crypto.encrypted_connection._sqlcipher_available",
                 True,
             ),
             patch(
-                "dbaas.entdb_server.crypto.encrypted_connection._sqlcipher_module",
+                "entdb_server.crypto.encrypted_connection._sqlcipher_module",
                 mock_module,
             ),
         ):
@@ -446,7 +446,7 @@ class TestReencryptTenantDb:
         """Without SQLCipher, reencrypt logs a warning and is a no-op."""
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="dbaas.entdb_server.crypto.key_manager"):
+        with caplog.at_level(logging.WARNING, logger="entdb_server.crypto.key_manager"):
             KeyManager.reencrypt_tenant_db("/tmp/fake.db", MASTER_KEY_BYTES, b"\xcc" * 32)
 
         assert any("SQLCipher not available" in r.message for r in caplog.records)

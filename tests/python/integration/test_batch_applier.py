@@ -13,14 +13,14 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
     TransactionEvent,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.wal.base import WalConnectionError
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.wal.base import WalConnectionError
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 def _event_bytes(
@@ -758,7 +758,7 @@ class TestWalStreamAdvanced:
     @pytest.mark.asyncio
     async def test_append_without_connect_raises(self):
         wal = InMemoryWalStream(num_partitions=1)
-        from dbaas.entdb_server.wal.base import WalConnectionError
+        from entdb_server.wal.base import WalConnectionError
 
         with pytest.raises(WalConnectionError):
             await wal.append("t", "k", b"v")
@@ -820,7 +820,7 @@ class TestWalStreamAdvanced:
 
     @pytest.mark.asyncio
     async def test_stream_pos_from_dict_roundtrip(self):
-        from dbaas.entdb_server.wal.base import StreamPos
+        from entdb_server.wal.base import StreamPos
 
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()
@@ -845,7 +845,7 @@ class TestWalStreamAdvanced:
 
     @pytest.mark.asyncio
     async def test_poll_batch_with_start_position(self):
-        from dbaas.entdb_server.wal.base import StreamPos
+        from entdb_server.wal.base import StreamPos
 
         wal = InMemoryWalStream(num_partitions=1)
         await wal.connect()

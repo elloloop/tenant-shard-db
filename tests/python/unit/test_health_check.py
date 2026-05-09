@@ -18,7 +18,7 @@ import grpc
 import pytest
 from grpc_health.v1 import health_pb2, health_pb2_grpc
 
-from dbaas.entdb_server.api.grpc_server import EntDBServicer, GrpcServer
+from entdb_server.api.grpc_server import EntDBServicer, GrpcServer
 
 
 def _make_server(port: int) -> GrpcServer:

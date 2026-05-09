@@ -27,13 +27,13 @@ from unittest.mock import MagicMock
 import grpc
 import pytest
 
-from dbaas.entdb_server.api.generated import ListTenantsRequest
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.auth.auth_interceptor import (
+from entdb_server.api.generated import ListTenantsRequest
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.auth.auth_interceptor import (
     reset_current_identity,
     set_current_identity,
 )
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.global_store import GlobalStore
 
 
 class _AbortError(BaseException):

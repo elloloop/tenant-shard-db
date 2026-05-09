@@ -23,7 +23,7 @@ import asyncio
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.canonical_store import CanonicalStore
 
 # --- Fixtures ---
 

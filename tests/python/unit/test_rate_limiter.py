@@ -6,8 +6,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dbaas.entdb_server.api.rate_limiter import RateLimitInterceptor, TokenBucket
-from dbaas.entdb_server.config import GrpcConfig
+from entdb_server.api.rate_limiter import RateLimitInterceptor, TokenBucket
+from entdb_server.config import GrpcConfig
 
 
 @pytest.mark.unit

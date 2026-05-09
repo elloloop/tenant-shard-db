@@ -20,7 +20,7 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import (
+from entdb_server.apply.canonical_store import (
     CanonicalStore,
     _compute_entry_hash,
 )

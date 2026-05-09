@@ -21,14 +21,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from dbaas.entdb_server.auth.quota_interceptor import (
+from entdb_server.auth.quota_interceptor import (
     _extract_ops_count,
     _extract_tenant_id,
     _next_calendar_month_start_ms,
     _QuotaCache,
     _seconds_until_next_period,
 )
-from dbaas.entdb_server.global_store import GlobalStore, _calendar_month_start_ms
+from entdb_server.global_store import GlobalStore, _calendar_month_start_ms
 
 # ── GlobalStore quota tables ─────────────────────────────────────────
 
@@ -251,7 +251,7 @@ def _make_interceptor(
     config: dict | None = None, usage: dict | None = None, raise_on_config: bool = False
 ):
     """Build a QuotaInterceptor backed by an async mock global store."""
-    from dbaas.entdb_server.auth.quota_interceptor import QuotaInterceptor
+    from entdb_server.auth.quota_interceptor import QuotaInterceptor
 
     mock_store = AsyncMock()
     if raise_on_config:

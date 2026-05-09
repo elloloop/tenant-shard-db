@@ -18,7 +18,7 @@ class TestServerStopPartialStartup:
     @pytest.mark.asyncio
     async def test_stop_cleans_up_wal_when_running_is_false(self):
         """If start() failed after WAL connect, stop() must still close WAL."""
-        from dbaas.entdb_server.main import Server
+        from entdb_server.main import Server
 
         server = Server.__new__(Server)
         server._running = False
@@ -43,7 +43,7 @@ class TestServerStopPartialStartup:
     @pytest.mark.asyncio
     async def test_stop_cleans_up_grpc_when_running_is_false(self):
         """If start() failed after gRPC start, stop() must still stop gRPC."""
-        from dbaas.entdb_server.main import Server
+        from entdb_server.main import Server
 
         server = Server.__new__(Server)
         server._running = False
@@ -68,7 +68,7 @@ class TestServerStopPartialStartup:
     @pytest.mark.asyncio
     async def test_stop_handles_all_none_components(self):
         """stop() must not crash when all components are None (very early failure)."""
-        from dbaas.entdb_server.main import Server
+        from entdb_server.main import Server
 
         server = Server.__new__(Server)
         server._running = False
@@ -88,7 +88,7 @@ class TestServerStopPartialStartup:
     @pytest.mark.asyncio
     async def test_stop_cancels_tasks_and_cleans_components(self):
         """Full cleanup: cancel tasks, stop applier/archiver/snapshotter, close WAL."""
-        from dbaas.entdb_server.main import Server
+        from entdb_server.main import Server
 
         server = Server.__new__(Server)
         server._running = True

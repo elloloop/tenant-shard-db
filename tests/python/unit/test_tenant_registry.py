@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import grpc
 import pytest
 
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.global_store import GlobalStore
 
 # -- GlobalStore unit tests ------------------------------------------------
 
@@ -200,7 +200,7 @@ class TestGlobalStoreMembership:
 
 def _make_servicer(global_store=None):
     """Build an EntDBServicer with mocked dependencies and a real GlobalStore."""
-    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+    from entdb_server.api.grpc_server import EntDBServicer
 
     wal = MagicMock()
     canonical_store = MagicMock()
@@ -255,7 +255,7 @@ class TestCreateTenantHandler:
 
     async def test_create_tenant_success(self, global_store):
         """CreateTenant creates tenant, initializes SQLite, adds creator as owner."""
-        from dbaas.entdb_server.api.generated import CreateTenantRequest
+        from entdb_server.api.generated import CreateTenantRequest
 
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
@@ -279,7 +279,7 @@ class TestCreateTenantHandler:
 
     async def test_create_duplicate_tenant(self, global_store):
         """CreateTenant returns error for duplicate tenant_id."""
-        from dbaas.entdb_server.api.generated import CreateTenantRequest
+        from entdb_server.api.generated import CreateTenantRequest
 
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
@@ -306,7 +306,7 @@ class TestGetTenantHandler:
 
     async def test_get_tenant_found(self, global_store):
         """GetTenant returns tenant details."""
-        from dbaas.entdb_server.api.generated import GetTenantRequest
+        from entdb_server.api.generated import GetTenantRequest
 
         await global_store.create_tenant("t1", "Acme Corp")
         servicer = _make_servicer(global_store)
@@ -322,7 +322,7 @@ class TestGetTenantHandler:
 
     async def test_get_tenant_not_found(self, global_store):
         """GetTenant returns found=False for missing tenant."""
-        from dbaas.entdb_server.api.generated import GetTenantRequest
+        from entdb_server.api.generated import GetTenantRequest
 
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
@@ -346,7 +346,7 @@ class TestArchiveTenantHandler:
 
     async def test_archive_by_owner(self, global_store):
         """Owner can archive a tenant."""
-        from dbaas.entdb_server.api.generated import ArchiveTenantRequest
+        from entdb_server.api.generated import ArchiveTenantRequest
 
         await global_store.create_tenant("t1", "Acme")
         await global_store.add_member("t1", "alice", role="owner")
@@ -363,7 +363,7 @@ class TestArchiveTenantHandler:
 
     async def test_archive_by_member_denied(self, global_store):
         """Regular member cannot archive a tenant."""
-        from dbaas.entdb_server.api.generated import ArchiveTenantRequest
+        from entdb_server.api.generated import ArchiveTenantRequest
 
         await global_store.create_tenant("t1", "Acme")
         await global_store.add_member("t1", "bob", role="member")
@@ -378,7 +378,7 @@ class TestArchiveTenantHandler:
 
     async def test_archive_by_system(self, global_store):
         """System actor can archive a tenant."""
-        from dbaas.entdb_server.api.generated import ArchiveTenantRequest
+        from entdb_server.api.generated import ArchiveTenantRequest
 
         await global_store.create_tenant("t1", "Acme")
         servicer = _make_servicer(global_store)
@@ -403,7 +403,7 @@ class TestAddTenantMemberHandler:
 
     async def test_add_member_by_owner(self, global_store):
         """Owner can add a new member."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         servicer = _make_servicer(global_store)
@@ -420,7 +420,7 @@ class TestAddTenantMemberHandler:
 
     async def test_add_member_by_admin(self, global_store):
         """Admin can add a new member."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         await global_store.add_member("t1", "alice", role="admin")
         servicer = _make_servicer(global_store)
@@ -435,7 +435,7 @@ class TestAddTenantMemberHandler:
 
     async def test_add_member_by_regular_member_denied(self, global_store):
         """Regular member cannot add members."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         await global_store.add_member("t1", "alice", role="member")
         servicer = _make_servicer(global_store)
@@ -461,7 +461,7 @@ class TestRemoveTenantMemberHandler:
 
     async def test_remove_member_success(self, global_store):
         """Remove a member from a tenant."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         await global_store.add_member("t1", "bob", role="member")
@@ -480,7 +480,7 @@ class TestRemoveTenantMemberHandler:
 
     async def test_remove_last_owner_denied(self, global_store):
         """Cannot remove the last owner of a tenant."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         servicer = _make_servicer(global_store)
@@ -496,7 +496,7 @@ class TestRemoveTenantMemberHandler:
 
     async def test_remove_owner_when_multiple_owners(self, global_store):
         """Can remove an owner when another owner exists."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         await global_store.add_member("t1", "bob", role="owner")
@@ -512,7 +512,7 @@ class TestRemoveTenantMemberHandler:
 
     async def test_remove_nonexistent_member(self, global_store):
         """Removing a non-existent member returns error."""
-        from dbaas.entdb_server.api.generated import TenantMemberRequest
+        from entdb_server.api.generated import TenantMemberRequest
 
         servicer = _make_servicer(global_store)
         ctx = _FakeContext()
@@ -538,7 +538,7 @@ class TestGetTenantMembersHandler:
 
     async def test_get_members(self, global_store):
         """List all members of a tenant."""
-        from dbaas.entdb_server.api.generated import GetTenantMembersRequest
+        from entdb_server.api.generated import GetTenantMembersRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         await global_store.add_member("t1", "bob", role="member")
@@ -566,7 +566,7 @@ class TestGetUserTenantsHandler:
 
     async def test_get_user_tenants(self, global_store):
         """List all tenants a user belongs to."""
-        from dbaas.entdb_server.api.generated import GetUserTenantsRequest
+        from entdb_server.api.generated import GetUserTenantsRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         await global_store.add_member("t2", "alice", role="member")
@@ -594,7 +594,7 @@ class TestChangeMemberRoleHandler:
 
     async def test_change_role_by_owner(self, global_store):
         """Owner can change a member's role."""
-        from dbaas.entdb_server.api.generated import ChangeMemberRoleRequest
+        from entdb_server.api.generated import ChangeMemberRoleRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         await global_store.add_member("t1", "bob", role="member")
@@ -615,7 +615,7 @@ class TestChangeMemberRoleHandler:
 
     async def test_change_role_by_member_denied(self, global_store):
         """Regular member cannot change roles."""
-        from dbaas.entdb_server.api.generated import ChangeMemberRoleRequest
+        from entdb_server.api.generated import ChangeMemberRoleRequest
 
         await global_store.add_member("t1", "alice", role="member")
         await global_store.add_member("t1", "bob", role="member")
@@ -633,7 +633,7 @@ class TestChangeMemberRoleHandler:
 
     async def test_change_role_by_admin_denied(self, global_store):
         """Admin cannot change roles -- only owner can."""
-        from dbaas.entdb_server.api.generated import ChangeMemberRoleRequest
+        from entdb_server.api.generated import ChangeMemberRoleRequest
 
         await global_store.add_member("t1", "alice", role="admin")
         await global_store.add_member("t1", "bob", role="member")
@@ -651,7 +651,7 @@ class TestChangeMemberRoleHandler:
 
     async def test_change_role_nonexistent_member(self, global_store):
         """Changing role for non-existent member returns error."""
-        from dbaas.entdb_server.api.generated import ChangeMemberRoleRequest
+        from entdb_server.api.generated import ChangeMemberRoleRequest
 
         await global_store.add_member("t1", "alice", role="owner")
         servicer = _make_servicer(global_store)
@@ -669,7 +669,7 @@ class TestChangeMemberRoleHandler:
 
     async def test_change_role_by_system(self, global_store):
         """System actor can change roles."""
-        from dbaas.entdb_server.api.generated import ChangeMemberRoleRequest
+        from entdb_server.api.generated import ChangeMemberRoleRequest
 
         await global_store.add_member("t1", "bob", role="member")
         servicer = _make_servicer(global_store)

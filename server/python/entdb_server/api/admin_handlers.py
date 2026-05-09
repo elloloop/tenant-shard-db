@@ -18,8 +18,8 @@ import uuid
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from dbaas.entdb_server.global_store import GlobalStore
-    from dbaas.entdb_server.wal.base import WalStream
+    from entdb_server.global_store import GlobalStore
+    from entdb_server.wal.base import WalStream
 
 logger = logging.getLogger(__name__)
 

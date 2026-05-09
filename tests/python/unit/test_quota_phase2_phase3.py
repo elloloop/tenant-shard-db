@@ -20,15 +20,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from dbaas.entdb_server.auth.auth_interceptor import (
+from entdb_server.auth.auth_interceptor import (
     set_current_identity,
 )
-from dbaas.entdb_server.auth.quota_interceptor import (
+from entdb_server.auth.quota_interceptor import (
     QuotaInterceptor,
     _next_calendar_month_start_ms,
     _TokenBucket,
 )
-from dbaas.entdb_server.global_store import GlobalStore, _calendar_month_start_ms
+from entdb_server.global_store import GlobalStore, _calendar_month_start_ms
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -374,7 +374,7 @@ async def test_tenant_rps_then_user_rps_ordering(interceptor, gs, with_identity)
 @pytest.mark.asyncio
 async def test_applier_increment_usage_hook_called():
     """The hook must call global_store.increment_usage with n_ops."""
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     mock_gs = MagicMock()
     mock_gs.increment_usage = AsyncMock(return_value={"writes_count": 3})
@@ -389,7 +389,7 @@ async def test_applier_increment_usage_hook_called():
 @pytest.mark.asyncio
 async def test_applier_increment_usage_swallows_errors():
     """A failed increment must NOT raise — apply must still succeed."""
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     mock_gs = MagicMock()
     mock_gs.increment_usage = AsyncMock(side_effect=RuntimeError("boom"))
@@ -404,7 +404,7 @@ async def test_applier_increment_usage_swallows_errors():
 
 @pytest.mark.asyncio
 async def test_applier_increment_usage_noop_when_no_global_store():
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     applier = Applier.__new__(Applier)
     applier.global_store = None
@@ -414,7 +414,7 @@ async def test_applier_increment_usage_noop_when_no_global_store():
 
 @pytest.mark.asyncio
 async def test_applier_increment_usage_zero_ops_noop():
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     mock_gs = MagicMock()
     mock_gs.increment_usage = AsyncMock()
@@ -480,8 +480,8 @@ class _FakeCtx:
 
 @pytest.mark.asyncio
 async def test_get_tenant_quota_returns_config_and_usage(gs):
-    from dbaas.entdb_server.api.generated import GetTenantQuotaRequest
-    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+    from entdb_server.api.generated import GetTenantQuotaRequest
+    from entdb_server.api.grpc_server import EntDBServicer
 
     servicer = EntDBServicer.__new__(EntDBServicer)
     servicer.global_store = gs
@@ -516,8 +516,8 @@ async def test_get_tenant_quota_returns_config_and_usage(gs):
 
 @pytest.mark.asyncio
 async def test_get_tenant_quota_unknown_returns_zeros(gs):
-    from dbaas.entdb_server.api.generated import GetTenantQuotaRequest
-    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+    from entdb_server.api.generated import GetTenantQuotaRequest
+    from entdb_server.api.grpc_server import EntDBServicer
 
     servicer = EntDBServicer.__new__(EntDBServicer)
     servicer.global_store = gs
@@ -533,8 +533,8 @@ async def test_get_tenant_quota_unknown_returns_zeros(gs):
 
 @pytest.mark.asyncio
 async def test_get_tenant_quota_requires_admin(gs):
-    from dbaas.entdb_server.api.generated import GetTenantQuotaRequest
-    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+    from entdb_server.api.generated import GetTenantQuotaRequest
+    from entdb_server.api.grpc_server import EntDBServicer
 
     servicer = EntDBServicer.__new__(EntDBServicer)
     servicer.global_store = gs
@@ -552,8 +552,8 @@ async def test_get_tenant_quota_requires_admin(gs):
 @pytest.mark.asyncio
 async def test_get_tenant_quota_period_end_is_next_month(gs):
     """period_end_ms should be the start-of-next-calendar-month."""
-    from dbaas.entdb_server.api.generated import GetTenantQuotaRequest
-    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+    from entdb_server.api.generated import GetTenantQuotaRequest
+    from entdb_server.api.grpc_server import EntDBServicer
 
     servicer = EntDBServicer.__new__(EntDBServicer)
     servicer.global_store = gs

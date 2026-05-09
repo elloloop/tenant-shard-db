@@ -3,7 +3,7 @@
 
 import pytest
 
-from dbaas.entdb_server.config import (
+from entdb_server.config import (
     EventHubsConfig,
     ServiceBusConfig,
     SqsConfig,

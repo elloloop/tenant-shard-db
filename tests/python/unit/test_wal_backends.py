@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from dbaas.entdb_server.wal.base import (
+from entdb_server.wal.base import (
     StreamPos,
     StreamRecord,
     WalConnectionError,
@@ -143,11 +143,11 @@ class TestKafkaWalStream:
         """connect() creates AIOKafkaProducer and calls start()."""
         mock_producer = AsyncMock()
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
         ):
             MockProducer.return_value = mock_producer
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             await wal.connect()
@@ -172,11 +172,11 @@ class TestKafkaWalStream:
         mock_producer.send_and_wait.return_value = record_meta
 
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
         ):
             MockProducer.return_value = mock_producer
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             await wal.connect()
@@ -201,11 +201,11 @@ class TestKafkaWalStream:
         mock_producer.send_and_wait.return_value = record_meta
 
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
         ):
             MockProducer.return_value = mock_producer
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             await wal.connect()
@@ -220,10 +220,10 @@ class TestKafkaWalStream:
     async def test_append_not_connected_raises(self):
         """append() raises WalConnectionError when not connected."""
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer"),
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer"),
         ):
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             # Do NOT connect
@@ -235,11 +235,11 @@ class TestKafkaWalStream:
         """close() stops the producer and marks disconnected."""
         mock_producer = AsyncMock()
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
         ):
             MockProducer.return_value = mock_producer
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             await wal.connect()
@@ -255,11 +255,11 @@ class TestKafkaWalStream:
         mock_producer.start.side_effect = Exception("broker unreachable")
 
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer") as MockProducer,
         ):
             MockProducer.return_value = mock_producer
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             with pytest.raises(WalConnectionError, match="broker unreachable"):
@@ -270,10 +270,10 @@ class TestKafkaWalStream:
     async def test_is_connected_initially_false(self):
         """is_connected is False before connect()."""
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer"),
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer"),
         ):
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             assert not wal.is_connected
@@ -286,15 +286,15 @@ class TestKafkaWalStream:
         mock_oam = MagicMock()
 
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer"),
-            patch("dbaas.entdb_server.wal.kafka.TopicPartition", return_value=mock_tp),
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer"),
+            patch("entdb_server.wal.kafka.TopicPartition", return_value=mock_tp),
             patch(
-                "dbaas.entdb_server.wal.kafka.OffsetAndMetadata",
+                "entdb_server.wal.kafka.OffsetAndMetadata",
                 return_value=mock_oam,
             ),
         ):
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             wal._consumer = mock_consumer
@@ -308,10 +308,10 @@ class TestKafkaWalStream:
     async def test_commit_without_consumer_raises(self):
         """commit() raises WalError when there is no consumer."""
         with (
-            patch("dbaas.entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kafka.AIOKafkaProducer"),
+            patch("entdb_server.wal.kafka.KAFKA_AVAILABLE", True),
+            patch("entdb_server.wal.kafka.AIOKafkaProducer"),
         ):
-            from dbaas.entdb_server.wal.kafka import KafkaWalStream
+            from entdb_server.wal.kafka import KafkaWalStream
 
             wal = KafkaWalStream(_make_kafka_config())
             with pytest.raises(WalError, match="No active consumer"):
@@ -339,13 +339,13 @@ class TestKinesisWalStream:
         mock_client.describe_stream.return_value = {"StreamDescription": {}}
 
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.kinesis.get_session",
+                "entdb_server.wal.kinesis.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             await wal.connect()
@@ -370,13 +370,13 @@ class TestKinesisWalStream:
         }
 
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.kinesis.get_session",
+                "entdb_server.wal.kinesis.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             await wal.connect()
@@ -395,10 +395,10 @@ class TestKinesisWalStream:
     async def test_append_not_connected_raises(self):
         """append() raises WalConnectionError when not connected."""
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kinesis.get_session"),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.get_session"),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             with pytest.raises(WalConnectionError):
@@ -416,13 +416,13 @@ class TestKinesisWalStream:
         mock_client.describe_stream.return_value = {}
 
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.kinesis.get_session",
+                "entdb_server.wal.kinesis.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             await wal.connect()
@@ -442,13 +442,13 @@ class TestKinesisWalStream:
         mock_session.create_client.return_value = mock_client_ctx
 
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.kinesis.get_session",
+                "entdb_server.wal.kinesis.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             with pytest.raises(WalConnectionError, match="stream not found"):
@@ -459,10 +459,10 @@ class TestKinesisWalStream:
     async def test_is_connected_initially_false(self):
         """is_connected is False before connect()."""
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kinesis.get_session"),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.get_session"),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             assert not wal.is_connected
@@ -471,10 +471,10 @@ class TestKinesisWalStream:
     async def test_commit_stores_checkpoint(self):
         """commit() stores the sequence number as an internal checkpoint."""
         with (
-            patch("dbaas.entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.kinesis.get_session"),
+            patch("entdb_server.wal.kinesis.KINESIS_AVAILABLE", True),
+            patch("entdb_server.wal.kinesis.get_session"),
         ):
-            from dbaas.entdb_server.wal.kinesis import KinesisWalStream
+            from entdb_server.wal.kinesis import KinesisWalStream
 
             wal = KinesisWalStream(_make_kinesis_config())
             record = _sample_record(partition=1, offset=999)
@@ -503,13 +503,13 @@ class TestPubSubWalStream:
         mock_publisher_cls = MagicMock()
         mock_subscriber_cls = MagicMock()
         return (
-            patch("dbaas.entdb_server.wal.pubsub.PUBSUB_AVAILABLE", True),
+            patch("entdb_server.wal.pubsub.PUBSUB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.pubsub.PublisherClient",
+                "entdb_server.wal.pubsub.PublisherClient",
                 mock_publisher_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.pubsub.SubscriberClient",
+                "entdb_server.wal.pubsub.SubscriberClient",
                 mock_subscriber_cls,
             ),
             mock_publisher_cls,
@@ -536,7 +536,7 @@ class TestPubSubWalStream:
         )
 
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             await wal.connect()
@@ -565,7 +565,7 @@ class TestPubSubWalStream:
         mock_publisher.publish.return_value = mock_future
 
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             # Use ordering_enabled=True here but mock the lazy import
             config = self._pubsub_config(ordering_enabled=True)
@@ -592,7 +592,7 @@ class TestPubSubWalStream:
         """append() raises WalConnectionError when not connected."""
         p1, p2, p3, mock_pub_cls, _mock_sub_cls = self._patch_pubsub()
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             with pytest.raises(WalConnectionError):
@@ -612,7 +612,7 @@ class TestPubSubWalStream:
         )
 
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             await wal.connect()
@@ -628,7 +628,7 @@ class TestPubSubWalStream:
         p1, p2, p3, mock_pub_cls, _mock_sub_cls = self._patch_pubsub()
         mock_pub_cls.side_effect = Exception("auth failed")
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             with pytest.raises(WalConnectionError, match="auth failed"):
@@ -640,7 +640,7 @@ class TestPubSubWalStream:
         """is_connected is False before connect()."""
         p1, p2, p3, _mock_pub_cls, _mock_sub_cls = self._patch_pubsub()
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             assert not wal.is_connected
@@ -659,7 +659,7 @@ class TestPubSubWalStream:
         )
 
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             await wal.connect()
@@ -677,7 +677,7 @@ class TestPubSubWalStream:
         """commit() raises WalError when there is no subscriber."""
         p1, p2, p3, _mock_pub_cls, _mock_sub_cls = self._patch_pubsub()
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             with pytest.raises(WalError, match="No active subscriber"):
@@ -731,12 +731,12 @@ class TestPubSubWalStream:
             p1,
             p2,
             p3,
-            patch("dbaas.entdb_server.wal.pubsub.PullRequest", mock_pull_request),
-            patch("dbaas.entdb_server.wal.pubsub.DeadlineExceeded", mock_deadline_exceeded),
-            patch("dbaas.entdb_server.wal.pubsub.NotFound", mock_not_found),
-            patch("dbaas.entdb_server.wal.pubsub.GoogleAPICallError", mock_google_api_error),
+            patch("entdb_server.wal.pubsub.PullRequest", mock_pull_request),
+            patch("entdb_server.wal.pubsub.DeadlineExceeded", mock_deadline_exceeded),
+            patch("entdb_server.wal.pubsub.NotFound", mock_not_found),
+            patch("entdb_server.wal.pubsub.GoogleAPICallError", mock_google_api_error),
         ):
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             wal._publisher = mock_publisher
@@ -767,7 +767,7 @@ class TestPubSubWalStream:
         """poll_batch() raises WalConnectionError when not connected."""
         p1, p2, p3, _mock_pub_cls, _mock_sub_cls = self._patch_pubsub()
         with p1, p2, p3:
-            from dbaas.entdb_server.wal.pubsub import PubSubWalStream
+            from entdb_server.wal.pubsub import PubSubWalStream
 
             wal = PubSubWalStream(self._pubsub_config())
             with pytest.raises(WalConnectionError):
@@ -803,17 +803,17 @@ class TestSqsWalStream:
         mock_aio_session_mod.get_session.return_value = mock_session
 
         with (
-            patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
+            patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
             patch.dict(
                 sys.modules,
                 {"aiobotocore.session": mock_aio_session_mod, "aiobotocore": MagicMock()},
             ),
             patch(
-                "dbaas.entdb_server.wal.sqs.aiobotocore.session",
+                "entdb_server.wal.sqs.aiobotocore.session",
                 mock_aio_session_mod,
             ),
         ):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+            from entdb_server.wal.sqs import SqsWalStream
 
             wal = SqsWalStream(_make_sqs_config())
             await wal.connect()
@@ -831,17 +831,17 @@ class TestSqsWalStream:
         mock_aio_session_mod.get_session.return_value = mock_session
 
         with (
-            patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
+            patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
             patch.dict(
                 sys.modules,
                 {"aiobotocore.session": mock_aio_session_mod, "aiobotocore": MagicMock()},
             ),
             patch(
-                "dbaas.entdb_server.wal.sqs.aiobotocore.session",
+                "entdb_server.wal.sqs.aiobotocore.session",
                 mock_aio_session_mod,
             ),
         ):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+            from entdb_server.wal.sqs import SqsWalStream
 
             config = _make_sqs_config()
             wal = SqsWalStream(config)
@@ -859,8 +859,8 @@ class TestSqsWalStream:
     @pytest.mark.asyncio
     async def test_append_not_connected_raises(self):
         """append() raises WalConnectionError when not connected."""
-        with patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+        with patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
+            from entdb_server.wal.sqs import SqsWalStream
 
             wal = SqsWalStream(_make_sqs_config())
             with pytest.raises(WalConnectionError):
@@ -875,17 +875,17 @@ class TestSqsWalStream:
         mock_aio_session_mod.get_session.return_value = mock_session
 
         with (
-            patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
+            patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
             patch.dict(
                 sys.modules,
                 {"aiobotocore.session": mock_aio_session_mod, "aiobotocore": MagicMock()},
             ),
             patch(
-                "dbaas.entdb_server.wal.sqs.aiobotocore.session",
+                "entdb_server.wal.sqs.aiobotocore.session",
                 mock_aio_session_mod,
             ),
         ):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+            from entdb_server.wal.sqs import SqsWalStream
 
             wal = SqsWalStream(_make_sqs_config())
             await wal.connect()
@@ -906,17 +906,17 @@ class TestSqsWalStream:
         mock_aio_session_mod.get_session.return_value = mock_session
 
         with (
-            patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
+            patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True),
             patch.dict(
                 sys.modules,
                 {"aiobotocore.session": mock_aio_session_mod, "aiobotocore": MagicMock()},
             ),
             patch(
-                "dbaas.entdb_server.wal.sqs.aiobotocore.session",
+                "entdb_server.wal.sqs.aiobotocore.session",
                 mock_aio_session_mod,
             ),
         ):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+            from entdb_server.wal.sqs import SqsWalStream
 
             wal = SqsWalStream(_make_sqs_config())
             with pytest.raises(WalConnectionError, match="endpoint unreachable"):
@@ -926,8 +926,8 @@ class TestSqsWalStream:
     @pytest.mark.asyncio
     async def test_is_connected_initially_false(self):
         """is_connected is False before connect()."""
-        with patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+        with patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
+            from entdb_server.wal.sqs import SqsWalStream
 
             wal = SqsWalStream(_make_sqs_config())
             assert not wal.is_connected
@@ -937,8 +937,8 @@ class TestSqsWalStream:
         """commit() calls delete_message with QueueUrl and ReceiptHandle."""
         mock_client = AsyncMock()
 
-        with patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+        with patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
+            from entdb_server.wal.sqs import SqsWalStream
 
             config = _make_sqs_config()
             wal = SqsWalStream(config)
@@ -959,8 +959,8 @@ class TestSqsWalStream:
     @pytest.mark.asyncio
     async def test_commit_without_client_raises(self):
         """commit() raises WalError when there is no client."""
-        with patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+        with patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
+            from entdb_server.wal.sqs import SqsWalStream
 
             wal = SqsWalStream(_make_sqs_config())
             with pytest.raises(WalError, match="No active SQS client"):
@@ -979,8 +979,8 @@ class TestSqsWalStream:
         """
         mock_client = AsyncMock()
 
-        with patch("dbaas.entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
-            from dbaas.entdb_server.wal.sqs import SqsWalStream
+        with patch("entdb_server.wal.sqs.AIOBOTOCORE_AVAILABLE", True):
+            from entdb_server.wal.sqs import SqsWalStream
 
             config = _make_sqs_config()
             wal = SqsWalStream(config)
@@ -1033,14 +1033,14 @@ class TestServiceBusWalStream:
         mock_sb_client_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                "entdb_server.wal.servicebus.ServiceBusClient",
                 mock_sb_client_cls,
             ),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             config = _make_servicebus_config()
             wal = ServiceBusWalStream(config)
@@ -1065,17 +1065,17 @@ class TestServiceBusWalStream:
         mock_sb_message_cls = MagicMock(return_value=mock_message)
 
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                "entdb_server.wal.servicebus.ServiceBusClient",
                 mock_sb_client_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusMessage",
+                "entdb_server.wal.servicebus.ServiceBusMessage",
                 mock_sb_message_cls,
             ),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             await wal.connect()
@@ -1090,11 +1090,11 @@ class TestServiceBusWalStream:
     async def test_append_not_connected_raises(self):
         """append() raises WalConnectionError when not connected."""
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusClient"),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.ServiceBusClient"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             with pytest.raises(WalConnectionError):
@@ -1115,14 +1115,14 @@ class TestServiceBusWalStream:
         mock_sb_client_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                "entdb_server.wal.servicebus.ServiceBusClient",
                 mock_sb_client_cls,
             ),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             await wal.connect()
@@ -1141,14 +1141,14 @@ class TestServiceBusWalStream:
         )
 
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                "entdb_server.wal.servicebus.ServiceBusClient",
                 mock_sb_client_cls,
             ),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             with pytest.raises(WalConnectionError, match="invalid connection string"):
@@ -1159,11 +1159,11 @@ class TestServiceBusWalStream:
     async def test_is_connected_initially_false(self):
         """is_connected is False before connect()."""
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusClient"),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.ServiceBusClient"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             assert not wal.is_connected
@@ -1172,11 +1172,11 @@ class TestServiceBusWalStream:
     async def test_commit_completes_message(self):
         """commit() calls receiver.complete_message on the stored message."""
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusClient"),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.ServiceBusClient"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
 
@@ -1202,17 +1202,17 @@ class TestServiceBusWalStream:
         mock_sb_message_cls = MagicMock(return_value=mock_message)
 
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                "entdb_server.wal.servicebus.ServiceBusClient",
                 mock_sb_client_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusMessage",
+                "entdb_server.wal.servicebus.ServiceBusMessage",
                 mock_sb_message_cls,
             ),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             await wal.connect()
@@ -1248,14 +1248,14 @@ class TestServiceBusWalStream:
         mock_sb_client_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
+            patch("entdb_server.wal.servicebus.SERVICEBUS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.servicebus.ServiceBusClient",
+                "entdb_server.wal.servicebus.ServiceBusClient",
                 mock_sb_client_cls,
             ),
-            patch("dbaas.entdb_server.wal.servicebus.ServiceBusMessage"),
+            patch("entdb_server.wal.servicebus.ServiceBusMessage"),
         ):
-            from dbaas.entdb_server.wal.servicebus import ServiceBusWalStream
+            from entdb_server.wal.servicebus import ServiceBusWalStream
 
             wal = ServiceBusWalStream(_make_servicebus_config())
             await wal.connect()
@@ -1296,18 +1296,18 @@ class TestEventHubsWalStream:
         mock_consumer_cls.from_connection_string.return_value = mock_consumer
 
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                "entdb_server.wal.eventhubs.EventHubProducerClient",
                 mock_producer_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                "entdb_server.wal.eventhubs.EventHubConsumerClient",
                 mock_consumer_cls,
             ),
-            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+            patch("entdb_server.wal.eventhubs.EventData"),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             config = _make_eventhubs_config()
             wal = EventHubsWalStream(config)
@@ -1342,21 +1342,21 @@ class TestEventHubsWalStream:
         mock_event_data_cls = MagicMock(return_value=mock_event_data)
 
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                "entdb_server.wal.eventhubs.EventHubProducerClient",
                 mock_producer_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                "entdb_server.wal.eventhubs.EventHubConsumerClient",
                 mock_consumer_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventData",
+                "entdb_server.wal.eventhubs.EventData",
                 mock_event_data_cls,
             ),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
             await wal.connect()
@@ -1384,21 +1384,21 @@ class TestEventHubsWalStream:
         mock_event_data_cls = MagicMock(return_value=MagicMock())
 
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                "entdb_server.wal.eventhubs.EventHubProducerClient",
                 mock_producer_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                "entdb_server.wal.eventhubs.EventHubConsumerClient",
                 mock_consumer_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventData",
+                "entdb_server.wal.eventhubs.EventData",
                 mock_event_data_cls,
             ),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
             await wal.connect()
@@ -1421,18 +1421,18 @@ class TestEventHubsWalStream:
         mock_consumer_cls.from_connection_string.return_value = mock_consumer
 
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                "entdb_server.wal.eventhubs.EventHubProducerClient",
                 mock_producer_cls,
             ),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient",
+                "entdb_server.wal.eventhubs.EventHubConsumerClient",
                 mock_consumer_cls,
             ),
-            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+            patch("entdb_server.wal.eventhubs.EventData"),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
             await wal.connect()
@@ -1451,15 +1451,15 @@ class TestEventHubsWalStream:
         )
 
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.wal.eventhubs.EventHubProducerClient",
+                "entdb_server.wal.eventhubs.EventHubProducerClient",
                 mock_producer_cls,
             ),
-            patch("dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient"),
-            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+            patch("entdb_server.wal.eventhubs.EventHubConsumerClient"),
+            patch("entdb_server.wal.eventhubs.EventData"),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
             with pytest.raises(WalConnectionError, match="invalid connection string"):
@@ -1470,12 +1470,12 @@ class TestEventHubsWalStream:
     async def test_is_connected(self):
         """is_connected is False before connect() and True after."""
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.eventhubs.EventHubProducerClient"),
-            patch("dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient"),
-            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EventHubProducerClient"),
+            patch("entdb_server.wal.eventhubs.EventHubConsumerClient"),
+            patch("entdb_server.wal.eventhubs.EventData"),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
             assert not wal.is_connected
@@ -1484,12 +1484,12 @@ class TestEventHubsWalStream:
     async def test_commit_updates_checkpoint(self):
         """commit() removes the checkpoint entry for the record."""
         with (
-            patch("dbaas.entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
-            patch("dbaas.entdb_server.wal.eventhubs.EventHubProducerClient"),
-            patch("dbaas.entdb_server.wal.eventhubs.EventHubConsumerClient"),
-            patch("dbaas.entdb_server.wal.eventhubs.EventData"),
+            patch("entdb_server.wal.eventhubs.EVENTHUBS_AVAILABLE", True),
+            patch("entdb_server.wal.eventhubs.EventHubProducerClient"),
+            patch("entdb_server.wal.eventhubs.EventHubConsumerClient"),
+            patch("entdb_server.wal.eventhubs.EventData"),
         ):
-            from dbaas.entdb_server.wal.eventhubs import EventHubsWalStream
+            from entdb_server.wal.eventhubs import EventHubsWalStream
 
             wal = EventHubsWalStream(_make_eventhubs_config())
 

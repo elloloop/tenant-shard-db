@@ -12,7 +12,7 @@ Tests cover:
 
 import pytest
 
-from dbaas.entdb_server.schema.types import (
+from entdb_server.schema.types import (
     EdgeTypeDef,
     FieldDef,
     FieldKind,

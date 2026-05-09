@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.auth.capability_registry import (
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.auth.capability_registry import (
     CapabilityRegistry,
     CoreCapability,
 )

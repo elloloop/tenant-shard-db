@@ -11,7 +11,7 @@ Exit codes:
     1  — service is not serving, channel failed, or RPC errored
 
 Usage:
-    python -m dbaas.entdb_server.healthcheck [--addr HOST:PORT] [--service NAME]
+    python -m entdb_server.healthcheck [--addr HOST:PORT] [--service NAME]
 
 Defaults: ``--addr=localhost:50051``, ``--service=``  (empty = default service).
 """

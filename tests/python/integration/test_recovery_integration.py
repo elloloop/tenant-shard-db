@@ -12,7 +12,7 @@ import sqlite3
 
 import pytest
 
-from dbaas.entdb_server.tools.recovery_strategy import (
+from entdb_server.tools.recovery_strategy import (
     RecoveryStrategy,
     RecoveryTier,
 )
@@ -1064,7 +1064,7 @@ class TestRecoveryPlanBuilder:
 
     @pytest.mark.asyncio
     async def test_tier_result_defaults(self):
-        from dbaas.entdb_server.tools.recovery_strategy import TierResult
+        from entdb_server.tools.recovery_strategy import TierResult
 
         tr = TierResult(tier=RecoveryTier.SNAPSHOT, success=True)
         assert tr.events_replayed == 0
@@ -1074,7 +1074,7 @@ class TestRecoveryPlanBuilder:
 
     @pytest.mark.asyncio
     async def test_recovery_result_defaults(self):
-        from dbaas.entdb_server.tools.recovery_strategy import RecoveryResult
+        from entdb_server.tools.recovery_strategy import RecoveryResult
 
         rr = RecoveryResult(success=False)
         assert rr.tier_results == []

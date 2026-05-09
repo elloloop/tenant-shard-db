@@ -11,7 +11,7 @@ import asyncio
 import sqlite3
 import time
 
-from dbaas.entdb_server.tools.recovery_strategy import (
+from entdb_server.tools.recovery_strategy import (
     RecoveryStrategy,
 )
 

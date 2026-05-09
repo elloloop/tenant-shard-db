@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from dbaas.entdb_server.sharding import ShardingConfig
+from entdb_server.sharding import ShardingConfig
 
 
 @pytest.mark.unit

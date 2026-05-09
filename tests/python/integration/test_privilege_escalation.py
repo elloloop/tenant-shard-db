@@ -45,7 +45,7 @@ import grpc
 import pytest
 from google.protobuf.struct_pb2 import Struct
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CreateNodeOp,
     CreateUserRequest,
     ExecuteAtomicRequest,
@@ -59,12 +59,12 @@ from dbaas.entdb_server.api.generated import (
     RequestContext,
     TransferUserContentRequest,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.auth.auth_interceptor import (
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.auth.auth_interceptor import (
     reset_current_identity,
     set_current_identity,
 )
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.global_store import GlobalStore
 
 # --------------------------------------------------------------------------
 # Test scaffolding

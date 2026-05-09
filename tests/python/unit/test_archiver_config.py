@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from dbaas.entdb_server.config import ArchiverConfig, RecoveryConfig
+from entdb_server.config import ArchiverConfig, RecoveryConfig
 
 
 @pytest.mark.unit

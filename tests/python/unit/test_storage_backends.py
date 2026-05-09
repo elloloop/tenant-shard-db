@@ -80,13 +80,13 @@ class TestS3ObjectStore:
         mock_session, _mock_ctx, _mock_client = self._setup_s3_mocks()
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -99,13 +99,13 @@ class TestS3ObjectStore:
         mock_session, _mock_ctx, _mock_client = self._setup_s3_mocks()
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             config = _make_s3_config(
                 endpoint_url="http://localhost:9000",
@@ -126,13 +126,13 @@ class TestS3ObjectStore:
         mock_session, _mock_ctx, mock_client = self._setup_s3_mocks()
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -151,13 +151,13 @@ class TestS3ObjectStore:
         mock_session, _mock_ctx, mock_client = self._setup_s3_mocks()
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -176,13 +176,13 @@ class TestS3ObjectStore:
         mock_session, _mock_ctx, mock_client = self._setup_s3_mocks()
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -200,13 +200,13 @@ class TestS3ObjectStore:
         mock_client.get_object.return_value = {"Body": mock_body}
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -241,13 +241,13 @@ class TestS3ObjectStore:
         }
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -269,13 +269,13 @@ class TestS3ObjectStore:
         mock_client.list_objects_v2.return_value = {}
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -315,13 +315,13 @@ class TestS3ObjectStore:
         mock_client.list_objects_v2.side_effect = [page1, page2]
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -345,13 +345,13 @@ class TestS3ObjectStore:
         mock_session, mock_ctx, _mock_client = self._setup_s3_mocks()
 
         with (
-            patch("dbaas.entdb_server.storage.s3.S3_AVAILABLE", True),
+            patch("entdb_server.storage.s3.S3_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.s3.get_session",
+                "entdb_server.storage.s3.get_session",
                 return_value=mock_session,
             ),
         ):
-            from dbaas.entdb_server.storage.s3 import S3ObjectStore
+            from entdb_server.storage.s3 import S3ObjectStore
 
             store = S3ObjectStore(_make_s3_config())
             await store.connect()
@@ -378,13 +378,13 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
+            patch("entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
+                "entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
             ),
         ):
-            from dbaas.entdb_server.storage.azure_blob import AzureBlobObjectStore
+            from entdb_server.storage.azure_blob import AzureBlobObjectStore
 
             config = _make_azure_blob_config()
             store = AzureBlobObjectStore(config)
@@ -405,13 +405,13 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
+            patch("entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
+                "entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
             ),
         ):
-            from dbaas.entdb_server.storage.azure_blob import AzureBlobObjectStore
+            from entdb_server.storage.azure_blob import AzureBlobObjectStore
 
             store = AzureBlobObjectStore(_make_azure_blob_config())
             await store.connect()
@@ -438,13 +438,13 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
+            patch("entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
+                "entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
             ),
         ):
-            from dbaas.entdb_server.storage.azure_blob import AzureBlobObjectStore
+            from entdb_server.storage.azure_blob import AzureBlobObjectStore
 
             store = AzureBlobObjectStore(_make_azure_blob_config())
             await store.connect()
@@ -469,13 +469,13 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
+            patch("entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
+                "entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
             ),
         ):
-            from dbaas.entdb_server.storage.azure_blob import AzureBlobObjectStore
+            from entdb_server.storage.azure_blob import AzureBlobObjectStore
 
             store = AzureBlobObjectStore(_make_azure_blob_config())
             await store.connect()
@@ -518,13 +518,13 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
+            patch("entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
+                "entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
             ),
         ):
-            from dbaas.entdb_server.storage.azure_blob import AzureBlobObjectStore
+            from entdb_server.storage.azure_blob import AzureBlobObjectStore
 
             store = AzureBlobObjectStore(_make_azure_blob_config())
             await store.connect()
@@ -543,13 +543,13 @@ class TestAzureBlobObjectStore:
         mock_cls.from_connection_string.return_value = mock_client
 
         with (
-            patch("dbaas.entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
+            patch("entdb_server.storage.azure_blob.AZURE_BLOB_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.azure_blob.BlobServiceClient",
+                "entdb_server.storage.azure_blob.BlobServiceClient",
                 mock_cls,
             ),
         ):
-            from dbaas.entdb_server.storage.azure_blob import AzureBlobObjectStore
+            from entdb_server.storage.azure_blob import AzureBlobObjectStore
 
             store = AzureBlobObjectStore(_make_azure_blob_config())
             await store.connect()
@@ -579,13 +579,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()
@@ -608,13 +608,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()
@@ -638,13 +638,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()
@@ -666,13 +666,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()
@@ -708,13 +708,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()
@@ -739,13 +739,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()
@@ -763,13 +763,13 @@ class TestGcsObjectStore:
         mock_storage_mod.Client.return_value = mock_gcs_client
 
         with (
-            patch("dbaas.entdb_server.storage.gcs.GCS_AVAILABLE", True),
+            patch("entdb_server.storage.gcs.GCS_AVAILABLE", True),
             patch(
-                "dbaas.entdb_server.storage.gcs.gcs_storage",
+                "entdb_server.storage.gcs.gcs_storage",
                 mock_storage_mod,
             ),
         ):
-            from dbaas.entdb_server.storage.gcs import GcsObjectStore
+            from entdb_server.storage.gcs import GcsObjectStore
 
             store = GcsObjectStore(_make_gcs_config())
             await store.connect()

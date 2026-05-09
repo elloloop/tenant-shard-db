@@ -14,13 +14,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CreateUserRequest,
     GetUserRequest,
     ListUsersRequest,
     UpdateUserRequest,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.api.grpc_server import EntDBServicer
 
 # ── Helpers ──────────────────────────────────────────────────────────
 
@@ -86,7 +86,7 @@ class TestCreateUser:
             name="Alice",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.CreateUser(request, context)
 
         assert response.success is True
@@ -117,7 +117,7 @@ class TestCreateUser:
             name="Bob",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.CreateUser(request, context)
 
         assert response.success is True
@@ -136,7 +136,7 @@ class TestCreateUser:
             name="Carol",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             await servicer.CreateUser(request, context)
 
         # context.abort was called with PERMISSION_DENIED
@@ -162,7 +162,7 @@ class TestCreateUser:
             name="Dup",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.CreateUser(request, context)
 
         assert response.success is False
@@ -180,7 +180,7 @@ class TestCreateUser:
             name="NoEmail",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             await servicer.CreateUser(request, context)
 
         context.abort.assert_called()
@@ -209,7 +209,7 @@ class TestGetUser:
 
         request = GetUserRequest(actor="user:u1", user_id="u1")
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.GetUser(request, context)
 
         assert response.found is True
@@ -225,7 +225,7 @@ class TestGetUser:
 
         request = GetUserRequest(actor="user:u99", user_id="u99")
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.GetUser(request, context)
 
         assert response.found is False
@@ -238,7 +238,7 @@ class TestGetUser:
 
         request = GetUserRequest(user_id="u1")
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             await servicer.GetUser(request, context)
 
         context.abort.assert_called()
@@ -264,7 +264,7 @@ class TestUpdateUser:
             name="Alice Updated",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.UpdateUser(request, context)
 
         assert response.success is True
@@ -283,7 +283,7 @@ class TestUpdateUser:
             status="suspended",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.UpdateUser(request, context)
 
         assert response.success is True
@@ -301,7 +301,7 @@ class TestUpdateUser:
             name="Hacked",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             await servicer.UpdateUser(request, context)
 
         context.abort.assert_called()
@@ -321,7 +321,7 @@ class TestUpdateUser:
             name="Ghost",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.UpdateUser(request, context)
 
         assert response.success is False
@@ -338,7 +338,7 @@ class TestUpdateUser:
             user_id="u1",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.UpdateUser(request, context)
 
         assert response.success is False
@@ -377,7 +377,7 @@ class TestListUsers:
 
         request = ListUsersRequest(actor="system:admin")
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.ListUsers(request, context)
 
         assert len(response.users) == 2
@@ -399,7 +399,7 @@ class TestListUsers:
             offset=5,
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             response = await servicer.ListUsers(request, context)
 
         assert len(response.users) == 0
@@ -424,7 +424,7 @@ class TestNoGlobalStore:
             name="A",
         )
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             await servicer.CreateUser(request, context)
 
         context.abort.assert_called()
@@ -437,7 +437,7 @@ class TestNoGlobalStore:
 
         request = GetUserRequest(actor="user:u1", user_id="u1")
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request"):
+        with patch("entdb_server.api.grpc_server.record_grpc_request"):
             await servicer.GetUser(request, context)
 
         context.abort.assert_called()

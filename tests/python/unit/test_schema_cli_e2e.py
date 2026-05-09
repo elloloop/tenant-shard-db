@@ -28,9 +28,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from dbaas.entdb_server.main import Server
-from dbaas.entdb_server.schema.registry import reset_registry
-from dbaas.entdb_server.tools.schema_cli import _load_registry
+from entdb_server.main import Server
+from entdb_server.schema.registry import reset_registry
+from entdb_server.tools.schema_cli import _load_registry
 
 # ── Step 2: snapshot accepts a _pb2 module directly ───────────────────
 
@@ -159,7 +159,7 @@ def test_snapshot_output_is_directly_loadable_by_server(tmp_path):
         registry = _load_registry("test_schema_pb2")
 
         # Mimic what `entdb-schema snapshot --output X` writes.
-        from dbaas.entdb_server.tools.schema_cli import SchemaCLI
+        from entdb_server.tools.schema_cli import SchemaCLI
 
         cli = SchemaCLI()
         if registry.fingerprint is None:

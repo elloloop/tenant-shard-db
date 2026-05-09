@@ -23,11 +23,11 @@ from pathlib import Path
 
 import pytest
 
-from dbaas.entdb_server.crypto.key_manager import (
+from entdb_server.crypto.key_manager import (
     CryptoShreddedError,
     KeyManager,
 )
-from dbaas.entdb_server.crypto.tenant_key_vault import TenantKeyVault
+from entdb_server.crypto.tenant_key_vault import TenantKeyVault
 
 _MASTER_A = b"\xa1" * 32
 _MASTER_B = b"\xb2" * 32
@@ -170,7 +170,7 @@ class TestCryptoShredOrchestrator:
 
     @pytest.mark.asyncio
     async def test_orchestrator_durable_shred_in_vault_mode(self, vault_path: Path) -> None:
-        from dbaas.entdb_server.crypto.crypto_shred import (
+        from entdb_server.crypto.crypto_shred import (
             crypto_shred_tenant,
         )
 
@@ -209,7 +209,7 @@ class TestTamperedVaultRow:
 
         # KeyManager surfaces the authentication failure rather than
         # silently returning acme's DEK as globex's.
-        from dbaas.entdb_server.crypto.tenant_key_vault import (
+        from entdb_server.crypto.tenant_key_vault import (
             TenantKeyVaultError,
         )
 

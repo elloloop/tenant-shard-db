@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from dbaas.entdb_server.archive.archiver import Archiver
+from entdb_server.archive.archiver import Archiver
 
 
 def _make_archiver(**kwargs):

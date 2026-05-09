@@ -35,7 +35,7 @@ import pytest
 from google.protobuf.json_format import MessageToDict
 from google.protobuf.struct_pb2 import Struct, Value
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CreateNodeOp,
     ExecuteAtomicRequest,
     GetNodeRequest,
@@ -44,13 +44,13 @@ from dbaas.entdb_server.api.generated import (
     QueryNodesRequest,
     RequestContext,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.apply.applier import Applier, MailboxFanoutConfig
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import FieldDef, FieldKind, NodeTypeDef
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.apply.applier import Applier, MailboxFanoutConfig
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import FieldDef, FieldKind, NodeTypeDef
+from entdb_server.wal.memory import InMemoryWalStream
 
 # ── Fixtures ────────────────────────────────────────────────────────
 

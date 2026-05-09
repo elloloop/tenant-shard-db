@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.canonical_store import CanonicalStore
 
 
 @pytest.fixture()

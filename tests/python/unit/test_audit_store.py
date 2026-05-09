@@ -16,8 +16,8 @@ from typing import Any
 
 import pytest
 
-from dbaas.entdb_server.audit.compliance import _parse_segment, export_audit_trail
-from dbaas.entdb_server.audit.s3_lock import S3ObjectLockConfig, configure_s3_object_lock
+from entdb_server.audit.compliance import _parse_segment, export_audit_trail
+from entdb_server.audit.s3_lock import S3ObjectLockConfig, configure_s3_object_lock
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 

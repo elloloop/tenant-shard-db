@@ -16,9 +16,9 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import TransactionEvent
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.applier import TransactionEvent
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 def _make_event(tenant_id: str, i: int, payload_size: int = 200) -> bytes:

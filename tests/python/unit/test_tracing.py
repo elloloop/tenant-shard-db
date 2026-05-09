@@ -15,9 +15,9 @@ from unittest import mock
 
 import pytest
 
-from dbaas.entdb_server import tracing
-from dbaas.entdb_server.config import ObservabilityConfig
-from dbaas.entdb_server.tracing import get_tracer, span
+from entdb_server import tracing
+from entdb_server.config import ObservabilityConfig
+from entdb_server.tracing import get_tracer, span
 
 
 @pytest.fixture(autouse=True)

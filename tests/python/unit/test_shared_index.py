@@ -18,8 +18,8 @@ import uuid
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
 
 TENANT_A = "tenant_alice"
 TENANT_B = "tenant_bob"
@@ -458,7 +458,7 @@ async def test_applier_delete_triggers_shared_cleanup(global_store, store_a):
     """Applier's delete_node path cleans up shared_index entries."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier, TransactionEvent
+    from entdb_server.apply.applier import Applier, TransactionEvent
 
     node_id = _create_node(store_a)
     await global_store.add_shared(BOB, TENANT_A, node_id, "read")
@@ -499,7 +499,7 @@ async def test_applier_delete_no_global_store_no_crash(store_a):
     """Applier without global_store doesn't crash on delete_node."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier, TransactionEvent
+    from entdb_server.apply.applier import Applier, TransactionEvent
 
     node_id = _create_node(store_a)
     mock_wal = AsyncMock()
@@ -531,7 +531,7 @@ async def test_applier_shared_index_on_share_direct_user(global_store, store_a):
     """_update_shared_index_on_share creates entry for direct user."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     applier = Applier(
         wal=AsyncMock(),
@@ -552,7 +552,7 @@ async def test_applier_shared_index_on_share_group(global_store, store_a):
     """_update_shared_index_on_share expands group to individual entries."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     _add_group_member(store_a, GROUP_FRIENDS, BOB)
     _add_group_member(store_a, GROUP_FRIENDS, CAROL)
@@ -577,7 +577,7 @@ async def test_applier_shared_index_on_revoke_direct(global_store, store_a):
     """_update_shared_index_on_revoke removes entry for direct user."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     applier = Applier(
         wal=AsyncMock(),
@@ -598,7 +598,7 @@ async def test_applier_shared_index_on_revoke_group(global_store, store_a):
     """_update_shared_index_on_revoke removes entries for group members."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     _add_group_member(store_a, GROUP_FRIENDS, BOB)
     _add_group_member(store_a, GROUP_FRIENDS, CAROL)
@@ -624,7 +624,7 @@ async def test_applier_group_member_add_cascades(global_store, store_a):
     """_update_shared_index_on_group_member_add cascades entries."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     node1 = _create_node(store_a)
     node2 = _create_node(store_a)
@@ -650,7 +650,7 @@ async def test_applier_group_member_remove_cascades(global_store, store_a):
     """_update_shared_index_on_group_member_remove removes entries."""
     from unittest.mock import AsyncMock
 
-    from dbaas.entdb_server.apply.applier import Applier
+    from entdb_server.apply.applier import Applier
 
     node1 = _create_node(store_a)
     _share(store_a, node1, GROUP_FRIENDS, "read")

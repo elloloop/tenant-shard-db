@@ -15,8 +15,8 @@ Tests cover:
 - List field validation
 """
 
-from dbaas.entdb_server.schema.types import NodeTypeDef, field
-from dbaas.entdb_server.schema.validator import validate_payload
+from entdb_server.schema.types import NodeTypeDef, field
+from entdb_server.schema.validator import validate_payload
 
 
 class FakeRegistry:

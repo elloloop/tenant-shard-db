@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock
 import grpc
 import pytest
 
-from dbaas.entdb_server.api.rate_limiter import RateLimitInterceptor
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.storage.local_fs import LocalFsObjectStore
+from entdb_server.api.rate_limiter import RateLimitInterceptor
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.storage.local_fs import LocalFsObjectStore
 
 # ── Fix 1: Path traversal ────────────────────────────────────────────
 
@@ -60,8 +60,8 @@ class TestCheckTenant:
 
     @pytest.mark.asyncio
     async def test_check_tenant_rejects_unassigned(self):
-        from dbaas.entdb_server.api.grpc_server import EntDBServicer
-        from dbaas.entdb_server.sharding import ShardingConfig
+        from entdb_server.api.grpc_server import EntDBServicer
+        from entdb_server.sharding import ShardingConfig
 
         sharding = ShardingConfig(
             node_id="node-a",
@@ -87,8 +87,8 @@ class TestCheckTenant:
 
     @pytest.mark.asyncio
     async def test_check_tenant_allows_assigned(self):
-        from dbaas.entdb_server.api.grpc_server import EntDBServicer
-        from dbaas.entdb_server.sharding import ShardingConfig
+        from entdb_server.api.grpc_server import EntDBServicer
+        from entdb_server.sharding import ShardingConfig
 
         sharding = ShardingConfig(
             node_id="node-a",
@@ -118,8 +118,8 @@ class TestHealthMultiNode:
 
     @pytest.mark.asyncio
     async def test_health_healthy_in_multi_node(self):
-        from dbaas.entdb_server.api.grpc_server import EntDBServicer
-        from dbaas.entdb_server.sharding import ShardingConfig
+        from entdb_server.api.grpc_server import EntDBServicer
+        from entdb_server.sharding import ShardingConfig
 
         sharding = ShardingConfig(
             node_id="node-a",
@@ -136,7 +136,7 @@ class TestHealthMultiNode:
             sharding=sharding,
         )
 
-        from dbaas.entdb_server.api.generated import HealthRequest
+        from entdb_server.api.generated import HealthRequest
 
         context = AsyncMock()
         response = await servicer.Health(HealthRequest(), context)

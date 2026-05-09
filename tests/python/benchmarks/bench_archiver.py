@@ -11,7 +11,7 @@ import json
 import time
 from unittest.mock import MagicMock
 
-from dbaas.entdb_server.archive.archiver import Archiver
+from entdb_server.archive.archiver import Archiver
 
 # --- Helpers ---
 

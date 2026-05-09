@@ -3,7 +3,7 @@
 
 import pytest
 
-from dbaas.entdb_server.config import (
+from entdb_server.config import (
     AzureBlobConfig,
     GcsConfig,
     StorageBackend,
@@ -60,7 +60,7 @@ class TestGcsConfig:
 class TestLocalFsStore:
     @pytest.mark.asyncio
     async def test_put_get_list(self, tmp_path):
-        from dbaas.entdb_server.storage.local_fs import LocalFsObjectStore
+        from entdb_server.storage.local_fs import LocalFsObjectStore
 
         store = LocalFsObjectStore(str(tmp_path))
         await store.connect()
@@ -80,7 +80,7 @@ class TestLocalFsStore:
 
     @pytest.mark.asyncio
     async def test_get_missing_raises(self, tmp_path):
-        from dbaas.entdb_server.storage.local_fs import LocalFsObjectStore
+        from entdb_server.storage.local_fs import LocalFsObjectStore
 
         store = LocalFsObjectStore(str(tmp_path))
         await store.connect()
@@ -89,7 +89,7 @@ class TestLocalFsStore:
 
     @pytest.mark.asyncio
     async def test_list_empty_prefix(self, tmp_path):
-        from dbaas.entdb_server.storage.local_fs import LocalFsObjectStore
+        from entdb_server.storage.local_fs import LocalFsObjectStore
 
         store = LocalFsObjectStore(str(tmp_path))
         await store.connect()

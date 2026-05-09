@@ -32,7 +32,7 @@ How to change safely:
       migration required.
 
 Example:
-    >>> from dbaas.entdb_server.schema.field_id_translation import (
+    >>> from entdb_server.schema.field_id_translation import (
     ...     name_to_id_keys, id_to_name_keys,
     ... )
     >>> registry.register_node_type(NodeTypeDef(

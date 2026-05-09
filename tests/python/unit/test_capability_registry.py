@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from dbaas.entdb_server.auth.capability_registry import (
+from entdb_server.auth.capability_registry import (
     CORE_IMPLICATIONS,
     DEFAULT_OP_REQUIREMENTS,
     CapabilityImplication,

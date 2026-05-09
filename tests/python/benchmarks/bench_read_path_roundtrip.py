@@ -20,7 +20,7 @@ import json
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore, Node
+from entdb_server.apply.canonical_store import CanonicalStore, Node
 
 
 @pytest.fixture

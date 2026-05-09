@@ -21,8 +21,8 @@ import tempfile
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.schema import NodeTypeDef, SchemaRegistry, field
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.schema import NodeTypeDef, SchemaRegistry, field
 
 
 def _make_registry() -> SchemaRegistry:

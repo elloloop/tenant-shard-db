@@ -19,8 +19,8 @@ import uuid
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
 
 TENANT_ALICE = "tenant_alice"
 TENANT_BOB = "tenant_bob"

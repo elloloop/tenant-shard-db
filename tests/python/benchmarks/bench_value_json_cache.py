@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import time
 
-from dbaas.entdb_server.wal.base import (
+from entdb_server.wal.base import (
     _SENTINEL,  # noqa: F401  -- cache reset marker
     StreamPos,
     StreamRecord,

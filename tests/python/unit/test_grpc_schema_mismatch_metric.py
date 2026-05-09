@@ -16,13 +16,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from google.protobuf.struct_pb2 import Struct
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CreateNodeOp,
     ExecuteAtomicRequest,
     Operation,
     RequestContext,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.api.grpc_server import EntDBServicer
 
 
 def _build_servicer(server_fingerprint: str) -> EntDBServicer:
@@ -57,7 +57,7 @@ class TestExecuteAtomicSchemaMismatchMetric:
         request = _build_request(client_fingerprint="sha256:stale-client")
         context = AsyncMock()
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request") as mock_record:
+        with patch("entdb_server.api.grpc_server.record_grpc_request") as mock_record:
             response = await servicer.ExecuteAtomic(request, context)
 
         # The response must indicate failure
@@ -84,7 +84,7 @@ class TestExecuteAtomicSchemaMismatchMetric:
         pos_mock.__str__ = MagicMock(return_value="0:0:0")
         servicer.wal.append = AsyncMock(return_value=pos_mock)
 
-        with patch("dbaas.entdb_server.api.grpc_server.record_grpc_request") as mock_record:
+        with patch("entdb_server.api.grpc_server.record_grpc_request") as mock_record:
             response = await servicer.ExecuteAtomic(request, context)
 
         assert response.success is True

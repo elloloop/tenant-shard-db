@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore, Node
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.canonical_store import CanonicalStore, Node
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 @dataclass

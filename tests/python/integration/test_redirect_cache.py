@@ -27,11 +27,11 @@ from unittest.mock import AsyncMock, MagicMock
 import grpc
 import pytest
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     add_EntDBServiceServicer_to_server,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.sharding import ShardingConfig
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.sharding import ShardingConfig
 from sdk.entdb_sdk._grpc_client import GrpcClient
 from sdk.entdb_sdk._redirect_cache import StaticMapResolver
 

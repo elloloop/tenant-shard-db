@@ -28,18 +28,18 @@ from unittest.mock import AsyncMock, MagicMock
 import grpc
 import pytest
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CancelUserDeletionRequest,
     DeleteUserRequest,
     ExportUserDataRequest,
     FreezeUserRequest,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.data_policy import DataPolicy
-from dbaas.entdb_server.gdpr_worker import GdprDeletionWorker
-from dbaas.entdb_server.global_store import GlobalStore
-from dbaas.entdb_server.schema import (
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.data_policy import DataPolicy
+from entdb_server.gdpr_worker import GdprDeletionWorker
+from entdb_server.global_store import GlobalStore
+from entdb_server.schema import (
     EdgeTypeDef,
     NodeTypeDef,
     OnSubjectExit,

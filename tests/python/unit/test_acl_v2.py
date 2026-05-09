@@ -23,13 +23,13 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.acl import AclManager, Permission
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.schema.compat import (
+from entdb_server.apply.acl import AclManager, Permission
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.schema.compat import (
     ChangeKind,
     check_compatibility,
 )
-from dbaas.entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.registry import SchemaRegistry
 from sdk.entdb_sdk.schema import (
     AclDefaults,
     EdgeTypeDef,

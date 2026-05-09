@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from dbaas.entdb_server.storage.local_fs import LocalFsObjectStore
+from entdb_server.storage.local_fs import LocalFsObjectStore
 
 
 @pytest.fixture
@@ -535,7 +535,7 @@ class TestLocalFsStress:
 
     @pytest.mark.asyncio
     async def test_list_objects_returns_object_meta(self, obj_store):
-        from dbaas.entdb_server.storage.base import ObjectMeta
+        from entdb_server.storage.base import ObjectMeta
 
         await obj_store.put("meta-test/x.txt", b"hello")
         result = await obj_store.list_objects("meta-test/")

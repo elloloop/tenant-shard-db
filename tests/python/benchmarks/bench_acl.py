@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.apply.canonical_store import CanonicalStore
 
 TENANT = "bench_acl"
 ALICE = "user:alice"

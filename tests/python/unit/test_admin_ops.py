@@ -22,8 +22,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
 
 TENANT = "tenant-admin-ops"
 ALICE = "user:alice"
@@ -331,7 +331,7 @@ class _RecordingCanonicalStore(CanonicalStore):
 
 
 async def _setup_servicer_with_wal_spy(tmp_path, gs_dir):
-    from dbaas.entdb_server.api.grpc_server import EntDBServicer
+    from entdb_server.api.grpc_server import EntDBServicer
 
     gs = GlobalStore(gs_dir)
     await gs.create_tenant(TENANT, "T")
@@ -372,7 +372,7 @@ class _FakeContext:
 
 class TestAdminHandlersGoThroughWal:
     async def test_transfer_user_content_appends_admin_transfer_event(self, tmp_path):
-        from dbaas.entdb_server.api.generated import TransferUserContentRequest
+        from entdb_server.api.generated import TransferUserContentRequest
 
         with tempfile.TemporaryDirectory() as gs_dir:
             servicer, cs, wal, gs = await _setup_servicer_with_wal_spy(tmp_path, gs_dir)
@@ -406,7 +406,7 @@ class TestAdminHandlersGoThroughWal:
                 gs.close()
 
     async def test_delegate_access_appends_admin_delegate_event(self, tmp_path):
-        from dbaas.entdb_server.api.generated import DelegateAccessRequest
+        from entdb_server.api.generated import DelegateAccessRequest
 
         with tempfile.TemporaryDirectory() as gs_dir:
             servicer, cs, wal, gs = await _setup_servicer_with_wal_spy(tmp_path, gs_dir)
@@ -441,7 +441,7 @@ class TestAdminHandlersGoThroughWal:
                 gs.close()
 
     async def test_delegate_access_default_permission_is_read(self, tmp_path):
-        from dbaas.entdb_server.api.generated import DelegateAccessRequest
+        from entdb_server.api.generated import DelegateAccessRequest
 
         with tempfile.TemporaryDirectory() as gs_dir:
             servicer, cs, wal, gs = await _setup_servicer_with_wal_spy(tmp_path, gs_dir)

@@ -36,7 +36,7 @@ class TestStrictPathValidation:
     any tenant_id / user_id that contains filesystem-unsafe chars."""
 
     def _make_store(self, tmp_path):
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         return CanonicalStore(data_dir=str(tmp_path))
 
@@ -105,7 +105,7 @@ class TestOAuthJwksHardening:
     @pytest.mark.asyncio
     async def test_fetch_runs_in_executor(self):
         """_fetch_jwks must dispatch urllib via run_in_executor."""
-        from dbaas.entdb_server.auth.oauth_validator import OAuthValidator
+        from entdb_server.auth.oauth_validator import OAuthValidator
 
         v = OAuthValidator("https://issuer.example.com", "aud")
 
@@ -135,7 +135,7 @@ class TestOAuthJwksHardening:
     @pytest.mark.asyncio
     async def test_deduped_concurrent_fetches(self):
         """Ten concurrent callers to _fetch_jwks_deduped fire one HTTP call."""
-        from dbaas.entdb_server.auth.oauth_validator import OAuthValidator
+        from entdb_server.auth.oauth_validator import OAuthValidator
 
         v = OAuthValidator("https://issuer.example.com", "aud")
 
@@ -160,7 +160,7 @@ class TestOAuthJwksHardening:
     @pytest.mark.asyncio
     async def test_unknown_kid_negative_cache(self):
         """Once a kid is confirmed unknown, subsequent lookups do NOT refetch."""
-        from dbaas.entdb_server.auth.oauth_validator import (
+        from entdb_server.auth.oauth_validator import (
             AuthenticationError,
             OAuthValidator,
         )
@@ -202,7 +202,7 @@ class TestOAuthJwksHardening:
     @pytest.mark.asyncio
     async def test_unknown_kid_cache_eventually_expires(self):
         """Negative cache entries must expire so real key rotations work."""
-        from dbaas.entdb_server.auth.oauth_validator import OAuthValidator
+        from entdb_server.auth.oauth_validator import OAuthValidator
 
         v = OAuthValidator(
             "https://issuer.example.com",
@@ -217,7 +217,7 @@ class TestOAuthJwksHardening:
     @pytest.mark.asyncio
     async def test_negative_cache_bounded(self):
         """The negative cache evicts when it crosses 1024 entries."""
-        from dbaas.entdb_server.auth.oauth_validator import OAuthValidator
+        from entdb_server.auth.oauth_validator import OAuthValidator
 
         v = OAuthValidator(
             "https://issuer.example.com",
@@ -240,7 +240,7 @@ class TestPerTenantFairShareSemaphore:
     async def test_same_tenant_requests_serialize(self, tmp_path):
         """Two concurrent same-tenant _run_sync calls must execute
         sequentially (one at a time) even though both can dispatch."""
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         store = CanonicalStore(data_dir=str(tmp_path))
         try:
@@ -279,7 +279,7 @@ class TestPerTenantFairShareSemaphore:
     async def test_different_tenants_run_in_parallel(self, tmp_path):
         """Different tenants have independent semaphores and do not
         block each other even under burst load."""
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         store = CanonicalStore(data_dir=str(tmp_path))
         try:
@@ -312,7 +312,7 @@ class TestPerTenantFairShareSemaphore:
         """A burst of same-tenant calls must not starve another
         tenant's single request — the canonical noisy-neighbor
         scenario that motivated this fix."""
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         store = CanonicalStore(data_dir=str(tmp_path))
         try:
@@ -353,7 +353,7 @@ class TestPerTenantFairShareSemaphore:
         Some internal helpers take a conn or other object first — we
         must not try to use it as a tenant key.
         """
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         store = CanonicalStore(data_dir=str(tmp_path))
         try:
@@ -380,7 +380,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_stop_signals_applier_before_touching_tasks(self):
         """applier.stop() must be awaited before any task.cancel()."""
-        from dbaas.entdb_server.main import Server as EntDBServer
+        from entdb_server.main import Server as EntDBServer
 
         # Build a Server via __new__ so we skip all startup logic and
         # can wire exactly the attributes we care about.
@@ -425,7 +425,7 @@ class TestGracefulShutdown:
     async def test_stop_drains_tasks_that_exit_on_their_own(self):
         """Tasks that observe the stop flag and exit cleanly should
         NOT be cancelled — they just drain via gather."""
-        from dbaas.entdb_server.main import Server as EntDBServer
+        from entdb_server.main import Server as EntDBServer
 
         server = EntDBServer.__new__(EntDBServer)
         server._running = True
@@ -466,7 +466,7 @@ class TestGracefulShutdown:
     async def test_stop_falls_back_to_cancel_after_timeout(self):
         """A stuck task that ignores the stop flag must be cancelled
         after the graceful timeout — we don't hang forever."""
-        from dbaas.entdb_server.main import Server as EntDBServer
+        from entdb_server.main import Server as EntDBServer
 
         server = EntDBServer.__new__(EntDBServer)
         server._running = True
@@ -501,7 +501,7 @@ class TestGracefulShutdown:
     @pytest.mark.asyncio
     async def test_partial_startup_stop_does_not_crash(self):
         """Server.stop() must tolerate a partial startup (many attrs are None)."""
-        from dbaas.entdb_server.main import Server as EntDBServer
+        from entdb_server.main import Server as EntDBServer
 
         server = EntDBServer.__new__(EntDBServer)
         server._running = True

@@ -35,15 +35,15 @@ import grpc
 import pytest
 from google.protobuf.struct_pb2 import Struct
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     CreateNodeOp,
     DeleteNodeOp,
     ExecuteAtomicRequest,
     Operation,
     RequestContext,
 )
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.global_store import GlobalStore
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.global_store import GlobalStore
 
 # ── Test scaffolding ─────────────────────────────────────────────────
 

@@ -14,14 +14,14 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
     TransactionEvent,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.sharding import ShardingConfig
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.sharding import ShardingConfig
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 def _make_event(

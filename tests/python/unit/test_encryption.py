@@ -22,8 +22,8 @@ from unittest.mock import patch
 
 import pytest
 
-from dbaas.entdb_server.config import EncryptionConfig
-from dbaas.entdb_server.encryption import (
+from entdb_server.config import EncryptionConfig
+from entdb_server.encryption import (
     derive_global_key,
     derive_tenant_key,
     is_sqlcipher_available,
@@ -164,7 +164,7 @@ class TestOpenEncryptedConnection:
         """Without sqlcipher, falls back to sqlite3 with a warning."""
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
-            with caplog.at_level(logging.WARNING, logger="dbaas.entdb_server.encryption"):
+            with caplog.at_level(logging.WARNING, logger="entdb_server.encryption"):
                 conn = open_encrypted_connection(db_path, "deadbeef" * 8)
             conn.execute("CREATE TABLE test (id TEXT)")
             conn.execute("INSERT INTO test VALUES ('hello')")
@@ -202,7 +202,7 @@ class TestCanonicalStoreEncryption:
     @pytest.mark.asyncio
     async def test_works_with_encryption_disabled(self, data_dir):
         """CanonicalStore works normally when encryption is disabled."""
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         store = CanonicalStore(data_dir=data_dir, encryption_config=EncryptionConfig())
         await store.initialize_tenant("t1")
@@ -218,7 +218,7 @@ class TestCanonicalStoreEncryption:
     @pytest.mark.asyncio
     async def test_works_with_encryption_enabled_no_sqlcipher(self, data_dir, caplog):
         """CanonicalStore with encryption enabled but no sqlcipher logs warning."""
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         if is_sqlcipher_available():
             pytest.skip("sqlcipher is available -- fallback path not testable")
@@ -242,7 +242,7 @@ class TestCanonicalStoreEncryption:
     @pytest.mark.asyncio
     async def test_different_tenants_get_different_connections(self, data_dir):
         """Each tenant gets its own database file, even with encryption."""
-        from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+        from entdb_server.apply.canonical_store import CanonicalStore
 
         enc_cfg = EncryptionConfig(enabled=True, master_key="test-key")
         store = CanonicalStore(data_dir=data_dir, encryption_config=enc_cfg)
@@ -257,7 +257,7 @@ class TestCanonicalStoreEncryption:
     def test_encryption_config_defaults_to_disabled(self):
         """CanonicalStore without encryption_config defaults to disabled."""
         with tempfile.TemporaryDirectory() as tmpdir:
-            from dbaas.entdb_server.apply.canonical_store import CanonicalStore
+            from entdb_server.apply.canonical_store import CanonicalStore
 
             store = CanonicalStore(data_dir=tmpdir)
             assert store.encryption_config.enabled is False
@@ -272,7 +272,7 @@ class TestGlobalStoreEncryption:
 
     def test_global_store_default_no_encryption(self):
         """GlobalStore without encryption_config defaults to disabled."""
-        from dbaas.entdb_server.global_store import GlobalStore
+        from entdb_server.global_store import GlobalStore
 
         with tempfile.TemporaryDirectory() as tmpdir:
             store = GlobalStore(data_dir=tmpdir)
@@ -281,7 +281,7 @@ class TestGlobalStoreEncryption:
 
     def test_global_store_with_encryption_enabled_no_sqlcipher(self, caplog):
         """GlobalStore with encryption but no sqlcipher logs warning."""
-        from dbaas.entdb_server.global_store import GlobalStore
+        from entdb_server.global_store import GlobalStore
 
         if is_sqlcipher_available():
             pytest.skip("sqlcipher is available -- fallback path not testable")

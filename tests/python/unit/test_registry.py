@@ -11,12 +11,12 @@ Tests cover:
 
 import pytest
 
-from dbaas.entdb_server.schema.registry import (
+from entdb_server.schema.registry import (
     DuplicateRegistrationError,
     RegistryFrozenError,
     SchemaRegistry,
 )
-from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
 
 
 class TestSchemaRegistry:

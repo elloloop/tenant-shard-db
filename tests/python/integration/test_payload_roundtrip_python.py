@@ -23,16 +23,16 @@ import tempfile
 import pytest
 from grpc import aio as grpc_aio
 
-from dbaas.entdb_server.api.generated import add_EntDBServiceServicer_to_server
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.apply.applier import Applier, MailboxFanoutConfig
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
-from dbaas.entdb_server.schema.registry import SchemaRegistry as ServerSchemaRegistry
-from dbaas.entdb_server.schema.types import FieldDef as ServerFieldDef
-from dbaas.entdb_server.schema.types import FieldKind as ServerFieldKind
-from dbaas.entdb_server.schema.types import NodeTypeDef as ServerNodeTypeDef
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.api.generated import add_EntDBServiceServicer_to_server
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.apply.applier import Applier, MailboxFanoutConfig
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
+from entdb_server.schema.registry import SchemaRegistry as ServerSchemaRegistry
+from entdb_server.schema.types import FieldDef as ServerFieldDef
+from entdb_server.schema.types import FieldKind as ServerFieldKind
+from entdb_server.schema.types import NodeTypeDef as ServerNodeTypeDef
+from entdb_server.wal.memory import InMemoryWalStream
 from sdk.entdb_sdk import register_proto_schema
 from sdk.entdb_sdk.client import DbClient
 from sdk.entdb_sdk.registry import get_registry, reset_registry

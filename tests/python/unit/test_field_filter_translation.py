@@ -17,8 +17,8 @@ from __future__ import annotations
 import pytest
 from google.protobuf import json_format
 
-from dbaas.entdb_server.api.generated import FieldFilter, FilterOp
-from dbaas.entdb_server.api.grpc_server import (
+from entdb_server.api.generated import FieldFilter, FilterOp
+from entdb_server.api.grpc_server import (
     _field_filters_to_filter_dict,
 )
 
