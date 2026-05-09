@@ -34,18 +34,18 @@ import grpc
 import pytest
 from grpc import aio as grpc_aio
 
-from dbaas.entdb_server.api.generated import (
+from entdb_server.api.generated import (
     EntDBServiceStub,
     add_EntDBServiceServicer_to_server,
 )
-from dbaas.entdb_server.api.generated import entdb_pb2 as pb
-from dbaas.entdb_server.api.grpc_server import EntDBServicer
-from dbaas.entdb_server.apply.applier import Applier, MailboxFanoutConfig
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.global_store import GlobalStore
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.api.generated import entdb_pb2 as pb
+from entdb_server.api.grpc_server import EntDBServicer
+from entdb_server.apply.applier import Applier, MailboxFanoutConfig
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.global_store import GlobalStore
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from entdb_server.wal.memory import InMemoryWalStream
 
 TENANT = "acme"
 ALICE = "user:alice"
@@ -84,7 +84,7 @@ def _build_registry() -> SchemaRegistry:
 @pytest.fixture
 async def live_server():
     """Spin up a real EntDBServicer with a tenant + alice + bob seeded."""
-    from dbaas.entdb_server.schema import registry as registry_mod
+    from entdb_server.schema import registry as registry_mod
 
     prev = registry_mod._global_registry
     reg = _build_registry()

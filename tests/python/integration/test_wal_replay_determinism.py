@@ -28,15 +28,15 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
     TransactionEvent,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 def _build_registry() -> SchemaRegistry:
@@ -166,7 +166,7 @@ def registry():
 @pytest.fixture
 def schema_registry_global(registry):
     """Install the registry as the global one so the applier can find it."""
-    from dbaas.entdb_server.schema import registry as registry_mod
+    from entdb_server.schema import registry as registry_mod
 
     prev = registry_mod._global_registry
     registry_mod._global_registry = registry

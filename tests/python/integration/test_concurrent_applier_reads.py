@@ -25,14 +25,14 @@ import time
 
 import pytest
 
-from dbaas.entdb_server.apply.applier import (
+from entdb_server.apply.applier import (
     Applier,
     MailboxFanoutConfig,
 )
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from entdb_server.wal.memory import InMemoryWalStream
 
 TENANT = "tenant_concurrent"
 TOPIC = "concurrent-wal"
@@ -60,7 +60,7 @@ def _build_registry() -> SchemaRegistry:
 
 @pytest.fixture
 def schema_registry_global():
-    from dbaas.entdb_server.schema import registry as registry_mod
+    from entdb_server.schema import registry as registry_mod
 
     prev = registry_mod._global_registry
     reg = _build_registry()
@@ -269,8 +269,7 @@ async def test_concurrent_reads_during_applier_burst(schema_registry_global):
         # we're starving readers behind writes). 10 readers × 2 each
         # is the floor; CI's slower hardware can't reliably hit higher.
         assert sum(iter_counts) >= 20, (
-            f"Total reader iterations too low: {iter_counts}; "
-            "readers are starving behind writes"
+            f"Total reader iterations too low: {iter_counts}; readers are starving behind writes"
         )
 
         # Read-after-write consistency: every task and edge must
