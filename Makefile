@@ -67,15 +67,15 @@ test:
 
 e2e:
 	@echo "Running end-to-end tests..."
-	./tests/e2e/run-e2e.sh
+	./tests/python/e2e/run-e2e.sh
 
 e2e-logs:
 	@echo "Running end-to-end tests (with logs on failure)..."
-	./tests/e2e/run-e2e.sh --logs
+	./tests/python/e2e/run-e2e.sh --logs
 
 e2e-keep:
 	@echo "Running end-to-end tests (keeping containers)..."
-	./tests/e2e/run-e2e.sh --keep
+	./tests/python/e2e/run-e2e.sh --keep
 
 # =============================================================================
 # Build
@@ -84,7 +84,7 @@ e2e-keep:
 build:
 	@echo "Building Docker images..."
 	docker compose build
-	docker compose -f tests/e2e/docker-compose.e2e.yml build
+	docker compose -f tests/python/e2e/docker-compose.e2e.yml build
 
 proto:
 	@echo "Regenerating protobuf files..."
@@ -97,5 +97,5 @@ proto:
 clean:
 	@echo "Cleaning up..."
 	docker compose down -v --remove-orphans
-	docker compose -f tests/e2e/docker-compose.e2e.yml down -v --remove-orphans
+	docker compose -f tests/python/e2e/docker-compose.e2e.yml down -v --remove-orphans
 	@echo "Done"

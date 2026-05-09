@@ -135,31 +135,42 @@ for interactive writes against a configured tenant.
 
 ```
 .
-├── dbaas/
-│   └── entdb_server/
-│       ├── schema/          # Schema types and registry
-│       ├── wal/             # WAL stream abstraction
-│       ├── apply/           # Applier and stores
-│       ├── api/             # gRPC server
-│       ├── archive/         # S3 archiving
-│       ├── snapshot/        # SQLite snapshots
-│       ├── tools/           # CLI tools
-│       └── diagrams/        # Mermaid diagrams
+├── proto/
+│   ├── entdb/v1/entdb.proto      # wire contract (entdb.v1.EntDBService)
+│   └── console/v1/console.proto  # browser-facing console RPCs
+├── server/
+│   ├── python/                   # Python gRPC server (today)
+│   │   ├── entdb_server/
+│   │   │   ├── schema/           # Schema types and registry
+│   │   │   ├── wal/              # WAL stream abstraction
+│   │   │   ├── apply/            # Applier and stores
+│   │   │   ├── api/              # gRPC server
+│   │   │   ├── archive/          # S3 archiving
+│   │   │   ├── snapshot/         # SQLite snapshots
+│   │   │   ├── tools/            # CLI tools
+│   │   │   └── diagrams/         # Mermaid diagrams
+│   │   └── pyproject.toml        # name = "entdb-server", AGPL-3.0-only
+│   └── go/                       # Go server reimplementation (placeholder)
 ├── sdk/
-│   ├── entdb_sdk/           # Python SDK
-│   └── go/entdb/            # Go SDK + entdb-console (single-binary web console)
+│   ├── python/
+│   │   ├── entdb_sdk/            # Python SDK
+│   │   └── pyproject.toml        # name = "entdb-sdk", MIT
+│   └── go/entdb/                 # Go SDK + entdb-console
 ├── examples/
-│   └── fastapi_app/         # Sample FastAPI application
+│   └── fastapi_app/              # Sample FastAPI application
 ├── tests/
-│   ├── unit/                # Unit tests
-│   ├── integration/         # Integration tests
-│   └── e2e/                 # End-to-end tests
-├── docs/                    # Documentation
-├── .github/
-│   └── workflows/           # CI/CD pipelines
-├── Dockerfile               # Multi-stage Docker build
-├── docker-compose.yml       # Local development stack
-└── pyproject.toml           # Python project configuration
+│   ├── python/
+│   │   ├── unit/                 # Unit tests
+│   │   ├── integration/          # Integration tests
+│   │   ├── e2e/                  # End-to-end tests
+│   │   └── benchmarks/           # pytest-benchmark suite
+│   ├── go/                       # Go test placeholder
+│   └── contract/                 # Cross-implementation contract tests
+├── docs/                         # Documentation
+├── .github/workflows/            # CI/CD pipelines
+├── Dockerfile                    # Multi-stage Docker build
+├── docker-compose.yml            # Local development stack
+└── pyproject.toml                # Workspace root: dev tooling only
 ```
 
 ## Development
@@ -181,15 +192,16 @@ cd entdb
 python -m venv venv
 source venv/bin/activate
 
-# Install dependencies
-pip install -e ".[dev]"
+# Install dependencies (server + SDK as editable installs)
+pip install -e ./server/python -e ./sdk/python \
+    pytest pytest-asyncio pytest-cov pytest-timeout ruff mypy httpx grpcio-tools
 
 # Start services
 docker-compose up -d
 
 # Run tests
-pytest tests/unit -v
-pytest tests/integration -v
+pytest tests/python/unit -v
+pytest tests/python/integration -v
 ```
 
 ### Running E2E Tests
@@ -199,7 +211,7 @@ pytest tests/integration -v
 export ENTDB_E2E_TESTS=1
 
 # Run E2E tests
-pytest tests/e2e -v
+pytest tests/python/e2e -v
 ```
 
 ## CI/CD
@@ -243,8 +255,8 @@ SDKs aren't forced to be copyleft.
 
 | Component | License | Path | License file |
 |---|---|---|---|
-| **Server** (`entdb` / `dbaas/`) | **GNU AGPL v3** | `dbaas/` | repo-root [`LICENSE`](LICENSE) |
-| **Python SDK** (`entdb-sdk`) | **MIT** | `sdk/entdb_sdk/` | [`sdk/LICENSE`](sdk/LICENSE) |
+| **Server** (`entdb-server`) | **GNU AGPL v3** | `server/python/` | repo-root [`LICENSE`](LICENSE) |
+| **Python SDK** (`entdb-sdk`) | **MIT** | `sdk/python/entdb_sdk/` | [`sdk/python/LICENSE`](sdk/python/LICENSE) |
 | **Go SDK** | **MIT** | `sdk/go/entdb/` | [`sdk/go/entdb/LICENSE`](sdk/go/entdb/LICENSE) |
 | **`entdbctl` CLI** | **MIT** | `sdk/go/entdb/cmd/entdbctl/` | covered by `sdk/go/entdb/LICENSE` |
 | **`entdb-console` debug binary** | **MIT** | `sdk/go/entdb/cmd/entdb-console/` | covered by `sdk/go/entdb/LICENSE` |

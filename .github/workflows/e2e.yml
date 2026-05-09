@@ -10,7 +10,7 @@ on:
     types: [created]
 
 env:
-  COMPOSE_FILE: tests/e2e/docker-compose.e2e.yml
+  COMPOSE_FILE: tests/python/e2e/docker-compose.e2e.yml
 
 jobs:
   e2e-tests:
@@ -27,8 +27,8 @@ jobs:
 
       - name: Run E2E tests
         run: |
-          chmod +x tests/e2e/run-e2e.sh
-          tests/e2e/run-e2e.sh --logs
+          chmod +x tests/python/e2e/run-e2e.sh
+          tests/python/e2e/run-e2e.sh --logs
 
   # ==========================================================================
   # Pre-release checks (runs on release creation)

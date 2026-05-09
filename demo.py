@@ -10,11 +10,11 @@ import asyncio
 import json
 import tempfile
 
-from dbaas.entdb_server.apply.applier import Applier, TransactionEvent
-from dbaas.entdb_server.apply.canonical_store import CanonicalStore
-from dbaas.entdb_server.schema.registry import SchemaRegistry
-from dbaas.entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
-from dbaas.entdb_server.wal.memory import InMemoryWalStream
+from entdb_server.apply.applier import Applier, TransactionEvent
+from entdb_server.apply.canonical_store import CanonicalStore
+from entdb_server.schema.registry import SchemaRegistry
+from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
+from entdb_server.wal.memory import InMemoryWalStream
 
 
 async def main():

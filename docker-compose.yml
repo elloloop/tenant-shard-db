@@ -82,7 +82,7 @@ services:
       minio-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-m", "dbaas.entdb_server.healthcheck", "--addr=localhost:50051"]
+      test: ["CMD", "python", "-m", "entdb_server.healthcheck", "--addr=localhost:50051"]
       interval: 10s
       timeout: 10s
       retries: 5

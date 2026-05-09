@@ -55,8 +55,8 @@ jobs:
         run: |
           VER="${GITHUB_REF_NAME#v}"
           echo "$VER" > VERSION
-          echo "__version__ = \"$VER\"" > sdk/entdb_sdk/_version.py
-          echo "__version__ = \"$VER\"" > dbaas/entdb_server/_version.py
+          echo "__version__ = \"$VER\"" > sdk/python/entdb_sdk/_version.py
+          echo "__version__ = \"$VER\"" > server/python/entdb_server/_version.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -97,7 +97,7 @@ jobs:
             entdb-smoke:server-${{ matrix.arch }}
           for i in $(seq 1 30); do
             if docker exec entdb-smoke \
-                python -m dbaas.entdb_server.healthcheck --addr=localhost:50051; then
+                python -m entdb_server.healthcheck --addr=localhost:50051; then
               echo "::notice::Server (${{ matrix.arch }}) healthy after ${i} attempts"
               docker rm -f entdb-smoke
               exit 0
@@ -277,7 +277,7 @@ jobs:
         run: |
           VER="${GITHUB_REF_NAME#v}"
           echo "$VER" > VERSION
-          echo "__version__ = \"$VER\"" > sdk/entdb_sdk/_version.py
+          echo "__version__ = \"$VER\"" > sdk/python/entdb_sdk/_version.py
 
       - name: Install build tools
         run: |
@@ -286,7 +286,7 @@ jobs:
 
       - name: Build SDK package
         run: |
-          cd sdk
+          cd sdk/python
           python -m build
 
       # Smoke-test the built wheel in a clean venv before publishing.
@@ -295,7 +295,7 @@ jobs:
         run: |
           set -euo pipefail
           uv venv /tmp/sdk-smoke
-          uv pip install --python /tmp/sdk-smoke/bin/python sdk/dist/*.whl
+          uv pip install --python /tmp/sdk-smoke/bin/python sdk/python/dist/*.whl
           /tmp/sdk-smoke/bin/python -c "
           import entdb_sdk
           from entdb_sdk import DbClient, register_proto_schema, Permission, Actor
@@ -305,7 +305,7 @@ jobs:
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: sdk/dist/
+          packages-dir: sdk/python/dist/
 
   build-cli-binaries:
     name: Build entdbctl release binaries

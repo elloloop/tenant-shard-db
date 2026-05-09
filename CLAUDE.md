@@ -6,10 +6,10 @@
 Before every `git push`, run the full local CI suite and fix any failures:
 
 ```bash
-python -m pytest tests/unit/ tests/integration/ -q   # all tests must pass
-uvx ruff@0.15.7 check .                              # lint must be clean
-uvx ruff@0.15.7 format --check .                     # format must be clean
-cd sdk/go/entdb && go vet ./... && go test ./...      # Go SDK (if modified)
+python -m pytest tests/python/unit/ tests/python/integration/ -q   # all tests must pass
+uvx ruff@0.15.7 check .                                            # lint must be clean
+uvx ruff@0.15.7 format --check .                                   # format must be clean
+cd sdk/go/entdb && go vet ./... && go test ./...                    # Go SDK (if modified)
 ```
 
 Do NOT push code that you haven't verified locally. Do NOT rely on GitHub CI to catch failures — fix them before push.
@@ -38,7 +38,7 @@ WRONG:     handler → global_store.update_something() → SQLite (direct)
 If you need a new operation type, add it to `TransactionEvent.ops` and handle it in `Applier.apply_event()`.
 
 ### 2. The WAL is the audit log
-S3 Object Lock (COMPLIANCE mode) provides tamper-evident, immutable audit trails. Do NOT build separate audit log tables with hash chains — they're redundant and weaker than S3 Object Lock. Use `export_audit_trail()` from `dbaas/entdb_server/audit/compliance.py` for compliance exports.
+S3 Object Lock (COMPLIANCE mode) provides tamper-evident, immutable audit trails. Do NOT build separate audit log tables with hash chains — they're redundant and weaker than S3 Object Lock. Use `export_audit_trail()` from `server/python/entdb_server/audit/compliance.py` for compliance exports.
 
 ### 3. Async-only on the gRPC server
 The gRPC server uses `grpc.aio`. All interceptors, handlers, and middleware MUST be async (`grpc.aio.ServerInterceptor`, not `grpc.ServerInterceptor`). Never use `asyncio.run()` or `ThreadPoolExecutor` to bridge sync/async in request handlers — it destroys throughput.
@@ -54,32 +54,50 @@ Payloads are stored keyed by `field_id` (e.g. `{"1": "value"}`), not by name. Tr
 
 ## Project Structure
 
+Polyglot monorepo, Python today, Go server reimplementation in flight:
+
 ```
-dbaas/entdb_server/
-  api/grpc_server.py     — gRPC handlers (ingress/egress boundary)
-  apply/applier.py       — WAL consumer, applies events to SQLite
-  apply/canonical_store.py — per-tenant SQLite operations
-  global_store.py        — cross-tenant state (users, tenants, memberships)
-  wal/                   — WAL backends (Kafka, Kinesis, SQS, memory)
-  audit/                 — S3-based compliance audit export
-  auth/                  — OAuth, API keys, sessions
-  crypto/                — encryption at rest, key management
+proto/
+  entdb/v1/entdb.proto        — wire contract (entdb.v1.EntDBService)
+  console/v1/console.proto    — browser-facing console RPCs
 
-sdk/entdb_sdk/           — Python SDK
-sdk/go/entdb/            — Go SDK
+server/
+  python/entdb_server/        — current Python gRPC server (AGPL-3.0-only)
+    api/grpc_server.py        — gRPC handlers (ingress/egress boundary)
+    apply/applier.py          — WAL consumer, applies events to SQLite
+    apply/canonical_store.py  — per-tenant SQLite operations
+    global_store.py           — cross-tenant state
+    wal/                      — WAL backends (Kafka, Kinesis, SQS, memory)
+    audit/                    — S3-based compliance audit export
+    auth/                     — OAuth, API keys, sessions
+    crypto/                   — encryption at rest, key management
+  python/pyproject.toml       — name = "entdb-server"
+  go/                         — placeholder for Go server reimplementation
 
-tests/unit/              — unit tests (fast, no external deps)
-tests/integration/       — integration tests (in-memory WAL + SQLite)
+sdk/
+  python/entdb_sdk/           — Python SDK (MIT, PyPI: entdb-sdk)
+  python/pyproject.toml       — name = "entdb-sdk"
+  go/entdb/                   — Go SDK (module: github.com/elloloop/tenant-shard-db/sdk/go/entdb)
+
+tests/
+  python/unit/                — unit tests (fast, no external deps)
+  python/integration/         — integration tests (in-memory WAL + SQLite)
+  python/e2e/                 — end-to-end tests (full stack with Docker)
+  python/benchmarks/          — pytest-benchmark suite
+  go/                         — Go test placeholder
+  contract/                   — cross-implementation contract tests placeholder
+
+pyproject.toml                — workspace root, dev tooling only (no [project])
 ```
 
 ## Testing
 
 ```bash
-python -m pytest tests/unit/ -q          # ~1300 tests, <10s
-python -m pytest tests/integration/ -q   # ~700 tests, <6s
-cd sdk/go/entdb && go test ./...         # Go SDK tests
-uvx ruff@0.15.7 check .                 # lint
-uvx ruff@0.15.7 format --check .        # format
+python -m pytest tests/python/unit/ -q          # ~1300 tests, <10s
+python -m pytest tests/python/integration/ -q   # ~700 tests, <6s
+cd sdk/go/entdb && go test ./...                # Go SDK tests
+uvx ruff@0.15.7 check .                         # lint
+uvx ruff@0.15.7 format --check .                # format
 ```
 
 ## Key Patterns
