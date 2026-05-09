@@ -32,8 +32,8 @@ from entdb_server.api.generated import (
 )
 from entdb_server.api.grpc_server import EntDBServicer
 from entdb_server.sharding import ShardingConfig
-from sdk.entdb_sdk._grpc_client import GrpcClient
-from sdk.entdb_sdk._redirect_cache import StaticMapResolver
+from entdb_sdk._grpc_client import GrpcClient
+from entdb_sdk._redirect_cache import StaticMapResolver
 
 
 def _free_port() -> int:

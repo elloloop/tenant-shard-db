@@ -31,7 +31,7 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
 
-from sdk.entdb_sdk import (
+from entdb_sdk import (
     DbClient,
     EdgeTypeDef,
     NodeTypeDef,

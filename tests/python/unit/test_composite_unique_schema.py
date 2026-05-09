@@ -139,8 +139,8 @@ class TestProtoToNodeTypeDefBridge:
     def test_unknown_field_name_raises(self) -> None:
         from google.protobuf import descriptor_pb2
 
-        from sdk.entdb_sdk._generated import entdb_options_pb2 as ep
-        from sdk.entdb_sdk.schema import NodeTypeDef as SdkNodeTypeDef
+        from entdb_sdk._generated import entdb_options_pb2 as ep
+        from entdb_sdk.schema import NodeTypeDef as SdkNodeTypeDef
 
         msg = descriptor_pb2.DescriptorProto(name="OAuthIdentity")
         f1 = msg.field.add()
@@ -162,8 +162,8 @@ class TestProtoToNodeTypeDefBridge:
     def test_resolved_constraint_round_trips(self) -> None:
         from google.protobuf import descriptor_pb2
 
-        from sdk.entdb_sdk._generated import entdb_options_pb2 as ep
-        from sdk.entdb_sdk.schema import NodeTypeDef as SdkNodeTypeDef
+        from entdb_sdk._generated import entdb_options_pb2 as ep
+        from entdb_sdk.schema import NodeTypeDef as SdkNodeTypeDef
 
         msg = descriptor_pb2.DescriptorProto(name="OAuthIdentity")
         f1 = msg.field.add()
@@ -189,8 +189,8 @@ class TestProtoToNodeTypeDefBridge:
     def test_omitted_name_derived_from_field_ids(self) -> None:
         from google.protobuf import descriptor_pb2
 
-        from sdk.entdb_sdk._generated import entdb_options_pb2 as ep
-        from sdk.entdb_sdk.schema import NodeTypeDef as SdkNodeTypeDef
+        from entdb_sdk._generated import entdb_options_pb2 as ep
+        from entdb_sdk.schema import NodeTypeDef as SdkNodeTypeDef
 
         msg = descriptor_pb2.DescriptorProto(name="OAuthIdentity")
         f1 = msg.field.add()

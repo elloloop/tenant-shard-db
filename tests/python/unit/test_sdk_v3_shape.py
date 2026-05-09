@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock
 import grpc
 import pytest
 
-from sdk.entdb_sdk import (
+from entdb_sdk import (
     Actor,
     DbClient,
     Mailbox,
@@ -33,9 +33,9 @@ from sdk.entdb_sdk import (
     UniqueKey,
     register_proto_schema,
 )
-from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt, Node
-from sdk.entdb_sdk.registry import get_registry, reset_registry
-from tests._test_schemas import test_schema_pb2 as ts
+from entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt, Node
+from entdb_sdk.registry import get_registry, reset_registry
+from tests.python._test_schemas import test_schema_pb2 as ts
 
 
 # ── Codegen-shaped sidecar ──────────────────────────────────────────
@@ -175,7 +175,7 @@ class TestCanonicalFlow:
         mocking the gRPC stub one layer below the SDK boundary, so
         the entire parser path is exercised end to end.
         """
-        from sdk.entdb_sdk._grpc_client import GrpcClient
+        from entdb_sdk._grpc_client import GrpcClient
 
         class _FakeRpcError(grpc.RpcError):
             def code(self):
@@ -293,32 +293,32 @@ class TestDeletedSurface:
     """
 
     def test_create_with_acl_is_gone(self):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         assert not hasattr(Plan, "create_with_acl")
 
     def test_create_in_mailbox_is_gone(self):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         assert not hasattr(Plan, "create_in_mailbox")
 
     def test_create_in_public_is_gone(self):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         assert not hasattr(Plan, "create_in_public")
 
     def test_create_with_keys_is_gone(self):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         assert not hasattr(Plan, "create_with_keys")
 
     def test_update_with_keys_is_gone(self):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         assert not hasattr(Plan, "update_with_keys")
 
     def test_plan_create_rejects_dict_payload(self, db):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         plan = Plan(db, tenant_id="t", actor="user:a")
         # The old shape — NodeTypeDef + dict — is no longer accepted.
@@ -326,9 +326,9 @@ class TestDeletedSurface:
             plan.create({"sku": "p1"})
 
     def test_plan_delete_rejects_node_type_def(self, db):
-        from sdk.entdb_sdk.client import Plan
-        from sdk.entdb_sdk.schema import NodeTypeDef
-        from sdk.entdb_sdk.schema import field as fld
+        from entdb_sdk.client import Plan
+        from entdb_sdk.schema import NodeTypeDef
+        from entdb_sdk.schema import field as fld
 
         plan = Plan(db, tenant_id="t", actor="user:a")
         nt = NodeTypeDef(type_id=99, name="X", fields=(fld(1, "name", "str"),))
@@ -336,7 +336,7 @@ class TestDeletedSurface:
             plan.delete(nt, "n1")
 
     def test_plan_update_rejects_dict_patch(self, db):
-        from sdk.entdb_sdk.client import Plan
+        from entdb_sdk.client import Plan
 
         plan = Plan(db, tenant_id="t", actor="user:a")
         with pytest.raises(TypeError, match="proto message instance"):

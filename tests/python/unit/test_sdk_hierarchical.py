@@ -18,13 +18,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from sdk.entdb_sdk import register_proto_schema
-from sdk.entdb_sdk._grpc_client import Edge, GrpcCommitResult, GrpcReceipt, Node
-from sdk.entdb_sdk.client import DbClient
-from sdk.entdb_sdk.registry import get_registry, reset_registry
-from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
-from sdk.entdb_sdk.scope import ActorScope, ScopedPlan, TenantScope
-from tests._test_schemas import test_schema_pb2 as ts
+from entdb_sdk import register_proto_schema
+from entdb_sdk._grpc_client import Edge, GrpcCommitResult, GrpcReceipt, Node
+from entdb_sdk.client import DbClient
+from entdb_sdk.registry import get_registry, reset_registry
+from entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
+from entdb_sdk.scope import ActorScope, ScopedPlan, TenantScope
+from tests.python._test_schemas import test_schema_pb2 as ts
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -233,7 +233,7 @@ class TestActorScopeEdges:
 class TestActorScopeSharing:
     async def test_share_delegates(self, client):
         scope = client.tenant("t1").actor("user:alice")
-        from sdk.entdb_sdk.typed import Permission
+        from entdb_sdk.typed import Permission
 
         result = await scope.share("n1", "user:charlie", perm=Permission.WRITE)
 

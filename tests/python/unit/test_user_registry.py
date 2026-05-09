@@ -452,7 +452,7 @@ class TestSDKUserRegistryClient:
 
     @pytest.mark.asyncio
     async def test_sdk_create_user(self):
-        from sdk.entdb_sdk.client import DbClient
+        from entdb_sdk.client import DbClient
 
         client = DbClient("localhost:50051")
         client._connected = True
@@ -478,7 +478,7 @@ class TestSDKUserRegistryClient:
 
     @pytest.mark.asyncio
     async def test_sdk_get_user(self):
-        from sdk.entdb_sdk.client import DbClient
+        from entdb_sdk.client import DbClient
 
         client = DbClient("localhost:50051")
         client._connected = True
@@ -500,7 +500,7 @@ class TestSDKUserRegistryClient:
 
     @pytest.mark.asyncio
     async def test_sdk_get_user_not_found(self):
-        from sdk.entdb_sdk.client import DbClient
+        from entdb_sdk.client import DbClient
 
         client = DbClient("localhost:50051")
         client._connected = True
@@ -512,7 +512,7 @@ class TestSDKUserRegistryClient:
 
     @pytest.mark.asyncio
     async def test_sdk_update_user(self):
-        from sdk.entdb_sdk.client import DbClient
+        from entdb_sdk.client import DbClient
 
         client = DbClient("localhost:50051")
         client._connected = True
@@ -529,7 +529,7 @@ class TestSDKUserRegistryClient:
 
     @pytest.mark.asyncio
     async def test_sdk_list_users(self):
-        from sdk.entdb_sdk.client import DbClient
+        from entdb_sdk.client import DbClient
 
         client = DbClient("localhost:50051")
         client._connected = True

@@ -318,8 +318,8 @@ def test_grant_scoped_to_type_id() -> None:
 
 
 def test_register_from_node_opts_with_proto_message() -> None:
-    pytest.importorskip("sdk.entdb_sdk._generated.entdb_options_pb2")
-    from sdk.entdb_sdk._generated import entdb_options_pb2 as opts_pb2
+    pytest.importorskip("entdb_sdk._generated.entdb_options_pb2")
+    from entdb_sdk._generated import entdb_options_pb2 as opts_pb2
 
     node_opts = opts_pb2.NodeOpts(
         type_id=101,
@@ -388,8 +388,8 @@ def test_legacy_permission_to_core_caps_unknown_is_empty() -> None:
 
 
 def test_mapping_with_both_core_and_ext_raises() -> None:
-    pytest.importorskip("sdk.entdb_sdk._generated.entdb_options_pb2")
-    from sdk.entdb_sdk._generated import entdb_options_pb2 as opts_pb2
+    pytest.importorskip("entdb_sdk._generated.entdb_options_pb2")
+    from entdb_sdk._generated import entdb_options_pb2 as opts_pb2
 
     bad = opts_pb2.NodeOpts(
         type_id=1,

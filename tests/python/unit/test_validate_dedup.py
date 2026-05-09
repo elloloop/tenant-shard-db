@@ -15,10 +15,10 @@ from __future__ import annotations
 
 import pytest
 
-from sdk.entdb_sdk import validate as validate_mod
-from sdk.entdb_sdk.errors import ValidationError
-from sdk.entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
-from sdk.entdb_sdk.validate import validate_or_raise, validate_payload
+from entdb_sdk import validate as validate_mod
+from entdb_sdk.errors import ValidationError
+from entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
+from entdb_sdk.validate import validate_or_raise, validate_payload
 
 
 def _fd(fid: int, name: str, kind: FieldKind, **kwargs) -> FieldDef:
@@ -134,7 +134,7 @@ class TestUnknownFieldSuggestions:
         assert any("name" in e for e in errors)
 
     def test_validate_or_raise_uses_unknown_field_error(self):
-        from sdk.entdb_sdk.errors import UnknownFieldError
+        from entdb_sdk.errors import UnknownFieldError
 
         nt = NodeTypeDef(type_id=1, name="User", fields=(_fd(1, "email", FieldKind.STRING),))
         with pytest.raises(UnknownFieldError):

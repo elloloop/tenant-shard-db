@@ -15,9 +15,9 @@ from __future__ import annotations
 
 import pytest
 
-from sdk.entdb_sdk.errors import ValidationError
-from sdk.entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
-from sdk.entdb_sdk.validate import validate_or_raise, validate_payload
+from entdb_sdk.errors import ValidationError
+from entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
+from entdb_sdk.validate import validate_or_raise, validate_payload
 
 
 def _field(fid: int, name: str, kind: FieldKind, **kwargs) -> FieldDef:

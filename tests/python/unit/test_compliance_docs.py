@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 COMPLIANCE_DIR = REPO_ROOT / "docs" / "compliance"
 SCRIPTS_DIR = REPO_ROOT / "scripts"
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 import copy
 import json
 
-from sdk.entdb_sdk.cli import _check_compat
+from entdb_sdk.cli import _check_compat
 
 # ── Helpers ──────────────────────────────────────────────────────────────
 

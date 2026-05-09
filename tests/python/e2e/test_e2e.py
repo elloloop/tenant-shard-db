@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass
 
 # Add SDK + repo root to path so the generated proto module's
-# ``from sdk.entdb_sdk._generated import entdb_options_pb2`` resolves.
+# ``from entdb_sdk._generated import entdb_options_pb2`` resolves.
 sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/sdk")
 # The schema module lives next to this script; importing it directly

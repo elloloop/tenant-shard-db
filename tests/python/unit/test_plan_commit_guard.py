@@ -19,13 +19,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from sdk.entdb_sdk import register_proto_schema
-from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt
-from sdk.entdb_sdk.client import DbClient, Plan
-from sdk.entdb_sdk.errors import ValidationError
-from sdk.entdb_sdk.registry import get_registry, reset_registry
-from sdk.entdb_sdk.schema import FieldDef, FieldKind
-from tests._test_schemas import test_schema_pb2 as ts
+from entdb_sdk import register_proto_schema
+from entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt
+from entdb_sdk.client import DbClient, Plan
+from entdb_sdk.errors import ValidationError
+from entdb_sdk.registry import get_registry, reset_registry
+from entdb_sdk.schema import FieldDef, FieldKind
+from tests.python._test_schemas import test_schema_pb2 as ts
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -402,8 +402,8 @@ class TestPlanCreateValidation:
     async def test_validate_payload_catches_wrong_types(self):
         """NodeTypeDef.validate_payload still catches type errors when
         called directly with a hand-rolled dict (e.g. by codegen tools)."""
-        from sdk.entdb_sdk.schema import NodeTypeDef
-        from sdk.entdb_sdk.schema import field as fld
+        from entdb_sdk.schema import NodeTypeDef
+        from entdb_sdk.schema import field as fld
 
         nt = NodeTypeDef(
             type_id=99,

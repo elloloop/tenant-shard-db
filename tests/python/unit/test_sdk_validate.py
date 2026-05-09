@@ -11,9 +11,9 @@ Tests cover:
 
 import pytest
 
-from sdk.entdb_sdk.errors import UnknownFieldError, ValidationError
-from sdk.entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
-from sdk.entdb_sdk.validate import (
+from entdb_sdk.errors import UnknownFieldError, ValidationError
+from entdb_sdk.schema import FieldDef, FieldKind, NodeTypeDef
+from entdb_sdk.validate import (
     suggest_fields,
     validate_or_raise,
     validate_payload,

@@ -11,10 +11,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from sdk.entdb_sdk import register_proto_schema
-from sdk.entdb_sdk.client import Edge, Node, Plan
-from sdk.entdb_sdk.registry import get_registry, reset_registry
-from tests._test_schemas import test_schema_pb2 as ts
+from entdb_sdk import register_proto_schema
+from entdb_sdk.client import Edge, Node, Plan
+from entdb_sdk.registry import get_registry, reset_registry
+from tests.python._test_schemas import test_schema_pb2 as ts
 
 
 @pytest.fixture(autouse=True)

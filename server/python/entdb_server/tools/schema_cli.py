@@ -310,11 +310,11 @@ def _load_registry(
         # into the CLI.
         if hasattr(module, "DESCRIPTOR"):
             try:
-                from sdk.entdb_sdk.codegen import register_proto_schema
-                from sdk.entdb_sdk.registry import (
+                from entdb_sdk.codegen import register_proto_schema
+                from entdb_sdk.registry import (
                     get_registry as _get_sdk_registry,
                 )
-                from sdk.entdb_sdk.registry import (
+                from entdb_sdk.registry import (
                     reset_registry as _reset_sdk_registry,
                 )
 

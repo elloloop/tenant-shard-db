@@ -30,7 +30,7 @@ from entdb_server.schema.compat import (
     check_compatibility,
 )
 from entdb_server.schema.registry import SchemaRegistry
-from sdk.entdb_sdk.schema import (
+from entdb_sdk.schema import (
     AclDefaults,
     EdgeTypeDef,
     NodeTypeDef,

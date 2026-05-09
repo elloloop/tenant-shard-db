@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock
 import grpc
 import pytest
 
-from sdk.entdb_sdk._redirect_cache import (
+from entdb_sdk._redirect_cache import (
     REDIRECT_TRAILER_KEY,
     DNSTemplateResolver,
     StaticMapResolver,

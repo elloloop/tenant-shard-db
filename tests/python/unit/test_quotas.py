@@ -347,7 +347,7 @@ async def test_check_counts_ops_not_requests():
 
 
 def test_rate_limit_error_has_retry_after_and_limit():
-    from sdk.entdb_sdk.errors import RateLimitError
+    from entdb_sdk.errors import RateLimitError
 
     err = RateLimitError("quota exceeded", retry_after_ms=5000, limit=100, used=150)
     assert err.retry_after_ms == 5000
@@ -357,6 +357,6 @@ def test_rate_limit_error_has_retry_after_and_limit():
 
 
 def test_rate_limit_error_exported_from_package():
-    from sdk.entdb_sdk import RateLimitError as Exported
+    from entdb_sdk import RateLimitError as Exported
 
     assert Exported.__name__ == "RateLimitError"

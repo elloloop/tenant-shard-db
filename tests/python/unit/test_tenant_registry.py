@@ -700,11 +700,11 @@ class TestSDKCreateTenantRegion:
     async def test_grpc_client_create_tenant_forwards_region(self) -> None:
         """``GrpcClient.create_tenant`` writes ``region`` onto the
         wire request and surfaces the resolved region back."""
-        from sdk.entdb_sdk._generated import (
+        from entdb_sdk._generated import (
             CreateTenantResponse,
             TenantDetail,
         )
-        from sdk.entdb_sdk._grpc_client import GrpcClient
+        from entdb_sdk._grpc_client import GrpcClient
 
         c = GrpcClient("localhost", 50051)
         # Stand up a fake stub so we can inspect the request that
@@ -743,8 +743,8 @@ class TestSDKCreateTenantRegion:
     async def test_grpc_client_create_tenant_no_region_sends_empty(self) -> None:
         """Omitting ``region`` sends an empty string on the wire so the
         server can default to its own served region."""
-        from sdk.entdb_sdk._generated import CreateTenantResponse, TenantDetail
-        from sdk.entdb_sdk._grpc_client import GrpcClient
+        from entdb_sdk._generated import CreateTenantResponse, TenantDetail
+        from entdb_sdk._grpc_client import GrpcClient
 
         c = GrpcClient("localhost", 50051)
         c._stub = MagicMock()
@@ -774,7 +774,7 @@ class TestSDKCreateTenantRegion:
     async def test_dbclient_create_tenant_passes_region_kwarg(self) -> None:
         """The public ``DbClient.create_tenant`` wrapper forwards the
         ``region`` kwarg to the underlying gRPC client."""
-        from sdk.entdb_sdk.client import DbClient
+        from entdb_sdk.client import DbClient
 
         c = DbClient("localhost:50051")
         c._connected = True
@@ -803,8 +803,8 @@ class TestSDKCreateTenantRegion:
 
     async def test_grpc_client_get_tenant_returns_region(self) -> None:
         """``get_tenant`` surfaces the persisted region back to callers."""
-        from sdk.entdb_sdk._generated import GetTenantResponse, TenantDetail
-        from sdk.entdb_sdk._grpc_client import GrpcClient
+        from entdb_sdk._generated import GetTenantResponse, TenantDetail
+        from entdb_sdk._grpc_client import GrpcClient
 
         c = GrpcClient("localhost", 50051)
         c._stub = MagicMock()

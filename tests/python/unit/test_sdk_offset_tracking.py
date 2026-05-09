@@ -21,12 +21,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from sdk.entdb_sdk import register_proto_schema
-from sdk.entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt, Node
-from sdk.entdb_sdk.client import _UNSET, DbClient
-from sdk.entdb_sdk.registry import get_registry, reset_registry
-from sdk.entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
-from tests._test_schemas import test_schema_pb2 as ts
+from entdb_sdk import register_proto_schema
+from entdb_sdk._grpc_client import GrpcCommitResult, GrpcReceipt, Node
+from entdb_sdk.client import _UNSET, DbClient
+from entdb_sdk.registry import get_registry, reset_registry
+from entdb_sdk.schema import EdgeTypeDef, FieldDef, FieldKind, NodeTypeDef
+from tests.python._test_schemas import test_schema_pb2 as ts
 
 # ---------------------------------------------------------------------------
 # Fixtures

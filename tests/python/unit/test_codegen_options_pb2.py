@@ -24,8 +24,8 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PLAYGROUND_PROTO = REPO_ROOT / "tests" / "_test_schemas" / "playground_schema.proto"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+PLAYGROUND_PROTO = REPO_ROOT / "tests" / "python" / "_test_schemas" / "playground_schema.proto"
 
 
 # ---------------------------------------------------------------------------
@@ -37,29 +37,29 @@ class TestEntdbOptionsPb2Generated:
     """The generated ``entdb_options_pb2`` module ships with the SDK."""
 
     def test_module_importable(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2  # noqa: F401
+        from entdb_sdk._generated import entdb_options_pb2  # noqa: F401
 
     def test_node_extension_present(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         assert hasattr(entdb_options_pb2, "node")
         assert hasattr(entdb_options_pb2, "NODE_FIELD_NUMBER")
         assert entdb_options_pb2.NODE_FIELD_NUMBER == 50100
 
     def test_edge_extension_present(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         assert hasattr(entdb_options_pb2, "edge")
         assert entdb_options_pb2.EDGE_FIELD_NUMBER == 50101
 
     def test_field_extension_present(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         assert hasattr(entdb_options_pb2, "field")
         assert entdb_options_pb2.FIELD_FIELD_NUMBER == 50102
 
     def test_node_opts_message_has_expected_fields(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         opts = entdb_options_pb2.NodeOpts()
         for name in (
@@ -78,7 +78,7 @@ class TestEntdbOptionsPb2Generated:
             assert hasattr(opts, name), f"NodeOpts missing field {name}"
 
     def test_edge_opts_message_has_expected_fields(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         opts = entdb_options_pb2.EdgeOpts()
         for name in (
@@ -96,7 +96,7 @@ class TestEntdbOptionsPb2Generated:
             assert hasattr(opts, name), f"EdgeOpts missing field {name}"
 
     def test_field_opts_message_has_expected_fields(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         opts = entdb_options_pb2.FieldOpts()
         for name in (
@@ -123,7 +123,7 @@ class TestEntdbOptionsPb2Generated:
 
 @pytest.fixture(scope="module")
 def parsed_playground():
-    from sdk.entdb_sdk.codegen import parse_proto
+    from entdb_sdk.codegen import parse_proto
 
     if not PLAYGROUND_PROTO.exists():
         pytest.skip(f"playground schema not found at {PLAYGROUND_PROTO}")
@@ -191,19 +191,19 @@ class TestGeneratedOutputStable:
 
     def test_generate_functions_removed(self):
         """Custom codegen is dead — replaced by standard protoc."""
-        import sdk.entdb_sdk.codegen as cg
+        import entdb_sdk.codegen as cg
 
         assert not hasattr(cg, "generate_python")
         assert not hasattr(cg, "generate_go")
         assert not hasattr(cg, "generate_from_proto")
 
     def test_register_proto_schema_exists(self):
-        from sdk.entdb_sdk.codegen import register_proto_schema
+        from entdb_sdk.codegen import register_proto_schema
 
         assert callable(register_proto_schema)
 
     def test_schema_fingerprint_still_computable(self, parsed_playground):
-        from sdk.entdb_sdk.codegen import compute_schema_fingerprint
+        from entdb_sdk.codegen import compute_schema_fingerprint
 
         nodes, edges = parsed_playground
         fp = compute_schema_fingerprint(nodes, edges)
@@ -220,7 +220,7 @@ class TestHandRolledParsersRemoved:
     """Ensure the pure-wire-format parsers are gone from codegen.py."""
 
     def test_no_hand_rolled_symbols(self):
-        import sdk.entdb_sdk.codegen as cg
+        import entdb_sdk.codegen as cg
 
         for name in (
             "_decode_varint",

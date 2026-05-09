@@ -663,7 +663,7 @@ class TestGrpcUniqueFieldHandlers:
 
 class TestProtoSurface:
     def test_node_opts_has_no_keys_field(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         opts = entdb_options_pb2.NodeOpts()
         assert not hasattr(opts, "keys") or not callable(getattr(opts, "keys", None))
@@ -675,7 +675,7 @@ class TestProtoSurface:
         assert not hasattr(entdb_options_pb2, "NodeKeySpec")
 
     def test_field_opts_has_unique_flag(self):
-        from sdk.entdb_sdk._generated import entdb_options_pb2
+        from entdb_sdk._generated import entdb_options_pb2
 
         opts = entdb_options_pb2.FieldOpts()
         opts.unique = True
