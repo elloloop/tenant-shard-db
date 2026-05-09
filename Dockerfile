@@ -64,10 +64,14 @@ ENV VIRTUAL_ENV=/opt/venv \
 # package itself is NOT installed here — modules are imported from /app
 # via PYTHONPATH at the per-stage level, so a code change does not
 # invalidate this dependency layer.
-COPY server/python/pyproject.toml ./server-pyproject.toml
-COPY README.md ./
+# uv pip compile dispatches based on filename — it must see "pyproject.toml"
+# (not "server-pyproject.toml") to detect the format. Copy into a dedicated
+# subdirectory so the file keeps its canonical name without colliding with
+# any future root pyproject in this stage.
+COPY server/python/pyproject.toml /tmp/server-deps/pyproject.toml
+COPY server/python/README.md /tmp/server-deps/README.md
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip compile server-pyproject.toml \
+    uv pip compile /tmp/server-deps/pyproject.toml \
         -o /tmp/requirements.txt && \
     uv pip install --no-cache -r /tmp/requirements.txt
 
