@@ -78,7 +78,7 @@ services:
   # ==========================================================================
   server:
     build:
-      context: ../..
+      context: ../../..
       dockerfile: Dockerfile
       target: server
     environment:
@@ -112,8 +112,8 @@ services:
   # ==========================================================================
   e2e-tests:
     build:
-      context: ../..
-      dockerfile: tests/e2e/Dockerfile.e2e
+      context: ../../..
+      dockerfile: tests/python/e2e/Dockerfile.e2e
     environment:
       - ENTDB_HOST=server
       - ENTDB_PORT=50051

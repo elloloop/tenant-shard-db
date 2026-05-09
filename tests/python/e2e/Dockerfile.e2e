@@ -18,14 +18,14 @@ RUN pip install --no-cache-dir \
     aiohttp>=3.9.0
 
 # Copy SDK and generated code
-COPY sdk/ /app/sdk/
-COPY dbaas/entdb_server/api/generated/ /app/dbaas/entdb_server/api/generated/
+COPY sdk/python/entdb_sdk/ /app/entdb_sdk/
+COPY server/python/entdb_server/api/generated/ /app/entdb_server/api/generated/
 
 # Copy test files
-COPY tests/e2e/ /app/tests/e2e/
+COPY tests/python/e2e/ /app/tests/python/e2e/
 
 # Set Python path
 ENV PYTHONPATH="/app:/app/sdk"
 
 # Run the e2e tests
-CMD ["python", "/app/tests/e2e/test_e2e.py"]
+CMD ["python", "/app/tests/python/e2e/test_e2e.py"]
