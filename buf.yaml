@@ -5,7 +5,7 @@ version: v2
 # both as modules in a single workspace lets `import "entdb.proto";` resolve
 # without per-file `--proto_path` flags.
 modules:
-  - path: dbaas/entdb_server/api/proto
+  - path: proto/entdb/v1
   - path: proto/console/v1
 
 lint:

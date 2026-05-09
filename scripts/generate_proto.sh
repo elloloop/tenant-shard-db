@@ -16,9 +16,9 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
-PROTO_DIR="$ROOT_DIR/dbaas/entdb_server/api/proto"
-SERVER_OUT="$ROOT_DIR/dbaas/entdb_server/api/generated"
-SDK_OUT="$ROOT_DIR/sdk/entdb_sdk/_generated"
+PROTO_DIR="$ROOT_DIR/proto/entdb/v1"
+SERVER_OUT="$ROOT_DIR/server/python/entdb_server/api/generated"
+SDK_OUT="$ROOT_DIR/sdk/python/entdb_sdk/_generated"
 
 echo "Generating protobuf code..."
 echo "  Proto source: $PROTO_DIR"
@@ -45,7 +45,7 @@ python -m grpc_tools.protoc \
 
 # Generate entdb_options for the SDK (used by codegen to parse
 # entdb extension options from user .proto files)
-SDK_OPTIONS_PROTO_DIR="$ROOT_DIR/sdk/entdb_sdk/proto"
+SDK_OPTIONS_PROTO_DIR="$ROOT_DIR/sdk/python/entdb_sdk/proto"
 python -m grpc_tools.protoc \
     -I"$SDK_OPTIONS_PROTO_DIR" \
     --python_out="$SDK_OUT" \
