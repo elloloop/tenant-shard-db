@@ -374,6 +374,8 @@ async def _start_go_server(tmp_path_factory) -> AsyncIterator[int]:
             str(data_dir),
             "--wal-backend",
             "memory",
+            "--seed-profile",
+            "contract",
             "--seed-tenant",
             TENANT,
         ]
