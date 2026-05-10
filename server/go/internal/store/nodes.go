@@ -461,6 +461,68 @@ func (s *CanonicalStore) DeleteNode(ctx context.Context, tenantID, nodeID string
 	})
 }
 
+// CountOwnedNodes returns the number of `nodes` rows where
+// `owner_actor = ownerActor` inside `tenantID`. Read-only — used by
+// TransferUserContent to compute the pre-apply count returned to the
+// caller (mirrors grpc_server.py:2727-2736).
+//
+// On a missing tenant DB the function returns (0, nil) — the user
+// transparently owns nothing in a tenant we have not seen — matching
+// the Python handler's "swallow + return 0" failure mode.
+func (s *CanonicalStore) CountOwnedNodes(ctx context.Context, tenantID, ownerActor string) (int32, error) {
+	if tenantID == "" || ownerActor == "" {
+		return 0, nil
+	}
+	db, err := s.db(tenantID)
+	if err != nil {
+		// Tenant file not yet open: treat as zero-owned for parity.
+		return 0, nil
+	}
+	var n int32
+	row := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM nodes WHERE tenant_id = ? AND owner_actor = ?`,
+		tenantID, ownerActor,
+	)
+	if err := row.Scan(&n); err != nil {
+		return 0, fmt.Errorf("store: CountOwnedNodes: %w", err)
+	}
+	return n, nil
+}
+
+// ListOwnedNodeIDs returns the node_ids in `tenantID` whose
+// `owner_actor = ownerActor`. The slice is unordered. Used by
+// TransferUserContent to chunk a bulk transfer into multiple WAL
+// events when the owned-set is large.
+func (s *CanonicalStore) ListOwnedNodeIDs(ctx context.Context, tenantID, ownerActor string) ([]string, error) {
+	if tenantID == "" || ownerActor == "" {
+		return nil, nil
+	}
+	db, err := s.db(tenantID)
+	if err != nil {
+		return nil, nil
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT node_id FROM nodes WHERE tenant_id = ? AND owner_actor = ?`,
+		tenantID, ownerActor,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: ListOwnedNodeIDs: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: ListOwnedNodeIDs scan: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: ListOwnedNodeIDs rows: %w", err)
+	}
+	return ids, nil
+}
+
 // isUniqueViolation reports whether err is a SQLite UNIQUE-constraint
 // failure. modernc.org/sqlite returns errors whose messages contain
 // "constraint failed: UNIQUE" — we string-match because the driver does
