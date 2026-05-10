@@ -41,6 +41,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -159,20 +160,56 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		return nil, err
 	}
 
-	// Server-fill empty create_node IDs and collect created_node_ids in
-	// op order. Generated BEFORE WAL append so replays read the same
-	// IDs off the log (determinism).
+	// Server-fill empty create_node IDs, collect created_node_ids in
+	// op order, and resolve in-transaction "$alias" references on edge
+	// from/to so the WAL event only ever carries concrete node ids.
+	//
+	// Why resolve at ingress (deviation from Python, which resolves at
+	// apply time): the WAL is the audit-of-record; a bare UUID is a
+	// stable, unambiguous identity, whereas "$alias" is meaningful only
+	// in the context of one in-flight transaction. Resolving here keeps
+	// the applier dispatch table free of map-shape branching for the
+	// alias_ref payload and prevents alias bugs from poisoning the
+	// consumer loop (the original symptom: "poison event: create_edge
+	// missing from/to" halted the applier for every subsequent RPC).
+	//
+	// Ordering: we walk ops in declared order. Each create_node with an
+	// "as" field publishes its (server-filled) id into the alias map;
+	// subsequent edge ops referencing that alias resolve against the
+	// map. A reference to an alias that has not been previously defined
+	// in the SAME transaction is an INVALID_ARGUMENT — matches the
+	// Python applier's lookup miss (which would surface as a poison
+	// event today). Aliases never span transactions.
 	createdNodeIDs := make([]string, 0)
+	aliasMap := make(map[string]string)
 	for _, op := range ops {
-		if op["op"] != opCreateNode {
-			continue
+		switch op["op"].(string) {
+		case opCreateNode:
+			id, _ := op["id"].(string)
+			if id == "" {
+				id = uuid.NewString()
+				op["id"] = id
+			}
+			createdNodeIDs = append(createdNodeIDs, id)
+			if alias, _ := op["as"].(string); alias != "" {
+				aliasMap[alias] = id
+			}
+		case opCreateEdge, opDeleteEdge:
+			resolved, err := resolveEdgeRef(op["from"], aliasMap)
+			if err != nil {
+				outcome = "error"
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"%s: from: %v", op["op"], err)
+			}
+			op["from"] = resolved
+			resolved, err = resolveEdgeRef(op["to"], aliasMap)
+			if err != nil {
+				outcome = "error"
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"%s: to: %v", op["op"], err)
+			}
+			op["to"] = resolved
 		}
-		id, _ := op["id"].(string)
-		if id == "" {
-			id = uuid.NewString()
-			op["id"] = id
-		}
-		createdNodeIDs = append(createdNodeIDs, id)
 	}
 
 	// Build the WAL event. The persisted actor is the trusted identity,
@@ -409,6 +446,81 @@ func convertACL(in []*pb.AclEntry) []any {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// resolveEdgeRef collapses the three on-wire ref shapes — bare id
+// string, {"ref": "$alias"}, and {"type_id":N, "id":"X"} — down to a
+// single bare-string node id, using the per-transaction alias map.
+//
+// Shape contract (must match convertNodeRef output):
+//
+//   - string ""          → missing ref; surfaced as INVALID_ARGUMENT.
+//   - string "id"        → returned as-is (bare-id; no $-prefix).
+//   - {"ref":"$a"}       → resolved against aliasMap; unresolved → error.
+//                          Supports "$a" and "$a.id" (Python parity, see
+//                          applier.py:_resolve_ref); only the dotted
+//                          prefix before the first "." is the alias name.
+//   - {"type_id":N,"id"} → returned as the id string (typed lookup is a
+//                          read-time concern, not a write-time one).
+//
+// Any other shape is treated as a missing ref. The caller wraps the
+// returned error in an InvalidArgument so the gRPC client sees a
+// stable status code instead of a poisoned applier loop.
+func resolveEdgeRef(raw any, aliasMap map[string]string) (string, error) {
+	switch v := raw.(type) {
+	case nil:
+		return "", fmt.Errorf("missing node reference")
+	case string:
+		if v == "" {
+			return "", fmt.Errorf("missing node reference")
+		}
+		if strings.HasPrefix(v, "$") {
+			// Bare "$alias" string is the Python on-the-wire
+			// short-form some SDKs emit when bypassing NodeRef.
+			// Treat it identically to {"ref":"$alias"}.
+			return resolveAlias(v, aliasMap)
+		}
+		return v, nil
+	case map[string]any:
+		if refStr, ok := v["ref"].(string); ok && refStr != "" {
+			return resolveAlias(refStr, aliasMap)
+		}
+		if idStr, ok := v["id"].(string); ok && idStr != "" {
+			// Typed-ref carries an explicit id; the applier will
+			// look it up by (type_id, id). We forward only the id
+			// string downstream because the legacy edge op shape
+			// expects a bare string. (Typed-ref+missing-id is a
+			// separate validation in the applier.)
+			return idStr, nil
+		}
+		return "", fmt.Errorf("malformed node reference")
+	default:
+		return "", fmt.Errorf("malformed node reference (type %T)", raw)
+	}
+}
+
+// resolveAlias looks up "$alias" or "$alias.id" against the per-
+// transaction alias map. Returns INVALID_ARGUMENT-shaped error when
+// the alias was never published by an earlier create_node in this
+// transaction. Mirrors applier.py:_resolve_ref's "." split.
+func resolveAlias(ref string, aliasMap map[string]string) (string, error) {
+	if !strings.HasPrefix(ref, "$") {
+		// Defensive: caller already type-switched, but if we ever
+		// reach here with a bare id, pass it through.
+		return ref, nil
+	}
+	name := ref[1:]
+	if i := strings.IndexByte(name, '.'); i >= 0 {
+		name = name[:i]
+	}
+	if name == "" {
+		return "", fmt.Errorf("alias reference %q has empty name", ref)
+	}
+	id, ok := aliasMap[name]
+	if !ok {
+		return "", fmt.Errorf("unresolved alias %q (no create_node with as=%q earlier in this transaction)", ref, name)
+	}
+	return id, nil
 }
 
 // convertNodeRef mirrors grpc_server.py:_convert_node_ref. The

@@ -614,3 +614,421 @@ func tenantShardingDeny() *tenant.Sharding {
 		Owner:  func(string) string { return "owner-node" },
 	}
 }
+
+// =============================================================================
+// W7 — $alias resolution at gRPC ingress.
+//
+// The Python SDK emits {"alias_ref": "$charlie"} for edge endpoints
+// declared with as_="charlie" on a sibling create_node. Before the W7
+// fix the Go server forwarded that ref untouched to the WAL, the
+// applier read op["from"] as an empty string (it's a map, not a
+// string), and halted with "poison event: create_edge missing from/to"
+// — which then took every subsequent RPC down with UNAVAILABLE because
+// the applier's consumer loop was dead.
+//
+// These tests pin the new behavior: aliases are resolved against a
+// per-transaction map at the handler, the WAL only ever sees bare
+// node ids, and unresolved aliases fail in-band with
+// INVALID_ARGUMENT instead of poisoning the applier.
+// =============================================================================
+
+// aliasRefEdge is the shape grpc_server.py:_convert_node_ref produces
+// for an alias_ref-typed NodeRef. We hand-roll the op so tests don't
+// need a registered edge type in the schema.
+func aliasRefEdge(edgeID int32, fromAlias, toAlias string) *pb.Operation {
+	return &pb.Operation{Op: &pb.Operation_CreateEdge{
+		CreateEdge: &pb.CreateEdgeOp{
+			EdgeId: edgeID,
+			From:   &pb.NodeRef{Ref: &pb.NodeRef_AliasRef{AliasRef: fromAlias}},
+			To:     &pb.NodeRef{Ref: &pb.NodeRef_AliasRef{AliasRef: toAlias}},
+		},
+	}}
+}
+
+// TestExecuteAtomic_AliasResolution_SingleCreateNodeAlias pins that a
+// solo create_node with an "as" alias survives ingress untouched and
+// the alias never leaks into the WAL payload (it is recorded only in
+// the handler's per-transaction map).
+func TestExecuteAtomic_AliasResolution_SingleCreateNodeAlias(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "alias-solo-1",
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "charlie",
+				Data: newStruct(t, map[string]any{"email": "c@x"}),
+			}},
+		}},
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	}
+	if len(resp.GetCreatedNodeIds()) != 1 {
+		t.Fatalf("CreatedNodeIds: got %v want 1", resp.GetCreatedNodeIds())
+	}
+	uuidNodeID := resp.GetCreatedNodeIds()[0]
+	if uuidNodeID == "" || strings.HasPrefix(uuidNodeID, "$") {
+		t.Fatalf("CreatedNodeIds[0]: got %q want non-empty UUID", uuidNodeID)
+	}
+
+	recs := f.wal.GetAllRecords(xaTopic)
+	if len(recs) != 1 {
+		t.Fatalf("WAL records: got %d want 1", len(recs))
+	}
+	var ev wal.Event
+	if err := json.Unmarshal(recs[0].Value, &ev); err != nil {
+		t.Fatalf("decode WAL event: %v", err)
+	}
+	// The "as" tag is still on the create_node op — that is the
+	// public alias contract for downstream readers — but the node
+	// "id" itself MUST be the server-filled UUID, never "$charlie".
+	if got, _ := ev.Ops[0]["id"].(string); got != uuidNodeID {
+		t.Fatalf("WAL op id: got %q want %q", got, uuidNodeID)
+	}
+	if got, _ := ev.Ops[0]["as"].(string); got != "charlie" {
+		t.Fatalf("WAL op as: got %q want %q", got, "charlie")
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_EdgeReferencesAlias pins the
+// happy path that prompted this fix: create_node($alice) + create_edge
+// referencing $alice. The WAL must carry the server-filled UUID on
+// the edge's from/to as a bare string, NOT a {"ref":"$alice"} map.
+func TestExecuteAtomic_AliasResolution_EdgeReferencesAlias(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "alias-edge-1",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "alice",
+				Data: newStruct(t, map[string]any{"email": "a@x"}),
+			}}},
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "phone",
+				Data: newStruct(t, map[string]any{"email": "p@x"}),
+			}}},
+			aliasRefEdge(99, "$alice", "$phone"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAtomic: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("Success=false (error=%q code=%q)", resp.GetError(), resp.GetErrorCode())
+	}
+	if len(resp.GetCreatedNodeIds()) != 2 {
+		t.Fatalf("CreatedNodeIds: got %v want 2", resp.GetCreatedNodeIds())
+	}
+	aliceUUID := resp.GetCreatedNodeIds()[0]
+	phoneUUID := resp.GetCreatedNodeIds()[1]
+
+	recs := f.wal.GetAllRecords(xaTopic)
+	if len(recs) != 1 {
+		t.Fatalf("WAL records: got %d want 1", len(recs))
+	}
+	var ev wal.Event
+	if err := json.Unmarshal(recs[0].Value, &ev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(ev.Ops) != 3 {
+		t.Fatalf("ev.Ops: got %d want 3", len(ev.Ops))
+	}
+	edgeOp := ev.Ops[2]
+	if got, _ := edgeOp["op"].(string); got != "create_edge" {
+		t.Fatalf("op[2] kind: got %q want create_edge", got)
+	}
+	// The contract: from/to are bare strings, not maps. If we ever
+	// regress and let {"ref":"$alice"} slip through, the applier's
+	// stringField will return "" and halt the consumer.
+	from, ok := edgeOp["from"].(string)
+	if !ok {
+		t.Fatalf("from: got %T want string (alias must be resolved at ingress)", edgeOp["from"])
+	}
+	if from != aliceUUID {
+		t.Fatalf("from: got %q want %q (server-filled UUID for $alice)", from, aliceUUID)
+	}
+	to, ok := edgeOp["to"].(string)
+	if !ok {
+		t.Fatalf("to: got %T want string", edgeOp["to"])
+	}
+	if to != phoneUUID {
+		t.Fatalf("to: got %q want %q (server-filled UUID for $phone)", to, phoneUUID)
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_MixedRefShapes pins that bare-id
+// and alias_ref refs can be combined in the same transaction. The
+// bare-id endpoint passes through unchanged, the $alias endpoint
+// resolves against the in-flight alias map.
+func TestExecuteAtomic_AliasResolution_MixedRefShapes(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "alias-mix-1",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "alice", Id: "alice-fixed",
+				Data: newStruct(t, map[string]any{"email": "a@x"}),
+			}}},
+			{Op: &pb.Operation_CreateEdge{CreateEdge: &pb.CreateEdgeOp{
+				EdgeId: 99,
+				From:   &pb.NodeRef{Ref: &pb.NodeRef_AliasRef{AliasRef: "$alice"}},
+				To:     &pb.NodeRef{Ref: &pb.NodeRef_Id{Id: "real-bob"}},
+			}}},
+		},
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	}
+	var ev wal.Event
+	if err := json.Unmarshal(f.wal.GetAllRecords(xaTopic)[0].Value, &ev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	from, _ := ev.Ops[1]["from"].(string)
+	to, _ := ev.Ops[1]["to"].(string)
+	if from != "alice-fixed" {
+		t.Fatalf("from: got %q want %q", from, "alice-fixed")
+	}
+	if to != "real-bob" {
+		t.Fatalf("to: got %q want %q", to, "real-bob")
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_UnresolvedAliasRejected pins the
+// failure mode: a create_edge that references "$ghost" with no prior
+// create_node defining "ghost" gets INVALID_ARGUMENT, NOT a poisoned
+// applier. The fix's reason for being.
+func TestExecuteAtomic_AliasResolution_UnresolvedAliasRejected(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context: &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "alice-fixed",
+				Data: newStruct(t, map[string]any{"email": "a@x"}),
+			}}},
+			aliasRefEdge(99, "alice-fixed", "$ghost"),
+		},
+	})
+	if err == nil {
+		t.Fatalf("ExecuteAtomic: expected InvalidArgument, got nil")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code: got %v want InvalidArgument (msg=%v)", got, err)
+	}
+	if n := f.wal.GetRecordCount(xaTopic); n != 0 {
+		t.Fatalf("WAL records: got %d want 0 (handler aborted before append)", n)
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_ForwardReferenceRejected pins that
+// aliases are resolved in op order: an edge that references an alias
+// defined LATER in the same transaction must fail, not silently
+// half-work. (Python parity: the applier's alias map is populated
+// linearly too.)
+func TestExecuteAtomic_AliasResolution_ForwardReferenceRejected(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context: &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		Operations: []*pb.Operation{
+			// edge first — references an alias that doesn't exist yet.
+			aliasRefEdge(99, "$alice", "$bob"),
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "alice",
+				Data: newStruct(t, map[string]any{"email": "a@x"}),
+			}}},
+		},
+	})
+	if err == nil {
+		t.Fatalf("ExecuteAtomic: expected InvalidArgument, got nil")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code: got %v want InvalidArgument (msg=%v)", got, err)
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_TransactionIsolation pins that
+// aliases never span transactions: an alias defined in transaction A
+// is NOT visible to transaction B, even on the same handler.
+func TestExecuteAtomic_AliasResolution_TransactionIsolation(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	// txn A defines $alice.
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "iso-A",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "alice",
+				Data: newStruct(t, map[string]any{"email": "a@x"}),
+			}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAtomic A: %v", err)
+	}
+
+	// txn B tries to reference $alice with no local create_node.
+	_, err = f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "iso-B",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "bob-fixed",
+				Data: newStruct(t, map[string]any{"email": "b@x"}),
+			}}},
+			aliasRefEdge(99, "bob-fixed", "$alice"),
+		},
+	})
+	if err == nil {
+		t.Fatalf("ExecuteAtomic B: expected InvalidArgument (alias must not leak across txns), got nil")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code: got %v want InvalidArgument", got)
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_MultipleAliasesInOneTxn covers
+// the original e2e failure shape: three aliased creates feeding three
+// edges. Every edge endpoint resolves to a distinct server-filled
+// UUID, all on the same WAL record.
+func TestExecuteAtomic_AliasResolution_MultipleAliasesInOneTxn(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "alias-multi-1",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "charlie",
+				Data: newStruct(t, map[string]any{"email": "c@x"}),
+			}}},
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "phone",
+				Data: newStruct(t, map[string]any{"email": "p@x"}),
+			}}},
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "order1",
+				Data: newStruct(t, map[string]any{"email": "o@x"}),
+			}}},
+			aliasRefEdge(101, "$charlie", "$phone"),
+			aliasRefEdge(102, "$charlie", "$order1"),
+			aliasRefEdge(103, "$order1", "$phone"),
+		},
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	}
+	ids := resp.GetCreatedNodeIds()
+	if len(ids) != 3 {
+		t.Fatalf("CreatedNodeIds: got %v want 3", ids)
+	}
+	charlie, phone, order1 := ids[0], ids[1], ids[2]
+
+	var ev wal.Event
+	if err := json.Unmarshal(f.wal.GetAllRecords(xaTopic)[0].Value, &ev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	for i, want := range []struct{ from, to string }{
+		{charlie, phone},
+		{charlie, order1},
+		{order1, phone},
+	} {
+		got := ev.Ops[3+i]
+		if f, _ := got["from"].(string); f != want.from {
+			t.Errorf("op[%d].from: got %q want %q", 3+i, f, want.from)
+		}
+		if to, _ := got["to"].(string); to != want.to {
+			t.Errorf("op[%d].to: got %q want %q", 3+i, to, want.to)
+		}
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_DeleteEdgeAlias pins the symmetric
+// case on the destructive side: delete_edge with $alias refs resolves
+// the same way create_edge does.
+func TestExecuteAtomic_AliasResolution_DeleteEdgeAlias(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "alias-del-1",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "u",
+				Data: newStruct(t, map[string]any{"email": "u@x"}),
+			}}},
+			{Op: &pb.Operation_DeleteEdge{DeleteEdge: &pb.DeleteEdgeOp{
+				EdgeId: 99,
+				From:   &pb.NodeRef{Ref: &pb.NodeRef_AliasRef{AliasRef: "$u"}},
+				To:     &pb.NodeRef{Ref: &pb.NodeRef_Id{Id: "real-target"}},
+			}}},
+		},
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	}
+	uUUID := resp.GetCreatedNodeIds()[0]
+
+	var ev wal.Event
+	if err := json.Unmarshal(f.wal.GetAllRecords(xaTopic)[0].Value, &ev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	from, _ := ev.Ops[1]["from"].(string)
+	to, _ := ev.Ops[1]["to"].(string)
+	if from != uUUID {
+		t.Fatalf("delete_edge.from: got %q want %q", from, uUUID)
+	}
+	if to != "real-target" {
+		t.Fatalf("delete_edge.to: got %q want %q", to, "real-target")
+	}
+}
+
+// TestExecuteAtomic_AliasResolution_DottedFormSupported pins the
+// Python-parity dotted-alias form: "$alice.id" resolves the same as
+// "$alice". applier.py:_resolve_ref splits on "." for legacy reasons.
+func TestExecuteAtomic_AliasResolution_DottedFormSupported(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "alias-dot-1",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, As: "alice",
+				Data: newStruct(t, map[string]any{"email": "a@x"}),
+			}}},
+			aliasRefEdge(99, "$alice.id", "$alice.id"),
+		},
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	}
+	aliceUUID := resp.GetCreatedNodeIds()[0]
+	var ev wal.Event
+	if err := json.Unmarshal(f.wal.GetAllRecords(xaTopic)[0].Value, &ev); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if from, _ := ev.Ops[1]["from"].(string); from != aliceUUID {
+		t.Fatalf("from: got %q want %q", from, aliceUUID)
+	}
+	if to, _ := ev.Ops[1]["to"].(string); to != aliceUUID {
+		t.Fatalf("to: got %q want %q", to, aliceUUID)
+	}
+}
