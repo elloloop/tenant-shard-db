@@ -69,6 +69,91 @@ func (s *CanonicalStore) GetNode(ctx context.Context, tenantID, nodeID string) (
 	return n, nil
 }
 
+// GetNodeByKey resolves a node via its declared unique field. Mirrors
+// canonical_store.py:_sync_get_node_by_key (2177). Returns (nil, nil)
+// when no row matches the (tenant, type, field, value) tuple — the
+// miss is signalled in-band so the caller can decide between
+// PERMISSION_DENIED, NOT_FOUND, or in-band found=false (the
+// GetNodeByKey RPC chooses found=false; see
+// docs/go-port/rpcs/GetNodeByKey.md).
+//
+// The lookup is byte-exact: SQLite TEXT comparison is case-sensitive
+// without an explicit COLLATE NOCASE, and we add none. Callers (SDKs)
+// own client-side normalisation (lowercased email, trimmed
+// whitespace) per docs/decisions/unique_keys.md:90-92.
+//
+// The query reaches for the partial unique expression index lazily
+// created by EnsureUniqueIndex. This method does NOT call
+// EnsureUniqueIndex itself — the index must already exist (the
+// applier creates it on the write path). Without the index the
+// SELECT still works but degrades to a scan.
+func (s *CanonicalStore) GetNodeByKey(ctx context.Context, tenantID string, typeID, fieldID int32, value any) (*Node, error) {
+	db, err := s.db(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	q := fmt.Sprintf(`
+		SELECT tenant_id, node_id, type_id, payload_json,
+		       created_at, updated_at, owner_actor, acl_blob
+		FROM nodes
+		WHERE tenant_id = ? AND type_id = ?
+		  AND json_extract(payload_json, '$."%d"') = ?
+		LIMIT 1`, fieldID)
+	row := db.QueryRowContext(ctx, q, tenantID, typeID, value)
+	n := &Node{}
+	err = row.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
+		&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: GetNodeByKey: %w", err)
+	}
+	return n, nil
+}
+
+// GetNodeByCompositeKey resolves a node via a multi-field composite
+// unique tuple. Mirrors canonical_store.py:_sync_get_node_by_composite_key
+// (2229). Same byte-exact contract as GetNodeByKey. Returns
+// (nil, nil) on miss; (nil, error) only on infra failure.
+//
+// fieldIDs and values must be the same non-zero length; an empty or
+// length-mismatched input returns (nil, errs.ErrInvalidArgument).
+func (s *CanonicalStore) GetNodeByCompositeKey(ctx context.Context, tenantID string, typeID int32, fieldIDs []int32, values []any) (*Node, error) {
+	if len(fieldIDs) == 0 || len(fieldIDs) != len(values) {
+		return nil, fmt.Errorf("store: GetNodeByCompositeKey: field_ids/values length mismatch (%d vs %d)", len(fieldIDs), len(values))
+	}
+	db, err := s.db(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	clauses := make([]string, 0, len(fieldIDs))
+	for _, fid := range fieldIDs {
+		clauses = append(clauses, fmt.Sprintf(`json_extract(payload_json, '$."%d"') = ?`, fid))
+	}
+	args := make([]any, 0, 2+len(values))
+	args = append(args, tenantID, typeID)
+	args = append(args, values...)
+	q := fmt.Sprintf(`
+		SELECT tenant_id, node_id, type_id, payload_json,
+		       created_at, updated_at, owner_actor, acl_blob
+		FROM nodes
+		WHERE tenant_id = ? AND type_id = ?
+		  AND %s
+		LIMIT 1`, strings.Join(clauses, " AND "))
+	row := db.QueryRowContext(ctx, q, args...)
+	n := &Node{}
+	err = row.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
+		&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: GetNodeByCompositeKey: %w", err)
+	}
+	return n, nil
+}
+
 // GetNodes batch-fetches nodes by id. Returns the nodes that exist plus
 // the list of missing ids (for caller-side NotFound reporting). Order
 // of returned nodes is unspecified.
