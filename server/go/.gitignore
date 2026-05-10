@@ -1,0 +1,5 @@
+# Local Go build cache / binaries
+/bin/
+/dist/
+*.test
+*.out
