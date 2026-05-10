@@ -34,10 +34,15 @@ func (s *CanonicalStore) UpdateAppliedOffset(ctx context.Context, tenantID, topi
 	}); err != nil {
 		return err
 	}
-	// Notify any WaitForOffset waiters.
+	// Notify any WaitForOffset waiters. We MUST set the entry even
+	// when offset == 0 (the very first record on an in-memory WAL
+	// starts at offset 0) so that WaitForOffset's "ok && cur >=
+	// target" predicate becomes true. Bumping only when offset > cur
+	// leaves the map unset on first apply and any wait_applied=true
+	// call for the first event hangs until timeout. Pinned by the
+	// Go E2E create_single_node test.
 	s.offsetMu.Lock()
-	cur := s.appliedOffsets[tenantID]
-	if offset > cur {
+	if cur, ok := s.appliedOffsets[tenantID]; !ok || offset > cur {
 		s.appliedOffsets[tenantID] = offset
 	}
 	s.offsetCond.Broadcast()
@@ -67,9 +72,12 @@ func (s *CanonicalStore) UpdateAppliedOffsetTx(ctx context.Context, b *BatchTxn,
 	// state will catch up at the next applied write. Strictly correct
 	// implementations would defer this to BatchTxn.Commit() — kept
 	// simple here, refine in W1.10 if a parity test demands it.
+	//
+	// MUST publish offset 0 on first apply too (see
+	// UpdateAppliedOffset above): otherwise wait_applied=true on the
+	// very first record hangs until timeout.
 	s.offsetMu.Lock()
-	cur := s.appliedOffsets[b.tenantID]
-	if offset > cur {
+	if cur, ok := s.appliedOffsets[b.tenantID]; !ok || offset > cur {
 		s.appliedOffsets[b.tenantID] = offset
 	}
 	s.offsetCond.Broadcast()
