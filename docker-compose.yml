@@ -89,6 +89,38 @@ services:
       start_period: 10s
 
   # ==========================================================================
+  # EntDB Server (Go) — Wave-5 reimplementation (EPIC #407).
+  #
+  # Opt-in via the "go-server" profile so the default `docker compose up`
+  # still launches the Python server. Bring up explicitly with:
+  #
+  #   docker compose --profile go-server up entdb-server-go
+  #
+  # The Go binary today only supports the in-memory WAL backend (no
+  # Kafka/S3 wiring yet), so this service has no infra dependencies and
+  # binds to host port 50052 to avoid colliding with the Python server.
+  # Test fixture: --seed-tenant pre-creates the contract-suite tenant so
+  # clients can issue RPCs against `playground` without an out-of-band
+  # bootstrap.
+  # ==========================================================================
+  entdb-server-go:
+    profiles: ["go-server"]
+    build:
+      context: .
+      dockerfile: Dockerfile.go
+      target: server
+    image: entdb-server-go:test
+    ports:
+      - "50052:50051"
+    command:
+      - "-addr=:50051"
+      - "-data-dir=/var/lib/entdb"
+      - "-wal-backend=memory"
+      - "-seed-tenant=playground"
+    volumes:
+      - entdb-go-data:/var/lib/entdb
+
+  # ==========================================================================
   # Redpanda (Kafka-compatible)
   # ==========================================================================
   redpanda:
@@ -200,6 +232,8 @@ volumes:
   redpanda-data:
     driver: local
   minio-data:
+    driver: local
+  entdb-go-data:
     driver: local
 
 networks:
