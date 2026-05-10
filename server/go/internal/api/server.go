@@ -32,6 +32,7 @@ type Server struct {
 	store    *store.CanonicalStore
 	global   *globalstore.GlobalStore
 	producer wal.Producer
+	topic    string
 	sharding *tenant.Sharding
 	region   string
 	registry *schema.Registry
@@ -62,6 +63,13 @@ func WithGlobalStore(g *globalstore.GlobalStore) Option {
 // WithWALProducer wires the WAL producer (for ExecuteAtomic in Wave 2).
 func WithWALProducer(p wal.Producer) Option {
 	return func(srv *Server) { srv.producer = p }
+}
+
+// WithWALTopic configures the WAL topic name handlers append to. When
+// unset (or empty), Wave-2 write RPCs default to "entdb-wal" — the
+// same default carried by cmd/entdb-server/main.go's --wal-topic flag.
+func WithWALTopic(topic string) Option {
+	return func(srv *Server) { srv.topic = topic }
 }
 
 // WithSharding wires the per-node tenant-ownership/redirect config the
@@ -114,4 +122,15 @@ func New(opts ...Option) *Server {
 // api/grpc_server.py:362).
 func (s *Server) checkTenant(ctx context.Context, tenantID string) error {
 	return tenant.CheckTenant(ctx, tenantID, s.global, s.sharding, tenant.Options{ServedRegion: s.region})
+}
+
+// walTopic returns the configured WAL topic, falling back to the
+// process-wide default ("entdb-wal", same as cmd/entdb-server/main.go's
+// --wal-topic flag default). Centralised here so every Wave-2 writer
+// reaches for the same string.
+func (s *Server) walTopic() string {
+	if s.topic == "" {
+		return "entdb-wal"
+	}
+	return s.topic
 }
