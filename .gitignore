@@ -35,6 +35,10 @@ data/
 *.sqlite
 *.sqlite3
 
+# Go test-harness binary cache (built by tests/python/integration/conftest.py
+# when ENTDB_SERVER_TARGET=go; SHA-suffixed so multiple checkouts coexist).
+.go-bin/
+
 # Logs
 *.log
 logs/
