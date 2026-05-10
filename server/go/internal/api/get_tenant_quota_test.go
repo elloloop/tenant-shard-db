@@ -1,12 +1,21 @@
 // Tests for GetTenantQuota (Wave 2 / EPIC #407). Behavioural pins:
 //
-//  1. Member happy path — tenant member sees configured quota + usage.
-//  2. Admin happy path — admin role works the same as member.
-//  3. Non-member → PERMISSION_DENIED, even with claimed actor on the wire.
-//  4. Quota not configured → defaults (zero-valued cfg fields) but
+//  1. Owner happy path — a user with role=owner sees configured quota +
+//     usage. Matches Python `_require_admin_or_owner` at
+//     grpc_server.py:2685.
+//  2. Admin-role happy path — a tenant user with role=admin succeeds.
+//  3. Plain member → PERMISSION_DENIED. The handler is admin/owner-only;
+//     tenant role=member is NOT enough (matches Python contract test
+//     test_grpc_contract.py:483-486).
+//  4. Non-member → PERMISSION_DENIED, even with claimed actor on the
+//     wire (privilege-escalation pin).
+//  5. Quota not configured → defaults (zero-valued cfg fields) but
 //     period_end_ms is still computed and writes_used / period_start_ms
 //     come from the synthesized usage row.
-//  5. Empty tenant_id → INVALID_ARGUMENT (gate runs before tenant check).
+//  6. Empty tenant_id → INVALID_ARGUMENT (gate runs before tenant check).
+//  7. No-trusted-identity fallback — when no auth interceptor is wired,
+//     the handler falls through to the claimed actor (cross-impl
+//     contract harness behaviour after #473).
 //
 // Spec: docs/go-port/rpcs/GetTenantQuota.md.
 // Privilege-escalation pin: claim-on-wire is ignored, trusted Identity wins.
@@ -26,10 +35,10 @@ import (
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
 
-// TestGetTenantQuota_Member_HappyPath: a tenant member with role=member
+// TestGetTenantQuota_Owner_HappyPath: a tenant user with role=owner
 // can read the quota dashboard; configured cfg + usage round-trip into
 // the response and period_end_ms is in the future.
-func TestGetTenantQuota_Member_HappyPath(t *testing.T) {
+func TestGetTenantQuota_Owner_HappyPath(t *testing.T) {
 	t.Parallel()
 
 	gs := newGlobalStore(t)
@@ -38,7 +47,7 @@ func TestGetTenantQuota_Member_HappyPath(t *testing.T) {
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	if err := gs.AddTenantMember(ctx, "acme", "alice", "member"); err != nil {
+	if err := gs.AddTenantMember(ctx, "acme", "alice", "owner"); err != nil {
 		t.Fatalf("AddTenantMember: %v", err)
 	}
 	if _, err := gs.SetTenantQuota(ctx, globalstore.QuotaConfig{
@@ -95,9 +104,9 @@ func TestGetTenantQuota_Member_HappyPath(t *testing.T) {
 	}
 }
 
-// TestGetTenantQuota_Admin_HappyPath: an admin role is treated identically
-// to a member for read access (per W2 spec — read is gated by membership,
-// admin is just one specific role).
+// TestGetTenantQuota_Admin_HappyPath: a tenant user with role=admin
+// succeeds, parity with role=owner. Matches the `role in ("owner",
+// "admin")` check at grpc_server.py:2685.
 func TestGetTenantQuota_Admin_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -170,7 +179,7 @@ func TestGetTenantQuota_NoQuotaConfigured_ReturnsDefaults(t *testing.T) {
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	if err := gs.AddTenantMember(ctx, "acme", "alice", "member"); err != nil {
+	if err := gs.AddTenantMember(ctx, "acme", "alice", "owner"); err != nil {
 		t.Fatalf("AddTenantMember: %v", err)
 	}
 
@@ -217,5 +226,65 @@ func TestGetTenantQuota_EmptyTenantID_InvalidArgument(t *testing.T) {
 	}
 	if got := errs.Code(err); got != codes.InvalidArgument {
 		t.Fatalf("GetTenantQuota: code = %v, want InvalidArgument (err=%v)", got, err)
+	}
+}
+
+// TestGetTenantQuota_PlainMember_PermissionDenied: a tenant user whose
+// role is "member" (not owner / not admin) is rejected. Pins the
+// Python contract test row at test_grpc_contract.py:483-486
+// (actor=user:bob, role=member → permission_denied).
+func TestGetTenantQuota_PlainMember_PermissionDenied(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+
+	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	if err := gs.AddTenantMember(ctx, "acme", "bob", "member"); err != nil {
+		t.Fatalf("AddTenantMember: %v", err)
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+	ctx = withTrustedUser(ctx, "bob")
+
+	_, err := srv.GetTenantQuota(ctx, &pb.GetTenantQuotaRequest{TenantId: "acme"})
+	if err == nil {
+		t.Fatalf("GetTenantQuota: expected PermissionDenied, got nil")
+	}
+	if got := errs.Code(err); got != codes.PermissionDenied {
+		t.Fatalf("GetTenantQuota: code = %v, want PermissionDenied (err=%v)", got, err)
+	}
+}
+
+// TestGetTenantQuota_NoTrustedIdentity_FallsBackToClaimed: when no auth
+// interceptor populated an Identity on ctx (cross-impl contract harness,
+// no-auth deployments), the handler falls through to the claimed actor
+// per auth.Authoritative's documented contract. A system: actor on the
+// wire then bypasses the membership gate. This is the divergence the
+// Wave-4 parity fix closes — previously the handler hard-rejected.
+func TestGetTenantQuota_NoTrustedIdentity_FallsBackToClaimed(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+
+	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+	// No withTrustedUser — auth interceptor disabled. Mirrors the
+	// contract harness path against the Go subprocess.
+	resp, err := srv.GetTenantQuota(ctx, &pb.GetTenantQuotaRequest{
+		TenantId: "acme",
+		Actor:    "system:admin",
+	})
+	if err != nil {
+		t.Fatalf("GetTenantQuota: unexpected error: %v", err)
+	}
+	if resp.GetTenantId() != "acme" {
+		t.Errorf("TenantId = %q, want %q", resp.GetTenantId(), "acme")
 	}
 }

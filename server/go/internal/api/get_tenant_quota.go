@@ -11,11 +11,16 @@
 //     out of globalstore (tenant_quotas + tenant_usage); both fall back to
 //     zero-valued defaults when the row is absent.
 //   - Auth: trusted-actor. The proto `actor` field is a hint only and is
-//     deliberately ignored for authorization (see commit fece3fb,
-//     "Fix privilege escalation"). Authoritative actor is taken from the
-//     interceptor-populated Identity on ctx.
-//   - Authorization gate: caller must be a member of the tenant
-//     (any role, including admin/owner). Non-members → PERMISSION_DENIED.
+//     deliberately ignored for authorization when an interceptor-attested
+//     Identity is on ctx (commit fece3fb, "Fix privilege escalation").
+//     When no Identity is present (unit tests, no-auth deployments) we
+//     fall through to the claimed actor — the documented Authoritative
+//     contract. Mirrors get_authoritative_actor in
+//     server/python/entdb_server/auth/auth_interceptor.py:92-115.
+//   - Authorization gate: matches Python `_require_admin_or_owner`
+//     (grpc_server.py:2656-2690). The trusted actor passes if it is
+//     system:/admin:, or if it is a user: whose tenant role is "owner"
+//     or "admin". Plain members and non-members → PERMISSION_DENIED.
 //     Empty tenant_id → INVALID_ARGUMENT.
 //   - period_end_ms is computed locally from time.Now(), never read from
 //     the DB — keeps dashboards correct for tenants with no writes this
@@ -63,38 +68,39 @@ func (s *Server) GetTenantQuota(
 		return nil, err
 	}
 
-	// Trusted actor: proto `actor` is ignored. The interceptor places
-	// the verified Identity on ctx; auth.Authoritative normalises it to
-	// an Actor. If the test/server is wired without an auth interceptor,
-	// Authoritative falls through to the claimed actor — but we then
-	// drop it on the floor and require a real trusted identity below.
-	id, ok := auth.IdentityFromContext(ctx)
-	if !ok {
-		outcome = "error"
-		return nil, errs.Errorf(codes.PermissionDenied,
-			"GetTenantQuota: no trusted identity")
-	}
-	trusted := auth.Authoritative(ctx, auth.User(id.Subject))
+	// Trusted-actor rebind. When the auth interceptor has populated an
+	// Identity on ctx, Authoritative returns that identity and the
+	// claimed actor is ignored — this is the privilege-escalation guard
+	// (commit fece3fb). When no interceptor ran (unit tests, contract
+	// harness without auth), Authoritative falls through to the claimed
+	// actor, matching Python's get_authoritative_actor fallback at
+	// auth_interceptor.py:108-115.
+	claimed := auth.ParseActor(req.GetActor())
+	trusted := auth.Authoritative(ctx, claimed)
 
-	// Membership gate: any member (including admin/owner) may read the
-	// tenant's quota dashboard. Non-members are rejected. Mirrors
-	// "_require_admin_or_owner" semantics relaxed to member-or-admin
-	// per the W2 task spec for parity dashboards.
 	if s.global == nil {
 		outcome = "error"
 		return nil, errs.Errorf(codes.Unimplemented,
 			"GetTenantQuota: quota registry not configured")
 	}
-	member, err := s.global.IsMember(ctx, tenantID, trusted.ID())
-	if err != nil {
-		outcome = "error"
-		return nil, errs.Errorf(codes.Internal,
-			"GetTenantQuota: membership probe: %v", err)
-	}
-	if !member {
-		outcome = "error"
-		return nil, errs.Errorf(codes.PermissionDenied,
-			"GetTenantQuota: caller is not a member of %q", tenantID)
+
+	// Admin/owner gate. Mirrors `_require_admin_or_owner` at
+	// grpc_server.py:2671-2690:
+	//   - system:/admin: actors bypass the membership check.
+	//   - user: actors must have role "owner" or "admin" on the tenant.
+	// Plain members and non-members are rejected.
+	if !(trusted.IsSystem() || trusted.IsAdmin()) {
+		role, err := s.lookupMemberRole(ctx, tenantID, trusted.ID())
+		if err != nil {
+			outcome = "error"
+			return nil, errs.Errorf(codes.Internal,
+				"GetTenantQuota: lookup member role: %v", err)
+		}
+		if role != "owner" && role != "admin" {
+			outcome = "error"
+			return nil, errs.Errorf(codes.PermissionDenied,
+				"GetTenantQuota requires admin or owner role")
+		}
 	}
 
 	cfg, err := s.global.GetTenantQuota(ctx, tenantID)
