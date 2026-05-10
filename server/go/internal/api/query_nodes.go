@@ -42,8 +42,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
-	"strconv"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -277,106 +275,9 @@ func (s *Server) applyQueryACLFilter(ctx context.Context, tenantID string, a aut
 	return out, nil
 }
 
-// authActorToACLActor coerces an auth.Actor into an acl.Actor.
-func authActorToACLActor(a auth.Actor) acl.Actor {
-	switch a.Kind() {
-	case auth.KindUser:
-		return acl.User(a.ID())
-	case auth.KindSystem:
-		return acl.System(a.ID())
-	case auth.KindAdmin:
-		// admin: actors are not ACL grant subjects; map to user: so
-		// owner-by-actor checks still resolve cleanly.
-		return acl.User(a.ID())
-	default:
-		return acl.Actor{}
-	}
-}
-
-// storeNodeToProto translates a store.Node into the wire pb.Node.
-// Payload stays id-keyed on the wire; ACL is the JSON-stored shape
-// unmarshalled to repeated AclEntry.
-func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, error) {
-	rawPayload := map[string]any{}
-	if n.PayloadJSON != "" {
-		if err := json.Unmarshal([]byte(n.PayloadJSON), &rawPayload); err != nil {
-			return nil, errs.Errorf(codes.Internal,
-				"QueryNodes: parse payload for %s: %v", n.NodeID, err)
-		}
-	}
-	idPayload := make(map[uint32]any, len(rawPayload))
-	for k, v := range rawPayload {
-		fid, ok := parsePayloadFieldID(k)
-		if !ok {
-			// Non-digit keys can't appear in on-disk payloads (the
-			// applier writes id-keyed JSON only); drop silently to
-			// avoid blowing up egress on legacy data.
-			continue
-		}
-		idPayload[fid] = v
-	}
-
-	pStruct, err := payload.PayloadToStruct(s.registry, typeName, idPayload)
-	if err != nil {
-		return nil, err
-	}
-
-	var aclList []store.ACLEntry
-	if n.ACLJSON != "" && n.ACLJSON != "null" {
-		if err := json.Unmarshal([]byte(n.ACLJSON), &aclList); err != nil {
-			return nil, errs.Errorf(codes.Internal,
-				"QueryNodes: parse acl for %s: %v", n.NodeID, err)
-		}
-	}
-	protoACL := make([]*pb.AclEntry, 0, len(aclList))
-	for _, e := range aclList {
-		protoACL = append(protoACL, &pb.AclEntry{
-			Principal:  e.Principal,
-			Permission: e.Permission,
-			Grantee:    e.Principal,
-		})
-	}
-
-	return &pb.Node{
-		TenantId:   n.TenantID,
-		NodeId:     n.NodeID,
-		TypeId:     n.TypeID,
-		CreatedAt:  n.CreatedAt,
-		UpdatedAt:  n.UpdatedAt,
-		OwnerActor: n.OwnerActor,
-		Payload:    pStruct,
-		Acl:        protoACL,
-	}, nil
-}
-
-// storeVisibilityAdapter adapts *store.CanonicalStore to the
-// acl.VisibilityReader interface. The store method is GetVisibleNodeIDs
-// (renamed from the Python _get_visible_nodes); the acl interface uses
-// the unprefixed name. Both signatures are otherwise identical.
-type storeVisibilityAdapter struct {
-	store *store.CanonicalStore
-}
-
-// VisibleNodeIDs satisfies acl.VisibilityReader.
-func (a storeVisibilityAdapter) VisibleNodeIDs(ctx context.Context, tenantID string, actorIDs []string, nodeIDs []string) (map[string]struct{}, error) {
-	return a.store.GetVisibleNodeIDs(ctx, tenantID, actorIDs, nodeIDs)
-}
-
-// parsePayloadFieldID parses a digit-only string into a uint32 in the
-// FieldDef bound (1-65535). Mirrors payload.parseFieldID — duplicated
-// here because that helper is unexported.
-func parsePayloadFieldID(s string) (uint32, bool) {
-	if s == "" {
-		return 0, false
-	}
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, false
-		}
-	}
-	n, err := strconv.ParseUint(s, 10, 32)
-	if err != nil || n == 0 || n > 65535 {
-		return 0, false
-	}
-	return uint32(n), true
-}
+// authActorToACLActor / (*Server).storeNodeToProto /
+// storeVisibilityAdapter / parsePayloadFieldID — consolidated in
+// helpers.go (round-3 Wave-2 dedupe). The shared authActorToACLActor
+// maps admin -> system (defensive: picks up the read-path bypass in
+// acl.Filter.FilterReadable). The shared storeNodeToProto preserves
+// the typeName-aware payload.PayloadToStruct path used here.

@@ -49,10 +49,10 @@ func newStoreWithTenant(t *testing.T, tenantID string) *store.CanonicalStore {
 	return cs
 }
 
-// seedNode is a tiny helper to put one node into the store with a
+// seedNodeForGetNodes is a tiny helper to put one node into the store with a
 // deterministic owner so the cross-tenant filter tests can vary by
 // whether the actor matches owner_actor.
-func seedNode(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, owner string) {
+func seedNodeForGetNodes(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, owner string) {
 	t.Helper()
 	_, err := cs.CreateNodeRaw(context.Background(), tenantID, store.NodeInput{
 		NodeID:     nodeID,
@@ -61,7 +61,7 @@ func seedNode(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, owner st
 		OwnerActor: owner,
 	})
 	if err != nil {
-		t.Fatalf("seedNode %s: %v", nodeID, err)
+		t.Fatalf("seedNodeForGetNodes %s: %v", nodeID, err)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestGetNodes_SingleHit(t *testing.T) {
 		t.Fatalf("AddTenantMember: %v", err)
 	}
 	cs := newStoreWithTenant(t, tenantID)
-	seedNode(t, cs, tenantID, "n1", "user:alice")
+	seedNodeForGetNodes(t, cs, tenantID, "n1", "user:alice")
 
 	srv := api.New(api.WithGlobalStore(gs), api.WithStore(cs))
 	resp, err := srv.GetNodes(context.Background(), &pb.GetNodesRequest{
@@ -180,9 +180,9 @@ func TestGetNodes_MultiPreservesOrderAndDuplicates(t *testing.T) {
 		t.Fatalf("AddTenantMember: %v", err)
 	}
 	cs := newStoreWithTenant(t, tenantID)
-	seedNode(t, cs, tenantID, "n1", "user:alice")
-	seedNode(t, cs, tenantID, "n2", "user:alice")
-	seedNode(t, cs, tenantID, "n3", "user:alice")
+	seedNodeForGetNodes(t, cs, tenantID, "n1", "user:alice")
+	seedNodeForGetNodes(t, cs, tenantID, "n2", "user:alice")
+	seedNodeForGetNodes(t, cs, tenantID, "n3", "user:alice")
 
 	srv := api.New(api.WithGlobalStore(gs), api.WithStore(cs))
 	resp, err := srv.GetNodes(context.Background(), &pb.GetNodesRequest{
@@ -231,8 +231,8 @@ func TestGetNodes_MissingAndDeniedMergedIntoMissingIds(t *testing.T) {
 		t.Fatalf("AddTenantMember: %v", err)
 	}
 	cs := newStoreWithTenant(t, tenantID)
-	seedNode(t, cs, tenantID, "n1", "user:alice")
-	seedNode(t, cs, tenantID, "n2", "user:alice")
+	seedNodeForGetNodes(t, cs, tenantID, "n1", "user:alice")
+	seedNodeForGetNodes(t, cs, tenantID, "n2", "user:alice")
 
 	// Grant mallory READ access to n1 only — this is the
 	// `node_access` row that flips _check_cross_tenant_read from
@@ -360,15 +360,7 @@ func TestGetNodes_UnknownTenantNotFound(t *testing.T) {
 	}
 }
 
-// nodeIDs flattens a []*pb.Node to its node_id slice, preserving
-// order. Used by the order-and-duplicates assertion.
-func nodeIDs(ns []*pb.Node) []string {
-	out := make([]string, 0, len(ns))
-	for _, n := range ns {
-		out = append(out, n.GetNodeId())
-	}
-	return out
-}
+// nodeIDs lives in helpers_external_test.go.
 
 func equalSlice(a, b []string) bool {
 	if len(a) != len(b) {

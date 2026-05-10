@@ -71,7 +71,7 @@ func newEdgesServer(t *testing.T, tenantID string) (*api.Server, *store.Canonica
 	return srv, cs
 }
 
-func edgesReq(tenantID, nodeID string) *pb.GetEdgesRequest {
+func edgesFromReq(tenantID, nodeID string) *pb.GetEdgesRequest {
 	return &pb.GetEdgesRequest{
 		Context: &pb.RequestContext{TenantId: tenantID},
 		NodeId:  nodeID,
@@ -84,7 +84,7 @@ func TestGetEdgesFrom_EmptyTenantReturnsNoEdges(t *testing.T) {
 	t.Parallel()
 	srv, _ := newEdgesServer(t, "tenant-empty")
 
-	resp, err := srv.GetEdgesFrom(context.Background(), edgesReq("tenant-empty", "src"))
+	resp, err := srv.GetEdgesFrom(context.Background(), edgesFromReq("tenant-empty", "src"))
 	if err != nil {
 		t.Fatalf("GetEdgesFrom: unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestGetEdgesFrom_SingleEdgeRoundTrip(t *testing.T) {
 		t.Fatalf("CreateEdge: %v", err)
 	}
 
-	resp, err := srv.GetEdgesFrom(ctx, edgesReq("tenant-single", "src"))
+	resp, err := srv.GetEdgesFrom(ctx, edgesFromReq("tenant-single", "src"))
 	if err != nil {
 		t.Fatalf("GetEdgesFrom: %v", err)
 	}
@@ -158,7 +158,7 @@ func TestGetEdgesFrom_MultipleEdgesAllReturned(t *testing.T) {
 		}
 	}
 
-	resp, err := srv.GetEdgesFrom(ctx, edgesReq("tenant-multi", "src"))
+	resp, err := srv.GetEdgesFrom(ctx, edgesFromReq("tenant-multi", "src"))
 	if err != nil {
 		t.Fatalf("GetEdgesFrom: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestGetEdgesFrom_MissingSourceReturnsEmpty(t *testing.T) {
 		t.Fatalf("CreateEdge: %v", err)
 	}
 
-	resp, err := srv.GetEdgesFrom(ctx, edgesReq("tenant-miss", "ghost"))
+	resp, err := srv.GetEdgesFrom(ctx, edgesFromReq("tenant-miss", "ghost"))
 	if err != nil {
 		t.Fatalf("GetEdgesFrom: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestGetEdgesFrom_EdgeTypeFilter(t *testing.T) {
 	}
 
 	// edge_type_id == 0 -> no filter, returns both.
-	respAll, err := srv.GetEdgesFrom(ctx, edgesReq("tenant-filter", "src"))
+	respAll, err := srv.GetEdgesFrom(ctx, edgesFromReq("tenant-filter", "src"))
 	if err != nil {
 		t.Fatalf("GetEdgesFrom (all): %v", err)
 	}
@@ -265,7 +265,7 @@ func TestGetEdgesFrom_StoreErrorSwallowedToEmpty(t *testing.T) {
 		api.WithSharding(&tenant.Sharding{NodeID: "node-a"}),
 	)
 
-	resp, err := srv.GetEdgesFrom(ctx, edgesReq("tenant-broken", "src"))
+	resp, err := srv.GetEdgesFrom(ctx, edgesFromReq("tenant-broken", "src"))
 	if err != nil {
 		t.Fatalf("GetEdgesFrom: must swallow store err to OK + empty resp, got %v", err)
 	}

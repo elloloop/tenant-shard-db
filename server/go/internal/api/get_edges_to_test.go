@@ -40,8 +40,8 @@ func newEdgeStore(t *testing.T, tenantID string) *store.CanonicalStore {
 	return cs
 }
 
-// edgesReq is a small builder so each case reads as the wire payload.
-func edgesReq(tenantID, nodeID string, edgeTypeID, limit int32) *pb.GetEdgesRequest {
+// edgesToReq is a small builder so each case reads as the wire payload.
+func edgesToReq(tenantID, nodeID string, edgeTypeID, limit int32) *pb.GetEdgesRequest {
 	return &pb.GetEdgesRequest{
 		Context:    &pb.RequestContext{TenantId: tenantID, Actor: "user:alice"},
 		NodeId:     nodeID,
@@ -59,7 +59,7 @@ func TestGetEdgesTo_EmptyReturnsNoEdges(t *testing.T) {
 	cs := newEdgeStore(t, tenantID)
 
 	srv := api.New(api.WithStore(cs))
-	resp, err := srv.GetEdgesTo(context.Background(), edgesReq(tenantID, "n-target", 0, 0))
+	resp, err := srv.GetEdgesTo(context.Background(), edgesToReq(tenantID, "n-target", 0, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo: unexpected error: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestGetEdgesTo_SingleEdgeRoundtrip(t *testing.T) {
 	}
 
 	srv := api.New(api.WithStore(cs))
-	resp, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, target, 0, 0))
+	resp, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, target, 0, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo: unexpected error: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestGetEdgesTo_MultipleEdgesFanIn(t *testing.T) {
 	}
 
 	srv := api.New(api.WithStore(cs))
-	resp, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, target, 0, 0))
+	resp, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, target, 0, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo: unexpected error: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestGetEdgesTo_MissingDstReturnsEmpty(t *testing.T) {
 	}
 
 	srv := api.New(api.WithStore(cs))
-	resp, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, "ghost", 0, 0))
+	resp, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, "ghost", 0, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo: unexpected error: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestGetEdgesTo_EdgeTypeFilter(t *testing.T) {
 	srv := api.New(api.WithStore(cs))
 
 	// edge_type_id=1 ⇒ only the two upvotes.
-	resp, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, target, 1, 0))
+	resp, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, target, 1, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo type=1: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestGetEdgesTo_EdgeTypeFilter(t *testing.T) {
 	}
 
 	// edge_type_id=2 ⇒ only the single reply.
-	resp2, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, target, 2, 0))
+	resp2, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, target, 2, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo type=2: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestGetEdgesTo_EdgeTypeFilter(t *testing.T) {
 	}
 
 	// edge_type_id=0 ⇒ unfiltered, all three rows.
-	respAll, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, target, 0, 0))
+	respAll, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, target, 0, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo type=0: %v", err)
 	}
@@ -271,7 +271,7 @@ func TestGetEdgesTo_EdgeTypeFilter(t *testing.T) {
 	}
 
 	// edge_type_id=99 (unknown) ⇒ empty.
-	respMiss, err := srv.GetEdgesTo(ctx, edgesReq(tenantID, target, 99, 0))
+	respMiss, err := srv.GetEdgesTo(ctx, edgesToReq(tenantID, target, 99, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo type=99: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestGetEdgesTo_StoreErrorReturnsEmpty(t *testing.T) {
 	// error and the handler must collapse that to edges=[].
 
 	srv := api.New(api.WithStore(cs))
-	resp, err := srv.GetEdgesTo(ctx, edgesReq("tenant-unopened", "n", 0, 0))
+	resp, err := srv.GetEdgesTo(ctx, edgesToReq("tenant-unopened", "n", 0, 0))
 	if err != nil {
 		t.Fatalf("GetEdgesTo: must return OK + empty body, not gRPC error: %v", err)
 	}

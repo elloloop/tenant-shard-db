@@ -45,13 +45,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/acl"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
@@ -158,7 +156,7 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 
 	out := make([]*pb.Node, 0, len(collected))
 	for _, n := range collected {
-		pn, perr := storeNodeToProto(s.registry, n)
+		pn, perr := s.storeNodeToProto("", n)
 		if perr != nil {
 			// A single bad row collapses the whole response to empty —
 			// matches Python's broad except. Recording as error so the
@@ -317,145 +315,8 @@ func sortNodesByCreatedAtDesc(nodes []*store.Node) {
 	}
 }
 
-// authActorToACLActor bridges the auth.Actor (caller identity admitted
-// by the interceptor) and the acl.Actor (ACL grant subject). user/system
-// translate directly; admin maps to system because admins bypass ACL on
-// the read path (matches Python's "admin can read everything" handler-
-// level convention).
-func authActorToACLActor(a auth.Actor) acl.Actor {
-	if a.IsZero() {
-		return acl.Actor{}
-	}
-	switch a.Kind() {
-	case auth.KindUser:
-		return acl.User(a.ID())
-	case auth.KindSystem:
-		return acl.System(a.ID())
-	case auth.KindAdmin:
-		// Admins bypass ACL for read on the Python side; expressing them
-		// as system: actors here picks up the same bypass in
-		// acl.Filter.FilterReadable.
-		return acl.System(a.ID())
-	default:
-		// Service / unknown — fall through to user: form so the filter
-		// has a non-system, non-empty actor.
-		return acl.User(a.ID())
-	}
-}
-
-// storeVisibilityAdapter satisfies acl.VisibilityReader by forwarding to
-// CanonicalStore.GetVisibleNodeIDs. Mirrors the same adapter used in
-// acl/integration_test.go.
-type storeVisibilityAdapter struct {
-	s *store.CanonicalStore
-}
-
-func (a storeVisibilityAdapter) VisibleNodeIDs(ctx context.Context, tenantID string, actorIDs []string, nodeIDs []string) (map[string]struct{}, error) {
-	return a.s.GetVisibleNodeIDs(ctx, tenantID, actorIDs, nodeIDs)
-}
-
-// storeNodeToProto converts a store.Node to a wire pb.Node. Payload
-// stays field-id-keyed per CLAUDE.md invariant #6 — the SDK names the
-// fields client-side. Mirrors Python's _node_to_proto at
-// grpc_server.py:1693-1710.
-//
-// The schema registry is currently unused on egress (the wire stays
-// id-keyed and structpb encodes scalars without help). It is accepted as
-// a parameter so a future kind-aware encoding can be plumbed in without
-// changing call sites.
-func storeNodeToProto(_ interface{}, n *store.Node) (*pb.Node, error) {
-	idPayload, err := decodeIDKeyedPayload(n.PayloadJSON)
-	if err != nil {
-		return nil, err
-	}
-	pStruct, err := payload.PayloadToStruct(nil, "", idPayload)
-	if err != nil {
-		return nil, err
-	}
-	aclEntries, err := decodeACLEntries(n.ACLJSON)
-	if err != nil {
-		return nil, err
-	}
-	return &pb.Node{
-		TenantId:   n.TenantID,
-		NodeId:     n.NodeID,
-		TypeId:     n.TypeID,
-		CreatedAt:  n.CreatedAt,
-		UpdatedAt:  n.UpdatedAt,
-		OwnerActor: n.OwnerActor,
-		Payload:    pStruct,
-		Acl:        aclEntries,
-	}, nil
-}
-
-// decodeIDKeyedPayload parses a raw JSON object whose keys are
-// stringified field_ids ({"1": ...}) into the uint32-keyed map the
-// payload package consumes. Empty / null JSON yields an empty map.
-func decodeIDKeyedPayload(raw string) (map[uint32]any, error) {
-	out := map[uint32]any{}
-	if raw == "" || raw == "null" {
-		return out, nil
-	}
-	tmp := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &tmp); err != nil {
-		return nil, err
-	}
-	for k, v := range tmp {
-		id, ok := parsePositiveDigits(k)
-		if !ok {
-			// A non-digit key on disk would violate invariant #6. We
-			// drop silently (the read path can't fix old rows; the
-			// applier-side guard prevents new ones).
-			continue
-		}
-		out[id] = v
-	}
-	return out, nil
-}
-
-// decodeACLEntries parses the on-disk acl_blob ([{principal, permission}])
-// into the wire pb.AclEntry slice. Empty / null yields nil.
-func decodeACLEntries(raw string) ([]*pb.AclEntry, error) {
-	if raw == "" || raw == "null" {
-		return nil, nil
-	}
-	var tmp []store.ACLEntry
-	if err := json.Unmarshal([]byte(raw), &tmp); err != nil {
-		return nil, err
-	}
-	if len(tmp) == 0 {
-		return nil, nil
-	}
-	out := make([]*pb.AclEntry, 0, len(tmp))
-	for _, e := range tmp {
-		out = append(out, &pb.AclEntry{
-			Grantee:    e.Principal,
-			Permission: e.Permission,
-		})
-	}
-	return out, nil
-}
-
-// parsePositiveDigits parses a non-empty digit-only string into a
-// uint32 in [1, 65535]. Mirrors payload.parseFieldID (unexported there).
-func parsePositiveDigits(s string) (uint32, bool) {
-	if s == "" {
-		return 0, false
-	}
-	var n uint32
-	for _, c := range s {
-		if c < '0' || c > '9' {
-			return 0, false
-		}
-		d := uint32(c - '0')
-		next := n*10 + d
-		if next < n {
-			return 0, false
-		}
-		n = next
-	}
-	if n == 0 || n > 65535 {
-		return 0, false
-	}
-	return n, true
-}
+// authActorToACLActor / storeVisibilityAdapter /
+// (*Server).storeNodeToProto / decodeIDKeyedPayload / decodeACLEntries
+// /parsePayloadFieldID — consolidated in helpers.go (round-3 Wave-2
+// dedupe). The shared method form takes typeName (passed "" here
+// because GetConnectedNodes operates on heterogeneous node sets).

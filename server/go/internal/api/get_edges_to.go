@@ -39,15 +39,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"time"
-
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 const grpcMethodGetEdgesTo = "GetEdgesTo"
@@ -129,48 +125,7 @@ func (s *Server) GetEdgesTo(
 	return &pb.GetEdgesResponse{Edges: out, HasMore: hasMore}, nil
 }
 
-// edgeToProto lowers a store.Edge into the wire shape. props_json is
-// parsed into a typed google.protobuf.Struct so SDK clients can read
-// `props` directly (Python parity: the handler passes the parsed dict
-// to `_dict_to_struct` at grpc_server.py:166 before assembling the
-// Edge proto). A non-JSON or non-object props_json column is treated
-// as an empty struct — matching `_dict_to_struct`'s defensive shape
-// when an unexpected legacy row is replayed.
-//
-// Kept package-private so a future GetEdgesFrom port can share it via
-// a single chokepoint without the conversion shape diverging between
-// the from / to handlers (see spec "Shared Go package deps").
-func edgeToProto(e *store.Edge) *pb.Edge {
-	out := &pb.Edge{
-		TenantId:   e.TenantID,
-		EdgeTypeId: e.EdgeTypeID,
-		FromNodeId: e.FromNodeID,
-		ToNodeId:   e.ToNodeID,
-		CreatedAt:  e.CreatedAt,
-	}
-	out.Props = edgePropsToStruct(e.PropsJSON)
-	return out
-}
-
-// edgePropsToStruct parses a stored props_json column into a typed
-// Struct. Empty / invalid input lowers to an empty Struct, never nil:
-// the Python wire shape always emits the field (zero-value
-// google.protobuf.Struct{}) so SDK consumers can rely on
-// `edge.props.fields` being addressable without a nil check.
-func edgePropsToStruct(propsJSON string) *structpb.Struct {
-	if propsJSON == "" {
-		s, _ := structpb.NewStruct(map[string]any{})
-		return s
-	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(propsJSON), &m); err != nil || m == nil {
-		s, _ := structpb.NewStruct(map[string]any{})
-		return s
-	}
-	s, err := structpb.NewStruct(m)
-	if err != nil {
-		s, _ = structpb.NewStruct(map[string]any{})
-		return s
-	}
-	return s
-}
+// edgeToProto and edgePropsToStruct live in helpers.go (consolidated
+// in the round-3 Wave-2 dedupe). The defensive empty-Struct semantics
+// — never nil for `props` even on malformed legacy rows — are
+// preserved there.

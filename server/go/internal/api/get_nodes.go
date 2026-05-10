@@ -51,12 +51,10 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc/codes"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
@@ -230,7 +228,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 			missing = append(missing, id)
 			continue
 		}
-		pn, perr := storeNodeToProto(s, results[i])
+		pn, perr := s.storeNodeToProto("", results[i])
 		if perr != nil {
 			// Conversion failure on a single row -- fold into
 			// missing_ids rather than failing the whole batch
@@ -247,112 +245,8 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	}, nil
 }
 
-// crossTenantRole is the result of checkCrossTenantRead. Mirrors the
-// "local" / "member" / "cross_tenant" string return of the Python
-// helper at grpc_server.py:561-618.
-type crossTenantRole int
-
-const (
-	roleLocal       crossTenantRole = iota // no global_store wired
-	roleMember                             // tenant member or system actor
-	roleCrossTenant                        // non-member with node_access grants
-)
-
-// checkCrossTenantRead is the Go port of
-// server/python/entdb_server/api/grpc_server.py:_check_cross_tenant_read
-// (561-618). Returns roleLocal / roleMember / roleCrossTenant on
-// success, or a PERMISSION_DENIED status error on rejection.
-//
-// Inlined here (rather than in a shared helper) because GetNodes is
-// the first read RPC to need it; subsequent read handlers (QueryNodes,
-// GetEdgesFrom, …) will refactor this into internal/tenant once the
-// surface stabilises.
-func (s *Server) checkCrossTenantRead(ctx context.Context, tenantID string, actor auth.Actor) (crossTenantRole, error) {
-	// No global_store wired -> "local" (backward-compat with bring-up
-	// configs and unit tests; mirrors grpc_server.py:590-591).
-	if s.global == nil {
-		return roleLocal, nil
-	}
-	// System actors bypass all checks (grpc_server.py:594-595).
-	if actor.IsSystem() {
-		return roleMember, nil
-	}
-	// Tenant membership: resolve actor -> user_id and consult
-	// globalstore.IsMember. Only user-kind actors can ever be members
-	// (admins / unknown kinds are not in tenant_members rows; for
-	// parity with Python we still try IsMember which falls through to
-	// false for them).
-	userID := actor.ID()
-	if !actor.IsUser() {
-		userID = actor.String()
-	}
-	if userID != "" {
-		isMember, err := s.global.IsMember(ctx, tenantID, userID)
-		if err == nil && isMember {
-			return roleMember, nil
-		}
-	}
-	// Not a member -- check for cross-tenant node_access grants.
-	if s.store != nil {
-		actorIDs, err := s.store.ResolveActorGroups(ctx, tenantID, actor.String())
-		if err == nil && len(actorIDs) > 0 {
-			has, herr := s.store.HasNodeAccess(ctx, tenantID, actorIDs)
-			if herr == nil && has {
-				return roleCrossTenant, nil
-			}
-		}
-	}
-	return 0, errs.Errorf(codes.PermissionDenied,
-		"Actor is not a member of this tenant")
-}
-
-// storeNodeToProto converts a *store.Node (id-keyed payload JSON,
-// raw ACL JSON) into a *pb.Node. Mirrors the inline conversion in
-// Python's grpc_server.py:1273-1284.
-//
-// Schema-aware kind coercion: when the schema registry is wired, we
-// look up the node type by type_id and feed payload.PayloadToStruct
-// the type's name so BYTES / TIMESTAMP / INTEGER values are encoded
-// correctly. Without a registry (unit tests), we fall through to the
-// schema-less passthrough.
-func storeNodeToProto(s *Server, n *store.Node) (*pb.Node, error) {
-	// Parse payload (string-keyed by field_id) into map[string]any.
-	var rawPayload map[string]any
-	if n.PayloadJSON != "" {
-		if err := json.Unmarshal([]byte(n.PayloadJSON), &rawPayload); err != nil {
-			return nil, err
-		}
-	}
-	// Build a *structpb.Struct with the same string keys. The wire
-	// stays id-keyed per CLAUDE.md invariant #6.
-	st, err := structpb.NewStruct(rawPayload)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse ACL JSON into proto entries.
-	var aclList []store.ACLEntry
-	if n.ACLJSON != "" {
-		if err := json.Unmarshal([]byte(n.ACLJSON), &aclList); err != nil {
-			return nil, err
-		}
-	}
-	aclProto := make([]*pb.AclEntry, 0, len(aclList))
-	for _, e := range aclList {
-		aclProto = append(aclProto, &pb.AclEntry{
-			Principal:  e.Principal,
-			Permission: e.Permission,
-		})
-	}
-
-	return &pb.Node{
-		TenantId:   n.TenantID,
-		NodeId:     n.NodeID,
-		TypeId:     n.TypeID,
-		CreatedAt:  n.CreatedAt,
-		UpdatedAt:  n.UpdatedAt,
-		OwnerActor: n.OwnerActor,
-		Payload:    st,
-		Acl:        aclProto,
-	}, nil
-}
+// crossTenantRole / checkCrossTenantRead / storeNodeToProto — shared
+// with the other read RPCs and declared in helpers.go (consolidated in
+// the round-3 Wave-2 dedupe). The shared type is named `readRole`
+// there; the constants (roleLocal / roleMember / roleCrossTenant) are
+// untouched, so existing callers in this file still compile.

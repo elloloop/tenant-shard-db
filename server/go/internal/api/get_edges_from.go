@@ -45,15 +45,11 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"time"
-
-	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 const grpcMethodGetEdgesFrom = "GetEdgesFrom"
@@ -122,34 +118,6 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	return &pb.GetEdgesResponse{Edges: out, HasMore: hasMore}, nil
 }
 
-// edgeToProto translates a store.Edge into its wire shape. PropsJSON is
-// stored as a JSON-encoded map keyed by field IDs (CLAUDE.md invariant
-// 6); we round-trip through map[string]any -> structpb.NewStruct so the
-// wire `props` mirrors Python's `_dict_to_struct` output. On any
-// translation error, props is left nil (parity with Python's defensive
-// fall-through at grpc_server.py:1408).
-func edgeToProto(e *store.Edge) *pb.Edge {
-	out := &pb.Edge{
-		TenantId:   e.TenantID,
-		EdgeTypeId: e.EdgeTypeID,
-		FromNodeId: e.FromNodeID,
-		ToNodeId:   e.ToNodeID,
-		CreatedAt:  e.CreatedAt,
-	}
-	if e.PropsJSON == "" {
-		return out
-	}
-	var m map[string]any
-	if err := json.Unmarshal([]byte(e.PropsJSON), &m); err != nil {
-		return out
-	}
-	if m == nil {
-		return out
-	}
-	s, err := structpb.NewStruct(m)
-	if err != nil {
-		return out
-	}
-	out.Props = s
-	return out
-}
+// edgeToProto is shared with GetEdgesTo and lives in helpers.go (after
+// the round-3 Wave-2 dedupe). The defensive empty-Struct shape is
+// preserved there; behaviour is otherwise identical.

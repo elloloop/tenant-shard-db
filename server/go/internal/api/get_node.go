@@ -82,25 +82,9 @@ import (
 
 const getNodeMethod = "GetNode"
 
-// readRole captures the outcome of the cross-tenant read-membership
-// check. Mirrors the Python sentinels at `_check_cross_tenant_read`
-// (server/python/entdb_server/api/grpc_server.py:561-618).
-type readRole int
-
-const (
-	// roleLocal is the back-compat path when no global_store is wired.
-	// Skips all membership checks; matches Python's
-	// `if self.global_store is None: return "local"` (`:570-571`).
-	roleLocal readRole = iota
-	// roleMember means the caller is either a tenant member or a
-	// system / admin actor. Same as Python `"member"` (`:582-589`).
-	roleMember
-	// roleCrossTenant means the caller is not a member but has at
-	// least one node_access row in the tenant. The handler must then
-	// re-check the specific node_id post-lookup. Same as Python
-	// `"cross_tenant"` (`:597-617`).
-	roleCrossTenant
-)
+// readRole / roleLocal / roleMember / roleCrossTenant — shared with
+// the other read RPCs (GetNodes, QueryNodes, GetConnectedNodes) and
+// declared in helpers.go (consolidated in the round-3 Wave-2 dedupe).
 
 // GetNode implements entdb.v1.EntDBService/GetNode. See file header
 // for the full contract.
@@ -208,82 +192,12 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	return &pb.GetNodeResponse{Found: true, Node: wire}, nil
 }
 
-// checkCrossTenantRead returns the caller's read role within tenantID.
-// Mirrors Python `_check_cross_tenant_read` at
-// server/python/entdb_server/api/grpc_server.py:561-618.
-//
-// Resolution order:
-//
-//  1. global_store == nil => roleLocal (back-compat path). Skips
-//     membership entirely.
-//  2. system / admin actors => roleMember (system bypass).
-//  3. IsMember(tenant, user_id) => roleMember.
-//  4. Any node_access row in the tenant for this actor =>
-//     roleCrossTenant.
-//  5. Otherwise => PERMISSION_DENIED.
-func (s *Server) checkCrossTenantRead(ctx context.Context, tenantID string, a auth.Actor) (readRole, error) {
-	if s.global == nil {
-		return roleLocal, nil
-	}
-	if a.IsSystem() || a.IsAdmin() {
-		return roleMember, nil
-	}
-	if a.IsZero() {
-		return 0, errs.Errorf(codes.PermissionDenied,
-			"GetNode: actor lacks access to tenant %q", tenantID)
-	}
-
-	// Membership check. global_store stores user_ids by their bare
-	// SDK identifier (e.g. "alice"), so we strip the "user:" prefix
-	// before consulting it.
-	if a.IsUser() {
-		ok, err := s.global.IsMember(ctx, tenantID, a.ID())
-		if err != nil {
-			return 0, fmt.Errorf("GetNode: IsMember: %w", err)
-		}
-		if ok {
-			return roleMember, nil
-		}
-	}
-
-	// Cross-tenant: any node_access grant in this tenant for the
-	// canonical actor string is enough to upgrade to "cross_tenant".
-	any, err := s.hasAnyNodeAccess(ctx, tenantID, a.String())
-	if err != nil {
-		return 0, err
-	}
-	if any {
-		return roleCrossTenant, nil
-	}
-	return 0, errs.Errorf(codes.PermissionDenied,
-		"GetNode: actor lacks access to tenant %q", tenantID)
-}
-
-// hasAnyNodeAccess returns true if there is at least one non-deny,
-// non-expired node_access row in tenantID granted to actorID. Mirrors
-// the Python "has_node_access" probe inside
-// `_check_cross_tenant_read` (`grpc_server.py:610-617`).
-func (s *Server) hasAnyNodeAccess(ctx context.Context, tenantID, actorID string) (bool, error) {
-	db, err := s.store.AdminDB(tenantID)
-	if err != nil {
-		return false, fmt.Errorf("GetNode: admin db: %w", err)
-	}
-	now := time.Now().UnixMilli()
-	var one int
-	err = db.QueryRowContext(ctx, `
-		SELECT 1 FROM node_access
-		WHERE actor_id = ?
-		  AND permission != 'deny'
-		  AND (expires_at IS NULL OR expires_at > ?)
-		LIMIT 1`, actorID, now).Scan(&one)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return false, nil
-		}
-		return false, fmt.Errorf("GetNode: query node_access: %w", err)
-	}
-	return true, nil
-}
+// checkCrossTenantRead lives in helpers.go (consolidated in the
+// round-3 Wave-2 dedupe). It now uses store.ResolveActorGroups +
+// store.HasNodeAccess for group-aware grant resolution rather than the
+// per-handler hasAnyNodeAccess shortcut — the per-node hasNodeAccess
+// below is still consulted by step 7 of GetNode for the specific
+// node_id post-lookup ACL re-check.
 
 // hasNodeAccess returns true if actorID has a non-deny, non-expired
 // node_access grant on (tenantID, nodeID). Mirrors a slim slice of

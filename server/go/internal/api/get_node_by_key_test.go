@@ -69,9 +69,9 @@ func newCanonicalStore(t *testing.T, tenantID string) *store.CanonicalStore {
 	return cs
 }
 
-// seedNode writes a node row keyed by field_id (CLAUDE.md invariant
+// seedNodeByKey writes a node row keyed by field_id (CLAUDE.md invariant
 // #6) so the unique-index SELECT lights it up.
-func seedNode(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, ownerActor string, payload map[string]any, acl []store.ACLEntry) {
+func seedNodeByKey(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, ownerActor string, payload map[string]any, acl []store.ACLEntry) {
 	t.Helper()
 	if _, err := cs.CreateNodeRaw(context.Background(), tenantID, store.NodeInput{
 		NodeID:     nodeID,
@@ -107,7 +107,7 @@ func TestGetNodeByKey_HappyRoundTrip(t *testing.T) {
 	}
 
 	cs := newCanonicalStore(t, gnbkTenant)
-	seedNode(t, cs, gnbkTenant, gnbkNodeID, "user:alice",
+	seedNodeByKey(t, cs, gnbkTenant, gnbkNodeID, "user:alice",
 		map[string]any{"1": "alice@example.com"}, nil)
 
 	srv := api.New(
@@ -208,7 +208,7 @@ func TestGetNodeByKey_ACLDenied(t *testing.T) {
 	}
 	cs := newCanonicalStore(t, gnbkTenant)
 
-	seedNode(t, cs, gnbkTenant, gnbkNodeID, "user:alice",
+	seedNodeByKey(t, cs, gnbkTenant, gnbkNodeID, "user:alice",
 		map[string]any{"1": "alice@example.com"},
 		[]store.ACLEntry{{Principal: "user:bob", Permission: "deny"}},
 	)
@@ -250,7 +250,7 @@ func TestGetNodeByCompositeKey_StoreLevel(t *testing.T) {
 
 	// Seed a Task node with a (owner_id=alice, title="finish go port")
 	// composite tuple. Field ids 2 and 1 (Python sample).
-	seedNode(t, cs, gnbkTenant, "task-1", "user:alice",
+	seedNodeByKey(t, cs, gnbkTenant, "task-1", "user:alice",
 		map[string]any{
 			"1": "finish go port",
 			"2": "alice",
