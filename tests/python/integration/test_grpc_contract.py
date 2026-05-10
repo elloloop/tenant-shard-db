@@ -26,149 +26,23 @@ docstring claims.
 
 from __future__ import annotations
 
-import asyncio
-import socket
-import tempfile
-
 import grpc
 import pytest
 from grpc import aio as grpc_aio
 
-from entdb_server.api.generated import (
-    EntDBServiceStub,
-    add_EntDBServiceServicer_to_server,
-)
+from entdb_server.api.generated import EntDBServiceStub
 from entdb_server.api.generated import entdb_pb2 as pb
-from entdb_server.api.grpc_server import EntDBServicer
-from entdb_server.apply.applier import Applier, MailboxFanoutConfig
-from entdb_server.apply.canonical_store import CanonicalStore
-from entdb_server.global_store import GlobalStore
-from entdb_server.schema.registry import SchemaRegistry
-from entdb_server.schema.types import EdgeTypeDef, NodeTypeDef, field
-from entdb_server.wal.memory import InMemoryWalStream
+
+# The ``live_server`` fixture used to live here. It now lives in
+# ``tests/python/integration/conftest.py`` so the same setup serves
+# both the in-process Python target and the Go subprocess target
+# (selected via ``ENTDB_SERVER_TARGET``; see
+# ``docs/go-port/shared/test-harness.md``).
 
 TENANT = "acme"
 ALICE = "user:alice"
 BOB = "user:bob"
 ADMIN = "system:admin"
-
-
-def _free_port() -> int:
-    s = socket.socket()
-    s.bind(("127.0.0.1", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
-
-
-def _build_registry() -> SchemaRegistry:
-    reg = SchemaRegistry()
-    reg.register_node_type(
-        NodeTypeDef(
-            type_id=1,
-            name="User",
-            fields=(field(1, "email", "str"), field(2, "name", "str")),
-        )
-    )
-    reg.register_node_type(
-        NodeTypeDef(
-            type_id=2,
-            name="Task",
-            fields=(field(1, "title", "str"), field(2, "description", "str")),
-        )
-    )
-    reg.register_edge_type(EdgeTypeDef(edge_id=100, name="AssignedTo", from_type=2, to_type=1))
-    return reg
-
-
-@pytest.fixture
-async def live_server():
-    """Spin up a real EntDBServicer with a tenant + alice + bob seeded."""
-    from entdb_server.schema import registry as registry_mod
-
-    prev = registry_mod._global_registry
-    reg = _build_registry()
-    registry_mod._global_registry = reg
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        global_store = GlobalStore(tmpdir)
-        await global_store.create_tenant(TENANT, "Acme Corp")
-        await global_store.create_user("alice", "alice@example.com", "Alice")
-        await global_store.create_user("bob", "bob@example.com", "Bob")
-        await global_store.add_member(TENANT, "alice", role="owner")
-        await global_store.add_member(TENANT, "bob", role="member")
-
-        canonical = CanonicalStore(data_dir=tmpdir, wal_mode=False)
-        await canonical.initialize_tenant(TENANT)
-
-        wal = InMemoryWalStream(num_partitions=1)
-        await wal.connect()
-
-        applier = Applier(
-            wal=wal,
-            canonical_store=canonical,
-            topic="entdb-wal",
-            group_id="contract-applier",
-            fanout_config=MailboxFanoutConfig(enabled=False),
-            batch_size=1,
-        )
-        applier_task = asyncio.create_task(applier.start())
-
-        servicer = EntDBServicer(
-            wal=wal,
-            canonical_store=canonical,
-            schema_registry=reg,
-            topic="entdb-wal",
-            global_store=global_store,
-        )
-
-        port = _free_port()
-        server = grpc_aio.server()
-        add_EntDBServiceServicer_to_server(servicer, server)
-        server.add_insecure_port(f"127.0.0.1:{port}")
-        await server.start()
-
-        # Seed one node so happy-path read RPCs have something to find.
-        from google.protobuf.struct_pb2 import Struct
-
-        seed_data = Struct()
-        seed_data.update({"1": "seeded@example.com", "2": "Seeded"})
-        async with grpc_aio.insecure_channel(f"127.0.0.1:{port}") as channel:
-            stub = EntDBServiceStub(channel)
-            req = pb.ExecuteAtomicRequest(
-                context=pb.RequestContext(tenant_id=TENANT, actor=ALICE),
-                idempotency_key="seed-1",
-                operations=[
-                    pb.Operation(
-                        create_node=pb.CreateNodeOp(
-                            type_id=1,
-                            id="seeded-node",
-                            data=seed_data,
-                        )
-                    )
-                ],
-                wait_applied=True,
-                wait_timeout_ms=2000,
-            )
-            seed_resp = await stub.ExecuteAtomic(req)
-            assert seed_resp.success, f"seed failed: {seed_resp.error}"
-
-        try:
-            yield port
-        finally:
-            await server.stop(grace=0)
-            await applier.stop()
-            applier_task.cancel()
-            try:
-                await asyncio.wait_for(applier_task, timeout=2.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError):
-                pass
-            try:
-                await wal.close()
-            except Exception:
-                pass
-            global_store.close()
-            registry_mod._global_registry = prev
 
 
 # ---- Request builders & assertions per RPC ---------------------------------
