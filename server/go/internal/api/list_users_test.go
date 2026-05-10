@@ -1,0 +1,297 @@
+// Behavioural tests for ListUsers (W2). The Python source-of-truth is
+// server/python/entdb_server/api/grpc_server.py:2231-2265; spec is
+// docs/go-port/rpcs/ListUsers.md.
+//
+// The four cases below cover the parity shape Python pins:
+//
+//  1. Empty registry -> users=[], OK.
+//  2. Multi-row round-trip -> proto fields preserved, ordered by
+//     created_at (the underlying globalstore.ListUsers contract).
+//  3. Default limit=100 + status="active" applied when the request
+//     omits them.
+//  4. Internal globalstore error -> codes.OK with users=[]. Python
+//     swallows; the Go port mirrors verbatim.
+//
+// Wart-tracking: cases 1 and 2 also exercise the "no admin scope"
+// behaviour by passing a plain user:<id> actor; today this is allowed.
+// A follow-up ticket should gate on a users.list capability and tighten
+// the test to expect PERMISSION_DENIED for non-admin callers.
+
+package api_test
+
+import (
+	"context"
+	"testing"
+
+	"google.golang.org/grpc/codes"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
+	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+)
+
+// TestListUsers_EmptyRegistry: a fresh globalstore with no user_registry
+// rows returns ListUsersResponse{users: []} and codes.OK. The Users
+// slice MUST be non-nil to mirror the Python repeated-field default.
+func TestListUsers_EmptyRegistry(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	srv := api.New(api.WithGlobalStore(gs))
+
+	resp, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
+		Actor: "user:u1",
+	})
+	if err != nil {
+		t.Fatalf("ListUsers: unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatalf("ListUsers: response is nil")
+	}
+	if resp.Users == nil {
+		t.Fatalf("ListUsers: Users is nil; want empty slice (parity pin)")
+	}
+	if len(resp.Users) != 0 {
+		t.Fatalf("ListUsers: len(Users) = %d; want 0", len(resp.Users))
+	}
+}
+
+// TestListUsers_RoundTripsMultipleUsers: rows seeded via
+// globalstore.CreateUser come back through the gRPC handler with their
+// fields preserved (user_id, email, name, status). Order is
+// created_at-ASC per the SQL in globalstore.ListUsers.
+func TestListUsers_RoundTripsMultipleUsers(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+	for _, u := range []struct{ id, email, name string }{
+		{"alice", "alice@example.com", "Alice"},
+		{"bob", "bob@example.com", "Bob"},
+		{"carol", "carol@example.com", "Carol"},
+	} {
+		if _, err := gs.CreateUser(ctx, u.id, u.email, u.name); err != nil {
+			t.Fatalf("CreateUser(%q): %v", u.id, err)
+		}
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+
+	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{
+		Actor: "system:admin",
+	})
+	if err != nil {
+		t.Fatalf("ListUsers: unexpected error: %v", err)
+	}
+	if got := len(resp.GetUsers()); got != 3 {
+		t.Fatalf("ListUsers: got %d users, want 3", got)
+	}
+	wantIDs := map[string]struct {
+		email, name string
+	}{
+		"alice": {"alice@example.com", "Alice"},
+		"bob":   {"bob@example.com", "Bob"},
+		"carol": {"carol@example.com", "Carol"},
+	}
+	for _, u := range resp.GetUsers() {
+		want, ok := wantIDs[u.GetUserId()]
+		if !ok {
+			t.Errorf("ListUsers: unexpected user_id %q", u.GetUserId())
+			continue
+		}
+		if u.GetEmail() != want.email {
+			t.Errorf("ListUsers[%s]: email = %q, want %q",
+				u.GetUserId(), u.GetEmail(), want.email)
+		}
+		if u.GetName() != want.name {
+			t.Errorf("ListUsers[%s]: name = %q, want %q",
+				u.GetUserId(), u.GetName(), want.name)
+		}
+		if u.GetStatus() != "active" {
+			t.Errorf("ListUsers[%s]: status = %q, want %q",
+				u.GetUserId(), u.GetStatus(), "active")
+		}
+		if u.GetCreatedAt() == 0 {
+			t.Errorf("ListUsers[%s]: created_at = 0; want non-zero (CreateUser stamps it)",
+				u.GetUserId())
+		}
+	}
+}
+
+// TestListUsers_DefaultStatusApplied: when the request omits status,
+// the handler coerces to status="active". We pin the behaviour by
+// seeding a "deleted" row alongside an "active" one and asserting the
+// deleted row is filtered out by the default-status branch. Mirrors
+// grpc_server.py:2248.
+func TestListUsers_DefaultStatusApplied(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
+		t.Fatalf("CreateUser(alice): %v", err)
+	}
+	if _, err := gs.CreateUser(ctx, "ghost", "ghost@example.com", "Ghost"); err != nil {
+		t.Fatalf("CreateUser(ghost): %v", err)
+	}
+	if _, err := gs.SetUserStatus(ctx, "ghost", "deleted"); err != nil {
+		t.Fatalf("SetUserStatus(ghost, deleted): %v", err)
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+
+	// No status -> default: status="active".
+	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:u1"})
+	if err != nil {
+		t.Fatalf("ListUsers: unexpected error: %v", err)
+	}
+	if got := len(resp.GetUsers()); got != 1 {
+		t.Fatalf("ListUsers: got %d users, want 1 (active default filters out 'deleted')", got)
+	}
+	if id := resp.GetUsers()[0].GetUserId(); id != "alice" {
+		t.Fatalf("ListUsers: user_id = %q, want \"alice\"", id)
+	}
+
+	// Explicit status="deleted" should now surface ghost.
+	resp, err = srv.ListUsers(ctx, &pb.ListUsersRequest{
+		Actor:  "user:u1",
+		Status: "deleted",
+	})
+	if err != nil {
+		t.Fatalf("ListUsers(status=deleted): unexpected error: %v", err)
+	}
+	if got := len(resp.GetUsers()); got != 1 {
+		t.Fatalf("ListUsers(status=deleted): got %d users, want 1", got)
+	}
+	if id := resp.GetUsers()[0].GetUserId(); id != "ghost" {
+		t.Fatalf("ListUsers(status=deleted): user_id = %q, want \"ghost\"", id)
+	}
+}
+
+// TestListUsers_DefaultLimitApplied pins the limit=0 -> 100 coercion
+// (grpc_server.py:2249). We seed 101 active users and assert the
+// default-limit response caps at 100; a follow-up explicit limit=200
+// confirms the cap was the default, not a hard ceiling (Python imposes
+// no upper cap — a parity wart tracked in the spec).
+func TestListUsers_DefaultLimitApplied(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+	const seeded = 101
+	for i := 0; i < seeded; i++ {
+		id := userIDFromIndex(i)
+		if _, err := gs.CreateUser(ctx, id, id+"@example.com", id); err != nil {
+			t.Fatalf("CreateUser(%q): %v", id, err)
+		}
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+
+	// limit unset (zero) -> default 100.
+	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:u1"})
+	if err != nil {
+		t.Fatalf("ListUsers: unexpected error: %v", err)
+	}
+	if got := len(resp.GetUsers()); got != 100 {
+		t.Fatalf("ListUsers: got %d users, want 100 (default limit)", got)
+	}
+
+	// Explicit larger limit returns all rows — proves no hidden cap and
+	// that the previous result was bounded by the default, not the data.
+	resp, err = srv.ListUsers(ctx, &pb.ListUsersRequest{
+		Actor: "user:u1",
+		Limit: 200,
+	})
+	if err != nil {
+		t.Fatalf("ListUsers(limit=200): unexpected error: %v", err)
+	}
+	if got := len(resp.GetUsers()); got != seeded {
+		t.Fatalf("ListUsers(limit=200): got %d users, want %d", got, seeded)
+	}
+}
+
+// userIDFromIndex returns a stable, lex-sortable id like "u000". Three
+// digits are enough for the 101-row test below and keep the IDs short
+// in failure messages.
+func userIDFromIndex(i int) string {
+	const digits = "0123456789"
+	b := []byte{'u', '0', '0', '0'}
+	b[1] = digits[(i/100)%10]
+	b[2] = digits[(i/10)%10]
+	b[3] = digits[i%10]
+	return string(b)
+}
+
+// TestListUsers_EmptyActorInvalidArgument pins the wire-validation
+// branch: actor=="" -> codes.InvalidArgument. Python pin:
+// tests/python/integration/test_grpc_contract.py:423-427.
+func TestListUsers_EmptyActorInvalidArgument(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	srv := api.New(api.WithGlobalStore(gs))
+
+	_, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{Actor: ""})
+	if err == nil {
+		t.Fatalf("ListUsers: expected INVALID_ARGUMENT, got nil")
+	}
+	if got := errs.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("ListUsers: code = %v, want InvalidArgument (err=%v)", got, err)
+	}
+}
+
+// TestListUsers_GlobalStoreUnconfigured pins the UNIMPLEMENTED branch:
+// when the server boots without a globalstore handle wired, ListUsers
+// MUST fail with codes.Unimplemented and the verbatim Python message
+// "User registry not configured" (grpc_server.py:2239-2243).
+func TestListUsers_GlobalStoreUnconfigured(t *testing.T) {
+	t.Parallel()
+
+	srv := api.New() // no WithGlobalStore — global == nil.
+
+	_, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
+		Actor: "user:u1",
+	})
+	if err == nil {
+		t.Fatalf("ListUsers: expected UNIMPLEMENTED, got nil")
+	}
+	if got := errs.Code(err); got != codes.Unimplemented {
+		t.Fatalf("ListUsers: code = %v, want Unimplemented (err=%v)", got, err)
+	}
+}
+
+// TestListUsers_InternalErrorSwallowed pins the parity wart: any
+// internal error from globalstore.ListUsers is swallowed and the
+// handler returns codes.OK with an empty Users list. We force the
+// error by closing the underlying SQLite handle before calling.
+//
+// Python source: grpc_server.py:2262-2265 (`except Exception: ...
+// return ListUsersResponse(users=[])`).
+func TestListUsers_InternalErrorSwallowed(t *testing.T) {
+	t.Parallel()
+
+	gs := newGlobalStore(t)
+	// Force every subsequent query to fail with "database is closed".
+	if err := gs.Close(); err != nil {
+		t.Fatalf("gs.Close: %v", err)
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+
+	resp, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
+		Actor: "user:u1",
+	})
+	if err != nil {
+		t.Fatalf("ListUsers: expected OK (parity swallow), got err=%v", err)
+	}
+	if resp == nil {
+		t.Fatalf("ListUsers: response is nil; want empty Users slice")
+	}
+	if resp.Users == nil {
+		t.Fatalf("ListUsers: Users is nil; want non-nil empty slice (parity pin)")
+	}
+	if len(resp.Users) != 0 {
+		t.Fatalf("ListUsers: len(Users) = %d; want 0 on swallowed error", len(resp.Users))
+	}
+}
