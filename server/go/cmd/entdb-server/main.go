@@ -35,9 +35,20 @@ func main() {
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
 	// --seed-tenant is a test-only flag honoured by the cross-impl
 	// contract harness (docs/go-port/shared/test-harness.md). When set,
-	// the binary pre-creates a tenant + alice/bob users + the seed node
-	// the contract suite expects to find. Empty disables seeding.
-	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant + contract-fixture state before serving")
+	// the binary pre-creates a tenant + the actors / nodes the chosen
+	// --seed-profile expects to find. Empty disables seeding.
+	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant before serving (paired with --seed-profile)")
+	// --seed-profile selects the fixture shape applied to --seed-tenant.
+	//   - "none" (default): no seeding (legacy --seed-tenant without
+	//     --seed-profile defaults to "contract" for backwards
+	//     compatibility with the Wave-4 harness).
+	//   - "contract": User/Task/AssignedTo schema + alice/bob users +
+	//     seed node + seed-1 receipt. Matches the cross-impl contract
+	//     suite (tests/python/integration/test_grpc_contract.py).
+	//   - "e2e": User/Product/Order schema (typeIDs 8001/8002/8003) +
+	//     Purchased/PlacedOrder/OrderContains edges + e2e-runner user
+	//     as tenant owner. Matches tests/python/e2e/.
+	seedProfile := flag.String("seed-profile", "", "test-only: seed profile {none, contract, e2e}; default 'contract' when --seed-tenant is set")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", *addr)
@@ -45,16 +56,39 @@ func main() {
 		log.Fatalf("entdb-server: listen %s: %v", *addr, err)
 	}
 
+	// Resolve --seed-profile. Empty profile + non-empty --seed-tenant
+	// defaults to "contract" so the pre-Wave-6 harness invocation
+	// (--seed-tenant=acme without --seed-profile) keeps working.
+	profile := *seedProfile
+	if profile == "" {
+		if *seedTenant != "" {
+			profile = "contract"
+		} else {
+			profile = "none"
+		}
+	}
+	switch profile {
+	case "none", "contract", "e2e":
+		// ok
+	default:
+		log.Fatalf("entdb-server: invalid --seed-profile %q (want none|contract|e2e)", profile)
+	}
+
 	srvOpts := []api.Option{}
 
-	// Schema registry. Populated below when --seed-tenant is set so the
-	// contract suite's GetSchema/ExecuteAtomic asserts hold; left empty
-	// otherwise (production wiring lands in a later wave once the loader
-	// hook is connected to a config source).
+	// Schema registry. Populated below when a seed profile selects one
+	// so the cross-impl suites' GetSchema/ExecuteAtomic asserts hold;
+	// left empty for profile=none (production wiring lands in a later
+	// wave once the loader hook is connected to a config source).
 	registry := schema.NewRegistry()
-	if *seedTenant != "" {
+	switch profile {
+	case "contract":
 		if err := testseed.RegisterContractSchema(registry); err != nil {
 			log.Fatalf("entdb-server: register contract schema: %v", err)
+		}
+	case "e2e":
+		if err := testseed.RegisterE2ESchema(registry); err != nil {
+			log.Fatalf("entdb-server: register e2e schema: %v", err)
 		}
 	}
 	if _, err := registry.Freeze(); err != nil {
@@ -122,18 +156,29 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Test-only seed: contract harness boots the binary with
-	// --seed-tenant <id> and expects the tenant + contract fixture state
-	// to be queryable before the first RPC arrives. Skipped silently
-	// when the flag is empty.
-	if *seedTenant != "" {
+	// Test-only seed: the cross-impl harnesses boot the binary with
+	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
+	// fixture state to be queryable before the first RPC arrives.
+	// Skipped silently when profile=none.
+	if profile != "none" {
+		if *seedTenant == "" {
+			log.Fatalf("entdb-server: --seed-profile=%s requires --seed-tenant", profile)
+		}
 		if canonical == nil || global == nil {
-			log.Fatalf("entdb-server: --seed-tenant requires --data-dir")
+			log.Fatalf("entdb-server: --seed-profile=%s requires --data-dir", profile)
 		}
-		if err := testseed.SeedTenant(ctx, global, canonical, *seedTenant); err != nil {
-			log.Fatalf("entdb-server: seed tenant %q: %v", *seedTenant, err)
+		switch profile {
+		case "contract":
+			if err := testseed.SeedTenantContract(ctx, global, canonical, *seedTenant); err != nil {
+				log.Fatalf("entdb-server: seed tenant %q (contract): %v", *seedTenant, err)
+			}
+			log.Printf("entdb-server: seeded tenant %q with contract profile (alice=owner, bob=member, seed node + receipt)", *seedTenant)
+		case "e2e":
+			if err := testseed.SeedTenantE2E(ctx, global, canonical, *seedTenant); err != nil {
+				log.Fatalf("entdb-server: seed tenant %q (e2e): %v", *seedTenant, err)
+			}
+			log.Printf("entdb-server: seeded tenant %q with e2e profile (e2e-runner=owner, User/Product/Order schema)", *seedTenant)
 		}
-		log.Printf("entdb-server: seeded tenant %q (alice=owner, bob=member, seed node + receipt)", *seedTenant)
 	}
 
 	// Run the applier in a background goroutine. Halt-on-poison errors

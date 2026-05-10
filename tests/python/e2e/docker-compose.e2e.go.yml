@@ -23,10 +23,11 @@ services:
   # ==========================================================================
   # EntDB Server (Go binary)
   #
-  # `--seed-tenant=e2e-test` pre-creates the tenant + alice/bob users +
-  # seed node so RPCs can target it without an out-of-band bootstrap
-  # (matches what the cross-impl contract harness does for the Python
-  # in-process fixture — see tests/python/integration/conftest.py).
+  # `--seed-profile=e2e --seed-tenant=e2e-test` pre-creates the tenant,
+  # the `user:e2e-runner` actor (tenant owner), and the User/Product/
+  # Order schema (typeIDs 8001/8002/8003) the e2e suite expects. This
+  # matches the actor/tenant pair hard-coded in tests/python/e2e/test_e2e.py
+  # (`TENANT="e2e-test"`, `ACTOR="user:e2e-runner"`).
   # ==========================================================================
   server:
     build:
@@ -38,6 +39,7 @@ services:
       - "-addr=:50051"
       - "-data-dir=/var/lib/entdb"
       - "-wal-backend=memory"
+      - "-seed-profile=e2e"
       - "-seed-tenant=e2e-test"
     # No HEALTHCHECK in the distroless image (no shell, no grpc probe
     # binary baked in). The test runner retries its own connect with
