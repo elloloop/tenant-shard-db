@@ -78,10 +78,7 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
-	"fmt"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -259,14 +256,5 @@ func isValidActorString(s string) bool {
 	}
 }
 
-// newIdempotencyKey returns a fresh hex-encoded random key for a WAL
-// event. 16 bytes (= 32 hex chars) is collision-free for the lifetime
-// of the system. Mirrors the Python uuid.uuid4().hex pattern used at
-// grpc_server.py:797 for ExecuteAtomic and similar WAL writers.
-func newIdempotencyKey() (string, error) {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", fmt.Errorf("rand: %w", err)
-	}
-	return hex.EncodeToString(buf[:]), nil
-}
+// newIdempotencyKey lives in helpers.go (consolidated in the round-3
+// Wave-2 dedupe).

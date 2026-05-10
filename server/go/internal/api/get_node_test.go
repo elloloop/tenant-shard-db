@@ -53,9 +53,9 @@ func newGetNodeStore(t *testing.T) *store.CanonicalStore {
 	return cs
 }
 
-// seedNode is a small builder that opens the tenant + creates a node.
+// seedNodeForGet is a small builder that opens the tenant + creates a node.
 // Returns the created node so tests can pin created_at / updated_at.
-func seedNode(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, owner string, payload map[string]any) *store.Node {
+func seedNodeForGet(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, owner string, payload map[string]any) *store.Node {
 	t.Helper()
 	ctx := context.Background()
 	if err := cs.OpenTenant(ctx, tenantID); err != nil {
@@ -89,7 +89,7 @@ func TestGetNode_HappyRoundTrip(t *testing.T) {
 	const tenantID = "tenant-a"
 	const nodeID = "node-1"
 
-	created := seedNode(t, cs, tenantID, nodeID, "user:alice", map[string]any{
+	created := seedNodeForGet(t, cs, tenantID, nodeID, "user:alice", map[string]any{
 		"1": "alice@example.com",
 		"2": "hashed-password-blob",
 	})
@@ -189,7 +189,7 @@ func TestGetNode_NoPermission(t *testing.T) {
 	if err := gs.AddTenantMember(ctx, tenantID, "alice", "owner"); err != nil {
 		t.Fatalf("AddTenantMember: %v", err)
 	}
-	seedNode(t, cs, tenantID, nodeID, "user:alice", nil)
+	seedNodeForGet(t, cs, tenantID, nodeID, "user:alice", nil)
 
 	srv := api.New(api.WithStore(cs), api.WithGlobalStore(gs))
 	_, err := srv.GetNode(ctx, &pb.GetNodeRequest{
@@ -229,7 +229,7 @@ func TestGetNode_PayloadIsIDKeyedOnWire(t *testing.T) {
 	const tenantID = "tenant-a"
 	const nodeID = "node-1"
 
-	seedNode(t, cs, tenantID, nodeID, "user:alice", map[string]any{
+	seedNodeForGet(t, cs, tenantID, nodeID, "user:alice", map[string]any{
 		"1": "alice@example.com",
 		"2": "hashed-password",
 	})

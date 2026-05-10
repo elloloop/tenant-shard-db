@@ -50,8 +50,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -188,21 +186,27 @@ func (s *Server) SetLegalHold(
 		if req.GetEnabled() {
 			op["reason"] = "SetLegalHold RPC"
 		}
-		ev := wal.Event{
-			TenantID:       req.GetTenantId(),
-			Actor:          trusted.String(),
-			IdempotencyKey: newIdempotencyKey(),
-			TsMs:           time.Now().UnixMilli(),
-			Ops:            []map[string]any{op},
-		}
-		value, encErr := ev.Encode()
-		if encErr == nil {
-			headers := map[string][]byte{
-				wal.HeaderIdempotencyKey: []byte(ev.IdempotencyKey),
+		// Best-effort WAL audit row. Failures here are not surfaced
+		// to the client — the synchronous SetTenantStatus above is the
+		// authoritative side effect. An idempotency-key alloc failure
+		// (crypto/rand error, vanishingly rare) skips the append; the
+		// status flip still stands.
+		if idempKey, keyErr := newIdempotencyKey(); keyErr == nil {
+			ev := wal.Event{
+				TenantID:       req.GetTenantId(),
+				Actor:          trusted.String(),
+				IdempotencyKey: idempKey,
+				TsMs:           time.Now().UnixMilli(),
+				Ops:            []map[string]any{op},
 			}
-			// Best-effort: failures are not surfaced to the client.
-			// Audit row in WAL is the immutable record (CLAUDE.md §2).
-			_, _ = s.producer.Append(ctx, setLegalHoldWALTopic, req.GetTenantId(), value, headers)
+			value, encErr := ev.Encode()
+			if encErr == nil {
+				headers := map[string][]byte{
+					wal.HeaderIdempotencyKey: []byte(ev.IdempotencyKey),
+				}
+				// Audit row in WAL is the immutable record (CLAUDE.md §2).
+				_, _ = s.producer.Append(ctx, setLegalHoldWALTopic, req.GetTenantId(), value, headers)
+			}
 		}
 	}
 
@@ -212,17 +216,8 @@ func (s *Server) SetLegalHold(
 	}, nil
 }
 
-// newIdempotencyKey produces a random hex string suitable for use as
-// the WAL idempotency-key header. Mirrors the uuid4-hex shape Python
-// uses; uniqueness is the only contract.
-func newIdempotencyKey() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// Fall back to a time-based key if crypto/rand is unavailable
-		// (extremely rare; the kernel CSPRNG is always seeded by the
-		// time userland code runs). The applier dedupes on the key,
-		// not on its randomness, so this is acceptable.
-		return time.Now().Format("20060102T150405.000000000")
-	}
-	return hex.EncodeToString(b[:])
-}
+// newIdempotencyKey lives in helpers.go (consolidated in the round-3
+// Wave-2 dedupe). Its signature is now (string, error); the
+// time-based fallback this file previously used has been dropped — a
+// crypto/rand failure is vanishingly rare and the best-effort WAL
+// append above simply skips the audit row in that case.

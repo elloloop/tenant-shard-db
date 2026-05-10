@@ -401,14 +401,7 @@ func TestSearchNodes_TypeWithNoSearchableFields(t *testing.T) {
 	}
 }
 
-// nodeIDs is a tiny diagnostic helper for assertion messages.
-func nodeIDs(ns []*pb.Node) []string {
-	out := make([]string, 0, len(ns))
-	for _, n := range ns {
-		out = append(out, n.GetNodeId())
-	}
-	return out
-}
+// nodeIDs lives in helpers_external_test.go.
 
 // codeOf extracts a grpc code from err for compact assertions.
 func codeOf(err error) codes.Code {

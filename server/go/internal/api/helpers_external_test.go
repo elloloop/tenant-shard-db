@@ -8,6 +8,7 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
+	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
 
 func newGlobalStore(t *testing.T) *globalstore.GlobalStore {
@@ -30,4 +31,16 @@ func withTrustedUser(ctx context.Context, subject string) context.Context {
 		Method:  auth.MethodSession,
 		Subject: subject,
 	})
+}
+
+// nodeIDs flattens a []*pb.Node to its node_id slice, preserving
+// order. Shared diagnostic helper used by the get_nodes and
+// search_nodes assertion blocks (consolidated in the round-3 Wave-2
+// dedupe — the two parallel PRs each declared a private copy).
+func nodeIDs(ns []*pb.Node) []string {
+	out := make([]string, 0, len(ns))
+	for _, n := range ns {
+		out = append(out, n.GetNodeId())
+	}
+	return out
 }

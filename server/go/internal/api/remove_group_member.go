@@ -59,8 +59,6 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"time"
@@ -242,15 +240,5 @@ func (s *Server) RemoveGroupMember(
 	return &pb.GroupMemberResponse{Success: found}, nil
 }
 
-// newIdempotencyKey returns a 128-bit hex-encoded random idempotency
-// key for the WAL Append. The producer's dedupe identity is
-// (topic, key, idempotency_key); a fresh key per RPC means every
-// distinct RemoveGroupMember invocation lands a distinct WAL record
-// even when the (group, member) pair repeats.
-func newIdempotencyKey() (string, error) {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", fmt.Errorf("RemoveGroupMember: idempotency key: %w", err)
-	}
-	return hex.EncodeToString(buf[:]), nil
-}
+// newIdempotencyKey lives in helpers.go (consolidated in the round-3
+// Wave-2 dedupe).
