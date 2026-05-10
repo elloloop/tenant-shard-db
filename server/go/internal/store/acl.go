@@ -210,6 +210,73 @@ func (s *CanonicalStore) RemoveGroupMember(ctx context.Context, tenantID, groupI
 	return existed, err
 }
 
+// IsGroupMember reports whether (group_id, member_actor_id) is a row in
+// group_users for tenantID. Used by the RemoveGroupMember handler to
+// snapshot `found` before the WAL append (the applier owns the actual
+// DELETE; the handler returns the pre-read membership state to the
+// caller as the response.success flag, mirroring Python's pre-WAL
+// canonical_store return value).
+func (s *CanonicalStore) IsGroupMember(ctx context.Context, tenantID, groupID, memberActorID string) (bool, error) {
+	db, err := s.db(tenantID)
+	if err != nil {
+		return false, err
+	}
+	var one int
+	row := db.QueryRowContext(ctx,
+		`SELECT 1 FROM group_users WHERE group_id = ? AND member_actor_id = ? LIMIT 1`,
+		groupID, memberActorID,
+	)
+	if err := row.Scan(&one); err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("store: is group member: %w", err)
+	}
+	return true, nil
+}
+
+// GroupNodeAccess is one node_access row keyed by a group subject.
+// Returned by ListNodeAccessForGroup; the caller uses this to drive the
+// shared_index cascade in RemoveGroupMember.
+type GroupNodeAccess struct {
+	NodeID     string
+	Permission string
+}
+
+// ListNodeAccessForGroup returns the (node_id, permission) rows where
+// actor_id == groupID and actor_type == "group". Mirrors
+// canonical_store.py:_sync_list_node_access_for_group used by
+// RemoveGroupMember to snapshot which shared_index rows to delete BEFORE
+// the membership delete (per spec ordering invariant: read after delete
+// observes the already-removed edge and undercounts).
+func (s *CanonicalStore) ListNodeAccessForGroup(ctx context.Context, tenantID, groupID string) ([]GroupNodeAccess, error) {
+	db, err := s.db(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.QueryContext(ctx,
+		`SELECT node_id, permission FROM node_access
+		 WHERE actor_id = ? AND actor_type = 'group'`,
+		groupID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("store: list node access for group: %w", err)
+	}
+	defer rows.Close()
+	out := []GroupNodeAccess{}
+	for rows.Next() {
+		var e GroupNodeAccess
+		if err := rows.Scan(&e.NodeID, &e.Permission); err != nil {
+			return nil, fmt.Errorf("store: scan node_access for group: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: iterate node_access for group: %w", err)
+	}
+	return out, nil
+}
+
 func intsOrEmpty(s []int32) []int32 {
 	if s == nil {
 		return []int32{}
