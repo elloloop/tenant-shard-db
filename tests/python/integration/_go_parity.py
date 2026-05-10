@@ -23,10 +23,58 @@ from __future__ import annotations
 # contract case for that RPC runs against the Go subprocess; non-
 # membership means it is skipped (not failed) when target=go.
 #
-# The registry is intentionally empty at Wave 2 start. Each subsequent
-# Wave 2 / Wave 3 PR lands one or more RPC names here together with
-# the Go handler.
-GO_IMPLEMENTED: set[str] = set()
+# Wave 2 consolidation: all 44 EntDBService RPCs now have Go-side
+# handlers merged on main. Membership here flips the contract suite
+# to exercise the Go binary for every RPC when ENTDB_SERVER_TARGET=go.
+# Wire-shape parity is best-effort at this point; any behavioural
+# divergences from the Python reference implementation become visible
+# as test failures and are tracked as follow-ups (see EPIC #407).
+GO_IMPLEMENTED: set[str] = {
+    "AddGroupMember",
+    "AddTenantMember",
+    "ArchiveTenant",
+    "CancelUserDeletion",
+    "ChangeMemberRole",
+    "CreateTenant",
+    "CreateUser",
+    "DelegateAccess",
+    "DeleteUser",
+    "ExecuteAtomic",
+    "ExportUserData",
+    "FreezeUser",
+    "GetConnectedNodes",
+    "GetEdgesFrom",
+    "GetEdgesTo",
+    "GetMailbox",
+    "GetNode",
+    "GetNodeByKey",
+    "GetNodes",
+    "GetReceiptStatus",
+    "GetSchema",
+    "GetTenant",
+    "GetTenantMembers",
+    "GetTenantQuota",
+    "GetUser",
+    "GetUserTenants",
+    "Health",
+    "ListMailboxUsers",
+    "ListSharedWithMe",
+    "ListTenants",
+    "ListUsers",
+    "QueryNodes",
+    "RemoveGroupMember",
+    "RemoveTenantMember",
+    "RevokeAccess",
+    "RevokeAllUserAccess",
+    "SearchMailbox",
+    "SearchNodes",
+    "SetLegalHold",
+    "ShareNode",
+    "TransferOwnership",
+    "TransferUserContent",
+    "UpdateUser",
+    "WaitForOffset",
+}
 
 
 def is_go_implemented(rpc_name: str) -> bool:
