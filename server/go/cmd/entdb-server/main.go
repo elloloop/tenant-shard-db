@@ -21,7 +21,9 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/testseed"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -31,6 +33,11 @@ func main() {
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory (only one supported in Wave 1)")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
+	// --seed-tenant is a test-only flag honoured by the cross-impl
+	// contract harness (docs/go-port/shared/test-harness.md). When set,
+	// the binary pre-creates a tenant + alice/bob users + the seed node
+	// the contract suite expects to find. Empty disables seeding.
+	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant + contract-fixture state before serving")
 	flag.Parse()
 
 	lis, err := net.Listen("tcp", *addr)
@@ -39,6 +46,21 @@ func main() {
 	}
 
 	srvOpts := []api.Option{}
+
+	// Schema registry. Populated below when --seed-tenant is set so the
+	// contract suite's GetSchema/ExecuteAtomic asserts hold; left empty
+	// otherwise (production wiring lands in a later wave once the loader
+	// hook is connected to a config source).
+	registry := schema.NewRegistry()
+	if *seedTenant != "" {
+		if err := testseed.RegisterContractSchema(registry); err != nil {
+			log.Fatalf("entdb-server: register contract schema: %v", err)
+		}
+	}
+	if _, err := registry.Freeze(); err != nil {
+		log.Fatalf("entdb-server: freeze registry: %v", err)
+	}
+	srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
 
 	// Per-tenant canonical store (optional in Wave-1; if data-dir is
 	// unset, RPCs will be served as Unimplemented anyway and the
@@ -49,7 +71,7 @@ func main() {
 		applier   *apply.Applier
 	)
 	if *dataDir != "" {
-		canonical, err = store.New(store.Options{RootDir: *dataDir, WALMode: true})
+		canonical, err = store.New(store.Options{RootDir: *dataDir, WALMode: true, Registry: registry})
 		if err != nil {
 			log.Fatalf("entdb-server: open canonical store: %v", err)
 		}
@@ -99,6 +121,20 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Test-only seed: contract harness boots the binary with
+	// --seed-tenant <id> and expects the tenant + contract fixture state
+	// to be queryable before the first RPC arrives. Skipped silently
+	// when the flag is empty.
+	if *seedTenant != "" {
+		if canonical == nil || global == nil {
+			log.Fatalf("entdb-server: --seed-tenant requires --data-dir")
+		}
+		if err := testseed.SeedTenant(ctx, global, canonical, *seedTenant); err != nil {
+			log.Fatalf("entdb-server: seed tenant %q: %v", *seedTenant, err)
+		}
+		log.Printf("entdb-server: seeded tenant %q (alice=owner, bob=member, seed node + receipt)", *seedTenant)
+	}
 
 	// Run the applier in a background goroutine. Halt-on-poison errors
 	// surface here; the supervisor (this loop) logs and shuts down.
