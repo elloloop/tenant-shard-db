@@ -17,20 +17,9 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/tenant"
 )
-
-func newGlobalStore(t *testing.T) *globalstore.GlobalStore {
-	t.Helper()
-	gs, err := globalstore.New(globalstore.Options{DataDir: t.TempDir(), WALMode: true})
-	if err != nil {
-		t.Fatalf("globalstore.New: %v", err)
-	}
-	t.Cleanup(func() { _ = gs.Close() })
-	return gs
-}
 
 // TestGetMailbox_HappyPath: with a registered tenant, the stub
 // returns an empty, well-formed response — `items == []`,
