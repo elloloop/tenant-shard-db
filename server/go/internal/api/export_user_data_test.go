@@ -29,19 +29,6 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
-// newCanonicalStore returns a tmpdir-backed *store.CanonicalStore. Used
-// by the cross-tenant ExportUserData tests so each one gets a fresh
-// per-tenant SQLite tree on disk.
-func newCanonicalStore(t *testing.T) *store.CanonicalStore {
-	t.Helper()
-	cs, err := store.New(store.Options{RootDir: t.TempDir(), WALMode: true})
-	if err != nil {
-		t.Fatalf("store.New: %v", err)
-	}
-	t.Cleanup(func() { _ = cs.Close() })
-	return cs
-}
-
 // seedAliceNode creates a single owner-matching node in `tenant` with
 // owner_actor=user:alice. Returns the node id so callers can assert on
 // the bundle contents.

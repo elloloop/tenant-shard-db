@@ -9,6 +9,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 func newGlobalStore(t *testing.T) *globalstore.GlobalStore {
@@ -19,6 +20,19 @@ func newGlobalStore(t *testing.T) *globalstore.GlobalStore {
 	}
 	t.Cleanup(func() { _ = gs.Close() })
 	return gs
+}
+
+// newCanonicalStore returns a tmpdir-backed *store.CanonicalStore. Used
+// by the cross-tenant ExportUserData tests so each one gets a fresh
+// per-tenant SQLite tree on disk.
+func newCanonicalStore(t *testing.T) *store.CanonicalStore {
+	t.Helper()
+	cs, err := store.New(store.Options{RootDir: t.TempDir(), WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	return cs
 }
 
 // withTrustedUser returns a ctx that carries the given subject as the
