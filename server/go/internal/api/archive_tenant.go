@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// ArchiveTenant RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// Spec: docs/go-port/rpcs/ArchiveTenant.md.
+//
+// Wire contract: proto/entdb/v1/entdb.proto:120 (rpc), :890-898 (messages).
+// Reference Python: server/python/entdb_server/api/grpc_server.py:2397-2440.
+//
+// Behavioural parity with Python is preserved deliberately, including the
+// known gap below. The handler:
+//
+//   - Returns UNIMPLEMENTED when global_store is not wired (parity with
+//     `grpc_server.py:2406-2409`).
+//   - Returns INVALID_ARGUMENT for empty actor / tenant_id (`:2411-2414`).
+//   - Resolves the trusted actor via auth.Authoritative (CLAUDE.md
+//     trusted-actor invariant — see docs/go-port/shared/auth-interceptor.md).
+//   - Wave-2 narrowing: only system: / admin: actors may archive. The
+//     Python handler additionally lets the tenant "owner" archive after a
+//     member-role lookup (`:2421-2427`); the Go port restricts this to
+//     admin-only for now. The owner branch will land alongside the WAL-
+//     first restoration (see "Known gaps" below).
+//   - Calls globalstore.SetTenantStatus(tenant_id, "archived") synchronously
+//     and returns success=true iff the row existed. Re-archiving an already-
+//     archived tenant is idempotent and returns success=true (the UPDATE
+//     still matches the row) — pinned by spec "Open questions" item 6.
+//   - Returns OK + success=false + error="Tenant not found" when the row is
+//     missing (`:2431-2433`). Asymmetric error contract preserved.
+//
+// Known gaps (preserved for parity, NOT fixed in this PR):
+//
+//  1. No WAL append. CLAUDE.md invariant #1 says every mutation flows
+//     through the WAL → Applier → SQLite. The Python handler does a direct
+//     globalstore SQLite UPDATE (a long-standing gap also called out in the
+//     spec). The WAL-first restoration for tenant-archive is in scope of a
+//     future PR — it requires a new applier op `archive_tenant` which the
+//     Wave-2 applier does not yet handle. See PLAN.md §6.
+//  2. No archiver / cold-storage handoff, no member or API-key revocation.
+//     Mirrors Python's no-op-after-flag behaviour.
+//  3. Legal-hold collision: `archived` and `legal_hold` share one status
+//     column. Spec "Open questions" item 1 flags this. We do not gate on
+//     current status here — Python doesn't either.
+
+package api
+
+import (
+	"context"
+	"time"
+
+	"google.golang.org/grpc/codes"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
+	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+)
+
+const archiveTenantMethod = "ArchiveTenant"
+
+// ArchiveTenant flips tenant_registry.status to 'archived' for a given
+// tenant. See file header for the full contract.
+func (s *Server) ArchiveTenant(
+	ctx context.Context,
+	req *pb.ArchiveTenantRequest,
+) (*pb.ArchiveTenantResponse, error) {
+	start := time.Now()
+	status := "ok"
+	defer func() {
+		metrics.RecordGRPCRequest(archiveTenantMethod, status, time.Since(start))
+	}()
+
+	// Optional-store guard. Mirrors Python `:2406-2409` which aborts with
+	// UNIMPLEMENTED when the global_store dep is not configured.
+	if s.global == nil {
+		status = "error"
+		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
+	}
+
+	// Required-arg validation. Empty actor / tenant_id surface as
+	// INVALID_ARGUMENT before any privilege decision (parity with
+	// `:2411-2414`). We MUST validate the wire actor non-empty even though
+	// the trusted actor below comes from the interceptor — this is a
+	// wire-contract pin (test_grpc_contract.py:690-693).
+	if req.GetActor() == "" {
+		status = "error"
+		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
+	}
+	if req.GetTenantId() == "" {
+		status = "error"
+		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
+	}
+
+	// Resolve the trusted actor. The wire `actor` field is UNTRUSTED — we
+	// rebind to the interceptor-bound identity before any authz decision.
+	// In no-auth deployments / unit tests with no Identity on ctx, the
+	// claimed actor is returned as-is (auth.Authoritative documented
+	// fallback) — matching the Python ContextVar fall-through.
+	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+
+	// Wave-2 narrowing: admin-only. The Python handler also allows the
+	// tenant owner via a member-role lookup; we defer that branch until
+	// the WAL-first restoration lands (see file header gap #1).
+	if !trusted.IsAdmin() && !trusted.IsSystem() {
+		status = "error"
+		return nil, errs.Errorf(codes.PermissionDenied,
+			"Only tenant owner can archive a tenant")
+	}
+
+	// Synchronous archive: direct global_store UPDATE. No WAL append today
+	// — see file header gap #1.
+	updated, err := s.global.SetTenantStatus(ctx, req.GetTenantId(), "archived")
+	if err != nil {
+		// Mirrors Python's broad except (`:2437-2440`): swallow as
+		// OK + success=false. Note: this leaks the Go error string to
+		// the wire. Spec "Open questions" item 5 flags this; matching
+		// Python parity for now.
+		return &pb.ArchiveTenantResponse{Success: false, Error: err.Error()}, nil
+	}
+	if !updated {
+		// Tenant id not found in registry. Asymmetric contract: OK +
+		// success=false rather than a NOT_FOUND status code (parity
+		// with `:2431-2433`).
+		return &pb.ArchiveTenantResponse{Success: false, Error: "Tenant not found"}, nil
+	}
+	return &pb.ArchiveTenantResponse{Success: true}, nil
+}
