@@ -134,3 +134,16 @@ func (s *CanonicalStore) now() int64 { return s.nowFn() }
 // configured. Used by callers that need to look up field metadata
 // outside of the lazy-index hook.
 func (s *CanonicalStore) Registry() *schema.Registry { return s.registry }
+
+// AdminDB returns the per-tenant *sql.DB handle for tenantID. The
+// tenant must already be open (call OpenTenant first). Intended ONLY
+// for the apply package's acl-readers adapter (server/go/internal/apply
+// /acladapter.go) — it needs ad-hoc reads against node_access /
+// group_users that don't have a dedicated public method on this store.
+//
+// Production code outside the apply package should use the typed
+// helpers (GetNode, QueryNodes, …); reaching for AdminDB elsewhere is
+// a code smell.
+func (s *CanonicalStore) AdminDB(tenantID string) (*sql.DB, error) {
+	return s.db(tenantID)
+}
