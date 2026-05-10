@@ -93,7 +93,7 @@ func (s *Server) ChangeMemberRole(
 		callerRole, err := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
 			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
-			return nil, err
+			return nil, errs.Errorf(codes.Internal, "list tenant members: %v", err)
 		}
 		if callerRole != "owner" && callerRole != "admin" {
 			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
@@ -143,24 +143,4 @@ func (s *Server) ChangeMemberRole(
 
 	metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "ok", time.Since(start))
 	return &pb.ChangeMemberRoleResponse{Success: true}, nil
-}
-
-// lookupMemberRole returns the trusted caller's role within tenantID, or
-// the empty string if no membership row exists. Errors from the
-// globalstore are surfaced as codes.Internal — mirrors how the Python
-// handler lets a SQLite error bubble through the unconditional catch.
-func (s *Server) lookupMemberRole(ctx context.Context, tenantID, userID string) (string, error) {
-	if userID == "" {
-		return "", nil
-	}
-	members, err := s.global.GetTenantMembers(ctx, tenantID)
-	if err != nil {
-		return "", errs.Errorf(codes.Internal, "list tenant members: %v", err)
-	}
-	for _, m := range members {
-		if m.UserID == userID {
-			return m.Role, nil
-		}
-	}
-	return "", nil
 }

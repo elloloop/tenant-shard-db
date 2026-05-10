@@ -21,21 +21,10 @@ import (
 	"google.golang.org/grpc/codes"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
-
-// withTrustedUser returns a ctx that carries the given subject as the
-// trusted user identity, mirroring what the auth interceptor sets on
-// every authenticated request.
-func withTrustedUser(ctx context.Context, subject string) context.Context {
-	return auth.WithIdentity(ctx, auth.Identity{
-		Method:  auth.MethodSession,
-		Subject: subject,
-	})
-}
 
 // TestGetTenantQuota_Member_HappyPath: a tenant member with role=member
 // can read the quota dashboard; configured cfg + usage round-trip into

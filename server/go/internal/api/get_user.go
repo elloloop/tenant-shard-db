@@ -43,7 +43,6 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
@@ -110,20 +109,4 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 		Found: true,
 		User:  userToProto(user),
 	}, nil
-}
-
-// userToProto mirrors `_user_dict_to_proto` in the Python handler
-// (server/python/entdb_server/api/grpc_server.py:2088-...). NULL columns
-// land as Go zero values via globalstore.User's plain-string fields,
-// which marshal to the proto's empty-string defaults -- the same shape
-// Python emits when it stringifies a None.
-func userToProto(u *globalstore.User) *pb.UserInfo {
-	return &pb.UserInfo{
-		UserId:    u.UserID,
-		Email:     u.Email,
-		Name:      u.Name,
-		Status:    u.Status,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
-	}
 }
