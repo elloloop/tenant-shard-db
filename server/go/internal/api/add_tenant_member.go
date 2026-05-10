@@ -162,21 +162,3 @@ func (s *Server) AddTenantMember(
 
 	return &pb.TenantMemberResponse{Success: true}, nil
 }
-
-// lookupMemberRole returns the role string for (tenantID, userID), or
-// "" if no membership exists. O(N) in the tenant's member count to
-// stay in lock-step with the Python _get_member_role implementation
-// (grpc_server.py:2290-2296). A dedicated MemberRole helper in
-// globalstore is tracked as a follow-up in the port spec.
-func (s *Server) lookupMemberRole(ctx context.Context, tenantID, userID string) (string, error) {
-	members, err := s.global.GetTenantMembers(ctx, tenantID)
-	if err != nil {
-		return "", err
-	}
-	for _, m := range members {
-		if m.UserID == userID {
-			return m.Role, nil
-		}
-	}
-	return "", nil
-}

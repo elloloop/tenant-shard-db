@@ -31,7 +31,6 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
@@ -96,21 +95,4 @@ func (s *Server) ListUsers(
 		out = append(out, userToProto(r))
 	}
 	return &pb.ListUsersResponse{Users: out}, nil
-}
-
-// userToProto maps a globalstore.User row to its proto wire form,
-// mirroring _user_dict_to_proto at grpc_server.py:2088-2097. A nil row
-// yields a zero-value UserInfo so callers never panic on missing data.
-func userToProto(u *globalstore.User) *pb.UserInfo {
-	if u == nil {
-		return &pb.UserInfo{}
-	}
-	return &pb.UserInfo{
-		UserId:    u.UserID,
-		Email:     u.Email,
-		Name:      u.Name,
-		Status:    u.Status,
-		CreatedAt: u.CreatedAt,
-		UpdatedAt: u.UpdatedAt,
-	}
 }

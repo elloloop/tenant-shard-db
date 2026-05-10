@@ -14,19 +14,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
-
-// withTrustedUser stamps a verified user identity onto ctx so the
-// handler's auth.Authoritative call returns the trusted Actor — the
-// only way a unit test can drive the post-#168 trusted-actor pattern.
-func withTrustedUser(ctx context.Context, subject string) context.Context {
-	return auth.WithIdentity(ctx, auth.Identity{
-		Method:  auth.MethodOAuth,
-		Subject: subject,
-	})
-}
 
 // TestUpdateUser_Self_HappyPath: alice updates her own row (only
 // `name` set; truthy-only gating means `email` and `status` are not
