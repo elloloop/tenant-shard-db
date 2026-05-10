@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 )
 
 // Node is the in-Go representation of one row of the `nodes` table.
@@ -521,6 +523,138 @@ func (s *CanonicalStore) ListOwnedNodeIDs(ctx context.Context, tenantID, ownerAc
 		return nil, fmt.Errorf("store: ListOwnedNodeIDs rows: %w", err)
 	}
 	return ids, nil
+}
+
+// TenantExportNode is one row in the per-tenant export bundle assembled
+// by ExportUserData. Mirrors the dict shape returned by Python
+// _sync_export_user_data (canonical_store.py:5223-5234):
+//
+//	{ tenant_id, node_id, type_id, payload, created_at, updated_at,
+//	  owner_actor, data_policy }
+//
+// `Payload` is field-id-keyed (CLAUDE.md invariant #6) — the JSON
+// returned to the client preserves the on-disk shape verbatim.
+type TenantExportNode struct {
+	TenantID   string         `json:"tenant_id"`
+	NodeID     string         `json:"node_id"`
+	TypeID     int32          `json:"type_id"`
+	Payload    map[string]any `json:"payload"`
+	CreatedAt  int64          `json:"created_at"`
+	UpdatedAt  int64          `json:"updated_at"`
+	OwnerActor string         `json:"owner_actor"`
+	DataPolicy string         `json:"data_policy"`
+}
+
+// TenantExport is the per-tenant slice of the cross-tenant
+// ExportUserData bundle. Mirrors `{tenant_id, nodes}` returned by
+// canonical_store.export_user_data_for_tenant (canonical_store.py:5236).
+type TenantExport struct {
+	TenantID string             `json:"tenant_id"`
+	Nodes    []TenantExportNode `json:"nodes"`
+}
+
+// ExportUserData collects every node in `tenantID` that the caller
+// owns or is the subject of, excluding `data_policy=audit` types.
+// Port of canonical_store.py:_sync_export_user_data (5174-5236).
+//
+// `principal` is the per-tenant principal form (`user:<id>`). `reg` is
+// the schema registry used for data-policy / subject-field lookups; nil
+// is permitted and triggers the same fall-back as Python's KeyError
+// branch (DataPolicyPersonal, no subject field).
+//
+// The returned `Nodes` slice is non-nil even when empty — JSON consumers
+// expect `[]`, not `null`, to match the Python `json.dumps([])` shape.
+func (s *CanonicalStore) ExportUserData(
+	ctx context.Context,
+	tenantID, principal string,
+	reg *schema.Registry,
+) (TenantExport, error) {
+	out := TenantExport{TenantID: tenantID, Nodes: []TenantExportNode{}}
+	db, err := s.db(tenantID)
+	if err != nil {
+		return out, err
+	}
+	rows, err := db.QueryContext(ctx, `
+		SELECT node_id, type_id, payload_json,
+		       created_at, updated_at, owner_actor
+		FROM nodes WHERE tenant_id = ?`,
+		tenantID,
+	)
+	if err != nil {
+		return out, fmt.Errorf("store: ExportUserData: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			nodeID, payloadJSON, owner string
+			typeID                     int32
+			createdAt, updatedAt       int64
+		)
+		if err := rows.Scan(&nodeID, &typeID, &payloadJSON, &createdAt, &updatedAt, &owner); err != nil {
+			return out, fmt.Errorf("store: ExportUserData scan: %w", err)
+		}
+
+		// Schema lookups: missing type → PERSONAL, no subject field.
+		// Mirrors the KeyError fallback at canonical_store.py:5206-5208.
+		var (
+			policy       schema.DataPolicy = schema.DataPolicyPersonal
+			subjectField string
+		)
+		if reg != nil {
+			if nt := reg.NodeTypeByID(typeID); nt != nil {
+				policy = reg.DataPolicyOf(typeID)
+				subjectField = reg.SubjectField(typeID)
+			}
+		}
+
+		// AUDIT records are NOT subject-access-requestable (ADR-004).
+		if policy == schema.DataPolicyAudit {
+			continue
+		}
+
+		payload := map[string]any{}
+		if payloadJSON != "" {
+			// Best-effort parse: a malformed payload becomes {} rather
+			// than failing the whole export — matches Python's
+			// json.JSONDecodeError swallow at canonical_store.py:5212-5213.
+			_ = json.Unmarshal([]byte(payloadJSON), &payload)
+		}
+
+		isOwner := owner == principal
+		isSubject := false
+		if subjectField != "" {
+			// Latent-bug parity: Python compares payload[subject_field]
+			// to the *user_id* (bare, e.g. "alice"), not the principal
+			// (`user:alice`). See canonical_store.py:5216 and the spec's
+			// Open Question #6. We replicate exactly: strip the
+			// `user:` prefix from `principal` before comparing.
+			subjectID := principal
+			if len(subjectID) > 5 && subjectID[:5] == "user:" {
+				subjectID = subjectID[5:]
+			}
+			if v, ok := payload[subjectField]; ok && v == subjectID {
+				isSubject = true
+			}
+		}
+		if !(isOwner || isSubject) {
+			continue
+		}
+
+		out.Nodes = append(out.Nodes, TenantExportNode{
+			TenantID:   tenantID,
+			NodeID:     nodeID,
+			TypeID:     typeID,
+			Payload:    payload,
+			CreatedAt:  createdAt,
+			UpdatedAt:  updatedAt,
+			OwnerActor: owner,
+			DataPolicy: string(policy),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return out, fmt.Errorf("store: ExportUserData rows: %w", err)
+	}
+	return out, nil
 }
 
 // isUniqueViolation reports whether err is a SQLite UNIQUE-constraint
