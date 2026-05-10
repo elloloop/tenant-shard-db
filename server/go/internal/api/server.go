@@ -10,6 +10,7 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/tenant"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
@@ -33,6 +34,7 @@ type Server struct {
 	producer wal.Producer
 	sharding *tenant.Sharding
 	region   string
+	registry *schema.Registry
 }
 
 // Option is a functional-options configurator for New.
@@ -66,6 +68,15 @@ func WithSharding(sh *tenant.Sharding) Option {
 // disables region pinning (tenant.Options{}.ServedRegion == "").
 func WithRegion(region string) Option {
 	return func(srv *Server) { srv.region = region }
+}
+
+// WithSchemaRegistry wires the process-wide *schema.Registry. Read-only
+// RPCs in Wave 2 (GetSchema, ExecuteAtomic schema_fingerprint check,
+// query handlers translating field names) all dereference this handle.
+// The registry is typically Freeze()'d before the server starts serving
+// (CLAUDE.md schema invariant), so post-boot reads are lock-free.
+func WithSchemaRegistry(r *schema.Registry) Option {
+	return func(srv *Server) { srv.registry = r }
 }
 
 // New constructs a Server. All RPCs return Unimplemented in Wave 1;
