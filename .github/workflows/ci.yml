@@ -58,6 +58,7 @@ jobs:
             schema:
               - 'server/python/entdb_server/schema/**'
               - 'proto/entdb/v1/**.proto'
+              - 'proto/console/v1/**.proto'
               - 'sdk/python/entdb_sdk/schema*'
               - '.schema-snapshot.json'
               - '.github/workflows/ci.yml'
@@ -185,6 +186,37 @@ jobs:
         working-directory: server/go
         run: go test ./...
 
+  # Drift guard for the checked-in Go server proto stubs. Regenerates
+  # both surfaces (entdb.v1 + console.v1) from the .proto sources and
+  # fails if the working tree differs from what's committed. Triggered
+  # whenever Go server sources OR the wire protos change.
+  go-server-proto-drift:
+    name: Go Server Proto Drift Guard
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.schema == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
+      - uses: bufbuild/buf-setup-action@v1
+        with:
+          version: '1.66.0'
+
+      - name: Regenerate server proto stubs
+        run: |
+          buf generate --template server/go/buf.gen.yaml
+          buf generate --template server/go/buf.gen.console.yaml
+
+      - name: Fail on drift
+        run: |
+          if ! git diff --exit-code -- server/go/internal/pb/; then
+            echo "::error::server/go/internal/pb/ is out of date — run 'cd server/go && go generate ./...' and commit the result"
+            exit 1
+          fi
+
   docker-build:
     name: Build Docker Image
     runs-on: ubuntu-latest
@@ -234,7 +266,7 @@ jobs:
     name: All Checks Passed
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, type-check, unit-tests, integration-tests, schema-compat, go-server-build, docker-build, e2e-tests, security-scan]
+    needs: [lint, type-check, unit-tests, integration-tests, schema-compat, go-server-build, go-server-proto-drift, docker-build, e2e-tests, security-scan]
     steps:
       - name: Verify required checks
         env:

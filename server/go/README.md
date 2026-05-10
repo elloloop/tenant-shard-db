@@ -18,7 +18,8 @@ server/go/
     api/                   — gRPC service implementation (EntDBService)
     apply/                 — WAL consumer ("Applier") — empty in Phase 0
     auth/                  — auth interceptor + trusted-actor plumbing — empty in Phase 0
-    pb/                    — generated protobuf + gRPC stubs (checked in)
+    pb/                    — generated protobuf + gRPC stubs for entdb.v1 (checked in)
+      consolev1/           — generated stubs for console.v1 (checked in)
     wal/                   — WAL producers + backends — empty in Phase 0
   buf.gen.yaml             — proto codegen template (used by `buf generate`)
   go.mod                   — module: github.com/elloloop/tenant-shard-db/server/go
@@ -54,13 +55,24 @@ CI runs the same as the `go-server-build` job.
 ## Regenerating proto stubs
 
 ```bash
-# from repo root
-buf generate --template server/go/buf.gen.yaml proto/entdb/v1
+# from server/go
+go generate ./...
 ```
 
-This rewrites everything under `server/go/internal/pb/`. The
-generated files are checked in — regenerate only when the proto
-changes, and commit the diff.
+This runs both buf templates from the repository root:
+
+```bash
+buf generate --template server/go/buf.gen.yaml          # entdb.v1
+buf generate --template server/go/buf.gen.console.yaml  # console.v1
+```
+
+`entdb.proto` lands in `server/go/internal/pb/` (package `pb`);
+`console.proto` lands in `server/go/internal/pb/consolev1/` (package
+`consolev1`) and re-uses the entdb message types via the
+`Mentdb.proto=…` plugin opt. The generated files are checked in —
+regenerate only when the proto changes, and commit the diff. CI's
+`Go Server Proto Drift Guard` job re-runs the same templates on
+every PR and fails if the working tree differs from what's committed.
 
 ## What lives here vs. what doesn't
 
