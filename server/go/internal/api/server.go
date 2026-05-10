@@ -6,9 +6,12 @@
 package api
 
 import (
+	"context"
+
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/tenant"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -28,6 +31,8 @@ type Server struct {
 	store    *store.CanonicalStore
 	global   *globalstore.GlobalStore
 	producer wal.Producer
+	sharding *tenant.Sharding
+	region   string
 }
 
 // Option is a functional-options configurator for New.
@@ -50,6 +55,19 @@ func WithWALProducer(p wal.Producer) Option {
 	return func(srv *Server) { srv.producer = p }
 }
 
+// WithSharding wires the per-node tenant-ownership/redirect config the
+// tenant gate consults on every RPC. A nil value is the single-node
+// default — every tenant is owned by this node (see tenant.Sharding).
+func WithSharding(sh *tenant.Sharding) Option {
+	return func(srv *Server) { srv.sharding = sh }
+}
+
+// WithRegion wires the region this node is configured to serve. Empty
+// disables region pinning (tenant.Options{}.ServedRegion == "").
+func WithRegion(region string) Option {
+	return func(srv *Server) { srv.region = region }
+}
+
 // New constructs a Server. All RPCs return Unimplemented in Wave 1;
 // dependencies wired via opts are stored for use by Wave-2 handlers as
 // they land.
@@ -59,4 +77,14 @@ func New(opts ...Option) *Server {
 		o(s)
 	}
 	return s
+}
+
+// checkTenant is the per-handler tenant gate wrapper. It exists so
+// Wave-2 RPCs can write a single line at the top of their handler
+// instead of repeating the dependency-passing dance, and so the gate
+// has exactly one call shape across the server (mirrors the Python
+// `await self._check_tenant(...)` convention at
+// api/grpc_server.py:362).
+func (s *Server) checkTenant(ctx context.Context, tenantID string) error {
+	return tenant.CheckTenant(ctx, tenantID, s.global, s.sharding, tenant.Options{ServedRegion: s.region})
 }
