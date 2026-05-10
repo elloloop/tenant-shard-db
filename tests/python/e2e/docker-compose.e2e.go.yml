@@ -1,0 +1,65 @@
+version: "3.8"
+
+# =============================================================================
+# EntDB E2E Test Environment — Go server target
+# =============================================================================
+#
+# Parallel compose file to docker-compose.e2e.yml, but the server is the
+# Go reimplementation (Dockerfile.go). The Go server today only supports
+# the in-memory WAL backend (no Kafka/S3 wiring yet), so this stack is
+# infra-free — just the server + the test runner.
+#
+# Wave 5 (EPIC #407): this enables ENTDB_SERVER_TARGET=go in
+# tests/python/e2e/run-e2e.sh. Behavioural divergences vs the Python
+# server are EXPECTED in this PR — see the Wave-5 PR body for the
+# enumerated pass/fail breakdown. Closing those divergences is Wave 6.
+#
+# Usage:
+#   ENTDB_SERVER_TARGET=go tests/python/e2e/run-e2e.sh --logs
+#
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # EntDB Server (Go binary)
+  #
+  # `--seed-tenant=e2e-test` pre-creates the tenant + alice/bob users +
+  # seed node so RPCs can target it without an out-of-band bootstrap
+  # (matches what the cross-impl contract harness does for the Python
+  # in-process fixture — see tests/python/integration/conftest.py).
+  # ==========================================================================
+  server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile.go
+      target: server
+    image: entdb-server-go:test
+    command:
+      - "-addr=:50051"
+      - "-data-dir=/var/lib/entdb"
+      - "-wal-backend=memory"
+      - "-seed-tenant=e2e-test"
+    # No HEALTHCHECK in the distroless image (no shell, no grpc probe
+    # binary baked in). The test runner retries its own connect with
+    # MAX_RETRIES so a TCP-ready server is sufficient.
+
+  # ==========================================================================
+  # E2E Test Runner — identical to the Python-target stack.
+  # ==========================================================================
+  e2e-tests:
+    build:
+      context: ../../..
+      dockerfile: tests/python/e2e/Dockerfile.e2e
+    environment:
+      - ENTDB_HOST=server
+      - ENTDB_PORT=50051
+      - ENTDB_TENANT=e2e-test
+      - ENTDB_SERVER_TARGET=go
+    depends_on:
+      - server
+    volumes:
+      - ../../tests/e2e:/app/tests/e2e:ro
+
+networks:
+  default:
+    name: entdb-e2e-go-network

@@ -6,12 +6,19 @@
 # This script runs the end-to-end test suite in Docker.
 #
 # Usage:
-#   ./tests/e2e/run-e2e.sh
+#   ./tests/python/e2e/run-e2e.sh                            # Python server (default)
+#   ENTDB_SERVER_TARGET=go ./tests/python/e2e/run-e2e.sh     # Go server (Wave-5)
 #
 # Options:
 #   --no-cache    Rebuild containers without cache
 #   --keep        Keep containers running after tests
 #   --logs        Show server logs on failure
+#
+# Environment:
+#   ENTDB_SERVER_TARGET   "python" (default) or "go". Selects which
+#                         server compose file is used. The Go target
+#                         uses Dockerfile.go (CGO-free distroless) and
+#                         the in-memory WAL — no Redpanda/MinIO.
 #
 # =============================================================================
 
@@ -19,7 +26,21 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-COMPOSE_FILE="$SCRIPT_DIR/docker-compose.e2e.yml"
+
+ENTDB_SERVER_TARGET="${ENTDB_SERVER_TARGET:-python}"
+
+case "$ENTDB_SERVER_TARGET" in
+    python)
+        COMPOSE_FILE="$SCRIPT_DIR/docker-compose.e2e.yml"
+        ;;
+    go)
+        COMPOSE_FILE="$SCRIPT_DIR/docker-compose.e2e.go.yml"
+        ;;
+    *)
+        echo "ERROR: ENTDB_SERVER_TARGET must be 'python' or 'go' (got '$ENTDB_SERVER_TARGET')"
+        exit 2
+        ;;
+esac
 
 # Parse arguments
 NO_CACHE=""
@@ -41,7 +62,7 @@ for arg in "$@"; do
 done
 
 echo "=============================================="
-echo "EntDB E2E Test Suite"
+echo "EntDB E2E Test Suite (target=$ENTDB_SERVER_TARGET)"
 echo "=============================================="
 echo ""
 
@@ -54,12 +75,22 @@ docker compose -f "$COMPOSE_FILE" build $NO_CACHE
 
 echo ""
 echo "[2/3] Starting infrastructure..."
-docker compose -f "$COMPOSE_FILE" up -d redpanda minio
-docker compose -f "$COMPOSE_FILE" up -d minio-init
-docker compose -f "$COMPOSE_FILE" up -d server
 
-echo "Waiting for server to be healthy..."
-docker compose -f "$COMPOSE_FILE" up -d --wait server
+if [ "$ENTDB_SERVER_TARGET" = "go" ]; then
+    # Go server has no Kafka/S3 dependencies (in-memory WAL only) and
+    # the distroless image carries no healthcheck binary; the test
+    # runner retries its own connect, so plain `up -d` is enough.
+    docker compose -f "$COMPOSE_FILE" up -d server
+    echo "Waiting briefly for Go server to bind its listener..."
+    sleep 3
+else
+    docker compose -f "$COMPOSE_FILE" up -d redpanda minio
+    docker compose -f "$COMPOSE_FILE" up -d minio-init
+    docker compose -f "$COMPOSE_FILE" up -d server
+
+    echo "Waiting for server to be healthy..."
+    docker compose -f "$COMPOSE_FILE" up -d --wait server
+fi
 
 echo ""
 echo "[3/4] Running e2e tests..."
