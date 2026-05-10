@@ -1,0 +1,527 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+
+// W2 — ExecuteAtomic RPC (Python -> Go server port, EPIC #407).
+//
+// Spec: docs/go-port/rpcs/ExecuteAtomic.md. This is the central write
+// path for the entire system: every mutation enters via this handler,
+// is appended to the WAL, and is later materialised into per-tenant
+// SQLite by the applier. Source-of-truth Python:
+// server/python/entdb_server/api/grpc_server.py:620-828.
+//
+// CLAUDE.md invariants enforced here:
+//
+//	#1 — All writes go through the WAL. The handler MUST NOT touch
+//	     SQLite for mutations; producer.Append is the single ingress.
+//	#6 — Field IDs, not names, on disk. The wire-side Struct payloads
+//	     for create_node.data / update_node.patch are translated to
+//	     id-keyed maps via payload.StructToPayload before WAL append.
+//
+// Key behaviours (pinned by the Python contract tests, see spec §
+// "Contract tests"):
+//
+//   - The wire-claimed actor (req.context.actor) is UNTRUSTED. The
+//     handler resolves the trusted identity via auth.Authoritative and
+//     immediately rebinds the local variable; the persisted WAL event
+//     records the trusted actor only. Privilege-escalation pin.
+//   - Schema-fingerprint mismatch is in-band: success=false,
+//     error_code="SCHEMA_MISMATCH", gRPC status remains OK. NOT an
+//     abort. Pinned by test_grpc_schema_mismatch_metric.py.
+//   - WAL append failure is in-band: success=false,
+//     error_code="INTERNAL", gRPC status remains OK.
+//   - Empty create_node.id is server-filled with a UUIDv4 BEFORE WAL
+//     append so replays read the same id off the log (determinism).
+//   - The receipt is built post-append and returned with
+//     applied_status=PENDING; if wait_applied is true, we block on
+//     store.WaitForOffset until the applier catches up or the timeout
+//     elapses, at which point applied_status flips to APPLIED.
+
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/google/uuid"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/types/known/structpb"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
+	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
+)
+
+const (
+	executeAtomicMethod    = "ExecuteAtomic"
+	executeAtomicDefaultMs = 30_000
+
+	// Internal op-string constants. Mirror the Python applier dispatch
+	// keys at apply/applier.py:929-1248. Kept local rather than imported
+	// from apply to avoid pulling that package's heavyweight deps into
+	// the api binary just for two strings.
+	opCreateNode = "create_node"
+	opUpdateNode = "update_node"
+	opDeleteNode = "delete_node"
+	opCreateEdge = "create_edge"
+	opDeleteEdge = "delete_edge"
+)
+
+// ExecuteAtomic implements entdb.v1.EntDBService/ExecuteAtomic.
+func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest) (*pb.ExecuteAtomicResponse, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() { metrics.RecordGRPCRequest(executeAtomicMethod, outcome, time.Since(start)) }()
+
+	if s.producer == nil || s.topic == "" {
+		outcome = "error"
+		return nil, errs.Errorf(codes.Unimplemented, "ExecuteAtomic: WAL producer not configured")
+	}
+
+	rctx := req.GetContext()
+	tenantID := rctx.GetTenantId()
+
+	// Tenant gate: sharding ownership, existence, region pin.
+	if err := s.checkTenant(ctx, tenantID); err != nil {
+		outcome = "error"
+		return nil, err
+	}
+
+	// Required-field validation. Order matches Python at grpc_server.py:632-637.
+	if tenantID == "" {
+		outcome = "error"
+		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
+	}
+	if rctx.GetActor() == "" {
+		outcome = "error"
+		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
+	}
+	if len(req.GetOperations()) == 0 {
+		outcome = "error"
+		return nil, errs.Errorf(codes.InvalidArgument, "operations list is empty")
+	}
+
+	// Trusted-actor chokepoint. The wire-claimed actor is fed in as the
+	// fallback for the no-interceptor path; when the AuthInterceptor
+	// populated ctx, that identity wins regardless. Rebind the local var
+	// — never re-read req.GetContext().GetActor() past this line.
+	// (PR #168 invariant; pinned by test_privilege_escalation.py:266,287.)
+	trustedActor := auth.Authoritative(ctx, auth.ParseActor(rctx.GetActor()))
+
+	// Idempotency key — server-generated UUIDv4 if empty
+	// (grpc_server.py:648). Generated here so retries in the in-band
+	// INTERNAL path can still observe a stable receipt.
+	idem := req.GetIdempotencyKey()
+	if idem == "" {
+		idem = uuid.NewString()
+	}
+
+	// Schema fingerprint check. In-band failure when the request claims a
+	// fingerprint that disagrees with the server's. NOT an abort.
+	// Pinned by test_grpc_schema_mismatch_metric.py:51-90.
+	srvFP := ""
+	if s.registry != nil {
+		srvFP = s.registry.Fingerprint()
+	}
+	if reqFP := req.GetSchemaFingerprint(); reqFP != "" && srvFP != "" && reqFP != srvFP {
+		outcome = "error"
+		return &pb.ExecuteAtomicResponse{
+			Success:   false,
+			Error:     fmt.Sprintf("Schema mismatch: server has %s", srvFP),
+			ErrorCode: "SCHEMA_MISMATCH",
+		}, nil
+	}
+
+	// Translate proto operations to internal id-keyed shape. This is the
+	// CLAUDE.md invariant #6 chokepoint: name-keyed Structs become
+	// id-keyed payload maps before they reach the WAL.
+	ops, err := s.convertOperations(req.GetOperations())
+	if err != nil {
+		outcome = "error"
+		return nil, err
+	}
+
+	// Tenant-membership + role + status check. Best-effort: skipped when
+	// no globalstore is wired (single-node bring-up / no-auth tests),
+	// matching the Python `if self.global_store is not None` guard.
+	hasDelete := false
+	for _, op := range ops {
+		switch op["op"].(string) {
+		case opDeleteNode, opDeleteEdge:
+			hasDelete = true
+		}
+	}
+	if err := s.checkTenantWriteAccess(ctx, tenantID, trustedActor, hasDelete); err != nil {
+		outcome = "error"
+		return nil, err
+	}
+
+	// Server-fill empty create_node IDs and collect created_node_ids in
+	// op order. Generated BEFORE WAL append so replays read the same
+	// IDs off the log (determinism).
+	createdNodeIDs := make([]string, 0)
+	for _, op := range ops {
+		if op["op"] != opCreateNode {
+			continue
+		}
+		id, _ := op["id"].(string)
+		if id == "" {
+			id = uuid.NewString()
+			op["id"] = id
+		}
+		createdNodeIDs = append(createdNodeIDs, id)
+	}
+
+	// Build the WAL event. The persisted actor is the trusted identity,
+	// not the wire claim — audit-truth invariant (grpc_server.py:780).
+	event := wal.Event{
+		TenantID:          tenantID,
+		Actor:             trustedActor.String(),
+		IdempotencyKey:    idem,
+		SchemaFingerprint: srvFP,
+		TsMs:              time.Now().UnixMilli(),
+		Ops:               ops,
+	}
+	payloadBytes, err := json.Marshal(event)
+	if err != nil {
+		outcome = "error"
+		return &pb.ExecuteAtomicResponse{
+			Success:   false,
+			Error:     fmt.Sprintf("encode event: %v", err),
+			ErrorCode: "INTERNAL",
+		}, nil
+	}
+
+	// Append to WAL. Partition key = tenant_id so all of a tenant's
+	// events land on one partition (in-order replay).
+	headers := map[string][]byte{
+		wal.HeaderIdempotencyKey: []byte(idem),
+	}
+	pos, err := s.producer.Append(ctx, s.topic, tenantID, payloadBytes, headers)
+	if err != nil {
+		// In-band INTERNAL channel — gRPC status stays OK, error_code
+		// signals failure. Mirrors grpc_server.py:818-825.
+		outcome = "error"
+		return &pb.ExecuteAtomicResponse{
+			Success:   false,
+			Error:     err.Error(),
+			ErrorCode: "INTERNAL",
+		}, nil
+	}
+
+	posStr := streamPosString(pos)
+	receipt := &pb.Receipt{
+		TenantId:       tenantID,
+		IdempotencyKey: idem,
+		StreamPosition: posStr,
+	}
+
+	// Optional apply-wait. Default 30s when wait_timeout_ms is zero
+	// (grpc_server.py:805). Honour ctx cancellation.
+	appliedStatus := pb.ReceiptStatus_RECEIPT_STATUS_PENDING
+	if req.GetWaitApplied() && posStr != "" && s.store != nil {
+		timeoutMs := int32(executeAtomicDefaultMs)
+		if v := req.GetWaitTimeoutMs(); v > 0 {
+			timeoutMs = v
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
+		if err := s.store.WaitForOffset(waitCtx, tenantID, parseStreamOffset(posStr)); err == nil {
+			appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
+		}
+		cancel()
+	}
+
+	return &pb.ExecuteAtomicResponse{
+		Success:        true,
+		Receipt:        receipt,
+		CreatedNodeIds: createdNodeIDs,
+		AppliedStatus:  appliedStatus,
+	}, nil
+}
+
+// streamPosString renders a wal.StreamPos in the wire form the client
+// expects. Returns "" when pos is the zero value (no record was
+// written) — matches the Python `str(stream_pos) if stream_pos else ""`
+// behaviour at grpc_server.py:799.
+func streamPosString(pos wal.StreamPos) string {
+	if pos == (wal.StreamPos{}) {
+		return ""
+	}
+	return pos.String()
+}
+
+// convertOperations translates wire Operations to internal id-keyed
+// op dicts. The schema-aware translation lives in
+// payload.StructToPayload; everything else is mechanical proto-to-map
+// boilerplate matching grpc_server.py:_convert_operations.
+func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any, error) {
+	out := make([]map[string]any, 0, len(operations))
+
+	for _, op := range operations {
+		switch v := op.GetOp().(type) {
+		case *pb.Operation_CreateNode:
+			create := v.CreateNode
+			if create.GetTypeId() == 0 {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"create_node: type_id is required")
+			}
+			data, err := s.translatePayload(create.GetTypeId(), create.GetData())
+			if err != nil {
+				return nil, err
+			}
+			internal := map[string]any{
+				"op":      opCreateNode,
+				"type_id": int(create.GetTypeId()),
+				"data":    data,
+			}
+			if id := create.GetId(); id != "" {
+				internal["id"] = id
+			}
+			if acl := convertACL(create.GetAcl()); len(acl) > 0 {
+				internal["acl"] = acl
+			}
+			if alias := create.GetAs(); alias != "" {
+				internal["as"] = alias
+			}
+			if fanout := create.GetFanoutTo(); len(fanout) > 0 {
+				internal["fanout_to"] = fanout
+			}
+			if name := storageModeName(create.GetStorageMode()); name != "TENANT" {
+				internal["storage_mode"] = name
+			}
+			if tgt := create.GetTargetUserId(); tgt != "" {
+				internal["target_user_id"] = tgt
+			}
+			out = append(out, internal)
+
+		case *pb.Operation_UpdateNode:
+			upd := v.UpdateNode
+			if upd.GetTypeId() == 0 {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"update_node: type_id is required")
+			}
+			if upd.GetId() == "" {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"update_node: id is required")
+			}
+			patch, err := s.translatePayload(upd.GetTypeId(), upd.GetPatch())
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, map[string]any{
+				"op":      opUpdateNode,
+				"type_id": int(upd.GetTypeId()),
+				"id":      upd.GetId(),
+				"patch":   patch,
+			})
+
+		case *pb.Operation_DeleteNode:
+			del := v.DeleteNode
+			if del.GetTypeId() == 0 {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"delete_node: type_id is required")
+			}
+			if del.GetId() == "" {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"delete_node: id is required")
+			}
+			out = append(out, map[string]any{
+				"op":      opDeleteNode,
+				"type_id": int(del.GetTypeId()),
+				"id":      del.GetId(),
+			})
+
+		case *pb.Operation_CreateEdge:
+			ce := v.CreateEdge
+			if ce.GetEdgeId() == 0 {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"create_edge: edge_id is required")
+			}
+			out = append(out, map[string]any{
+				"op":      opCreateEdge,
+				"edge_id": int(ce.GetEdgeId()),
+				"from":    convertNodeRef(ce.GetFrom()),
+				"to":      convertNodeRef(ce.GetTo()),
+				"props":   structToMap(ce.GetProps()),
+			})
+
+		case *pb.Operation_DeleteEdge:
+			de := v.DeleteEdge
+			if de.GetEdgeId() == 0 {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"delete_edge: edge_id is required")
+			}
+			out = append(out, map[string]any{
+				"op":      opDeleteEdge,
+				"edge_id": int(de.GetEdgeId()),
+				"from":    convertNodeRef(de.GetFrom()),
+				"to":      convertNodeRef(de.GetTo()),
+			})
+		}
+	}
+	return out, nil
+}
+
+// translatePayload runs name->id translation for a create_node.data /
+// update_node.patch struct. The schema-less / unknown-type-id path is a
+// digit-key passthrough (matches Python's lazy schema fallthrough).
+//
+// The result is stored under the op's "data"/"patch" key as
+// map[string]any with stringified field-id keys — that's the shape the
+// applier (which JSON-decodes events from the WAL) consumes.
+func (s *Server) translatePayload(typeID int32, st *structpb.Struct) (map[string]any, error) {
+	typeName := ""
+	if s.registry != nil {
+		if nt := s.registry.NodeTypeByID(typeID); nt != nil {
+			typeName = nt.Name
+		}
+	}
+	idKeyed, err := payload.StructToPayload(s.registry, typeName, st)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]any, len(idKeyed))
+	for fid, val := range idKeyed {
+		out[fmt.Sprintf("%d", fid)] = val
+	}
+	return out, nil
+}
+
+// convertACL maps the wire AclEntry slice to the internal list-of-dicts
+// the applier expects. Mirrors _acl_proto_to_list in the Python handler.
+func convertACL(in []*pb.AclEntry) []any {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]any, 0, len(in))
+	for _, e := range in {
+		principal := e.GetGrantee()
+		if principal == "" {
+			principal = e.GetPrincipal()
+		}
+		entry := map[string]any{
+			"principal":  principal,
+			"permission": e.GetPermission(),
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+// convertNodeRef mirrors grpc_server.py:_convert_node_ref. The
+// applier's create_edge / delete_edge handlers consume one of three
+// shapes: a bare id string, {"ref": <alias>}, or
+// {"type_id": N, "id": "X"}.
+func convertNodeRef(ref *pb.NodeRef) any {
+	if ref == nil {
+		return nil
+	}
+	switch r := ref.GetRef().(type) {
+	case *pb.NodeRef_Id:
+		return r.Id
+	case *pb.NodeRef_AliasRef:
+		return map[string]any{"ref": r.AliasRef}
+	case *pb.NodeRef_Typed:
+		return map[string]any{
+			"type_id": int(r.Typed.GetTypeId()),
+			"id":      r.Typed.GetId(),
+		}
+	}
+	return nil
+}
+
+// storageModeName mirrors the proto-enum -> internal-string map at
+// grpc_server.py:865-871.
+func storageModeName(m pb.StorageMode) string {
+	switch m {
+	case pb.StorageMode_STORAGE_MODE_USER_MAILBOX:
+		return "USER_MAILBOX"
+	case pb.StorageMode_STORAGE_MODE_PUBLIC:
+		return "PUBLIC"
+	default:
+		return "TENANT"
+	}
+}
+
+// structToMap is the lightweight egress for edge props (which are NOT
+// field-id-translated — edges store free-form properties, not declared
+// schema fields). Returns nil for a nil Struct so the JSON-encoded WAL
+// event omits the field cleanly.
+func structToMap(s *structpb.Struct) map[string]any {
+	if s == nil || len(s.GetFields()) == 0 {
+		return nil
+	}
+	return s.AsMap()
+}
+
+// checkTenantWriteAccess enforces the membership + role + tenant-status
+// gates the Python handler runs at grpc_server.py:758. Skips when no
+// globalstore is wired or the actor is system/admin (which bypass
+// per grpc_server.py:498-499).
+//
+// The gate is finer-grained than CheckTenant: where CheckTenant only
+// asserts existence + ownership + region, this asserts the caller is
+// allowed to WRITE to this tenant in its current status.
+func (s *Server) checkTenantWriteAccess(ctx context.Context, tenantID string, actor auth.Actor, hasDelete bool) error {
+	if s.global == nil {
+		return nil
+	}
+	// system: / admin: actors bypass tenant-membership checks.
+	if actor.IsSystem() || actor.IsAdmin() {
+		return nil
+	}
+
+	t, err := s.global.GetTenant(ctx, tenantID)
+	if err != nil {
+		return errs.Errorf(codes.Internal, "tenant lookup: %v", err)
+	}
+	if t == nil {
+		return errs.Errorf(codes.NotFound, "tenant %q does not exist", tenantID)
+	}
+	switch t.Status {
+	case "deleted":
+		return errs.Errorf(codes.NotFound, "tenant %q does not exist", tenantID)
+	case "archived":
+		return errs.Errorf(codes.FailedPrecondition,
+			"tenant %q is archived; writes are disabled", tenantID)
+	case "legal_hold":
+		if hasDelete {
+			return errs.Errorf(codes.FailedPrecondition,
+				"tenant %q is on legal hold; deletes are disabled", tenantID)
+		}
+	}
+
+	if !actor.IsUser() {
+		// Group / unknown actor kinds aren't valid callers — the Python
+		// gate rejects these at the auth layer; here we treat them as
+		// non-members for defensive parity.
+		return errs.Errorf(codes.PermissionDenied,
+			"actor %q is not a member of tenant %q", actor.String(), tenantID)
+	}
+
+	members, err := s.global.GetTenantMembers(ctx, tenantID)
+	if err != nil {
+		return errs.Errorf(codes.Internal, "membership lookup: %v", err)
+	}
+	var role string
+	for _, m := range members {
+		if m.UserID == actor.ID() {
+			role = m.Role
+			break
+		}
+	}
+	if role == "" {
+		return errs.Errorf(codes.PermissionDenied,
+			"actor %q is not a member of tenant %q", actor.String(), tenantID)
+	}
+	switch role {
+	case "viewer", "guest":
+		return errs.Errorf(codes.PermissionDenied,
+			"actor %q has role %q; writes require member/admin/owner",
+			actor.String(), role)
+	}
+	return nil
+}

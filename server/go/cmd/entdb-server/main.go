@@ -78,7 +78,7 @@ func main() {
 	if err := walImpl.Connect(context.Background()); err != nil {
 		log.Fatalf("entdb-server: wal connect: %v", err)
 	}
-	srvOpts = append(srvOpts, api.WithWALProducer(walImpl))
+	srvOpts = append(srvOpts, api.WithWALProducer(walImpl), api.WithWALTopic(*walTopic))
 
 	// Applier: only when we have a canonical store.
 	if canonical != nil {

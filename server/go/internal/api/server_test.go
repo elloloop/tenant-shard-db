@@ -12,21 +12,23 @@ import (
 
 // TestServer_UnimplementedRPC_Default pins the Wave-1 contract: any RPC
 // that hasn't been ported yet still returns codes.Unimplemented via the
-// embedded UnimplementedEntDBServiceServer. We probe `ExecuteAtomic`
-// because it's still Unimplemented as of this PR; rotate when it ships.
+// embedded UnimplementedEntDBServiceServer. We probe `DeleteUser`
+// because it's still Unimplemented as of this PR (ExecuteAtomic, the
+// previous canary, ships in this same PR). Rotate again whenever
+// DeleteUser lands.
 func TestServer_UnimplementedRPC_Default(t *testing.T) {
 	t.Parallel()
 	srv := New()
 
-	_, err := srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{})
+	_, err := srv.DeleteUser(context.Background(), &pb.DeleteUserRequest{})
 	if err == nil {
-		t.Fatalf("ExecuteAtomic: expected Unimplemented error, got nil")
+		t.Fatalf("DeleteUser: expected Unimplemented error, got nil")
 	}
 	st, ok := status.FromError(err)
 	if !ok {
-		t.Fatalf("ExecuteAtomic: error is not a grpc status: %v", err)
+		t.Fatalf("DeleteUser: error is not a grpc status: %v", err)
 	}
 	if st.Code() != codes.Unimplemented {
-		t.Fatalf("ExecuteAtomic: expected code Unimplemented, got %v", st.Code())
+		t.Fatalf("DeleteUser: expected code Unimplemented, got %v", st.Code())
 	}
 }
