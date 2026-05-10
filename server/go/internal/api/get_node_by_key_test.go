@@ -48,12 +48,12 @@ const (
 	gnbkField  = int32(1)
 )
 
-// newCanonicalStore opens a tmpdir-backed store + opens one tenant. We
+// newCanonicalStoreForTenant opens a tmpdir-backed store + opens one tenant. We
 // don't reach for a Registry — GetNodeByKey relies on the unique
 // expression index lazily created by the applier, but the SELECT works
 // without it (degrades to a scan); pure read tests don't need the
 // index for correctness.
-func newCanonicalStore(t *testing.T, tenantID string) *store.CanonicalStore {
+func newCanonicalStoreForTenant(t *testing.T, tenantID string) *store.CanonicalStore {
 	t.Helper()
 	cs, err := store.New(store.Options{
 		RootDir: t.TempDir(),
@@ -106,7 +106,7 @@ func TestGetNodeByKey_HappyRoundTrip(t *testing.T) {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	cs := newCanonicalStore(t, gnbkTenant)
+	cs := newCanonicalStoreForTenant(t, gnbkTenant)
 	seedNodeByKey(t, cs, gnbkTenant, gnbkNodeID, "user:alice",
 		map[string]any{"1": "alice@example.com"}, nil)
 
@@ -166,7 +166,7 @@ func TestGetNodeByKey_MissingKey(t *testing.T) {
 	if _, err := gs.CreateTenant(ctx, gnbkTenant, "Acme", gnbkRegion); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	cs := newCanonicalStore(t, gnbkTenant)
+	cs := newCanonicalStoreForTenant(t, gnbkTenant)
 
 	srv := api.New(
 		api.WithGlobalStore(gs),
@@ -206,7 +206,7 @@ func TestGetNodeByKey_ACLDenied(t *testing.T) {
 	if _, err := gs.CreateTenant(ctx, gnbkTenant, "Acme", gnbkRegion); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	cs := newCanonicalStore(t, gnbkTenant)
+	cs := newCanonicalStoreForTenant(t, gnbkTenant)
 
 	seedNodeByKey(t, cs, gnbkTenant, gnbkNodeID, "user:alice",
 		map[string]any{"1": "alice@example.com"},
@@ -245,7 +245,7 @@ func TestGetNodeByKey_ACLDenied(t *testing.T) {
 // non-matching value misses with (nil, nil).
 func TestGetNodeByCompositeKey_StoreLevel(t *testing.T) {
 	t.Parallel()
-	cs := newCanonicalStore(t, gnbkTenant)
+	cs := newCanonicalStoreForTenant(t, gnbkTenant)
 	ctx := context.Background()
 
 	// Seed a Task node with a (owner_id=alice, title="finish go port")
