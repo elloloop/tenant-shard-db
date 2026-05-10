@@ -142,16 +142,15 @@ jobs:
 
   # Cross-implementation contract suite — same Python tests, but the
   # gRPC server is the Go ``entdb-server`` subprocess. Each Wave-2 PR
-  # adds one RPC to ``tests/python/integration/_go_parity.py`` and
-  # the matching contract case starts running here. Until then the
-  # leg is informational (``continue-on-error: true``); Wave-3 flips
-  # it to required once ``GO_IMPLEMENTED`` covers every RPC.
+  # added one RPC to ``tests/python/integration/_go_parity.py`` and
+  # the matching contract case started running here. Wave-3 flipped
+  # this job to required now that ``GO_IMPLEMENTED`` covers every
+  # RPC — Go-server failures gate merges.
   go-server-contract:
     name: Go Server Contract
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
-    continue-on-error: true
     env:
       ENTDB_SERVER_TARGET: go
     steps:
@@ -304,7 +303,7 @@ jobs:
     name: All Checks Passed
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, type-check, unit-tests, integration-tests, schema-compat, go-server-build, go-server-proto-drift, docker-build, e2e-tests, security-scan]
+    needs: [lint, type-check, unit-tests, integration-tests, go-server-contract, schema-compat, go-server-build, go-server-proto-drift, docker-build, e2e-tests, security-scan]
     steps:
       - name: Verify required checks
         env:
