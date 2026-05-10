@@ -374,6 +374,8 @@ async def _start_go_server(tmp_path_factory) -> AsyncIterator[int]:
             str(data_dir),
             "--wal-backend",
             "memory",
+            "--seed-tenant",
+            TENANT,
         ]
         log_fh = open(log_path, "ab", buffering=0)  # noqa: SIM115 - lifetime tied to subprocess
         proc = subprocess.Popen(
