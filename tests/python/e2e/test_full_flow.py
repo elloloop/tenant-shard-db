@@ -294,15 +294,9 @@ async def test_schema_endpoint(db_client, tenant_id) -> None:
 # The single most important E2E invariant: an event-sourced DB must
 # rebuild SQLite from the WAL on restart. We write data, restart the
 # server container with ``docker compose restart server`` (the WAL
-# persists — Kafka/Redpanda for the Python target, an in-memory WAL
-# for the Go target which means *Go* recovery here only proves the
-# server boots back up cleanly), then read back through a fresh gRPC
-# connection and assert content equals what we wrote.
-#
-# When ENTDB_SERVER_TARGET=go the WAL is in-memory and survives only
-# as long as the process; the test still runs but is reduced to a
-# "server reboots cleanly" smoke test — the asserts on prior state
-# would falsely fail. Skip the post-restart read in that case.
+# persists — Kafka/Redpanda for both Python and Go targets as of Wave 9),
+# then read back through a fresh gRPC connection and assert content
+# equals what we wrote.
 
 
 @pytest.mark.timeout(300)
@@ -317,12 +311,10 @@ async def test_recovery_after_restart(
     """Write data, restart the server, read it back.
 
     The WAL is the source of truth. After ``docker compose restart
-    server`` the Python server must replay the WAL from Kafka and
+    server`` the server must replay the WAL from Kafka/Redpanda and
     serve reads for nodes that were never durably in SQLite at the
-    write moment. The Go target's in-memory WAL doesn't survive
-    process death, so we only assert the post-restart reconnect
-    succeeds there (state loss is an acknowledged Go-server gap, not
-    something this test is responsible for fixing).
+    write moment. Both Python and Go targets exercise this since
+    Wave 9 (EPIC #407) wired the Go server's WAL to Kafka via franz-go.
     """
     # Write a recognisable node first.
     marker = f"recovery-{uuid.uuid4().hex[:10]}@example.com"
@@ -353,22 +345,12 @@ async def test_recovery_after_restart(
     # Re-bind the scope against the reconnected client.
     fresh_scope = db_client.tenant(tenant_id).actor(actor)
 
-    if server_target == "go":
-        # In-memory WAL → state loss is expected. Just prove the
-        # server is responsive again.
-        health = await db_client.health()
-        assert health.get("healthy") is True
-        pytest.skip(
-            "Go server uses in-memory WAL; durability across "
-            "process restart is a Wave-9 follow-up (see PR body)."
-        )
-
-    # Python target: Kafka WAL must have been replayed by the
-    # applier, and the node must be visible again. The applier rejoins
-    # the Kafka consumer group + replays from offset 0 on boot (the
-    # data dir wasn't volumised so SQLite was wiped along with the
-    # container); the rebalance + replay can take 30-90 s on cold CI
-    # so we poll for two minutes before declaring failure.
+    # Kafka WAL must have been replayed by the applier and the node
+    # visible again. The applier rejoins the Kafka consumer group +
+    # replays from earliest / committed offset on boot; the rebalance
+    # + replay can take 30-90 s on cold CI so we poll for two minutes
+    # before declaring failure.
+    del server_target  # both targets must satisfy this contract now
     import asyncio as _asyncio
 
     deadline = time.time() + 120
