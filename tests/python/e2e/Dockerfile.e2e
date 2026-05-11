@@ -1,31 +1,59 @@
 # EntDB E2E Test Runner
 #
-# This Dockerfile builds a container that runs the e2e test suite
-# using the Python SDK to test the EntDB server.
+# This container drives the live gRPC server (Python or Go target)
+# via the Python SDK and pytest. Wave 8 of EPIC #407 switched it
+# from running ``test_e2e.py`` as a script to pytest discovery
+# across all ``test_*.py`` files in /app/tests/python/e2e — adding
+# the ported ``test_full_flow.py`` and a crash-recovery test that
+# cycles the server container via ``docker compose restart``.
 
 FROM python:3.11-slim-bookworm
 
-# Prevent Python from writing bytecode and buffering stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install dependencies
+# Runtime + test deps. docker-ce-cli + docker-compose-plugin let the
+# crash-recovery test issue ``docker compose restart server`` against
+# the bind-mounted compose file at /compose/docker-compose.yml.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir \
-    grpcio>=1.60.0 \
-    grpcio-tools>=1.60.0 \
-    aiohttp>=3.9.0
+        "grpcio>=1.60.0" \
+        "grpcio-tools>=1.60.0" \
+        "protobuf>=6.31.0" \
+        "pytest>=7.4,<9" \
+        "pytest-asyncio>=0.23,<0.25" \
+        "pytest-timeout>=2.1"
 
-# Copy SDK and generated code
+# Copy SDK (the package contains its own _generated/ subdir with the
+# protoc-generated entdb_pb2 modules, so this is sufficient — no
+# separate server-side generated dir needed).
 COPY sdk/python/entdb_sdk/ /app/entdb_sdk/
-COPY server/python/entdb_server/api/generated/ /app/entdb_server/api/generated/
 
-# Copy test files
+# Copy the e2e test directory.
 COPY tests/python/e2e/ /app/tests/python/e2e/
 
-# Set Python path
-ENV PYTHONPATH="/app:/app/sdk"
+ENV PYTHONPATH="/app:/app/tests/python/e2e"
 
-# Run the e2e tests
-CMD ["python", "/app/tests/python/e2e/test_e2e.py"]
+# Pytest-driven entry. Note: rootdir is the test directory so
+# pyproject.toml from the repo root isn't picked up — keeps the
+# container self-contained. ``-p no:cacheprovider`` avoids a stale
+# .pytest_cache from a previous run.
+CMD ["pytest", \
+     "-v", \
+     "--tb=short", \
+     "-p", "no:cacheprovider", \
+     "-o", "asyncio_mode=auto", \
+     "/app/tests/python/e2e"]

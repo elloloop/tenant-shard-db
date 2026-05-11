@@ -32,9 +32,14 @@ ENTDB_SERVER_TARGET="${ENTDB_SERVER_TARGET:-python}"
 case "$ENTDB_SERVER_TARGET" in
     python)
         COMPOSE_FILE="$SCRIPT_DIR/docker-compose.e2e.yml"
+        # Project name MUST match COMPOSE_PROJECT_NAME inside the
+        # e2e-tests container so the crash-recovery test's
+        # `docker compose restart server` finds the right container.
+        export COMPOSE_PROJECT_NAME="e2e"
         ;;
     go)
         COMPOSE_FILE="$SCRIPT_DIR/docker-compose.e2e.go.yml"
+        export COMPOSE_PROJECT_NAME="e2e-go"
         ;;
     *)
         echo "ERROR: ENTDB_SERVER_TARGET must be 'python' or 'go' (got '$ENTDB_SERVER_TARGET')"

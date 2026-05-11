@@ -109,6 +109,12 @@ services:
 
   # ==========================================================================
   # E2E Test Runner
+  #
+  # The /var/run/docker.sock + /compose bind mounts let the crash-
+  # recovery test in test_full_flow.py issue
+  #   docker compose -f /compose/docker-compose.yml restart server
+  # from inside this container. Without those mounts the recovery
+  # test self-skips with a clear reason.
   # ==========================================================================
   e2e-tests:
     build:
@@ -118,11 +124,16 @@ services:
       - ENTDB_HOST=server
       - ENTDB_PORT=50051
       - ENTDB_TENANT=e2e-test
+      - ENTDB_SERVER_TARGET=python
+      # Make `docker compose restart` inside the container target
+      # the same project the host's run-e2e.sh started.
+      - COMPOSE_PROJECT_NAME=e2e
     depends_on:
       server:
         condition: service_healthy
     volumes:
-      - ../../tests/e2e:/app/tests/e2e:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.e2e.yml:/compose/docker-compose.yml:ro
 
 networks:
   default:
