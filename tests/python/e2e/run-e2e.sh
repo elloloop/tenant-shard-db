@@ -82,9 +82,11 @@ echo ""
 echo "[2/3] Starting infrastructure..."
 
 if [ "$ENTDB_SERVER_TARGET" = "go" ]; then
-    # Go server has no Kafka/S3 dependencies (in-memory WAL only) and
-    # the distroless image carries no healthcheck binary; the test
-    # runner retries its own connect, so plain `up -d` is enough.
+    # Wave-9: Go server now uses Kafka/Redpanda as its WAL (parity with
+    # Python). MinIO isn't needed yet (no audit-export wiring in the Go
+    # tree). The distroless image carries no healthcheck binary; the
+    # test runner retries its own connect, so plain `up -d` is enough.
+    docker compose -f "$COMPOSE_FILE" up -d --wait redpanda
     docker compose -f "$COMPOSE_FILE" up -d server
     echo "Waiting briefly for Go server to bind its listener..."
     sleep 3

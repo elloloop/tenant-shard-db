@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"google.golang.org/grpc"
@@ -30,9 +31,14 @@ import (
 func main() {
 	addr := flag.String("addr", ":50051", "gRPC bind address (host:port)")
 	dataDir := flag.String("data-dir", "", "directory for per-tenant SQLite + global.db")
-	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory (only one supported in Wave 1)")
+	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
+	// Kafka/Redpanda-specific knobs. Defaults match
+	// server/python/entdb_server/wal/kafka.py + config.py (KAFKA_BROKERS
+	// etc.) so the cross-impl e2e stack can swap targets without
+	// re-jiggering compose env-vars.
+	walBrokers := flag.String("wal-brokers", "localhost:9092", "comma-separated Kafka bootstrap brokers (used when --wal-backend=kafka)")
 	// --seed-tenant is a test-only flag honoured by the cross-impl
 	// contract harness (docs/go-port/shared/test-harness.md). When set,
 	// the binary pre-creates a tenant + the actors / nodes the chosen
@@ -120,7 +126,10 @@ func main() {
 		srvOpts = append(srvOpts, api.WithGlobalStore(global))
 	}
 
-	// WAL backend wiring. Wave 1 only ships the in-memory backend.
+	// WAL backend wiring. memory: in-process, lost on restart (dev /
+	// short-running tests). kafka: Kafka/Redpanda; production-grade,
+	// survives docker compose restart, exact-parity with Python's
+	// wal/kafka.py.
 	var walImpl interface {
 		wal.Producer
 		wal.Consumer
@@ -128,8 +137,14 @@ func main() {
 	switch *walBackend {
 	case "memory":
 		walImpl = wal.NewInMemory(0)
+	case "kafka":
+		brokers := splitBrokers(*walBrokers)
+		if len(brokers) == 0 {
+			log.Fatalf("entdb-server: --wal-backend=kafka requires --wal-brokers")
+		}
+		walImpl = wal.NewKafka(wal.DefaultKafkaConfig(brokers))
 	default:
-		log.Fatalf("entdb-server: unsupported wal backend %q (only 'memory' is supported in Wave 1)", *walBackend)
+		log.Fatalf("entdb-server: unsupported wal backend %q (want memory|kafka)", *walBackend)
 	}
 	if err := walImpl.Connect(context.Background()); err != nil {
 		log.Fatalf("entdb-server: wal connect: %v", err)
@@ -216,4 +231,18 @@ func main() {
 	} else {
 		<-ctx.Done()
 	}
+}
+
+// splitBrokers parses a comma-separated broker list and returns
+// non-empty entries. Mirrors the way Python passes brokers as a single
+// string via KAFKA_BROKERS.
+func splitBrokers(s string) []string {
+	out := []string{}
+	for _, b := range strings.Split(s, ",") {
+		b = strings.TrimSpace(b)
+		if b != "" {
+			out = append(out, b)
+		}
+	}
+	return out
 }

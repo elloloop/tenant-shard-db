@@ -4,15 +4,13 @@ version: "3.8"
 # EntDB E2E Test Environment — Go server target
 # =============================================================================
 #
-# Parallel compose file to docker-compose.e2e.yml, but the server is the
-# Go reimplementation (Dockerfile.go). The Go server today only supports
-# the in-memory WAL backend (no Kafka/S3 wiring yet), so this stack is
-# infra-free — just the server + the test runner.
-#
-# Wave 5 (EPIC #407): this enables ENTDB_SERVER_TARGET=go in
-# tests/python/e2e/run-e2e.sh. Behavioural divergences vs the Python
-# server are EXPECTED in this PR — see the Wave-5 PR body for the
-# enumerated pass/fail breakdown. Closing those divergences is Wave 6.
+# Parallel compose file to docker-compose.e2e.yml, with the Go server
+# binary (Dockerfile.go) in place of the Python server. Wave 9 (EPIC #407)
+# wires the Go server to Redpanda via the franz-go-backed Kafka WAL
+# producer/consumer (see server/go/internal/wal/kafka.go), so this stack
+# now mirrors the Python e2e topology: Redpanda + persistent SQLite data
+# volume so docker compose restart can replay the WAL and rebuild
+# SQLite, exercising the test_recovery_after_restart invariant.
 #
 # Usage:
 #   ENTDB_SERVER_TARGET=go tests/python/e2e/run-e2e.sh --logs
@@ -21,13 +19,49 @@ version: "3.8"
 
 services:
   # ==========================================================================
+  # Redpanda (Kafka-compatible WAL backend)
+  #
+  # Identical configuration to docker-compose.e2e.yml so the Python and
+  # Go targets exercise the same broker behaviour. Auto-topic creation
+  # is on (default), so we do not need a topic-init sidecar.
+  # ==========================================================================
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=256M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ==========================================================================
   # EntDB Server (Go binary)
   #
   # `--seed-profile=e2e --seed-tenant=e2e-test` pre-creates the tenant,
   # the `user:e2e-runner` actor (tenant owner), and the User/Product/
-  # Order schema (typeIDs 8001/8002/8003) the e2e suite expects. This
-  # matches the actor/tenant pair hard-coded in tests/python/e2e/test_e2e.py
-  # (`TENANT="e2e-test"`, `ACTOR="user:e2e-runner"`).
+  # Order schema (typeIDs 8001/8002/8003) the e2e suite expects.
+  #
+  # --wal-backend=kafka points the WAL at Redpanda. The applier consumer
+  # group rejoins on restart and replays from the committed offset (or
+  # earliest, the first time), which is what test_recovery_after_restart
+  # depends on.
+  #
+  # The data-dir is volumised so SQLite survives `docker compose
+  # restart`. Without this the WAL replays cleanly but the rebuilt
+  # SQLite is empty until every event has been re-applied; the test
+  # then races the applier and may flake. Volumising matches the
+  # production deployment pattern (SQLite as a fast read-side cache of
+  # the WAL).
   # ==========================================================================
   server:
     build:
@@ -38,9 +72,17 @@ services:
     command:
       - "-addr=:50051"
       - "-data-dir=/var/lib/entdb"
-      - "-wal-backend=memory"
+      - "-wal-backend=kafka"
+      - "-wal-brokers=redpanda:9092"
+      - "-wal-topic=entdb-wal-e2e"
+      - "-wal-group=entdb-applier-e2e"
       - "-seed-profile=e2e"
       - "-seed-tenant=e2e-test"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+    volumes:
+      - go-server-data:/var/lib/entdb
     # No HEALTHCHECK in the distroless image (no shell, no grpc probe
     # binary baked in). The test runner retries its own connect with
     # MAX_RETRIES so a TCP-ready server is sufficient.
@@ -49,9 +91,7 @@ services:
   # E2E Test Runner — identical to the Python-target stack except for
   # the compose file path and the SERVER_TARGET env. The /var/run
   # bind mount + /compose mount let the crash-recovery test run
-  # `docker compose restart server` from inside the container; on
-  # the Go target this only proves the server boots back up because
-  # the in-memory WAL doesn't persist (see Wave-9 follow-ups in PR).
+  # `docker compose restart server` from inside the container.
   # ==========================================================================
   e2e-tests:
     build:
@@ -68,6 +108,9 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./docker-compose.e2e.go.yml:/compose/docker-compose.yml:ro
+
+volumes:
+  go-server-data:
 
 networks:
   default:
