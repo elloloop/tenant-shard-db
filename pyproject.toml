@@ -3,8 +3,9 @@
 # This file is NOT an installable package. It hosts shared dev tooling
 # config (ruff, mypy, pytest, coverage) for the polyglot workspace.
 # Installable Python packages live under:
-#   - server/python/pyproject.toml  (entdb-server, AGPL-3.0-only)
 #   - sdk/python/pyproject.toml     (entdb-sdk, MIT)
+# (The Python server was retired in Phase 4D of EPIC #407; the server
+# lives at server/go/ now.)
 
 # =============================================================================
 # Ruff (linter)
@@ -47,7 +48,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["entdb_sdk", "entdb_server"]
+known-first-party = ["entdb_sdk"]
 
 # =============================================================================
 # Mypy (type checker)
@@ -62,7 +63,7 @@ check_untyped_defs = true
 ignore_missing_imports = true
 show_error_codes = true
 strict_optional = true
-mypy_path = "server/python:sdk/python"
+mypy_path = "sdk/python"
 exclude = [
     "_generated/",
     "api/generated/",
@@ -81,30 +82,9 @@ ignore_missing_imports = true
 module = [
     "entdb_sdk._generated",
     "entdb_sdk._generated.*",
-    "entdb_server.api.generated",
-    "entdb_server.api.generated.*",
 ]
 follow_imports = "skip"
 ignore_errors = true
-
-[[tool.mypy.overrides]]
-module = [
-    "entdb_server.wal.kinesis",
-    "entdb_server.wal.kafka",
-    "entdb_server.wal.pubsub",
-    "entdb_server.wal.sqs",
-    "entdb_server.wal.servicebus",
-    "entdb_server.wal.eventhubs",
-    "entdb_server.tools.restore",
-    "entdb_server.tools.schema_cli",
-    "entdb_server.snapshot.snapshotter",
-    "entdb_server.archive.archiver",
-    "entdb_server.storage.s3",
-    "entdb_server.storage.azure_blob",
-    "entdb_server.storage.gcs",
-]
-strict_optional = false
-warn_return_any = false
 
 # =============================================================================
 # Pytest
@@ -112,7 +92,7 @@ warn_return_any = false
 [tool.pytest.ini_options]
 minversion = "7.0"
 testpaths = ["tests/python"]
-pythonpath = ["server/python", "sdk/python"]
+pythonpath = ["sdk/python"]
 python_files = ["test_*.py", "*_test.py", "bench_*.py"]
 python_functions = ["test_*", "bench_*"]
 asyncio_mode = "auto"
@@ -137,7 +117,7 @@ timeout = 60
 # Coverage
 # =============================================================================
 [tool.coverage.run]
-source = ["server/python/entdb_server", "sdk/python/entdb_sdk"]
+source = ["sdk/python/entdb_sdk"]
 branch = true
 omit = [
     "*/tests/*",
