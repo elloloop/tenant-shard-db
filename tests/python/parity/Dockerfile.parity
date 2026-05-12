@@ -1,0 +1,57 @@
+# EntDB Parity Test Runner — Phase 4A (EPIC #407)
+#
+# Container that drives the Python and Go gRPC servers in parallel
+# via the Python SDK and asserts state equivalence. Mirrors the e2e
+# Dockerfile but copies the parity test dir instead.
+#
+# Transitional: deletes alongside server/python/ in Phase 4D.
+
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# docker-ce-cli + docker-compose-plugin let the restart-parity scenario
+# issue `docker compose restart` against the bind-mounted compose file
+# at /compose/docker-compose.yml.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+       | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir \
+        "grpcio>=1.60.0" \
+        "grpcio-tools>=1.60.0" \
+        "protobuf>=6.31.0" \
+        "pytest>=7.4,<9" \
+        "pytest-asyncio>=0.23,<0.25" \
+        "pytest-timeout>=2.1"
+
+# Copy SDK (self-contained — bundles _generated/entdb_pb2.py).
+COPY sdk/python/entdb_sdk/ /app/entdb_sdk/
+
+# Copy the e2e schema (reused for parity to avoid schema-divergence
+# bugs masquerading as parity divergences) and the parity test dir.
+COPY tests/python/e2e/e2e_schema_pb2.py /app/tests/python/parity/e2e_schema_pb2.py
+COPY tests/python/parity/ /app/tests/python/parity/
+
+ENV PYTHONPATH="/app:/app/tests/python/parity"
+
+# pytest entry — rootdir is the parity dir so the repo-root
+# pyproject.toml isn't picked up. `-p no:cacheprovider` avoids a
+# stale .pytest_cache from a previous run.
+CMD ["pytest", \
+     "-v", \
+     "--tb=short", \
+     "-p", "no:cacheprovider", \
+     "-o", "asyncio_mode=auto", \
+     "/app/tests/python/parity"]
