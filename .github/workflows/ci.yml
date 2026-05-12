@@ -139,6 +139,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Always set up Go — we need it to build entdb-server (the live
+      # registry source for `--from-server`). entdb-schema itself is
+      # preferred from the released binary, but the source-build
+      # fallback also needs Go, so we set it up unconditionally to keep
+      # the YAML simple.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
+
       # Prefer the released entdb-schema binary (issue #488 AC7). Fall
       # back to source-build when no release asset is found yet. See
       # the matching block in schema-compat.yml for rationale.
@@ -155,40 +165,75 @@ jobs:
             tar -xzf entdb-schema-*-linux-amd64.tar.gz
             chmod +x entdb-schema
             mv entdb-schema /tmp/entdb-schema
-            echo "source=release" >> "$GITHUB_OUTPUT"
             /tmp/entdb-schema version
           else
             echo "::notice::No release asset found — falling back to build-from-source."
-            echo "source=source" >> "$GITHUB_OUTPUT"
+            (cd server/go && go build -o /tmp/entdb-schema ./cmd/entdb-schema)
           fi
 
-      - name: Set up Go (only when falling back to source)
-        if: steps.install.outputs.source == 'source'
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-          cache-dependency-path: server/go/go.sum
-
-      - name: Build entdb-schema from source (fallback)
-        if: steps.install.outputs.source == 'source'
+      # Build entdb-server from this PR's tree so the registry we check
+      # is the registry the PR actually ships. Mirrors the e2e/
+      # integration jobs that boot the same binary the same way.
+      - name: Build entdb-server (PR tree)
         working-directory: server/go
-        run: go build -o /tmp/entdb-schema ./cmd/entdb-schema
+        run: go build -o /tmp/entdb-server ./cmd/entdb-server
 
-      - name: Check schema compatibility against baseline
+      - name: Boot entdb-server and run schema check
         if: hashFiles('.schema-snapshot.json') != ''
         run: |
+          set -euo pipefail
+          DATA_DIR="$(mktemp -d)"
+          LOG_FILE="$(mktemp)"
+          # Boot in the background on a fixed loopback port; --wal-backend=memory
+          # avoids needing a Kafka stack just to read the schema. The
+          # --seed-profile=contract flag registers the User/Task/AssignedTo
+          # registry that matches the committed .schema-snapshot.json
+          # baseline (server/go/internal/testseed.RegisterContractSchema).
+          /tmp/entdb-server \
+            --addr 127.0.0.1:50451 \
+            --data-dir "$DATA_DIR" \
+            --wal-backend memory \
+            --seed-profile contract \
+            --seed-tenant acme \
+            > "$LOG_FILE" 2>&1 &
+          SERVER_PID=$!
+          # Be sure to clean up even on early exit.
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; echo "--- entdb-server log ---"; cat "$LOG_FILE" || true' EXIT
+
+          # Readiness: poll the gRPC port via a TCP connect. The Python
+          # conftest uses a Health RPC poll; for the CI step a TCP
+          # connect is sufficient and avoids pulling in grpc tooling.
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/50451) >/dev/null 2>&1; then
+              echo "server ready after ${i} attempts"
+              break
+            fi
+            sleep 0.5
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::entdb-server exited during boot"
+              exit 2
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "::error::entdb-server did not become ready within 30s"
+              exit 2
+            fi
+          done
+
+          # Real check: compare the live server's schema against the
+          # committed baseline. `check` exits 1 on breaking change, 0
+          # otherwise, 2 on usage / I/O error.
           set +e
-          /tmp/entdb-schema diff \
-            --old .schema-snapshot.json \
-            --new .schema-snapshot.json \
-            --format text \
-            --fail-on-breaking
+          /tmp/entdb-schema check \
+            --baseline .schema-snapshot.json \
+            --from-server 127.0.0.1:50451 \
+            --format text
           status=$?
-          if [ $status -eq 1 ] && [[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-schema-change') }}" == "true" ]]; then
+          set -e
+          if [ "$status" -eq 1 ] && [[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-schema-change') }}" == "true" ]]; then
             echo "::warning::Breaking-schema-change label present — accepting on the labelled PR."
             exit 0
           fi
-          exit $status
+          exit "$status"
 
       - name: No baseline — recommend committing one
         if: hashFiles('.schema-snapshot.json') == ''
