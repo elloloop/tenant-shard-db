@@ -29,6 +29,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/acl"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
@@ -360,6 +361,42 @@ type storeVisibilityAdapter struct {
 // VisibleNodeIDs satisfies acl.VisibilityReader.
 func (a storeVisibilityAdapter) VisibleNodeIDs(ctx context.Context, tenantID string, actorIDs []string, nodeIDs []string) (map[string]struct{}, error) {
 	return a.s.GetVisibleNodeIDs(ctx, tenantID, actorIDs, nodeIDs)
+}
+
+// aclCheck runs an ACL check via acl.Checker.Check. Handlers that
+// need ACL pre-checks (ShareNode, RevokeAccess, TransferOwnership, …)
+// call this so the (Registry, Resolver, NodeMetaReader, GrantReader)
+// wiring lives in one place.
+//
+// The Checker is constructed per call against s.store + s.global. The
+// construction itself is cheap (NewRegistry / NewResolver allocate a
+// couple of maps, the readers are pointer wrappers over the stores);
+// no SQL is issued until Check actually walks grants.
+//
+// When WithEnforcer wires a process-wide Enforcer, future iterations
+// can reuse its precomputed Registry/Resolver — for now the Enforcer
+// is a marker that ACL wiring is present; the per-call construction
+// reads the same store handles either way.
+//
+// Returns the Check result (nil on allow, errs.ErrPermission /
+// errs.ErrNotFound otherwise). When s.store is unwired the function
+// returns a sentinel error so handlers can short-circuit with their
+// own contract-shaped response.
+func (s *Server) aclCheck(ctx context.Context, req acl.CheckRequest) error {
+	if s.store == nil {
+		return errs.Errorf(codes.Unimplemented, "acl: canonical store not configured")
+	}
+	readers := &apply.StoreReaders{Canonical: s.store, Global: s.global}
+	checker, err := acl.NewChecker(acl.CheckerOptions{
+		Registry: acl.NewRegistry(),
+		Resolver: acl.NewResolver(readers),
+		Nodes:    readers,
+		Grants:   readers,
+	})
+	if err != nil {
+		return err
+	}
+	return checker.Check(ctx, req)
 }
 
 // newIdempotencyKey returns a 128-bit hex-encoded random idempotency

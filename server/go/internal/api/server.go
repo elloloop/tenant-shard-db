@@ -8,6 +8,7 @@ package api
 import (
 	"context"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/acl"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
@@ -43,6 +44,14 @@ type Server struct {
 	// has no such gate. See docs/go-port/rpcs/DeleteUser.md "Side
 	// effects" / "Open questions" §4.
 	legalHoldOnDelete bool
+
+	// aclEnforcer is the optional ACL Enforcer wired by main.go (or
+	// by tests via WithEnforcer). When nil, handlers that need ACL
+	// pre-checks fall back to the lightweight per-call construction
+	// path (see Server.aclChecker). The shared Enforcer holds the
+	// Registry + Resolver + Checker + Filter so per-server wiring is
+	// in one place; handlers prefer it when present.
+	aclEnforcer *acl.Enforcer
 }
 
 // Option is a functional-options configurator for New.
@@ -92,6 +101,15 @@ func WithRegion(region string) Option {
 // (CLAUDE.md schema invariant), so post-boot reads are lock-free.
 func WithSchemaRegistry(r *schema.Registry) Option {
 	return func(srv *Server) { srv.registry = r }
+}
+
+// WithEnforcer wires a process-wide *acl.Enforcer. Handlers that
+// need ACL pre-checks (ShareNode, RevokeAccess, TransferOwnership)
+// reach for it via s.aclEnforcer. When unset, handlers construct an
+// ad-hoc Checker on the fly using s.store + s.global as reader sources
+// — preserves Wave-2 test fixtures that wire only the stores.
+func WithEnforcer(e *acl.Enforcer) Option {
+	return func(srv *Server) { srv.aclEnforcer = e }
 }
 
 // WithLegalHoldOnDelete enables the Go-port-only legal-hold gate at
