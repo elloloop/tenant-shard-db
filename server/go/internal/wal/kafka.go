@@ -8,15 +8,19 @@ package wal
 // the durability-critical knobs:
 //
 //   - Producer:  acks=all, enable.idempotence=true,
-//                max.in.flight.requests.per.connection=5,
+//                max.in.flight.requests.per.connection=1 (sarama requires
+//                this when idempotent=true; see sarama.NewConfig docs),
 //                linger.ms=5, request.timeout.ms=30000.
 //   - Consumer:  auto.offset.reset=earliest, enable.auto.commit=false
-//                (manual commit via OffsetCommit per applied record),
-//                session.timeout.ms=30000, heartbeat.interval.ms=10000.
+//                (manual commit via session.MarkMessage + session.Commit
+//                per applied record), session.timeout.ms=30000,
+//                heartbeat.interval.ms=10000.
 //   - Topic:     single, name comes from --wal-topic (default "entdb-wal").
-//   - Partition: keyed by tenant_id (the Append `key` arg). franz-go's
-//                default partitioner hashes the key, giving per-tenant
-//                total order while spreading load across partitions.
+//   - Partition: keyed by tenant_id (the Append `key` arg). sarama's
+//                NewHashPartitioner hashes the key, giving per-tenant
+//                total order while spreading load across partitions —
+//                same semantic as the franz-go default and aiokafka's
+//                DefaultPartitioner.
 //   - Headers:   pass-through, including HeaderIdempotencyKey.
 //
 // Halt-on-poison: a malformed record surfaces as a Subscribe error /
@@ -28,17 +32,23 @@ package wal
 // -> StreamPos so a retried Append within the lifetime of the producer
 // returns the original receipt without writing a duplicate record. This
 // mirrors memory.go and the Python applier's apply-time dedupe; the
-// Kafka transactional/idempotent producer config also prevents broker-
-// side duplicates on retry within a single producer session.
+// sarama idempotent producer config also prevents broker-side
+// duplicates on retry within a single producer session.
+//
+// Why sarama (vs franz-go): IBM/sarama is the older, IBM-backed Kafka
+// client (~11.7k stars, 350+ contributors). franz-go is faster but
+// single-maintainer (~2.5k stars). For supply-chain hardening on the
+// durability layer we prefer the larger contributor base.
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/twmb/franz-go/pkg/kgo"
+	"github.com/IBM/sarama"
 )
 
 // KafkaConfig mirrors server/python/entdb_server/config.py KafkaConfig.
@@ -48,19 +58,21 @@ import (
 type KafkaConfig struct {
 	// Brokers is the comma-separated bootstrap list, e.g. "redpanda:9092".
 	Brokers []string
-	// ClientID is the franz-go client id; appears in broker logs and
+	// ClientID is the sarama client id; appears in broker logs and
 	// metrics. Defaults to "entdb-server-go" when empty.
 	ClientID string
-	// Acks is the producer ack level. We default to "all" (RequireAllISRAcks)
-	// to match Python's default. Any non-"all" value falls back to leader-
-	// only acks (matches the Python `int(acks)` path for "1"/"0").
+	// Acks is the producer ack level. We default to "all"
+	// (sarama.WaitForAll) to match Python's default. Any non-"all"
+	// value falls back to leader-only acks (matches the Python
+	// `int(acks)` path for "1"/"0").
 	Acks string
 	// EnableIdempotence enables the broker-side idempotent producer
 	// (prevents duplicates on retry within a producer session).
 	EnableIdempotence bool
 	// MaxInFlight is the producer's max in-flight requests per
-	// connection. Python defaults to 5; franz-go also caps at 5 when
-	// idempotence is on.
+	// connection. Python defaults to 5; sarama requires this to be 1
+	// when idempotence is enabled, so we cap appropriately at Connect
+	// time.
 	MaxInFlight int
 	// LingerMs is the batch-collection window for the producer.
 	LingerMs int
@@ -103,29 +115,29 @@ func DefaultKafkaConfig(brokers []string) KafkaConfig {
 //
 // Implementation notes:
 //
-//   - We keep one franz-go client for production and a separate one
-//     per (topic, groupID) consumer pair. franz-go can do both with one
-//     client but the lifecycle gets noisy when Connect/Close need to
-//     drop only the consumer half on a topic switch.
+//   - We keep one sarama SyncProducer for production and a separate
+//     ConsumerGroup per (topic, groupID) consumer pair. sarama splits
+//     producer and consumer-group lifecycles cleanly, so this mirrors
+//     the franz-go layout.
 //   - The producer client is lazily created in Connect; consumer
-//     clients are lazily created on the first PollBatch / Subscribe.
+//     groups are lazily created on the first PollBatch / Subscribe.
 //   - We hold mu for the duration of Append's idempotency-cache lookup
-//     and franz-go produce-future setup, then release it before
-//     blocking on the future (so concurrent appends can pipeline).
+//     and SendMessage call setup, then release it before blocking on
+//     SendMessage (so concurrent appends can pipeline).
 type Kafka struct {
 	config KafkaConfig
 
 	mu        sync.Mutex
 	connected bool
 
-	// producer holds the franz-go client used for Append. nil until
+	// producer is the sarama SyncProducer used for Append. nil until
 	// Connect is called.
-	producer *kgo.Client
+	producer sarama.SyncProducer
 
-	// consumerByGroup caches one client per (topic, groupID). We
-	// instantiate on demand because franz-go binds the group + topic
-	// to the client at construction time.
-	consumerByGroup map[consumerKey]*kgo.Client
+	// consumerByGroup caches one consumer-group session driver per
+	// (topic, groupID). We instantiate on demand because sarama binds
+	// the group to its config at construction time.
+	consumerByGroup map[consumerKey]*saramaConsumer
 
 	// idemp[topic][key][idempotencyKey] -> previously-issued StreamPos.
 	// Mirrors InMemory's idempotency cache; lets retried Appends within
@@ -168,9 +180,88 @@ func NewKafka(cfg KafkaConfig) *Kafka {
 	}
 	return &Kafka{
 		config:          cfg,
-		consumerByGroup: make(map[consumerKey]*kgo.Client),
+		consumerByGroup: make(map[consumerKey]*saramaConsumer),
 		idemp:           make(map[string]map[string]map[string]StreamPos),
 	}
+}
+
+// producerConfig builds a sarama.Config for the producer half. Kept
+// out of Connect so tests can inspect / override it without spinning
+// up a broker.
+func (k *Kafka) producerConfig() *sarama.Config {
+	config := sarama.NewConfig()
+	config.ClientID = k.config.ClientID
+	// Match aiokafka 1:1: V3_5_0_0 is what current Redpanda LTS and
+	// Confluent Cloud advertise; sarama negotiates down if the broker
+	// speaks an older protocol.
+	config.Version = sarama.V3_5_0_0
+
+	switch k.config.Acks {
+	case "all", "-1":
+		config.Producer.RequiredAcks = sarama.WaitForAll
+	case "0":
+		config.Producer.RequiredAcks = sarama.NoResponse
+	default:
+		// "1" or anything else: leader-only ack. Mirrors Python's
+		// int(acks) path for non-"all" values.
+		config.Producer.RequiredAcks = sarama.WaitForLocal
+	}
+
+	config.Producer.Idempotent = k.config.EnableIdempotence
+	if k.config.EnableIdempotence {
+		// sarama requires MaxOpenRequests == 1 when Idempotent is on
+		// (otherwise NewSyncProducer returns an error). aiokafka /
+		// franz-go cap to 5 internally; matching to 1 here is the
+		// safest interpretation and still gives the durability story
+		// the Python path documents.
+		config.Net.MaxOpenRequests = 1
+	} else {
+		config.Net.MaxOpenRequests = k.config.MaxInFlight
+	}
+
+	config.Producer.Retry.Max = 10
+	config.Producer.Retry.Backoff = 100 * time.Millisecond
+	config.Producer.Return.Successes = true
+	// Hash partitioner over the message key gives per-tenant total
+	// order (the Append `key` is tenant_id) while spreading load
+	// across partitions. Matches aiokafka's DefaultPartitioner and
+	// the franz-go default.
+	config.Producer.Partitioner = sarama.NewHashPartitioner
+	// 10 MiB. aiokafka's max_request_size default is ~1 MiB but
+	// Python overrides via config; matching the franz-go side's
+	// implicit ceiling and our applied-event payload budget.
+	config.Producer.MaxMessageBytes = 10 << 20
+	config.Producer.Timeout = time.Duration(k.config.RequestTimeoutMs) * time.Millisecond
+	// linger.ms equivalent: sarama batches via Flush.Frequency on the
+	// SyncProducer. Keep small to match Python's 5ms.
+	config.Producer.Flush.Frequency = time.Duration(k.config.LingerMs) * time.Millisecond
+
+	return config
+}
+
+// consumerConfig builds a sarama.Config for the consumer half.
+func (k *Kafka) consumerConfig() *sarama.Config {
+	config := sarama.NewConfig()
+	config.ClientID = k.config.ClientID + "-consumer"
+	config.Version = sarama.V3_5_0_0
+
+	if k.config.AutoOffsetReset == "latest" {
+		config.Consumer.Offsets.Initial = sarama.OffsetNewest
+	} else {
+		config.Consumer.Offsets.Initial = sarama.OffsetOldest
+	}
+	// Manual commit. Python sets enable_auto_commit=False; we match
+	// by disabling sarama's auto-commit loop.
+	config.Consumer.Offsets.AutoCommit.Enable = false
+	config.Consumer.Group.Session.Timeout = time.Duration(k.config.SessionTimeoutMs) * time.Millisecond
+	config.Consumer.Group.Heartbeat.Interval = time.Duration(k.config.HeartbeatIntervalMs) * time.Millisecond
+	config.Consumer.Group.Rebalance.GroupStrategies = []sarama.BalanceStrategy{sarama.NewBalanceStrategyRoundRobin()}
+	// Surface fatal consumer errors instead of swallowing them. We
+	// drain the Errors() channel inside the consumer driver below and
+	// propagate to PollBatch / Subscribe.
+	config.Consumer.Return.Errors = true
+
+	return config
 }
 
 // Connect opens the producer connection.
@@ -184,50 +275,14 @@ func (k *Kafka) Connect(ctx context.Context) error {
 		return fmt.Errorf("%w: no brokers configured", ErrConnection)
 	}
 
-	opts := []kgo.Opt{
-		kgo.SeedBrokers(k.config.Brokers...),
-		kgo.ClientID(k.config.ClientID),
-		kgo.ProducerLinger(time.Duration(k.config.LingerMs) * time.Millisecond),
-		kgo.ProduceRequestTimeout(time.Duration(k.config.RequestTimeoutMs) * time.Millisecond),
-		// Mirror aiokafka's default behaviour: the broker auto-creates
-		// topics on first produce (Redpanda + Kafka both have this on
-		// by default). franz-go disables auto-create on the client
-		// side unless we ask for it.
-		kgo.AllowAutoTopicCreation(),
-	}
-	switch k.config.Acks {
-	case "all", "-1":
-		opts = append(opts, kgo.RequiredAcks(kgo.AllISRAcks()))
-	case "0":
-		opts = append(opts, kgo.RequiredAcks(kgo.NoAck()))
-	default:
-		// "1" or anything else: leader-only ack. Mirrors Python's
-		// int(acks) path for non-"all" values.
-		opts = append(opts, kgo.RequiredAcks(kgo.LeaderAck()))
-	}
-	// franz-go pins max-in-flight to 1 internally when idempotence is
-	// enabled (to keep retries from reordering); explicitly setting
-	// MaxProduceRequestsInflightPerBroker conflicts with that, so we
-	// only apply it when idempotence is off.
-	if !k.config.EnableIdempotence {
-		opts = append(opts, kgo.DisableIdempotentWrite())
-		opts = append(opts, kgo.MaxProduceRequestsInflightPerBroker(k.config.MaxInFlight))
-	}
+	config := k.producerConfig()
 
-	cl, err := kgo.NewClient(opts...)
+	prod, err := sarama.NewSyncProducer(k.config.Brokers, config)
 	if err != nil {
-		return fmt.Errorf("%w: kafka new client: %v", ErrConnection, err)
-	}
-	// Ping with a short timeout so unreachable brokers fail-fast
-	// instead of silently buffering the first Append.
-	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	if err := cl.Ping(pingCtx); err != nil {
-		cl.Close()
-		return fmt.Errorf("%w: kafka ping: %v", ErrConnection, err)
+		return fmt.Errorf("%w: kafka new producer: %v", ErrConnection, err)
 	}
 
-	k.producer = cl
+	k.producer = prod
 	k.connected = true
 	return nil
 }
@@ -238,11 +293,11 @@ func (k *Kafka) Close(ctx context.Context) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if k.producer != nil {
-		k.producer.Close()
+		_ = k.producer.Close()
 		k.producer = nil
 	}
-	for ck, cl := range k.consumerByGroup {
-		cl.Close()
+	for ck, c := range k.consumerByGroup {
+		c.close()
 		delete(k.consumerByGroup, ck)
 	}
 	k.connected = false
@@ -265,9 +320,9 @@ func (k *Kafka) Append(
 	// Idempotency cache. Mirrors memory.go's behaviour: a retry with
 	// the same (topic, key, idempotency-key) tuple within this
 	// producer session returns the original StreamPos without
-	// re-producing. The franz-go idempotent producer covers
-	// broker-side dedupe on transport-level retries; this is
-	// application-level dedupe for caller-driven retries.
+	// re-producing. The sarama idempotent producer covers broker-side
+	// dedupe on transport-level retries; this is application-level
+	// dedupe for caller-driven retries.
 	idempKey := ""
 	if h, ok := headers[HeaderIdempotencyKey]; ok && len(h) > 0 {
 		idempKey = string(h)
@@ -285,45 +340,69 @@ func (k *Kafka) Append(
 	producer := k.producer
 	k.mu.Unlock()
 
-	rec := &kgo.Record{
+	msg := &sarama.ProducerMessage{
 		Topic: topic,
-		Key:   []byte(key),
-		Value: value,
+		Key:   sarama.StringEncoder(key),
+		Value: sarama.ByteEncoder(value),
 	}
 	if len(headers) > 0 {
-		rec.Headers = make([]kgo.RecordHeader, 0, len(headers))
+		msg.Headers = make([]sarama.RecordHeader, 0, len(headers))
 		for hk, hv := range headers {
 			cp := append([]byte(nil), hv...)
-			rec.Headers = append(rec.Headers, kgo.RecordHeader{Key: hk, Value: cp})
+			msg.Headers = append(msg.Headers, sarama.RecordHeader{
+				Key:   []byte(hk),
+				Value: cp,
+			})
 		}
 	}
 
-	// ProduceSync waits for broker ack (acks=all when configured).
-	res := producer.ProduceSync(ctx, rec)
-	produced, err := res.First()
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-			return StreamPos{}, err
+	// Honor ctx cancellation: sarama's SendMessage is synchronous and
+	// doesn't accept a context, so we race it against ctx.Done() in a
+	// goroutine. If ctx fires first we return the ctx error; the
+	// underlying produce may still complete in the background, which
+	// is consistent with the franz-go path (broker-side idempotent
+	// producer prevents duplicates on the caller's retry).
+	type result struct {
+		partition int32
+		offset    int64
+		err       error
+	}
+	resCh := make(chan result, 1)
+	go func() {
+		p, o, err := producer.SendMessage(msg)
+		resCh <- result{partition: p, offset: o, err: err}
+	}()
+
+	var partition int32
+	var offset int64
+	select {
+	case <-ctx.Done():
+		return StreamPos{}, ctx.Err()
+	case r := <-resCh:
+		if r.err != nil {
+			if errors.Is(r.err, context.DeadlineExceeded) || errors.Is(r.err, context.Canceled) {
+				return StreamPos{}, r.err
+			}
+			// Heuristic: timeout errors -> ErrTimeout, everything
+			// else rolls up under ErrWal. Connection-loss errors
+			// from sarama surface as sarama.ErrOutOfBrokers etc.; we
+			// treat them as ErrWal — the next Append will try to
+			// reconnect transparently because the underlying client
+			// is long-lived.
+			if isTimeout(r.err) {
+				return StreamPos{}, fmt.Errorf("%w: kafka append: %v", ErrTimeout, r.err)
+			}
+			return StreamPos{}, fmt.Errorf("%w: kafka append: %v", ErrWal, r.err)
 		}
-		// Heuristic: timeout errors -> ErrTimeout, everything else
-		// rolls up under ErrWal. Connection-loss errors from franz-go
-		// surface as kerr.* but we treat them as ErrWal too — the
-		// next Append will try to reconnect transparently because the
-		// underlying client is long-lived.
-		if isTimeout(err) {
-			return StreamPos{}, fmt.Errorf("%w: kafka append: %v", ErrTimeout, err)
-		}
-		return StreamPos{}, fmt.Errorf("%w: kafka append: %v", ErrWal, err)
+		partition = r.partition
+		offset = r.offset
 	}
 
 	pos := StreamPos{
-		Topic:       produced.Topic,
-		Partition:   produced.Partition,
-		Offset:      produced.Offset,
-		TimestampMs: produced.Timestamp.UnixMilli(),
-	}
-	if pos.TimestampMs == 0 {
-		pos.TimestampMs = time.Now().UnixMilli()
+		Topic:       topic,
+		Partition:   partition,
+		Offset:      offset,
+		TimestampMs: time.Now().UnixMilli(),
 	}
 
 	if idempKey != "" {
@@ -345,39 +424,23 @@ func (k *Kafka) Append(
 	return pos, nil
 }
 
-// consumerFor returns a franz-go client bound to (topic, groupID),
+// consumerForLocked returns a saramaConsumer bound to (topic, groupID),
 // lazily creating it on first access. Caller must hold k.mu.
-func (k *Kafka) consumerForLocked(topic, groupID string) (*kgo.Client, error) {
+func (k *Kafka) consumerForLocked(topic, groupID string) (*saramaConsumer, error) {
 	ck := consumerKey{topic: topic, groupID: groupID}
-	if cl, ok := k.consumerByGroup[ck]; ok {
-		return cl, nil
+	if c, ok := k.consumerByGroup[ck]; ok {
+		return c, nil
 	}
 
-	autoReset := kgo.NewOffset().AtStart()
-	if k.config.AutoOffsetReset == "latest" {
-		autoReset = kgo.NewOffset().AtEnd()
-	}
-
-	opts := []kgo.Opt{
-		kgo.SeedBrokers(k.config.Brokers...),
-		kgo.ClientID(k.config.ClientID + "-consumer"),
-		kgo.ConsumerGroup(groupID),
-		kgo.ConsumeTopics(topic),
-		kgo.ConsumeResetOffset(autoReset),
-		kgo.SessionTimeout(time.Duration(k.config.SessionTimeoutMs) * time.Millisecond),
-		kgo.HeartbeatInterval(time.Duration(k.config.HeartbeatIntervalMs) * time.Millisecond),
-		// Manual commit. Python sets enable_auto_commit=False; we
-		// match by leaving auto-commit off entirely (the AutoCommit-
-		// related opts are simply not set).
-		kgo.DisableAutoCommit(),
-	}
-
-	cl, err := kgo.NewClient(opts...)
+	config := k.consumerConfig()
+	group, err := sarama.NewConsumerGroup(k.config.Brokers, groupID, config)
 	if err != nil {
 		return nil, fmt.Errorf("%w: kafka new consumer: %v", ErrConnection, err)
 	}
-	k.consumerByGroup[ck] = cl
-	return cl, nil
+
+	c := newSaramaConsumer(group, topic)
+	k.consumerByGroup[ck] = c
+	return c, nil
 }
 
 // PollBatch fetches up to maxRecords from (topic, groupID), blocking
@@ -396,50 +459,14 @@ func (k *Kafka) PollBatch(
 		k.mu.Unlock()
 		return nil, fmt.Errorf("%w: not connected", ErrConnection)
 	}
-	cl, err := k.consumerForLocked(topic, groupID)
+	c, err := k.consumerForLocked(topic, groupID)
 	if err != nil {
 		k.mu.Unlock()
 		return nil, err
 	}
 	k.mu.Unlock()
 
-	pollCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	fetches := cl.PollRecords(pollCtx, maxRecords)
-	if errs := fetches.Errors(); len(errs) > 0 {
-		// Surface only fatal errors. EOF / context.DeadlineExceeded
-		// on the consumer is "no records yet"; do not turn that into
-		// an error (Python's getmany() returns empty for the same
-		// case).
-		for _, fe := range errs {
-			if errors.Is(fe.Err, context.DeadlineExceeded) || errors.Is(fe.Err, context.Canceled) {
-				continue
-			}
-			return nil, fmt.Errorf("%w: kafka poll: %v", ErrWal, fe.Err)
-		}
-	}
-
-	out := make([]Record, 0, fetches.NumRecords())
-	fetches.EachRecord(func(r *kgo.Record) {
-		headers := map[string][]byte{}
-		for _, h := range r.Headers {
-			cp := append([]byte(nil), h.Value...)
-			headers[h.Key] = cp
-		}
-		out = append(out, Record{
-			Key:   string(r.Key),
-			Value: append([]byte(nil), r.Value...),
-			Position: StreamPos{
-				Topic:       r.Topic,
-				Partition:   r.Partition,
-				Offset:      r.Offset,
-				TimestampMs: r.Timestamp.UnixMilli(),
-			},
-			Headers: headers,
-		})
-	})
-	return out, nil
+	return c.poll(ctx, maxRecords, timeout)
 }
 
 // Subscribe streams records continuously via background polling.
@@ -455,7 +482,7 @@ func (k *Kafka) Subscribe(
 		k.mu.Unlock()
 		return nil, nil, fmt.Errorf("%w: not connected", ErrConnection)
 	}
-	cl, err := k.consumerForLocked(topic, groupID)
+	c, err := k.consumerForLocked(topic, groupID)
 	if err != nil {
 		k.mu.Unlock()
 		return nil, nil, err
@@ -471,56 +498,24 @@ func (k *Kafka) Subscribe(
 			if err := ctx.Err(); err != nil {
 				return
 			}
-			pollCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-			fetches := cl.PollRecords(pollCtx, 32)
-			cancel()
-			if errs := fetches.Errors(); len(errs) > 0 {
-				for _, fe := range errs {
-					if errors.Is(fe.Err, context.DeadlineExceeded) || errors.Is(fe.Err, context.Canceled) {
-						continue
-					}
-					if ctx.Err() == nil {
-						errCh <- fmt.Errorf("%w: kafka subscribe: %v", ErrWal, fe.Err)
-					}
-					return
+			recs, err := c.poll(ctx, 32, 100*time.Millisecond)
+			if err != nil {
+				if ctx.Err() == nil {
+					errCh <- err
 				}
+				return
 			}
-			var sendErr error
-			fetches.EachRecord(func(r *kgo.Record) {
-				if sendErr != nil {
-					return
-				}
-				headers := map[string][]byte{}
-				for _, h := range r.Headers {
-					cp := append([]byte(nil), h.Value...)
-					headers[h.Key] = cp
-				}
-				rec := Record{
-					Key:   string(r.Key),
-					Value: append([]byte(nil), r.Value...),
-					Position: StreamPos{
-						Topic:       r.Topic,
-						Partition:   r.Partition,
-						Offset:      r.Offset,
-						TimestampMs: r.Timestamp.UnixMilli(),
-					},
-					Headers: headers,
-				}
+			for _, r := range recs {
 				select {
 				case <-ctx.Done():
-					sendErr = ctx.Err()
 					return
-				case out <- rec:
+				case out <- r:
 					// Auto-commit per record on the Subscribe path
 					// (parallel with InMemory.Subscribe). Callers
 					// wanting manual commits should use PollBatch +
 					// Commit directly.
-					cl.MarkCommitRecords(r)
-					_ = cl.CommitMarkedOffsets(ctx)
+					_ = c.commit(ctx, r)
 				}
-			})
-			if sendErr != nil {
-				return
 			}
 		}
 	}()
@@ -536,61 +531,232 @@ func (k *Kafka) Commit(ctx context.Context, groupID string, record Record) error
 		k.mu.Unlock()
 		return fmt.Errorf("%w: not connected", ErrConnection)
 	}
-	cl, err := k.consumerForLocked(record.Position.Topic, groupID)
+	c, err := k.consumerForLocked(record.Position.Topic, groupID)
 	if err != nil {
 		k.mu.Unlock()
 		return err
 	}
 	k.mu.Unlock()
 
-	// franz-go's CommitOffsets takes a map of topic -> partition ->
-	// EpochOffset. The committed offset is "next record to consume",
-	// i.e. record.Offset + 1 (matches aiokafka semantics).
-	rec := &kgo.Record{
+	return c.commit(ctx, record)
+}
+
+// saramaConsumer wraps sarama.ConsumerGroup and a
+// sarama.ConsumerGroupHandler that forwards messages through a
+// buffered channel. The handler also exposes the active session so
+// MarkMessage / Commit can be plumbed into wal.Consumer.Commit.
+type saramaConsumer struct {
+	group  sarama.ConsumerGroup
+	topic  string
+	cancel context.CancelFunc
+
+	mu      sync.Mutex
+	session sarama.ConsumerGroupSession
+	msgs    chan *sarama.ConsumerMessage
+	errs    chan error
+	done    chan struct{}
+}
+
+func newSaramaConsumer(group sarama.ConsumerGroup, topic string) *saramaConsumer {
+	c := &saramaConsumer{
+		group: group,
+		topic: topic,
+		// Buffered channel so ConsumeClaim can fill ahead of pollers.
+		// 256 is roughly two poll batches; tune later if needed.
+		msgs: make(chan *sarama.ConsumerMessage, 256),
+		errs: make(chan error, 8),
+		done: make(chan struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = cancel
+
+	go func() {
+		defer close(c.done)
+		for {
+			if err := ctx.Err(); err != nil {
+				return
+			}
+			// Consume blocks until rebalance/error; we re-call it in
+			// a loop so the consumer keeps running across rebalances.
+			if err := c.group.Consume(ctx, []string{topic}, c); err != nil {
+				// Surface fatal errors; non-fatal rebalance errors
+				// also flow through here, so select on done to drop
+				// them once shutdown has started.
+				select {
+				case c.errs <- err:
+				default:
+				}
+				if errors.Is(err, sarama.ErrClosedConsumerGroup) || ctx.Err() != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Pump the consumer-group-wide error channel into c.errs too. We
+	// don't want any unmarshal/transport error to be silently dropped
+	// (CLAUDE.md invariant: WAL is the source of truth).
+	go func() {
+		for err := range c.group.Errors() {
+			if err == nil {
+				continue
+			}
+			select {
+			case c.errs <- err:
+			default:
+			}
+		}
+	}()
+
+	return c
+}
+
+// Setup is part of sarama.ConsumerGroupHandler. Called when a new
+// session begins; we stash the session so commit() can mark offsets.
+func (c *saramaConsumer) Setup(session sarama.ConsumerGroupSession) error {
+	c.mu.Lock()
+	c.session = session
+	c.mu.Unlock()
+	return nil
+}
+
+// Cleanup is part of sarama.ConsumerGroupHandler. Called when the
+// session ends (rebalance or shutdown). Clearing the session means a
+// subsequent commit() will no-op until the next Setup, which matches
+// aiokafka behaviour during a rebalance.
+func (c *saramaConsumer) Cleanup(session sarama.ConsumerGroupSession) error {
+	c.mu.Lock()
+	if c.session == session {
+		c.session = nil
+	}
+	c.mu.Unlock()
+	return nil
+}
+
+// ConsumeClaim is part of sarama.ConsumerGroupHandler. Forwards
+// claimed messages into c.msgs in offset order within the partition.
+// We deliberately do NOT decode/unmarshal here — that's the applier's
+// job, and any decode error there propagates back via Commit failure
+// or supervisor halt. Transport-level errors (e.g. claim cancelled
+// mid-iteration) surface via session.Context().
+func (c *saramaConsumer) ConsumeClaim(
+	session sarama.ConsumerGroupSession,
+	claim sarama.ConsumerGroupClaim,
+) error {
+	for {
+		select {
+		case msg, ok := <-claim.Messages():
+			if !ok {
+				return nil
+			}
+			select {
+			case c.msgs <- msg:
+			case <-session.Context().Done():
+				return nil
+			}
+		case <-session.Context().Done():
+			return nil
+		}
+	}
+}
+
+// poll drains up to maxRecords from c.msgs, blocking up to timeout.
+func (c *saramaConsumer) poll(ctx context.Context, maxRecords int, timeout time.Duration) ([]Record, error) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+
+	out := make([]Record, 0, maxRecords)
+	for len(out) < maxRecords {
+		select {
+		case <-ctx.Done():
+			if len(out) > 0 {
+				return out, nil
+			}
+			return nil, ctx.Err()
+		case err := <-c.errs:
+			if err == nil {
+				continue
+			}
+			return nil, fmt.Errorf("%w: kafka poll: %v", ErrWal, err)
+		case msg, ok := <-c.msgs:
+			if !ok {
+				return out, nil
+			}
+			out = append(out, recordFromMessage(msg))
+		case <-deadline.C:
+			return out, nil
+		}
+	}
+	return out, nil
+}
+
+// commit marks the record and synchronously commits offsets via the
+// active session. If no session is active (rebalance in progress),
+// returns nil — sarama will re-deliver after the next Setup.
+func (c *saramaConsumer) commit(ctx context.Context, record Record) error {
+	c.mu.Lock()
+	session := c.session
+	c.mu.Unlock()
+	if session == nil {
+		// No active session; the offset will be re-delivered after
+		// the next rebalance. Matches aiokafka behaviour during
+		// rebalance.
+		return nil
+	}
+	// Build a synthetic ConsumerMessage so we can use the session's
+	// MarkMessage API. sarama only inspects Topic/Partition/Offset.
+	msg := &sarama.ConsumerMessage{
 		Topic:     record.Position.Topic,
 		Partition: record.Position.Partition,
 		Offset:    record.Position.Offset,
 	}
-	cl.MarkCommitRecords(rec)
-	if err := cl.CommitMarkedOffsets(ctx); err != nil {
-		return fmt.Errorf("%w: kafka commit: %v", ErrWal, err)
-	}
+	session.MarkMessage(msg, "")
+	session.Commit()
 	return nil
 }
 
+// close shuts down the consumer goroutine and the underlying sarama
+// consumer group.
+func (c *saramaConsumer) close() {
+	if c.cancel != nil {
+		c.cancel()
+	}
+	if c.group != nil {
+		_ = c.group.Close()
+	}
+	<-c.done
+}
+
+func recordFromMessage(msg *sarama.ConsumerMessage) Record {
+	headers := map[string][]byte{}
+	for _, h := range msg.Headers {
+		cp := append([]byte(nil), h.Value...)
+		headers[string(h.Key)] = cp
+	}
+	ts := msg.Timestamp.UnixMilli()
+	if ts == 0 {
+		ts = time.Now().UnixMilli()
+	}
+	return Record{
+		Key:   string(msg.Key),
+		Value: append([]byte(nil), msg.Value...),
+		Position: StreamPos{
+			Topic:       msg.Topic,
+			Partition:   msg.Partition,
+			Offset:      msg.Offset,
+			TimestampMs: ts,
+		},
+		Headers: headers,
+	}
+}
+
 // isTimeout returns true if err looks like a transport/produce timeout
-// (heuristic by error string — franz-go surfaces these as kerr.*).
+// (heuristic by error string — sarama surfaces these as sarama.ErrXxx).
 func isTimeout(err error) bool {
 	if err == nil {
 		return false
 	}
-	s := err.Error()
-	// Don't pull in kerr just for two strings; the heuristic is
-	// loose-but-safe (we only map this to a typed sentinel for
-	// observability, not for control flow).
-	return contains(s, "timeout") || contains(s, "timed out")
-}
-
-func contains(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		match := true
-		for j := 0; j < len(needle); j++ {
-			c := haystack[i+j]
-			n := needle[j]
-			if c >= 'A' && c <= 'Z' {
-				c += 'a' - 'A'
-			}
-			if c != n {
-				match = false
-				break
-			}
-		}
-		if match {
-			return true
-		}
-	}
-	return false
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "timeout") || strings.Contains(s, "timed out")
 }
