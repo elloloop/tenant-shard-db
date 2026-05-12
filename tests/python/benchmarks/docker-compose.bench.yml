@@ -1,0 +1,79 @@
+name: entdb-bench
+
+# =============================================================================
+# Bench harness — EntDB Go server + Postgres at parity resource limits.
+#
+# Brings up both backends in containers of the same size so the bench
+# client can drive them side-by-side with identical CPU/memory budgets.
+#
+# Tier 2 (`--tier 2` / `--with-postgres` in run_bench.sh) uses this file
+# directly. The Tier 1 path skips Postgres entirely and runs the EntDB
+# server as a host subprocess (already the conftest's default code-path).
+#
+# Resource limits are set via the v2-compose ``cpus`` / ``mem_limit``
+# fields rather than ``deploy.resources.limits``, because the latter is
+# only honoured by swarm. Both backends get the same numbers so the
+# absolute CPU and memory budget is equal — this is the apples-to-apples
+# slice the issue #487 north-star ratios are measured against.
+#
+# Memory floor (empirically determined — see docs/benchmarks/benchmarks.md):
+# Postgres 17-alpine boots and runs the bench workload reliably at 256m
+# on a developer laptop. We pin Tier 2 at 512m to leave 2x headroom for
+# Linux CI runners (which typically have a smaller page-cache buffer
+# available than a 32GB dev box) and to match the EntDB Tier 1 budget.
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # EntDB Go server
+  #
+  # In-memory WAL — the bench measures wire-level RPC cost; Kafka/Redpanda
+  # adds fan-in latency that's tracked separately (see Caveats in the
+  # report doc).
+  # ==========================================================================
+  entdb-server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+    image: entdb-server-bench:latest
+    command:
+      - "-addr=:50051"
+      - "-data-dir=/var/lib/entdb"
+      - "-wal-backend=memory"
+      - "-seed-profile=contract"
+      - "-seed-tenant=bench"
+    ports:
+      - "50051:50051"
+    volumes:
+      - entdb-data:/var/lib/entdb
+    cpus: 1.0
+    mem_limit: 512m
+    # Distroless base — no shell, no probe binary. The runner script
+    # polls the gRPC health RPC instead.
+
+  # ==========================================================================
+  # Postgres 17-alpine — stock image, no postgresql.conf overrides.
+  #
+  # Indexes that the bench needs are created in conftest.py
+  # (pg_conn fixture), not here, so the schema is co-located with the
+  # bench code that depends on it.
+  # ==========================================================================
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: bench
+      POSTGRES_PASSWORD: bench
+      POSTGRES_DB: bench
+    ports:
+      - "55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bench -d bench"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+      start_period: 3s
+    cpus: 1.0
+    mem_limit: 512m
+
+volumes:
+  entdb-data:
