@@ -1,0 +1,140 @@
+name: Schema Compatibility Check
+
+# Per-PR schema-lock check. Boots this PR's entdb-server, calls
+# entdb-schema check --from-server against the committed
+# `.schema-snapshot.json`, and fails the job on any breaking change
+# unless the PR is explicitly tagged with the `breaking-schema-change`
+# label.
+#
+# Derived from the YAML sketch in issue #488 §CI check design with one
+# divergence: v1 of `entdb-schema` does NOT yet support
+# `--from-descriptors PATH`. The proto-options-based registry loader is
+# tracked separately (issue #488 open question #6). Until that lands,
+# we boot the server and use `--from-server` (the route documented in
+# docs/guides/schema-lockdown.md). Switching to `--from-descriptors`
+# will be a single-line change.
+
+on:
+  pull_request:
+    paths:
+      - 'proto/**'
+      - 'server/go/**'
+      - 'sdk/python/entdb_sdk/schema*'
+      - '.schema-snapshot.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  schema-compat:
+    name: Schema Compatibility Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # We always need Go for entdb-server (the live source for
+      # `--from-server`). entdb-schema is preferred from a release
+      # binary, with a source-build fallback that also needs Go, so
+      # set it up unconditionally for simplicity.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
+
+      # Prefer the released `entdb-schema` binary so this workflow
+      # depends on the same artifact downstream users consume (issue
+      # #488 AC7). Fall back to building from source when no release
+      # exists yet (the very first tag, or when the latest release
+      # pre-dates the entdb-schema publishing in release.yml). The
+      # fallback keeps the workflow green on PRs against repos that
+      # have not yet cut a v1+ tag carrying the entdb-schema artifact.
+      - name: Install entdb-schema (from latest release, fallback to source)
+        id: install
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/entdb-schema-bin
+          ASSET="entdb-schema-*-linux-amd64.tar.gz"
+          if gh release download --pattern "$ASSET" --dir /tmp/entdb-schema-bin --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            cd /tmp/entdb-schema-bin
+            tar -xzf entdb-schema-*-linux-amd64.tar.gz
+            chmod +x entdb-schema
+            mv entdb-schema /tmp/entdb-schema
+            /tmp/entdb-schema version
+          else
+            echo "::notice::No release asset found — falling back to build-from-source. Once v1+ is tagged, this step will switch to downloading the published binary automatically."
+            (cd server/go && go build -o /tmp/entdb-schema ./cmd/entdb-schema)
+          fi
+
+      - name: Build entdb-server (PR tree)
+        working-directory: server/go
+        run: go build -o /tmp/entdb-server ./cmd/entdb-server
+
+      - name: Boot entdb-server and check schema compatibility
+        id: check
+        if: hashFiles('.schema-snapshot.json') != ''
+        run: |
+          set -euo pipefail
+          DATA_DIR="$(mktemp -d)"
+          LOG_FILE="$(mktemp)"
+          # --seed-profile=contract registers the User/Task/AssignedTo
+          # registry that matches the committed .schema-snapshot.json
+          # baseline (server/go/internal/testseed.RegisterContractSchema).
+          # --wal-backend=memory avoids needing a Kafka stack for what
+          # is effectively a read-only GetSchema check.
+          /tmp/entdb-server \
+            --addr 127.0.0.1:50451 \
+            --data-dir "$DATA_DIR" \
+            --wal-backend memory \
+            --seed-profile contract \
+            --seed-tenant acme \
+            > "$LOG_FILE" 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; echo "--- entdb-server log ---"; cat "$LOG_FILE" || true' EXIT
+
+          # Readiness: TCP connect-poll on the bound port (mirrors the
+          # Python conftest harness pattern, minus the Health RPC).
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/50451) >/dev/null 2>&1; then
+              echo "server ready after ${i} attempts"
+              break
+            fi
+            sleep 0.5
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::entdb-server exited during boot"
+              exit 2
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "::error::entdb-server did not become ready within 30s"
+              exit 2
+            fi
+          done
+
+          # Real `check` against the live server. JSON output goes to
+          # /tmp/result.json for downstream tooling (PR comment etc.).
+          set +e
+          /tmp/entdb-schema check \
+            --baseline .schema-snapshot.json \
+            --from-server 127.0.0.1:50451 \
+            --format json \
+            > /tmp/result.json
+          status=$?
+          set -e
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/result.json
+          exit "$status"
+
+      - name: No baseline — recommend committing one
+        if: hashFiles('.schema-snapshot.json') == ''
+        run: |
+          echo "No .schema-snapshot.json found at repo root."
+          echo "Run 'entdb-schema snapshot --from-server <addr> > .schema-snapshot.json'"
+          echo "to lock the current schema, then commit the file."
+
+      - name: Allow if 'breaking-schema-change' label present
+        if: failure() && contains(github.event.pull_request.labels.*.name, 'breaking-schema-change')
+        run: |
+          echo "::warning::Breaking-schema-change label present — accepting on the labelled PR."
+          echo "Reviewer responsibility: ensure CHANGELOG has a BREAKING CHANGE entry."

@@ -133,28 +133,114 @@ jobs:
     name: Schema Compatibility Check
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.schema == 'true' || needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.schema == 'true' || needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v4
-      - run: uv python install ${{ env.PYTHON_VERSION }}
-      - run: |
-          uv venv
-          uv pip install -e ./sdk/python \
-            pytest>=8.0.0 pytest-asyncio>=0.23.0 pytest-cov>=4.1.0 \
-            pytest-timeout>=2.2.0 ruff>=0.15.0 httpx>=0.26.0 \
-            grpcio-tools>=1.60.0
 
-      - name: Check schema compatibility
+      # Always set up Go — we need it to build entdb-server (the live
+      # registry source for `--from-server`). entdb-schema itself is
+      # preferred from the released binary, but the source-build
+      # fallback also needs Go, so we set it up unconditionally to keep
+      # the YAML simple.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
+
+      # Prefer the released entdb-schema binary (issue #488 AC7). Fall
+      # back to source-build when no release asset is found yet. See
+      # the matching block in schema-compat.yml for rationale.
+      - name: Install entdb-schema (from latest release, fallback to source)
+        id: install
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -f ".schema-snapshot.json" ]; then
-            echo "Schema baseline check is a follow-up after Phase 4D (Python server retirement)."
-            echo "The Go server's schema-CLI equivalent will land in a follow-up PR."
+          set -euo pipefail
+          mkdir -p /tmp/entdb-schema-bin
+          ASSET="entdb-schema-*-linux-amd64.tar.gz"
+          if gh release download --pattern "$ASSET" --dir /tmp/entdb-schema-bin --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            cd /tmp/entdb-schema-bin
+            tar -xzf entdb-schema-*-linux-amd64.tar.gz
+            chmod +x entdb-schema
+            mv entdb-schema /tmp/entdb-schema
+            /tmp/entdb-schema version
           else
-            echo "No schema baseline found, skipping compatibility check"
+            echo "::notice::No release asset found — falling back to build-from-source."
+            (cd server/go && go build -o /tmp/entdb-schema ./cmd/entdb-schema)
           fi
+
+      # Build entdb-server from this PR's tree so the registry we check
+      # is the registry the PR actually ships. Mirrors the e2e/
+      # integration jobs that boot the same binary the same way.
+      - name: Build entdb-server (PR tree)
+        working-directory: server/go
+        run: go build -o /tmp/entdb-server ./cmd/entdb-server
+
+      - name: Boot entdb-server and run schema check
+        if: hashFiles('.schema-snapshot.json') != ''
+        run: |
+          set -euo pipefail
+          DATA_DIR="$(mktemp -d)"
+          LOG_FILE="$(mktemp)"
+          # Boot in the background on a fixed loopback port; --wal-backend=memory
+          # avoids needing a Kafka stack just to read the schema. The
+          # --seed-profile=contract flag registers the User/Task/AssignedTo
+          # registry that matches the committed .schema-snapshot.json
+          # baseline (server/go/internal/testseed.RegisterContractSchema).
+          /tmp/entdb-server \
+            --addr 127.0.0.1:50451 \
+            --data-dir "$DATA_DIR" \
+            --wal-backend memory \
+            --seed-profile contract \
+            --seed-tenant acme \
+            > "$LOG_FILE" 2>&1 &
+          SERVER_PID=$!
+          # Be sure to clean up even on early exit.
+          trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; echo "--- entdb-server log ---"; cat "$LOG_FILE" || true' EXIT
+
+          # Readiness: poll the gRPC port via a TCP connect. The Python
+          # conftest uses a Health RPC poll; for the CI step a TCP
+          # connect is sufficient and avoids pulling in grpc tooling.
+          for i in $(seq 1 60); do
+            if (echo > /dev/tcp/127.0.0.1/50451) >/dev/null 2>&1; then
+              echo "server ready after ${i} attempts"
+              break
+            fi
+            sleep 0.5
+            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+              echo "::error::entdb-server exited during boot"
+              exit 2
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "::error::entdb-server did not become ready within 30s"
+              exit 2
+            fi
+          done
+
+          # Real check: compare the live server's schema against the
+          # committed baseline. `check` exits 1 on breaking change, 0
+          # otherwise, 2 on usage / I/O error.
+          set +e
+          /tmp/entdb-schema check \
+            --baseline .schema-snapshot.json \
+            --from-server 127.0.0.1:50451 \
+            --format text
+          status=$?
+          set -e
+          if [ "$status" -eq 1 ] && [[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-schema-change') }}" == "true" ]]; then
+            echo "::warning::Breaking-schema-change label present — accepting on the labelled PR."
+            exit 0
+          fi
+          exit "$status"
+
+      - name: No baseline — recommend committing one
+        if: hashFiles('.schema-snapshot.json') == ''
+        run: |
+          echo "No .schema-snapshot.json found at repo root."
+          echo "Run 'entdb-schema snapshot --from-server <addr> > .schema-snapshot.json'"
+          echo "to lock the current schema, then commit the file."
 
   go-server-build:
     name: Go Server Build
