@@ -6,6 +6,7 @@ import { consoleClient } from '../api'
 import { cn } from '../lib/utils'
 import { sandboxEnabled } from '../env'
 import { SettingsDialog } from './SettingsDialog'
+import { Button } from './ui'
 
 interface LayoutProps {
   children: ReactNode
@@ -40,13 +41,14 @@ export default function Layout({ children }: LayoutProps) {
               EntDB Console
             </Link>
           )}
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="h-8 w-8 inline-flex items-center justify-center rounded-md hover:bg-accent"
             aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
           >
             {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-          </button>
+          </Button>
         </div>
 
         <nav className="flex-1 overflow-y-auto py-4">
@@ -124,13 +126,14 @@ export default function Layout({ children }: LayoutProps) {
         </nav>
 
         <div className="border-t p-3">
-          <button
+          <Button
+            variant="ghost"
             onClick={() => setSettingsOpen(true)}
-            className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            className="w-full justify-start text-muted-foreground"
           >
             <Settings className="w-4 h-4" />
             {sidebarOpen && <span>Settings</span>}
-          </button>
+          </Button>
         </div>
       </aside>
 
