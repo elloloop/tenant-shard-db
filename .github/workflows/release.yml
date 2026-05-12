@@ -87,7 +87,6 @@ jobs:
           VER="${GITHUB_REF_NAME#v}"
           echo "$VER" > VERSION
           echo "__version__ = \"$VER\"" > sdk/python/entdb_sdk/_version.py
-          echo "__version__ = \"$VER\"" > server/python/entdb_server/_version.py
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
