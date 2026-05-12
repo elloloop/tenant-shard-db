@@ -138,12 +138,39 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+
+      # Prefer the released entdb-schema binary (issue #488 AC7). Fall
+      # back to source-build when no release asset is found yet. See
+      # the matching block in schema-compat.yml for rationale.
+      - name: Install entdb-schema (from latest release, fallback to source)
+        id: install
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/entdb-schema-bin
+          ASSET="entdb-schema-*-linux-amd64.tar.gz"
+          if gh release download --pattern "$ASSET" --dir /tmp/entdb-schema-bin --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            cd /tmp/entdb-schema-bin
+            tar -xzf entdb-schema-*-linux-amd64.tar.gz
+            chmod +x entdb-schema
+            mv entdb-schema /tmp/entdb-schema
+            echo "source=release" >> "$GITHUB_OUTPUT"
+            /tmp/entdb-schema version
+          else
+            echo "::notice::No release asset found — falling back to build-from-source."
+            echo "source=source" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go (only when falling back to source)
+        if: steps.install.outputs.source == 'source'
+        uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache-dependency-path: server/go/go.sum
 
-      - name: Build entdb-schema
+      - name: Build entdb-schema from source (fallback)
+        if: steps.install.outputs.source == 'source'
         working-directory: server/go
         run: go build -o /tmp/entdb-schema ./cmd/entdb-schema
 

@@ -31,12 +31,42 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-go@v5
+      # Prefer the released `entdb-schema` binary so this workflow
+      # depends on the same artifact downstream users consume (issue
+      # #488 AC7). Fall back to building from source when no release
+      # exists yet (the very first tag, or when the latest release
+      # pre-dates the entdb-schema publishing in release.yml). The
+      # fallback keeps the workflow green on PRs against repos that
+      # have not yet cut a v1+ tag carrying the entdb-schema artifact.
+      - name: Install entdb-schema (from latest release, fallback to source)
+        id: install
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/entdb-schema-bin
+          ASSET="entdb-schema-*-linux-amd64.tar.gz"
+          if gh release download --pattern "$ASSET" --dir /tmp/entdb-schema-bin --repo "$GITHUB_REPOSITORY" 2>/dev/null; then
+            cd /tmp/entdb-schema-bin
+            tar -xzf entdb-schema-*-linux-amd64.tar.gz
+            chmod +x entdb-schema
+            mv entdb-schema /tmp/entdb-schema
+            echo "source=release" >> "$GITHUB_OUTPUT"
+            /tmp/entdb-schema version
+          else
+            echo "::notice::No release asset found — falling back to build-from-source. Once v1+ is tagged, this step will switch to downloading the published binary automatically."
+            echo "source=source" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Go (only when falling back to source)
+        if: steps.install.outputs.source == 'source'
+        uses: actions/setup-go@v5
         with:
           go-version: '1.25'
           cache-dependency-path: server/go/go.sum
 
-      - name: Build entdb-schema
+      - name: Build entdb-schema from source (fallback)
+        if: steps.install.outputs.source == 'source'
         working-directory: server/go
         run: go build -o /tmp/entdb-schema ./cmd/entdb-schema
 

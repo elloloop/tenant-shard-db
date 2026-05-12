@@ -61,6 +61,23 @@ jobs:
             platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
+          # entdb-schema is the standalone schema-snapshot CLI from
+          # issue #488 (AC7). Distroless static image with just the
+          # binary inside; same multi-arch story as the server. Image
+          # name is ghcr.io/<repo>-schema:vX.Y.Z so it's a sibling
+          # tag, not a subpath of the server image.
+          - target: schema
+            suffix: "-schema"
+            dockerfile: Dockerfile.schema
+            platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-latest
+          - target: schema
+            suffix: "-schema"
+            dockerfile: Dockerfile.schema
+            platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
@@ -137,6 +154,23 @@ jobs:
           docker run --rm entdb-smoke:sdk-${{ matrix.arch }} \
             python -c "import entdb_sdk; print('entdb_sdk', entdb_sdk.__version__, 'on ${{ matrix.arch }}')"
 
+      # Smoke test for the entdb-schema image. Confirms the binary
+      # is executable in the distroless runtime and that the embedded
+      # subcommand dispatch is wired up (a broken main package would
+      # exit non-zero on --help). We do not exercise --from-server
+      # here — the image is build-time-only and has no network
+      # dependency on a running server.
+      - name: Smoke test - entdb-schema image runs --help
+        if: matrix.target == 'schema'
+        run: |
+          set -euo pipefail
+          docker run --rm entdb-smoke:schema-${{ matrix.arch }} --help \
+            | grep -q "entdb-schema" || {
+              echo "::error::entdb-schema --help did not print expected banner"
+              exit 1
+            }
+          docker run --rm entdb-smoke:schema-${{ matrix.arch }} version
+
       # Stage 2: smoke passed — push the same image to the registry by
       # digest only (no tag). Buildkit reuses the cached layers from the
       # smoke build via the gha cache scope above.
@@ -189,6 +223,8 @@ jobs:
             suffix: ""
           - target: sdk
             suffix: "-sdk"
+          - target: schema
+            suffix: "-schema"
 
     steps:
       - name: Download per-platform digests
@@ -358,6 +394,103 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  # Cross-compile entdb-schema for every (OS × arch) we ship as a
+  # downloadable release artifact, archive each, and attach to the
+  # GitHub Release. Matches the issue #488 AC7 ask: the binary is
+  # distributable as a release artifact and as a ghcr image (the
+  # image is already produced by the matrix above; this job covers
+  # the plain-archive path that the schema-compat CI workflow
+  # consumes via `curl … releases/download/…`).
+  #
+  # Pure-Go binary — no CGO, no SQLite, no gRPC server runtime — so
+  # cross-compilation is a flag swap. Build all platforms on a
+  # single Linux runner.
+  build-schema-binaries:
+    name: Build entdb-schema release binaries
+    runs-on: ubuntu-latest
+    needs: [create-release]
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            archive: tar.gz
+          - goos: linux
+            goarch: arm64
+            archive: tar.gz
+          - goos: darwin
+            goarch: amd64
+            archive: tar.gz
+          - goos: darwin
+            goarch: arm64
+            archive: tar.gz
+          - goos: windows
+            goarch: amd64
+            archive: zip
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
+
+      - name: Build entdb-schema (${{ matrix.goos }}/${{ matrix.goarch }})
+        working-directory: server/go
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          VER="${GITHUB_REF_NAME#v}"
+          BIN_NAME="entdb-schema"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            BIN_NAME="entdb-schema.exe"
+          fi
+          mkdir -p /tmp/release-staging
+          go build \
+            -trimpath -ldflags="-s -w" \
+            -o "/tmp/release-staging/${BIN_NAME}" \
+            ./cmd/entdb-schema
+          ls -lh "/tmp/release-staging/${BIN_NAME}"
+
+      - name: Archive (${{ matrix.archive }})
+        run: |
+          set -euo pipefail
+          ARCHIVE_BASE="entdb-schema-${GITHUB_REF_NAME}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p /tmp/release-out
+          cd /tmp/release-staging
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            zip "/tmp/release-out/${ARCHIVE_BASE}.zip" *
+          else
+            tar -czf "/tmp/release-out/${ARCHIVE_BASE}.tar.gz" *
+          fi
+          # Per-archive SHA256 for users who verify downloads. The
+          # checksum file lives next to the archive in the release.
+          cd /tmp/release-out
+          if command -v sha256sum >/dev/null; then
+            sha256sum "${ARCHIVE_BASE}.${{ matrix.archive }}" \
+              > "${ARCHIVE_BASE}.${{ matrix.archive }}.sha256"
+          else
+            shasum -a 256 "${ARCHIVE_BASE}.${{ matrix.archive }}" \
+              > "${ARCHIVE_BASE}.${{ matrix.archive }}.sha256"
+          fi
+          ls -lh /tmp/release-out
+
+      - name: Attach archive to GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            /tmp/release-out/entdb-schema-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}
+            /tmp/release-out/entdb-schema-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.${{ matrix.archive }}.sha256
+
   create-release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
@@ -398,11 +531,29 @@ jobs:
 
             # SDK (Python)
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-sdk:${{ github.ref_name }}
+
+            # entdb-schema CLI (schema lockdown — issue #488)
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-schema:${{ github.ref_name }}
             ```
 
             ## Python SDK
             ```bash
             pip install entdb-sdk==${{ github.ref_name }}
             ```
+
+            ## entdb-schema CLI
+            Standalone schema-snapshot / check / diff binary for CI
+            schema-lockdown (issue #488). Download for your platform:
+
+            ```bash
+            # Linux amd64
+            curl -L -o entdb-schema.tar.gz \
+              https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/entdb-schema-${{ github.ref_name }}-linux-amd64.tar.gz
+            tar -xzf entdb-schema.tar.gz && chmod +x entdb-schema
+            ```
+
+            Other platforms: `linux-arm64`, `darwin-amd64`, `darwin-arm64`,
+            `windows-amd64` (`.zip`). Or `go install
+            github.com/elloloop/tenant-shard-db/server/go/cmd/entdb-schema@${{ github.ref_name }}`.
           draft: false
           prerelease: ${{ contains(github.ref, '-') }}
