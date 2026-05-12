@@ -26,9 +26,16 @@
 #   per-backend JSON under ``.benchmarks/{entdb-go,postgres}/``.
 #
 # Env vars:
-#   PYTEST_ARGS    extra args appended to the pytest invocation
+#   PYTEST_ARGS    extra args appended to the pytest invocation. Parsed
+#                  as a space-separated list via ``read -ra`` — quoting
+#                  nested args (e.g. ``-k "edge or write"``) is not
+#                  supported; use ``-k edge`` or ``-k 'edge or write'``
+#                  on the command line directly if you need a complex
+#                  selector.
 #   BENCH_ROUNDS   --benchmark-min-rounds value (default 5)
 #   BENCH_MEM      override the per-container memory budget for Tier 2
+#                  (Tier 2 ONLY — Tier 1 runs as a host subprocess
+#                  without cgroup limits and ignores this).
 
 set -euo pipefail
 
@@ -69,7 +76,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --help|-h)
-            sed -n '2,40p' "$0"
+            sed -n '2,38p' "$0"
             exit 0
             ;;
         *)
@@ -101,13 +108,26 @@ fi
 OUT_ENTDB=".benchmarks/entdb-go/${TS}_${TIER_TAG}.json"
 mkdir -p ".benchmarks/entdb-go"
 
+# Parse PYTEST_ARGS into an array preserving word boundaries. The
+# previous form ``${PYTEST_ARGS:-}`` inside an array splat lost
+# whitespace structure — multi-token args still split on IFS but a
+# quoted segment like ``-k "edge or write"`` could not survive the
+# round-trip through an exported env var anyway. ``read -ra`` is the
+# bash-idiomatic split; see ``--help`` for the contract (issue #491
+# item 8).
+PYTEST_EXTRA_ARGS=()
+if [[ -n "${PYTEST_ARGS:-}" ]]; then
+    # shellcheck disable=SC2206  # intentional word-splitting on $PYTEST_ARGS
+    read -ra PYTEST_EXTRA_ARGS <<< "${PYTEST_ARGS}"
+fi
+
 PYTEST_BASE_ARGS=(
     --benchmark-only
     --benchmark-min-rounds="${ROUNDS}"
     --benchmark-disable-gc
     --timeout=120
     -q
-    ${PYTEST_ARGS:-}
+    "${PYTEST_EXTRA_ARGS[@]}"
 )
 
 # ---------------------------------------------------------------------------
