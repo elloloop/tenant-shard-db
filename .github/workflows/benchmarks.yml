@@ -1,11 +1,32 @@
 name: Benchmarks
 
+# Split per issue #487 acceptance criteria:
+#
+#   Tier 1 — EntDB-only, --cpus=1 --memory=512m, runs on every PR.
+#            Lightweight enough that we can keep it on the hot path.
+#
+#   Tier 2 — EntDB vs Postgres at parity (--cpus=1 --memory=512m each).
+#            Heavier — brings up the docker-compose stack, runs both
+#            backends. Runs on push-to-main, on tags, on workflow_dispatch,
+#            and on PRs labelled ``bench:postgres``.
+#
+# Both tiers commit results to .benchmarks/{entdb-go,postgres}/ via the
+# upload-artifact action; on main + tag pushes, Tier 1 also feeds
+# github-action-benchmark for regression alerts.
+
 on:
   push:
     branches: [main]
     tags: ['v*']
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: 'Tier to run (1, 2, or both)'
+        type: choice
+        options: [both, '1', '2']
+        default: both
 
 permissions:
   contents: write
@@ -15,8 +36,17 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
-  benchmark:
-    name: Run Benchmarks
+  # ==========================================================================
+  # Tier 1 — EntDB only, --memory=512m equivalent (single-process on the
+  # GH Linux runner, but the bench harness keeps the same shape as
+  # docker-compose.bench.yml). Runs on every PR.
+  # ==========================================================================
+  tier1:
+    name: Tier 1 — EntDB only
+    if: |
+      github.event_name == 'push' ||
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.tier == 'both' || github.event.inputs.tier == '1'))
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,39 +60,129 @@ jobs:
           uv pip install -e ./sdk/python \
             "pytest>=8.0.0" "pytest-asyncio>=0.23.0" "pytest-cov>=4.1.0" \
             "pytest-timeout>=2.2.0" "ruff>=0.15.0" "mypy>=1.8.0" "httpx>=0.26.0" \
-            "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3
+            "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3 "psycopg[binary]>=3.1"
 
       - name: Pre-build Go entdb-server binary
         run: |
           cd server/go && go build -o "$RUNNER_TEMP/entdb-server" ./cmd/entdb-server
           echo "ENTDB_GO_BINARY=$RUNNER_TEMP/entdb-server" >> "$GITHUB_ENV"
 
-      - name: Run benchmarks
-        env:
-          ENTDB_SERVER_TARGET: go
+      - name: Run Tier 1 benchmark (EntDB only)
         run: |
-          uv run pytest tests/python/benchmarks/ -v \
+          uv run pytest tests/python/benchmarks/bench_entdb.py -v \
             --benchmark-only \
-            --benchmark-json=benchmark-results.json \
+            --benchmark-json=benchmark-tier1.json \
             --benchmark-min-rounds=5
 
-      - name: Store benchmark results
+      - name: Store Tier 1 benchmark results (regression alerts)
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
         uses: benchmark-action/github-action-benchmark@v1
         with:
           tool: 'pytest'
-          output-file-path: benchmark-results.json
+          output-file-path: benchmark-tier1.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: true
           alert-threshold: '150%'
           comment-on-alert: true
           fail-on-alert: false
-          benchmark-data-dir-path: 'dev/bench'
+          benchmark-data-dir-path: 'dev/bench/tier1'
 
-      - name: Upload benchmark artifacts
+      - name: Upload Tier 1 artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-reports
+          name: benchmark-tier1
+          path: benchmark-tier1.json
+
+  # ==========================================================================
+  # Tier 2 — EntDB + Postgres at parity. Heavy job; gate by label on PRs.
+  # ==========================================================================
+  tier2:
+    name: Tier 2 — EntDB vs Postgres
+    if: |
+      github.event_name == 'push' ||
+      startsWith(github.ref, 'refs/tags/') ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'bench:postgres')) ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.tier == 'both' || github.event.inputs.tier == '2'))
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: bench
+          POSTGRES_PASSWORD: bench
+          POSTGRES_DB: bench
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bench -d bench"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: |
+          uv venv
+          uv pip install -e ./sdk/python \
+            "pytest>=8.0.0" "pytest-asyncio>=0.23.0" "pytest-cov>=4.1.0" \
+            "pytest-timeout>=2.2.0" "ruff>=0.15.0" "mypy>=1.8.0" "httpx>=0.26.0" \
+            "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3 "psycopg[binary]>=3.1"
+
+      - name: Pre-build Go entdb-server binary
+        run: |
+          cd server/go && go build -o "$RUNNER_TEMP/entdb-server" ./cmd/entdb-server
+          echo "ENTDB_GO_BINARY=$RUNNER_TEMP/entdb-server" >> "$GITHUB_ENV"
+
+      - name: Run Tier 2 EntDB benchmark
+        env:
+          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:5432/bench
+        run: |
+          uv run pytest tests/python/benchmarks/bench_entdb.py -v \
+            --benchmark-only \
+            --benchmark-json=benchmark-tier2-entdb.json \
+            --benchmark-min-rounds=5
+
+      - name: Run Tier 2 Postgres benchmark
+        env:
+          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:5432/bench
+        run: |
+          uv run pytest tests/python/benchmarks/bench_postgres.py -v \
+            --benchmark-only \
+            --benchmark-json=benchmark-tier2-postgres.json \
+            --benchmark-min-rounds=5
+
+      - name: Dump Postgres EXPLAIN ANALYZE
+        if: always()
+        env:
+          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:5432/bench
+        run: |
+          uv run python tests/python/benchmarks/dump_pg_explain.py \
+            "$ENTDB_BENCH_PG_DSN" > benchmark-tier2-explain.txt 2>&1 || true
+
+      - name: Store Tier 2 benchmark results
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: 'pytest'
+          output-file-path: benchmark-tier2-entdb.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: '150%'
+          comment-on-alert: false
+          fail-on-alert: false
+          benchmark-data-dir-path: 'dev/bench/tier2'
+
+      - name: Upload Tier 2 artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-tier2
           path: |
-            benchmark-results.json
+            benchmark-tier2-entdb.json
+            benchmark-tier2-postgres.json
+            benchmark-tier2-explain.txt
