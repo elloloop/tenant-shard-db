@@ -54,6 +54,8 @@ Payloads are stored keyed by `field_id` (e.g. `{"1": "value"}`), not by name. Tr
 
 ## Project Structure
 
+> Server is Go-only as of EPIC #407 Phase 4D; the historical Python server has been deleted. See `docs/decisions/python-server-retired.md`.
+
 Polyglot monorepo, Python today, Go server reimplementation in flight:
 
 ```

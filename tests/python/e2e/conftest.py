@@ -100,8 +100,13 @@ def grpc_target() -> str:
 
 @pytest.fixture(scope="session")
 def server_target() -> str:
-    """Which server implementation we're driving (`python` or `go`)."""
-    return os.environ.get("ENTDB_SERVER_TARGET", "python")
+    """Which server implementation we're driving.
+
+    Always ``"go"`` since Phase 4D of EPIC #407 retired the Python server.
+    Kept as a fixture so older tests that branched on this value keep
+    compiling; the legacy ``"python"`` branches are now unreachable.
+    """
+    return os.environ.get("ENTDB_SERVER_TARGET", "go")
 
 
 @pytest.fixture(scope="session")

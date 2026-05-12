@@ -30,8 +30,8 @@ import grpc
 import pytest
 from grpc import aio as grpc_aio
 
-from entdb_server.api.generated import EntDBServiceStub
-from entdb_server.api.generated import entdb_pb2 as pb
+from entdb_sdk._generated import entdb_pb2 as pb
+from entdb_sdk._generated.entdb_pb2_grpc import EntDBServiceStub
 
 # The ``live_server`` fixture used to live here. It now lives in
 # ``tests/python/integration/conftest.py`` so the same setup serves

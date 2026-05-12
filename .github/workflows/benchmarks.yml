@@ -21,30 +21,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
       - run: uv python install ${{ env.PYTHON_VERSION }}
       - run: |
           uv venv
-          uv pip install -e ./server/python -e ./sdk/python \
+          uv pip install -e ./sdk/python \
             "pytest>=8.0.0" "pytest-asyncio>=0.23.0" "pytest-cov>=4.1.0" \
             "pytest-timeout>=2.2.0" "ruff>=0.15.0" "mypy>=1.8.0" "httpx>=0.26.0" \
             "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3
 
+      - name: Pre-build Go entdb-server binary
+        run: |
+          cd server/go && go build -o "$RUNNER_TEMP/entdb-server" ./cmd/entdb-server
+          echo "ENTDB_GO_BINARY=$RUNNER_TEMP/entdb-server" >> "$GITHUB_ENV"
+
       - name: Run benchmarks
+        env:
+          ENTDB_SERVER_TARGET: go
         run: |
           uv run pytest tests/python/benchmarks/ -v \
             --benchmark-only \
             --benchmark-json=benchmark-results.json \
             --benchmark-min-rounds=5
-
-      - name: Run cost model
-        run: |
-          uv run pytest tests/python/benchmarks/bench_archiver.py::TestCostModel -v -s \
-            --no-header 2>&1 | tee cost-report.txt
-
-      - name: Run compression analysis
-        run: |
-          uv run pytest tests/python/benchmarks/bench_archiver.py::TestCompressionRatio -v -s \
-            --no-header 2>&1 | tee compression-report.txt
 
       - name: Store benchmark results
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')
@@ -66,60 +66,3 @@ jobs:
           name: benchmark-reports
           path: |
             benchmark-results.json
-            cost-report.txt
-            compression-report.txt
-
-  # ---------------------------------------------------------------------------
-  # Dual-backend wire-level benchmarks (Phase 4B of EPIC #407).
-  #
-  # Runs tests/python/benchmarks/bench_grpc_dual.py against both the
-  # Python in-process server and the Go entdb-server subprocess, under
-  # matched Linux conditions. The Go leg is non-blocking
-  # (continue-on-error) until Phase 4D's go/no-go decision lands.
-  # ---------------------------------------------------------------------------
-  benchmark-dual:
-    name: Dual-backend bench (server=${{ matrix.server }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        server: [python, go]
-    continue-on-error: ${{ matrix.server == 'go' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.25'
-      - run: uv python install ${{ env.PYTHON_VERSION }}
-      - run: |
-          uv venv
-          uv pip install -e ./server/python -e ./sdk/python \
-            "pytest>=8.0.0" "pytest-asyncio>=0.23.0" "pytest-timeout>=2.2.0" \
-            "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3
-
-      - name: Pre-build Go entdb-server binary
-        if: matrix.server == 'go'
-        run: |
-          cd server/go && go build -o "$RUNNER_TEMP/entdb-server" ./cmd/entdb-server
-          echo "ENTDB_GO_BINARY=$RUNNER_TEMP/entdb-server" >> "$GITHUB_ENV"
-
-      - name: Run dual-backend benchmarks (ENTDB_SERVER_TARGET=${{ matrix.server }})
-        env:
-          ENTDB_SERVER_TARGET: ${{ matrix.server }}
-        run: |
-          mkdir -p .benchmarks/${{ matrix.server }}
-          uv run pytest tests/python/benchmarks/bench_grpc_dual.py -v \
-            --benchmark-only \
-            --benchmark-min-rounds=20 \
-            --benchmark-disable-gc \
-            --timeout=120 \
-            --benchmark-json=".benchmarks/${{ matrix.server }}/ci-${{ github.run_id }}.json"
-
-      - name: Upload dual-backend benchmark artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: dual-backend-bench-${{ matrix.server }}
-          path: |
-            .benchmarks/${{ matrix.server }}/*.json

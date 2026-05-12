@@ -44,81 +44,25 @@ services:
     ports:
       - "50051:50051"
     environment:
-      # Server configuration
-      - GRPC_BIND=0.0.0.0:50051
-      - SCHEMA_FILE=/app/schema.yaml
-
-      # WAL configuration
-      - WAL_BACKEND=kafka
-      - KAFKA_BROKERS=redpanda:9092
-      - KAFKA_TOPIC=entdb-wal
-      - KAFKA_CONSUMER_GROUP=entdb-applier
-
-      # S3 configuration
-      - S3_BUCKET=entdb-storage
-      - S3_ENDPOINT=http://minio:9000
-      - S3_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=minioadmin
-      - AWS_SECRET_ACCESS_KEY=minioadmin
-
-      # Storage configuration
-      - DATA_DIR=/var/lib/entdb
-
-      # Feature flags
-      - ARCHIVER_ENABLED=true
-      - ARCHIVE_FLUSH_SECONDS=30
-      - SNAPSHOT_ENABLED=true
-      - SNAPSHOT_INTERVAL_SECONDS=300
-
-      # Observability
-      - LOG_LEVEL=INFO
-      - LOG_FORMAT=json
+      - ENTDB_LOG_LEVEL=info
+    command:
+      - "-addr=:50051"
+      - "-data-dir=/var/lib/entdb"
+      - "-wal-backend=kafka"
+      - "-wal-brokers=redpanda:9092"
+      - "-wal-topic=entdb-wal"
+      - "-wal-group=entdb-applier"
+      - "-seed-tenant=playground"
     volumes:
       - entdb-data:/var/lib/entdb
-      - ./schema.yaml:/app/schema.yaml:ro
     depends_on:
       redpanda:
         condition: service_healthy
       minio-init:
         condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-m", "entdb_server.healthcheck", "--addr=localhost:50051"]
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 10s
-
-  # ==========================================================================
-  # EntDB Server (Go) — Wave-5 reimplementation (EPIC #407).
-  #
-  # Opt-in via the "go-server" profile so the default `docker compose up`
-  # still launches the Python server. Bring up explicitly with:
-  #
-  #   docker compose --profile go-server up entdb-server-go
-  #
-  # The Go binary today only supports the in-memory WAL backend (no
-  # Kafka/S3 wiring yet), so this service has no infra dependencies and
-  # binds to host port 50052 to avoid colliding with the Python server.
-  # Test fixture: --seed-tenant pre-creates the contract-suite tenant so
-  # clients can issue RPCs against `playground` without an out-of-band
-  # bootstrap.
-  # ==========================================================================
-  entdb-server-go:
-    profiles: ["go-server"]
-    build:
-      context: .
-      dockerfile: Dockerfile.go
-      target: server
-    image: entdb-server-go:test
-    ports:
-      - "50052:50051"
-    command:
-      - "-addr=:50051"
-      - "-data-dir=/var/lib/entdb"
-      - "-wal-backend=memory"
-      - "-seed-tenant=playground"
-    volumes:
-      - entdb-go-data:/var/lib/entdb
+    # No HEALTHCHECK on the distroless Go image (no shell, no probe binary
+    # baked in). Dependents that need readiness should retry their own
+    # TCP connect.
 
   # ==========================================================================
   # Redpanda (Kafka-compatible)
@@ -172,8 +116,7 @@ services:
       - CONSOLE_SANDBOX_TENANT=playground
       - CONSOLE_SANDBOX_ACTOR=user:demo
     depends_on:
-      server:
-        condition: service_healthy
+      - server
 
   # ==========================================================================
   # Redpanda Console (Kafka UI)
@@ -232,8 +175,6 @@ volumes:
   redpanda-data:
     driver: local
   minio-data:
-    driver: local
-  entdb-go-data:
     driver: local
 
 networks:
