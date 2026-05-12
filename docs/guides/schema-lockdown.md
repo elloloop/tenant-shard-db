@@ -384,6 +384,29 @@ captured Python-era snapshot; the test asserts the Go-computed
 fingerprint byte-equals the Python-era fingerprint embedded in the
 file).
 
+## About this repository's `.schema-snapshot.json`
+
+The `.schema-snapshot.json` committed at the root of *this* repo is
+intentionally minimal: it captures exactly what
+`server/go/internal/testseed.RegisterContractSchema` registers — the
+`User` / `Task` / `AssignedTo` types with bare `field_id` / `kind` /
+`name` only. No `required`, no `unique`, no `data_policy`, no
+`subject_field`, no `default_acl`, no `composite_unique`, no
+`enum_values`, no `pii`. That matches the contract test fixture that
+the integration suite runs against and lets the CI schema-compat job
+boot the server with `--seed-profile=contract` and get a byte-clean
+match.
+
+It is **not** a complete example of what a downstream consumer's
+snapshot should look like. A richer reference snapshot exercising
+those fields lives at
+`tests/contract/fixtures/python-snapshot-v1.json` — a captured
+Python-era snapshot used by the cross-implementation parity test. Use
+that as the shape reference when you're building your own snapshot for
+production use; capture yours via `entdb-schema snapshot --from-server`
+pointed at your actual server (with your full registry registered, not
+just the contract-test seed).
+
 ## Caveats and follow-ups
 
 - **`--from-descriptors` is reserved.** Loading the registry from a
