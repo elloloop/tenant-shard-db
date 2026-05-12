@@ -149,6 +149,96 @@ func TestCompat_FieldKindChanged(t *testing.T) {
 	}
 }
 
+// TestCompat_FieldRenamed asserts that renaming a field (same field_id,
+// same kind, different name) is classified as the new non-breaking
+// FIELD_RENAMED kind — not FIELD_KIND_CHANGED. CLAUDE.md invariant #6:
+// field IDs (not names) are the on-disk key, so renames are free.
+func TestCompat_FieldRenamed(t *testing.T) {
+	old := regWith([]NodeTypeDef{userNode()}, nil)
+	user2 := userNode()
+	// rename email -> email_address while keeping field_id=2, kind=str
+	user2.Fields[1].Name = "email_address"
+	newR := regWith([]NodeTypeDef{user2}, nil)
+	c := Check(old, newR)
+
+	got := findChange(c, ChangeKindFieldRenamed)
+	if got == nil {
+		t.Fatalf("expected FIELD_RENAMED, got %v", c)
+	}
+	if got.Breaking {
+		t.Fatalf("FIELD_RENAMED must not be breaking (field_id is the on-disk key)")
+	}
+	// Must NOT emit FIELD_KIND_CHANGED for the rename — that's only
+	// for a genuine STRING -> INT etc transition.
+	if k := findChange(c, ChangeKindFieldKindChanged); k != nil {
+		t.Fatalf("FIELD_KIND_CHANGED must NOT fire on a same-kind rename; got %v", k)
+	}
+	// Must NOT emit FIELD_ADDED for the renamed-to name — that
+	// double-counts the rename.
+	if a := findChange(c, ChangeKindFieldAdded); a != nil {
+		t.Fatalf("FIELD_ADDED must NOT fire when a field_id is renamed; got %v", a)
+	}
+	if HasBreaking(c) {
+		t.Fatalf("rename-only diff must not flag any breaking change; got %v", c)
+	}
+	// Sanity: exactly one event.
+	if len(c) != 1 {
+		t.Fatalf("expected exactly one FIELD_RENAMED change, got %d: %v", len(c), c)
+	}
+}
+
+// TestCompat_FieldRenamedWithKindChange asserts that if a rename is
+// combined with a genuine kind transition (str -> int), the kind change
+// still surfaces as breaking. The rename itself remains non-breaking.
+func TestCompat_FieldRenamedWithKindChange(t *testing.T) {
+	old := regWith([]NodeTypeDef{userNode()}, nil)
+	user2 := userNode()
+	user2.Fields[1].Name = "email_address"
+	user2.Fields[1].Kind = KindInteger
+	newR := regWith([]NodeTypeDef{user2}, nil)
+	c := Check(old, newR)
+
+	if findChange(c, ChangeKindFieldRenamed) == nil {
+		t.Fatalf("expected FIELD_RENAMED, got %v", c)
+	}
+	if got := findChange(c, ChangeKindFieldKindChanged); got == nil {
+		t.Fatalf("expected FIELD_KIND_CHANGED for genuine str->int transition, got %v", c)
+	} else if !got.Breaking {
+		t.Fatalf("FIELD_KIND_CHANGED must remain breaking on genuine kind transitions")
+	}
+}
+
+// TestCompat_TypeIDChangedSingleEvent asserts that renaming a node's
+// type_id (same name, different type_id) emits ONLY TYPE_ID_CHANGED,
+// not the redundant NODE_REMOVED + NODE_ADDED pair.
+func TestCompat_TypeIDChangedSingleEvent(t *testing.T) {
+	old := regWith([]NodeTypeDef{{
+		TypeID: 1, Name: "User",
+		Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}},
+	}}, nil)
+	newR := regWith([]NodeTypeDef{{
+		TypeID: 99, Name: "User",
+		Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}},
+	}}, nil)
+	c := Check(old, newR)
+
+	if got := findChange(c, ChangeKindTypeIDChanged); got == nil {
+		t.Fatalf("expected TYPE_ID_CHANGED, got %v", c)
+	} else if !got.Breaking {
+		t.Fatalf("TYPE_ID_CHANGED must be breaking")
+	}
+	if r := findChange(c, ChangeKindNodeRemoved); r != nil {
+		t.Fatalf("NODE_REMOVED must NOT fire when TYPE_ID_CHANGED handles it; got %v", r)
+	}
+	if a := findChange(c, ChangeKindNodeAdded); a != nil {
+		t.Fatalf("NODE_ADDED must NOT fire when TYPE_ID_CHANGED handles it; got %v", a)
+	}
+	// Sanity: exactly one change.
+	if len(c) != 1 {
+		t.Fatalf("expected exactly one TYPE_ID_CHANGED change, got %d: %v", len(c), c)
+	}
+}
+
 func TestCompat_RequiredTightened(t *testing.T) {
 	old := regWith([]NodeTypeDef{userNode()}, nil)
 	user2 := userNode()

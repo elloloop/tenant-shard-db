@@ -46,6 +46,7 @@ const (
 	ChangeKindFieldRemoved           // BREAKING — historic rows still carry the field
 	ChangeKindFieldIDChanged         // BREAKING — field_id reassignment corrupts existing data
 	ChangeKindFieldKindChanged       // BREAKING — type-coercion of stored bytes is unsafe
+	ChangeKindFieldRenamed           // non-breaking — field_id is the on-disk key (CLAUDE.md invariant #6)
 	ChangeKindFieldRequiredTightened // BREAKING — existing rows that omit the field now fail
 	ChangeKindFieldRequiredLoosened  // non-breaking — looser is always safe
 	ChangeKindFieldUniqueAdded       // BREAKING — historical data may already violate
@@ -91,6 +92,7 @@ var changeKindName = map[ChangeKind]string{
 	ChangeKindFieldRemoved:             "FIELD_REMOVED",
 	ChangeKindFieldIDChanged:           "FIELD_ID_CHANGED",
 	ChangeKindFieldKindChanged:         "FIELD_KIND_CHANGED",
+	ChangeKindFieldRenamed:             "FIELD_RENAMED",
 	ChangeKindFieldRequiredTightened:   "FIELD_REQUIRED_TIGHTENED",
 	ChangeKindFieldRequiredLoosened:    "FIELD_REQUIRED_LOOSENED",
 	ChangeKindFieldUniqueAdded:         "FIELD_UNIQUE_ADDED",
@@ -243,6 +245,35 @@ func diffNodes(oldR, newR *Registry) []Change {
 	oldByID := nodesByID(oldR)
 	newByID := nodesByID(newR)
 
+	// First, identify name pairs that exist on both sides with different
+	// type_ids. These get a single canonical TYPE_ID_CHANGED entry and
+	// must be suppressed from the id-keyed remove/add passes below
+	// (otherwise we triple-count: NODE_REMOVED + NODE_ADDED +
+	// TYPE_ID_CHANGED for the same logical operation).
+	oldByName := map[string]*NodeTypeDef{}
+	for _, n := range oldByID {
+		oldByName[n.Name] = n
+	}
+	newByName := map[string]*NodeTypeDef{}
+	for _, n := range newByID {
+		newByName[n.Name] = n
+	}
+	// suppressedOldIDs / suppressedNewIDs hold the type_ids that should
+	// NOT produce a NODE_REMOVED / NODE_ADDED event because they're
+	// already accounted for by a TYPE_ID_CHANGED match on the name.
+	suppressedOldIDs := map[int32]struct{}{}
+	suppressedNewIDs := map[int32]struct{}{}
+	for name, oldNode := range oldByName {
+		newNode, ok := newByName[name]
+		if !ok {
+			continue
+		}
+		if oldNode.TypeID != newNode.TypeID {
+			suppressedOldIDs[oldNode.TypeID] = struct{}{}
+			suppressedNewIDs[newNode.TypeID] = struct{}{}
+		}
+	}
+
 	// Sort old IDs for deterministic traversal.
 	oldIDs := make([]int32, 0, len(oldByID))
 	for id := range oldByID {
@@ -253,6 +284,11 @@ func diffNodes(oldR, newR *Registry) []Change {
 		oldNode := oldByID[id]
 		newNode, ok := newByID[id]
 		if !ok {
+			if _, suppress := suppressedOldIDs[id]; suppress {
+				// Name still present in new under a different type_id —
+				// reported as TYPE_ID_CHANGED below.
+				continue
+			}
 			out = append(out, Change{
 				Kind:     ChangeKindNodeRemoved,
 				Path:     fmt.Sprintf("node:%s", oldNode.Name),
@@ -273,6 +309,11 @@ func diffNodes(oldR, newR *Registry) []Change {
 		if _, ok := oldByID[id]; ok {
 			continue
 		}
+		if _, suppress := suppressedNewIDs[id]; suppress {
+			// Name existed before under a different type_id — reported
+			// as TYPE_ID_CHANGED below.
+			continue
+		}
 		newNode := newByID[id]
 		out = append(out, Change{
 			Kind:     ChangeKindNodeAdded,
@@ -282,18 +323,11 @@ func diffNodes(oldR, newR *Registry) []Change {
 		})
 	}
 
-	// Detect TYPE_ID_CHANGED — a node with the same name on both sides
+	// Emit TYPE_ID_CHANGED — a node with the same name on both sides
 	// but a different type_id. This is materially different from
 	// "remove-then-add" because users typically don't intend type-id
-	// drift; we surface it as its own breaking rule.
-	oldByName := map[string]*NodeTypeDef{}
-	for _, n := range oldByID {
-		oldByName[n.Name] = n
-	}
-	newByName := map[string]*NodeTypeDef{}
-	for _, n := range newByID {
-		newByName[n.Name] = n
-	}
+	// drift; we surface it as its own breaking rule and suppress the
+	// id-keyed remove/add for the same name (above).
 	for name, oldNode := range oldByName {
 		newNode, ok := newByName[name]
 		if !ok {
@@ -385,14 +419,18 @@ func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 			// Same id, same name → check body diff.
 			out = append(out, diffFieldBody(newNode.Name, of, nf)...)
 		case sameID && nf.Name != of.Name:
-			// Same id, different name → treat as kind change on the id.
+			// Same id, different name → field rename. Field IDs are the
+			// on-disk key (CLAUDE.md invariant #6), so the rename is a
+			// safe, non-breaking metadata change. Emit FIELD_RENAMED and
+			// still run the body diff so genuine kind/required/etc.
+			// transitions on top of the rename still surface.
 			out = append(out, Change{
-				Kind:     ChangeKindFieldKindChanged,
+				Kind:     ChangeKindFieldRenamed,
 				Path:     fmt.Sprintf("node:%s.field:%s", newNode.Name, nf.Name),
 				OldValue: of.Name,
 				NewValue: nf.Name,
 				Message: fmt.Sprintf(
-					"field_id %d on %q renamed from %q to %q (semantic identity unclear; treat as schema break)",
+					"field_id %d on %q renamed from %q to %q (field_id is the on-disk key — non-breaking)",
 					id, newNode.Name, of.Name, nf.Name,
 				),
 			})
@@ -434,6 +472,13 @@ func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 	for _, id := range newIDs {
 		nf := newFields[id]
 		if of, ok := oldFields[id]; ok && of.Name == nf.Name {
+			continue
+		}
+		// Suppress spurious FIELD_ADDED when the field_id already
+		// existed under a different name (handled above as
+		// FIELD_RENAMED) — otherwise the renamed-to name would
+		// double-count as both a rename and a new add.
+		if _, idExisted := oldFields[id]; idExisted {
 			continue
 		}
 		if _, oldHasName := oldFieldsByName[nf.Name]; oldHasName {

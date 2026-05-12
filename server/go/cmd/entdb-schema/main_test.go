@@ -44,15 +44,19 @@ const sampleSchema = `{
   ]
 }`
 
-// breakingSchema reassigns field_id 1 on User from email to phone — a
-// classic FIELD_ID_CHANGED break the deleted Python tool caught.
+// breakingSchema flips field_id 1 on User from `str` to `int` — a
+// genuine FIELD_KIND_CHANGED break (type-coercion of stored bytes is
+// unsafe). Field renames alone are non-breaking per CLAUDE.md
+// invariant #6 (field_id, not name, is the on-disk key), so this
+// fixture deliberately combines a rename with a kind change to exercise
+// the "really breaking" path through `check` / `diff`.
 const breakingSchema = `{
   "node_types": [
     {
       "type_id": 1,
       "name": "User",
       "fields": [
-        {"field_id": 1, "name": "phone", "kind": "str", "required": true, "unique": true},
+        {"field_id": 1, "name": "phone", "kind": "int", "required": true, "unique": true},
         {"field_id": 2, "name": "name", "kind": "str"}
       ]
     },
