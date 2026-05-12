@@ -30,6 +30,17 @@ stack, two backends, EXPLAIN dump) so it gates on a label or a push
 to main; most PRs don't change anything that would affect the Postgres
 comparison.
 
+**Parity is enforced by `docker-compose.bench.yml`, not by the CI
+runner.** Both the local `run_bench.sh --tier 2` flow and the CI
+`Tier 2` workflow bring up the compose stack, which pins
+`entdb-server` and `postgres:17-alpine` to `cpus=1.0` / `mem_limit=512m`
+each. The CI job dumps the inspected NanoCpus + Memory limits before
+running the benches so a reviewer can confirm the cgroup is actually
+applied (the previous GHA-service-container path declared
+`postgres:17-alpine` with no resource options, which meant the
+container ran with the runner's full 7GB / 2-CPU budget — "parity" in
+name only, fixed in issue #491 item 5).
+
 Both tiers write pytest-benchmark JSON to `.benchmarks/`:
 
 ```
@@ -62,6 +73,20 @@ EntDB acks after WAL apply).
 | 10 | `GetConnectedNodes(node_id, depth=1)` | `SELECT … FROM edges JOIN nodes ON …` | `traversal` | within 1.50x |
 | 11 | `SearchMailbox(query)` | `tsvector @@ plainto_tsquery(…)` | `fulltext` | not a target (different semantics) |
 | 12 | `GetMailbox(user_id, limit)` | `SELECT … WHERE owner=$ ORDER BY created_at DESC LIMIT` | `mailbox-list` | within 1.50x |
+
+**Shape note — `update` (row #7).** EntDB's `UpdateNodeOp` sends a
+client-side `patch` that the server merges into the existing payload
+field-by-field (no full-row rewrite at the storage layer; only changed
+field-id slots touch SQLite). Postgres uses `payload = payload ||
+$1::jsonb` which is a JSONB merge at SQL level but is **internally a
+full-row rewrite** — Postgres has no in-place update on the heap, so
+every UPDATE writes a new row version and the old one is reclaimed by
+VACUUM. The two are wire-equivalent ("merge this patch into the row")
+but storage-divergent. We picked the JSONB-merge form on the Postgres
+side rather than a full `SET payload = $1` rewrite because it matches
+the wire intent — but a reader comparing the absolute write cost should
+be aware that EntDB's edge here is partly a JSON-on-disk vs row-on-heap
+asymmetry, not pure runtime speed.
 
 The ratio targets are encoded in `tests/python/benchmarks/conftest.py`
 (`RATIO_TARGETS` dict) and attached to each pytest-benchmark item as
@@ -133,37 +158,61 @@ defaults.
 
 Issue #487 asks: how small can Postgres actually run the bench
 workload? Community lore says "Postgres often fails to start or
-thrashes immediately at `--memory=256m`". On `postgres:17-alpine` with
-this bench's 1k-node + 5k-edge corpus, that lore is **stale**:
+thrashes immediately at `--memory=256m`". The original PR #489 table
+measured this on a 1k-node / 5k-edge corpus — a fair-game starting
+point but, as the PR review (issue #491 item 6) called out, a trivial
+working set fits in any memory budget and the table only proved "PG
+doesn't crash at 256m on a trivial workload."
 
-| `--memory` | Cold boot | Bench-shaped workload (1k seed + 500 reads + 100 writes) |
-|------------|-----------|----------------------------------------------------------|
-| 256m       | ok        | ok (~0.40s)                                              |
-| 384m       | ok        | ok (~0.41s)                                              |
-| 512m       | ok        | ok (~0.41s)                                              |
-| 768m       | ok        | ok (~0.42s)                                              |
-| 1024m      | ok        | ok (~0.42s)                                              |
+Re-measured at **10x** the corpus — 10k nodes / 100k edges — using
+`tests/python/benchmarks/measure_pg_memory_floor.py`:
 
-Methodology: `tests/python/benchmarks/dump_pg_explain.py` exercises the
-same query shapes the bench measures (point reads, edge fanout,
-filtered list, FTS, batched writes). At each `--memory` step the script
-brings up `postgres:17-alpine` under `--cpus=1`, creates the documented
-schema + indexes, bulk-loads the 1k-node / 5k-edge corpus, then runs
-500 read transactions and 100 write transactions. Pass = no
-`OOMKilled`, no connection drop, workload completes in <5s.
+| `--memory` | Cold boot   | Workload (500r + 100w on 10k/100k) | Status |
+|------------|-------------|------------------------------------|--------|
+| 256m       | ok (1.3s)   | 0.27s                              | ok     |
+| 384m       | ok (1.2s)   | 0.22s                              | ok     |
+| 512m       | ok (1.2s)   | 0.23s                              | ok     |
+| 768m       | ok (1.2s)   | 0.23s                              | ok     |
+| 1024m      | ok (1.2s)   | 0.22s                              | ok     |
 
-**Pinned Tier 2 floor: 512m.** Rationale:
+Even at 10× the original corpus, `postgres:17-alpine` is unfazed at
+256m on this dev box (macOS / arm64, Docker Desktop, ~3.8GB Docker VM
+ceiling — see the script for the exact methodology). The 256m row
+shows a slightly higher workload time because the 10k bulk-load fills
+the shared-buffers ring; once it's warm subsequent rows are equivalent.
+No OOM kills, no connection drops, no plan flips visible in the
+EXPLAIN dumps.
 
-- Empirical minimum on this dev box was **256m** — well under the 768m
-  / 1g the issue speculated.
+Methodology: `tests/python/benchmarks/measure_pg_memory_floor.py`
+brings up `postgres:17-alpine` under `--cpus=1 --memory=<step>m`,
+creates the documented schema + indexes, bulk-loads 10k Task-shaped
+nodes + 100k fan-out edges (10 per node), then runs 500 mixed read
+transactions (point / batched / filtered / edge-fanout / FTS) and 100
+write transactions. Pass = no `OOMKilled`, no connection drop,
+workload completes. Run the script yourself to reproduce on a
+different machine:
+
+```bash
+python tests/python/benchmarks/measure_pg_memory_floor.py 256 384 512 768 1024
+```
+
+**Pinned Tier 2 floor: 512m.** Rationale, restated against the
+10k/100k evidence:
+
+- Empirical minimum on this dev box was still **256m** — neither the
+  1k nor the 10k corpus pushed PG into distress.
 - Linux CI runners (GH-hosted `ubuntu-latest`, 7GB total RAM, no
-  dedicated cgroup) have less page-cache headroom than a 32GB dev box;
-  pinning at 256m there would risk flake from one bad GC pause.
+  dedicated cgroup) have less page-cache headroom than a 16-32GB dev
+  box; pinning at 256m there would risk flake from one bad GC pause
+  or a noisy-neighbour eviction. The CI run is the headline number
+  this doc cites — flake there is more expensive than 256MB.
 - 512m gives us 2x headroom over the empirical floor and matches the
   EntDB Tier 1 budget exactly (apples-to-apples on the absolute number).
 
-If a future workload (large corpus, concurrent clients, real ACL graph)
-pushes the floor higher, re-run the methodology and update the table.
+If a future workload (real ACL graph, concurrent clients, 10x larger
+corpus again) pushes the floor higher, re-run the script and update
+the table. The measurement script is **not** invoked by the bench
+harness or CI — it's a one-shot doc-evidence tool.
 
 ## Reproduce locally
 
@@ -221,11 +270,21 @@ external reference.
   Multi-tenant Postgres performance is a separate question
   (schema-per-tenant, table-per-tenant, RLS, partitioning by
   `tenant_id`).
-- **No ACL filtering.** EntDB's `GetNode` runs through
-  Permission-checking middleware; the Postgres equivalent is a raw
-  `SELECT`. The bench skips EntDB's ACL middleware to keep the
-  comparison fair on the storage hop. ACL overhead is measured
-  separately in Tier 1.
+- **No ACL filtering — symmetric on reads and writes.** EntDB's
+  `GetNode` runs through Permission-checking middleware; EntDB writes
+  also run a tenant-membership + role check in `ExecuteAtomic`. The
+  Postgres equivalents are raw `SELECT` / `INSERT` / `UPDATE` with no
+  authz hop. To keep the comparison apples-to-apples on **both** the
+  read and write paths, the bench runs as the `system:bench` actor —
+  `system:*` actors bypass both the read-side ACL filter
+  (`server/go/internal/api/query_nodes.go:applyQueryACLFilter`, system
+  short-circuit at L242) and the write-side membership gate
+  (`server/go/internal/api/execute_atomic.go:checkTenantWriteAccess`,
+  system short-circuit at L585). Previously the bench actor was
+  `user:alice`, which bypassed nothing on the write side and forced
+  `acl.NewFilter(...)` allocation on the read side even though no
+  canonical ACL store was wired. ACL overhead is measured separately in
+  Tier 1 — that's the right place for it, not here.
 - **In-memory WAL on EntDB.** The bench uses the in-memory WAL
   backend; Postgres uses its real WAL. This favours EntDB on write
   latency. A Kafka-WAL variant is future work.
@@ -244,6 +303,43 @@ external reference.
   twice on writes (client → field-id payload → SQLite blob); Postgres
   pays it once (client → JSONB binary). Slight unfairness toward EntDB
   on write.
+
+## Baseline drift on label-gated tiers
+
+Both tiers feed `github-action-benchmark` and write to a `gh-pages`
+data path (`dev/bench/tier1` and `dev/bench/tier2`). Tier 1 runs on
+every PR + push to `main` so its series is dense — the
+`alert-threshold: 150%` comparison fires against the immediately
+preceding run, typically the previous day. Tier 2 is heavier and runs
+only on push-to-`main`, on tags, and on PRs labelled `bench:postgres`.
+
+The gappy-series footgun: `alert-threshold` compares each new data
+point to the **immediately previous one in the series**, not to a
+rolling median. If the Tier 2 series goes 6 weeks between push-to-main
+runs (because no one shipped a Tier-2-interesting change), then a 50%
+regression on the next run compares against 6-week-old numbers — not
+the most-recent week's main-branch performance. A real regression
+introduced gradually across that window can slip under the 150% gate
+without firing.
+
+Workarounds (none yet shipped — call out in a follow-up issue if/when
+the drift bites):
+
+1. **Run Tier 2 nightly on `main` from a separate workflow.** Cron a
+   `workflow_dispatch` with `tier: 2`; the series gets a data point a
+   day even when no PR triggers it. The regression-alert window stays
+   tight.
+2. **Tighten the Tier 2 threshold** (e.g. `alert-threshold: 120%`) so
+   smaller regressions fire — but a noisy Tier 2 run on a noisy CI
+   runner already flirts with ±15% on writes, so this trades false
+   positives for false negatives.
+3. **Switch to a comparison strategy that uses the median of the last
+   N runs**, not the previous point. `github-action-benchmark` does
+   not support this out of the box; would need a custom analyser.
+
+Tier 1 is not exposed to this problem on the cadence we ship at
+(commits land daily). Document the limitation rather than silently
+shipping a misleading regression alert.
 
 ## Open questions tracked elsewhere
 

@@ -30,7 +30,10 @@ import pytest
 # pytest collection works whether the bench dir is loaded as a package
 # (``-p tests.python.benchmarks``) or via a plain ``pytest path/to``.
 BENCH_TENANT = "bench"
-BENCH_ACTOR = "user:alice"
+# ``system:bench`` bypasses ACL on both reads and writes — keeps the
+# comparison apples-to-apples with Postgres which pays no ACL cost.
+# See ``conftest.BENCH_ACTOR`` for the full rationale.
+BENCH_ACTOR = "system:bench"
 TASK_TYPE_ID = 2
 
 pytestmark = pytest.mark.benchmark

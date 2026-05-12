@@ -96,29 +96,24 @@ jobs:
 
   # ==========================================================================
   # Tier 2 — EntDB + Postgres at parity. Heavy job; gate by label on PRs.
+  #
+  # Uses ``docker-compose.bench.yml`` (not a GHA service container) so
+  # **both** the Go server and Postgres run with ``--cpus=1
+  # --memory=512m`` cgroup limits — the parity claim in
+  # ``docs/benchmarks/benchmarks.md`` is only honest if the limits are
+  # actually applied. A GHA service container with no ``--cpus`` /
+  # ``--memory`` options runs with the runner's full 7GB / 2-CPU budget;
+  # the Go server-as-host-subprocess path is similarly unpinned. Both
+  # were "parity" in name only (issue #491 item 5).
   # ==========================================================================
   tier2:
-    name: Tier 2 — EntDB vs Postgres
+    name: Tier 2 — EntDB vs Postgres (compose-pinned)
     if: |
       github.event_name == 'push' ||
       startsWith(github.ref, 'refs/tags/') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'bench:postgres')) ||
       (github.event_name == 'workflow_dispatch' && (github.event.inputs.tier == 'both' || github.event.inputs.tier == '2'))
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine
-        env:
-          POSTGRES_USER: bench
-          POSTGRES_PASSWORD: bench
-          POSTGRES_DB: bench
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U bench -d bench"
-          --health-interval 2s
-          --health-timeout 2s
-          --health-retries 30
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -133,14 +128,21 @@ jobs:
             "pytest-timeout>=2.2.0" "ruff>=0.15.0" "mypy>=1.8.0" "httpx>=0.26.0" \
             "grpcio-tools>=1.60.0" pytest-benchmark==5.2.3 "psycopg[binary]>=3.1"
 
-      - name: Pre-build Go entdb-server binary
+      - name: Bring up bench compose stack (cgroup-pinned)
         run: |
-          cd server/go && go build -o "$RUNNER_TEMP/entdb-server" ./cmd/entdb-server
-          echo "ENTDB_GO_BINARY=$RUNNER_TEMP/entdb-server" >> "$GITHUB_ENV"
+          docker compose -f tests/python/benchmarks/docker-compose.bench.yml \
+            up -d --build --wait
+          # Sanity: confirm the limits are actually applied.
+          docker inspect entdb-bench-entdb-server-1 \
+            --format 'entdb cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}}'
+          docker inspect entdb-bench-postgres-1 \
+            --format 'postgres cpus={{.HostConfig.NanoCpus}} mem={{.HostConfig.Memory}}'
 
       - name: Run Tier 2 EntDB benchmark
         env:
-          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:5432/bench
+          # docker-compose.bench.yml maps entdb 50051→50051, postgres 5432→55432.
+          ENTDB_BENCH_ENDPOINT: 127.0.0.1:50051
+          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:55432/bench
         run: |
           uv run pytest tests/python/benchmarks/bench_entdb.py -v \
             --benchmark-only \
@@ -149,7 +151,8 @@ jobs:
 
       - name: Run Tier 2 Postgres benchmark
         env:
-          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:5432/bench
+          ENTDB_BENCH_ENDPOINT: 127.0.0.1:50051
+          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:55432/bench
         run: |
           uv run pytest tests/python/benchmarks/bench_postgres.py -v \
             --benchmark-only \
@@ -159,10 +162,16 @@ jobs:
       - name: Dump Postgres EXPLAIN ANALYZE
         if: always()
         env:
-          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:5432/bench
+          ENTDB_BENCH_PG_DSN: postgresql://bench:bench@127.0.0.1:55432/bench
         run: |
           uv run python tests/python/benchmarks/dump_pg_explain.py \
             "$ENTDB_BENCH_PG_DSN" > benchmark-tier2-explain.txt 2>&1 || true
+
+      - name: Tear down compose stack
+        if: always()
+        run: |
+          docker compose -f tests/python/benchmarks/docker-compose.bench.yml \
+            down --remove-orphans -v
 
       - name: Store Tier 2 benchmark results
         if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/')

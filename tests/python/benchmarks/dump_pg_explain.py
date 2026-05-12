@@ -69,12 +69,50 @@ QUERIES: list[tuple[str, str, tuple]] = [
 ]
 
 
-def main() -> None:
+def _corpus_present(conn: psycopg.Connection) -> bool:
+    """Return True if the bench corpus appears to be loaded.
+
+    Checks both that the schema exists and that ``bench-node-000000``
+    (hardcoded into the ``QUERIES`` list) is actually present — without
+    it every plan reports ``rows=0`` and the dump is misleading (issue
+    #491 item 7).
+    """
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM nodes WHERE tenant_id=%s AND id=%s",
+                ("bench", "bench-node-000000"),
+            )
+            return cur.fetchone() is not None
+    except psycopg.errors.UndefinedTable:
+        return False
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def main() -> int:
     if len(sys.argv) != 2:
         print("usage: dump_pg_explain.py <DSN>", file=sys.stderr)
-        sys.exit(2)
+        return 2
     dsn = sys.argv[1]
     with psycopg.connect(dsn) as conn:
+        if not _corpus_present(conn):
+            print(
+                "ERROR: bench corpus not found in this Postgres instance.\n"
+                "  Expected row (tenant_id='bench', id='bench-node-000000') is missing,\n"
+                "  or the `nodes` table doesn't exist yet.\n"
+                "\n"
+                "  Run the bench first so the seed fixture populates the corpus, e.g.:\n"
+                "    tests/python/benchmarks/run_bench.sh --tier 2\n"
+                "  or, if the compose stack is already up:\n"
+                "    pytest tests/python/benchmarks/bench_postgres.py --benchmark-only -q\n"
+                "\n"
+                "  Without the seed, every EXPLAIN ANALYZE plan reports rows=0 and is\n"
+                "  not useful for confirming index usage.",
+                file=sys.stderr,
+            )
+            return 1
+
         for title, sql, params in QUERIES:
             print(f"\n========== {title} ==========\n")
             try:
@@ -82,9 +120,10 @@ def main() -> None:
                     cur.execute("EXPLAIN (ANALYZE, BUFFERS, VERBOSE) " + sql, params)
                     for (line,) in cur.fetchall():
                         print(line)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 print(f"(EXPLAIN failed: {exc})")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

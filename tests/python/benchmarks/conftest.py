@@ -58,7 +58,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 BENCH_TENANT = "bench"
-BENCH_ACTOR = "user:alice"
+# ``system:bench`` actor bypasses ACL on both reads AND writes
+# (server/go/internal/acl/actor.go:111 — system actors skip capability
+# checks; server/go/internal/api/execute_atomic.go:585 — system/admin
+# actors skip tenant-membership). Postgres pays no equivalent cost; the
+# symmetric "skip auth on both sides" choice keeps the comparison
+# apples-to-apples on both read and write paths. The previous bench
+# actor ``user:alice`` still ran the ACL filter on reads (it returned
+# trivial results because no canonical ACL store is wired, but
+# ``acl.NewFilter(...)`` allocation + the FilterReadable round-trip
+# was real overhead). See ``docs/benchmarks/benchmarks.md`` Caveats.
+BENCH_ACTOR = "system:bench"
 
 # The ``contract`` seed profile registers User=1 / Task=2 / AssignedTo=100.
 # Task is the closest-fit corpus shape (has title/description, no
@@ -66,6 +76,13 @@ BENCH_ACTOR = "user:alice"
 TASK_TYPE_ID = 2
 USER_TYPE_ID = 1
 ASSIGNED_TO_EDGE_ID = 100
+
+# Fail-loud threshold on the seed: if fewer than this fraction of the
+# expected nodes land, the bench is running against an empty / partial
+# corpus and the numbers it reports are meaningless. The previous
+# ``logger.warning``-only behaviour let a hard seed failure produce a
+# green CI run on a near-empty DB (issue #491 item 1).
+SEED_MIN_FRACTION = 0.10
 
 CORPUS_SIZE = int(os.environ.get("ENTDB_BENCH_CORPUS", "1000"))
 CORPUS_EDGES_PER_NODE = int(os.environ.get("ENTDB_BENCH_EDGE_FANOUT", "5"))
@@ -340,6 +357,7 @@ def entdb_seeded(entdb_stub, corpus):
 
     ctx = pb.RequestContext(tenant_id=BENCH_TENANT, actor=BENCH_ACTOR)
     node_ids: list[str] = []
+    seed_failures = 0
 
     BATCH = 50
     for batch_start in range(0, len(corpus), BATCH):
@@ -363,16 +381,33 @@ def entdb_seeded(entdb_stub, corpus):
         try:
             entdb_stub.ExecuteAtomic(req, timeout=30.0)
         except Exception as exc:  # noqa: BLE001
-            # Re-seeding the same corpus into the same data-dir is fine
-            # (idempotency key collisions); a hard failure on a fresh
-            # bench is not.
+            seed_failures += len(ops)
             logger.warning("entdb seed batch %d failed: %r", batch_start, exc)
 
+    # Fail-loud: if too few nodes landed, the bench would run against
+    # an empty/partial corpus and produce meaningless numbers (issue
+    # #491 item 1). Threshold deliberately generous — re-seeding into a
+    # pre-populated data-dir is fine (idempotency-key collisions are
+    # expected), but a hard "server not reachable" or "schema not
+    # registered" should fail the bench rather than be hidden behind a
+    # log line.
+    expected = len(corpus)
+    landed = expected - seed_failures
+    if landed < max(1, int(expected * SEED_MIN_FRACTION)):
+        raise RuntimeError(
+            f"entdb seed: only {landed}/{expected} node creates succeeded "
+            f"(< {SEED_MIN_FRACTION:.0%} threshold); bench would run against "
+            f"a near-empty corpus. Check the server log."
+        )
+
     # Edge fan-out — every node gets ``CORPUS_EDGES_PER_NODE`` edges to
-    # the next K nodes in the corpus (wraps).
+    # the next K nodes in the corpus (wraps). Hoist ``edge_ops`` out of
+    # the ``if i % BATCH == 0`` guard so a zero-length ``node_ids`` or
+    # first-iteration break can't leave it unbound (issue #491 item 2).
+    edge_ops: list = []
     for i, nid in enumerate(node_ids):
         if i % BATCH == 0:
-            ops = []
+            edge_ops = []
         for k in range(1, CORPUS_EDGES_PER_NODE + 1):
             target = node_ids[(i + k) % len(node_ids)]
             edge_op = pb.CreateEdgeOp(edge_id=ASSIGNED_TO_EDGE_ID)
@@ -381,20 +416,21 @@ def entdb_seeded(entdb_stub, corpus):
             # construction form that works.
             getattr(edge_op, "from").CopyFrom(pb.NodeRef(id=nid))
             edge_op.to.CopyFrom(pb.NodeRef(id=target))
-            ops.append(pb.Operation(create_edge=edge_op))
+            edge_ops.append(pb.Operation(create_edge=edge_op))
         if (i % BATCH == BATCH - 1) or (i == len(node_ids) - 1):
             req = pb.ExecuteAtomicRequest(
                 context=ctx,
                 idempotency_key=f"bench-seed-edges-{i}-{uuid.uuid4().hex[:6]}",
-                operations=ops,
+                operations=edge_ops,
             )
             try:
                 entdb_stub.ExecuteAtomic(req, timeout=60.0)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("entdb seed edges batch %d failed: %r", i, exc)
-                # First failure terminates the edge seed — bench reads
-                # that need edges will report a measurable-but-empty
-                # result rather than hang.
+                # Edge-seed failures are not as load-bearing as the node
+                # seed (edge benches will simply return empty result
+                # sets and the bench will still produce numbers for
+                # the non-edge cases). Still log loud + bail early.
+                logger.error("entdb seed edges batch %d failed: %r", i, exc)
                 break
 
     # Give the applier a moment to drain.
