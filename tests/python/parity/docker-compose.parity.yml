@@ -1,0 +1,201 @@
+version: "3.8"
+
+# =============================================================================
+# EntDB Dual-Stack Parity Test Environment — Phase 4A (EPIC #407)
+# =============================================================================
+#
+# Boots the Python and Go gRPC servers side-by-side, each backed by its
+# own dedicated Redpanda cluster (separate broker => separate WAL =>
+# we exercise parity rather than replay-determinism on a shared log).
+#
+# Topology:
+#
+#     parity-tests ──┬── server-python:50051  ── redpanda-py:9092
+#                    └── server-go:50051      ── redpanda-go:9092
+#
+# Both servers boot with the same e2e schema (User/Product/Order +
+# Purchased/PlacedOrder/OrderContains edges) so the SDK can drive
+# identical proto traffic against each. Tenant `e2e-test` is pre-seeded
+# on the Go target via --seed-profile=e2e; the Python target auto-
+# creates tenants on first write (global_store disabled in dev mode).
+#
+# This suite is transitional. After Phase 4D deletes server/python/ this
+# compose file becomes unrunnable and should be removed alongside the
+# rest of tests/python/parity/. See README.md.
+#
+# Usage:
+#   bash tests/python/parity/run-parity.sh
+# =============================================================================
+
+services:
+  # ==========================================================================
+  # Redpanda (Python target WAL)
+  # ==========================================================================
+  redpanda-py:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=256M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda-py:9092
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ==========================================================================
+  # Redpanda (Go target WAL) — separate cluster so the two servers
+  # genuinely consume independent logs.
+  # ==========================================================================
+  redpanda-go:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=256M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda-go:9092
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # ==========================================================================
+  # MinIO (S3-compatible storage — required by the Python server image)
+  # ==========================================================================
+  minio:
+    image: minio/minio:RELEASE.2024-01-18T22-51-28Z
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  minio-init:
+    image: minio/mc:RELEASE.2024-01-18T07-03-39Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing myminio/entdb-storage;
+      echo 'Bucket created';
+      exit 0;
+      "
+
+  # ==========================================================================
+  # Python EntDB Server
+  # ==========================================================================
+  server-python:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: server
+    environment:
+      - GRPC_BIND=0.0.0.0:50051
+      - WAL_BACKEND=kafka
+      - KAFKA_BROKERS=redpanda-py:9092
+      - KAFKA_TOPIC=entdb-wal-parity
+      - KAFKA_CONSUMER_GROUP=entdb-applier-parity-py
+      - S3_BUCKET=entdb-storage
+      - S3_ENDPOINT=http://minio:9000
+      - S3_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - DATA_DIR=/var/lib/entdb
+      - LOG_LEVEL=INFO
+      - LOG_FORMAT=text
+    depends_on:
+      redpanda-py:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    volumes:
+      - py-server-data:/var/lib/entdb
+    healthcheck:
+      test: ["CMD", "python", "-c", "import grpc; ch = grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=5)"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+      start_period: 10s
+
+  # ==========================================================================
+  # Go EntDB Server
+  # ==========================================================================
+  server-go:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile.go
+      target: server
+    image: entdb-server-go:parity
+    command:
+      - "-addr=:50051"
+      - "-data-dir=/var/lib/entdb"
+      - "-wal-backend=kafka"
+      - "-wal-brokers=redpanda-go:9092"
+      - "-wal-topic=entdb-wal-parity"
+      - "-wal-group=entdb-applier-parity-go"
+      - "-seed-profile=e2e"
+      - "-seed-tenant=e2e-test"
+    depends_on:
+      redpanda-go:
+        condition: service_healthy
+    volumes:
+      - go-server-data:/var/lib/entdb
+    # Distroless image: no shell-based healthcheck; the parity-tests
+    # container retries the TCP connect itself.
+
+  # ==========================================================================
+  # Parity Test Runner — drives BOTH servers in parallel via the SDK.
+  # ==========================================================================
+  parity-tests:
+    build:
+      context: ../../..
+      dockerfile: tests/python/parity/Dockerfile.parity
+    environment:
+      - ENTDB_PYTHON_HOST=server-python
+      - ENTDB_PYTHON_PORT=50051
+      - ENTDB_GO_HOST=server-go
+      - ENTDB_GO_PORT=50051
+      - ENTDB_TENANT=e2e-test
+    depends_on:
+      server-python:
+        condition: service_healthy
+      server-go:
+        condition: service_started
+      redpanda-py:
+        condition: service_healthy
+      redpanda-go:
+        condition: service_healthy
+    # Mount the docker socket + compose file so the restart-parity
+    # scenario can `docker compose restart` both servers.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docker-compose.parity.yml:/compose/docker-compose.yml:ro
+
+volumes:
+  py-server-data:
+  go-server-data:
+
+networks:
+  default:
+    name: entdb-parity-network
