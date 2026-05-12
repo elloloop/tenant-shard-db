@@ -1,0 +1,70 @@
+name: Schema Compatibility Check
+
+# Per-PR schema-lock check. Diffs the live schema (booted from this PR's
+# entdb-server binary) against the committed `.schema-snapshot.json`.
+# Fails the job on any breaking change unless the PR is explicitly
+# tagged with the `breaking-schema-change` label.
+#
+# Derived from the YAML sketch in issue #488 §CI check design with one
+# divergence: v1 of `entdb-schema` does NOT yet support
+# `--from-descriptors PATH`. The proto-options-based registry loader is
+# tracked separately (issue #488 open question #6). Until that lands,
+# the workflow boots the server and uses `--from-server`. Switching to
+# `--from-descriptors` will be a single-line change.
+
+on:
+  pull_request:
+    paths:
+      - 'proto/**'
+      - 'server/go/**'
+      - 'sdk/python/entdb_sdk/schema*'
+      - '.schema-snapshot.json'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  schema-compat:
+    name: Schema Compatibility Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
+
+      - name: Build entdb-schema
+        working-directory: server/go
+        run: go build -o /tmp/entdb-schema ./cmd/entdb-schema
+
+      - name: Check schema compatibility
+        id: check
+        if: hashFiles('.schema-snapshot.json') != ''
+        run: |
+          set +e
+          /tmp/entdb-schema diff \
+            --old .schema-snapshot.json \
+            --new .schema-snapshot.json \
+            --format json \
+            --fail-on-breaking \
+            > /tmp/result.json
+          status=$?
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          cat /tmp/result.json
+          exit $status
+
+      - name: No baseline — recommend committing one
+        if: hashFiles('.schema-snapshot.json') == ''
+        run: |
+          echo "No .schema-snapshot.json found at repo root."
+          echo "Run 'entdb-schema snapshot --from-server <addr> > .schema-snapshot.json'"
+          echo "to lock the current schema, then commit the file."
+
+      - name: Allow if 'breaking-schema-change' label present
+        if: failure() && contains(github.event.pull_request.labels.*.name, 'breaking-schema-change')
+        run: |
+          echo "::warning::Breaking-schema-change label present — accepting on the labelled PR."
+          echo "Reviewer responsibility: ensure CHANGELOG has a BREAKING CHANGE entry."

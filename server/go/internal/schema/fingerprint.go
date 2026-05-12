@@ -47,6 +47,42 @@ func (r *Registry) computeFingerprint() (string, error) {
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
+// CanonicalJSON marshals the registry into the byte-for-byte
+// deterministic shape used by the fingerprint (Python's
+// json.dumps(sort_keys=True, separators=(",", ":"))). entdb-schema
+// uses this for snapshot output so two invocations on the same
+// registry produce identical bytes — see issue #488 determinism
+// requirements (§Determinism, points 7-8).
+func (r *Registry) CanonicalJSON() ([]byte, error) {
+	doc := r.toFile()
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("schema: marshal for canonical JSON: %w", err)
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, fmt.Errorf("schema: unmarshal for canonical JSON: %w", err)
+	}
+	var sb strings.Builder
+	if err := canonicalEncode(&sb, v); err != nil {
+		return nil, fmt.Errorf("schema: canonical encode: %w", err)
+	}
+	return []byte(sb.String()), nil
+}
+
+// CanonicalEncodeJSON is the exported escape hatch used by
+// entdb-schema to canonicalise a generic JSON value (e.g. the
+// snapshot envelope) using the same sort-keys/no-whitespace rules as
+// the fingerprint. Accepts the standard encoding/json value shapes
+// (map[string]any, []any, string, bool, float64, json.Number, nil).
+func CanonicalEncodeJSON(v any) ([]byte, error) {
+	var sb strings.Builder
+	if err := canonicalEncode(&sb, v); err != nil {
+		return nil, fmt.Errorf("schema: canonical encode: %w", err)
+	}
+	return []byte(sb.String()), nil
+}
+
 // canonicalEncode writes v to sb using Python's
 // `json.dumps(sort_keys=True, separators=(",", ":"))` byte format:
 //   - Object keys sorted by Unicode code point (Python sorted() default).

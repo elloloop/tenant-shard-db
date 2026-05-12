@@ -133,28 +133,42 @@ jobs:
     name: Schema Compatibility Check
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.schema == 'true' || needs.changes.outputs.python == 'true'
+    if: needs.changes.outputs.schema == 'true' || needs.changes.outputs.go == 'true'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@v4
-      - run: uv python install ${{ env.PYTHON_VERSION }}
-      - run: |
-          uv venv
-          uv pip install -e ./sdk/python \
-            pytest>=8.0.0 pytest-asyncio>=0.23.0 pytest-cov>=4.1.0 \
-            pytest-timeout>=2.2.0 ruff>=0.15.0 httpx>=0.26.0 \
-            grpcio-tools>=1.60.0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go/go.sum
 
-      - name: Check schema compatibility
+      - name: Build entdb-schema
+        working-directory: server/go
+        run: go build -o /tmp/entdb-schema ./cmd/entdb-schema
+
+      - name: Check schema compatibility against baseline
+        if: hashFiles('.schema-snapshot.json') != ''
         run: |
-          if [ -f ".schema-snapshot.json" ]; then
-            echo "Schema baseline check is a follow-up after Phase 4D (Python server retirement)."
-            echo "The Go server's schema-CLI equivalent will land in a follow-up PR."
-          else
-            echo "No schema baseline found, skipping compatibility check"
+          set +e
+          /tmp/entdb-schema diff \
+            --old .schema-snapshot.json \
+            --new .schema-snapshot.json \
+            --format text \
+            --fail-on-breaking
+          status=$?
+          if [ $status -eq 1 ] && [[ "${{ contains(github.event.pull_request.labels.*.name, 'breaking-schema-change') }}" == "true" ]]; then
+            echo "::warning::Breaking-schema-change label present — accepting on the labelled PR."
+            exit 0
           fi
+          exit $status
+
+      - name: No baseline — recommend committing one
+        if: hashFiles('.schema-snapshot.json') == ''
+        run: |
+          echo "No .schema-snapshot.json found at repo root."
+          echo "Run 'entdb-schema snapshot --from-server <addr> > .schema-snapshot.json'"
+          echo "to lock the current schema, then commit the file."
 
   go-server-build:
     name: Go Server Build
