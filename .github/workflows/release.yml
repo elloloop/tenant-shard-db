@@ -27,36 +27,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # server image is now the Go reimplementation (Phase 4C of
-          # EPIC #407). Image-name is unchanged
-          # (ghcr.io/<repo>:vX.Y.Z) so downstream SDK consumers see a
-          # drop-in replacement — the only difference is the binary
-          # inside the image. CGO is disabled in Dockerfile.go (pure-Go
-          # SQLite via modernc.org/sqlite) so both arch legs build
-          # natively without QEMU.
+          # server image is the Go reimplementation (Phase 4D of
+          # EPIC #407 — Python server retired). Image name is
+          # unchanged (ghcr.io/<repo>:vX.Y.Z) so downstream consumers
+          # see a drop-in replacement. CGO is disabled in the Dockerfile
+          # (pure-Go SQLite via modernc.org/sqlite) so both arch legs
+          # build natively without QEMU.
           - target: server
             suffix: ""
-            dockerfile: Dockerfile.go
-            platform: linux/amd64
-            arch: amd64
-            runner: ubuntu-latest
-          - target: server
-            suffix: ""
-            dockerfile: Dockerfile.go
-            platform: linux/arm64
-            arch: arm64
-            runner: ubuntu-24.04-arm
-          # sdk image still ships from the Python Dockerfile — the
-          # SDK artifact itself is language-side and unaffected by the
-          # server-language rewrite.
-          - target: sdk
-            suffix: "-sdk"
             dockerfile: Dockerfile
             platform: linux/amd64
             arch: amd64
             runner: ubuntu-latest
-          - target: sdk
-            suffix: "-sdk"
+          - target: server
+            suffix: ""
             dockerfile: Dockerfile
             platform: linux/arm64
             arch: arm64
@@ -146,13 +130,6 @@ jobs:
           docker rm -f entdb-smoke
           exit 1
 
-      - name: Smoke test - SDK image imports entdb_sdk
-        if: matrix.target == 'sdk'
-        run: |
-          set -euo pipefail
-          docker run --rm entdb-smoke:sdk-${{ matrix.arch }} \
-            python -c "import entdb_sdk; print('entdb_sdk', entdb_sdk.__version__, 'on ${{ matrix.arch }}')"
-
       # Smoke test for the entdb-schema image. Confirms the binary
       # is executable in the distroless runtime and that the embedded
       # subcommand dispatch is wired up (a broken main package would
@@ -220,8 +197,6 @@ jobs:
         include:
           - target: server
             suffix: ""
-          - target: sdk
-            suffix: "-sdk"
           - target: schema
             suffix: "-schema"
 
