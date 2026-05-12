@@ -411,6 +411,149 @@ func TestShareNode_NoProducerUnimplemented(t *testing.T) {
 	}
 }
 
+// shareNodeFixtureWithStore is shareNodeFixture but also returns the
+// underlying *store.CanonicalStore so tests can seed node_access rows
+// directly (the path normally taken by the applier). Used by the
+// Phase 4A.2 grant-based ADMIN tests where we want bob to have a
+// pre-existing ADMIN row before the gRPC call.
+func shareNodeFixtureWithStore(t *testing.T) (*api.Server, *store.CanonicalStore, *wal.InMemory, context.Context) {
+	t.Helper()
+	ctx := context.Background()
+
+	cs, err := store.New(store.Options{RootDir: t.TempDir(), WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	if err := cs.OpenTenant(ctx, "acme"); err != nil {
+		t.Fatalf("OpenTenant: %v", err)
+	}
+	if _, err := cs.CreateNodeRaw(ctx, "acme", store.NodeInput{
+		NodeID:     "doc-1",
+		TypeID:     7,
+		Payload:    map[string]any{"1": "hello"},
+		OwnerActor: "user:alice",
+	}); err != nil {
+		t.Fatalf("CreateNodeRaw: %v", err)
+	}
+
+	gs := newGlobalStore(t)
+	if _, err := gs.CreateTenant(ctx, "acme", "Acme", ""); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	producer := wal.NewInMemory(0)
+	if err := producer.Connect(ctx); err != nil {
+		t.Fatalf("producer.Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = producer.Close(ctx) })
+
+	srv := api.New(
+		api.WithStore(cs),
+		api.WithGlobalStore(gs),
+		api.WithWALProducer(producer),
+	)
+	return srv, cs, producer, ctx
+}
+
+// TestShareNode_NonOwnerWithAdminGrant: a user that is NOT the node
+// owner but holds an explicit ADMIN grant on the node can re-share.
+// Phase 4A.2 expansion: before this change the handler enforced an
+// owner-only branch that rejected this case. The acl.Checker handles
+// owner short-circuit + grant-based ADMIN; wiring it in restores the
+// "ADMIN means I can delegate" semantic that every adjacent system
+// uses (see .claude/triage/sharenode-owner-share-analysis.md §3 #3).
+func TestShareNode_NonOwnerWithAdminGrant(t *testing.T) {
+	t.Parallel()
+
+	srv, cs, producer, ctx := shareNodeFixtureWithStore(t)
+
+	// Pre-seed: bob has an ADMIN grant on doc-1 (the fixture has
+	// alice as owner). Direct store.ShareNode write since this is
+	// fixture-stage setup, not a re-entry through the gRPC layer.
+	if err := cs.ShareNode(ctx, "acme", store.ShareNodeInput{
+		NodeID:    "doc-1",
+		ActorID:   "user:bob",
+		ActorType: "user",
+		// CORE_CAP_ADMIN = 5. Persisted as a typed-cap row so the
+		// acl.Checker's RequiredForOp(ShareNode) -> CoreCapAdmin
+		// requirement is satisfied without depending on legacy
+		// permission-string back-fill.
+		CoreCaps:  []int32{5},
+		GrantedBy: "user:alice",
+	}); err != nil {
+		t.Fatalf("seed ShareNode (admin grant for bob): %v", err)
+	}
+
+	resp, err := srv.ShareNode(ctx, &pb.ShareNodeRequest{
+		Context:    &pb.RequestContext{TenantId: "acme", Actor: "user:bob"},
+		NodeId:     "doc-1",
+		ActorId:    "user:charlie",
+		Permission: "read",
+	})
+	if err != nil {
+		t.Fatalf("ShareNode: unexpected gRPC error: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("ShareNode (non-owner ADMIN grantee): success=false, error=%q; want success=true",
+			resp.GetError())
+	}
+
+	ops := shareNodeOps(t, producer)
+	if len(ops) != 1 {
+		t.Fatalf("WAL records: got %d, want 1", len(ops))
+	}
+	op := ops[0][0]
+	if op["actor_id"] != "user:charlie" {
+		t.Errorf("op.actor_id = %q; want %q", op["actor_id"], "user:charlie")
+	}
+	if op["granted_by"] != "user:bob" {
+		t.Errorf("op.granted_by = %q; want %q (the re-sharing admin)", op["granted_by"], "user:bob")
+	}
+}
+
+// TestShareNode_NonOwnerWithReadGrant: a user with ONLY a READ grant
+// on the node cannot re-share. Phase 4A.2: pin the lower bound of the
+// acl.Checker grant-walk — READ does not satisfy CORE_CAP_ADMIN, so
+// the soft-fail "permission denied" path fires and NO WAL record is
+// written.
+func TestShareNode_NonOwnerWithReadGrant(t *testing.T) {
+	t.Parallel()
+
+	srv, cs, producer, ctx := shareNodeFixtureWithStore(t)
+
+	if err := cs.ShareNode(ctx, "acme", store.ShareNodeInput{
+		NodeID:    "doc-1",
+		ActorID:   "user:bob",
+		ActorType: "user",
+		// CORE_CAP_READ = 1. No ADMIN bit set.
+		CoreCaps:  []int32{1},
+		GrantedBy: "user:alice",
+	}); err != nil {
+		t.Fatalf("seed ShareNode (read grant for bob): %v", err)
+	}
+
+	resp, err := srv.ShareNode(ctx, &pb.ShareNodeRequest{
+		Context: &pb.RequestContext{TenantId: "acme", Actor: "user:bob"},
+		NodeId:  "doc-1",
+		ActorId: "user:charlie",
+	})
+	if err != nil {
+		t.Fatalf("ShareNode: unexpected gRPC error: %v", err)
+	}
+	if resp.GetSuccess() {
+		t.Fatalf("ShareNode (READ-only grantee): success=true; want false")
+	}
+	if !strings.Contains(resp.GetError(), "permission denied") {
+		t.Errorf("error = %q; want substring %q", resp.GetError(), "permission denied")
+	}
+	// No record should have been appended on the deny path.
+	if ops := shareNodeOps(t, producer); len(ops) != 0 {
+		t.Errorf("WAL: %d records appended on deny; want 0", len(ops))
+	}
+}
+
 // TestShareNode_EmptyNodeOrActorSoftFail: empty node_id or actor_id
 // surface as soft-fail success=false rather than INVALID_ARGUMENT —
 // matches Python's "no shape validation" behaviour (spec §Error-

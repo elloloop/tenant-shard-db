@@ -114,27 +114,41 @@ async def test_edge_creation_parity(python_client, go_client, parity_tenant) -> 
 
 
 async def test_share_revoke_parity(python_client, go_client, parity_tenant) -> None:
-    """Create a node, share it with `user:bob`, then revoke. After
-    revocation both servers' ACL state must match (which, since
-    revoke removes the grant, means: identical normalised node ACL)."""
+    """Create a node as `user:e2e-runner`, then have an `admin:` actor
+    share it with `user:bob` and revoke. After revocation both servers'
+    ACL state must match (which, since revoke removes the grant, means:
+    identical normalised node ACL).
+
+    The share/revoke is driven by an `admin:` actor on purpose: Python's
+    `_check_capability` requires an explicit ADMIN grant on the node
+    (or system/admin actor) and does NOT honour node-ownership as
+    implicit-admin; Go's wired-`acl.Checker` accepts owner OR explicit
+    ADMIN grant OR system/admin actor (see
+    .claude/triage/sharenode-owner-share-analysis.md §3). The
+    owner-can-share point is therefore a known transitional divergence
+    that disappears with the Python server. Using an `admin:` actor for
+    the share/revoke step keeps the test exercising the side-effect
+    parity (WAL + node_access state) without depending on that
+    divergence.
+    """
 
     async def _seq(client, tenant_id):
         results: list = []
-        scope = client.tenant(tenant_id).actor("user:e2e-runner")
+        owner_scope = client.tenant(tenant_id).actor("user:e2e-runner")
+        admin_scope = client.tenant(tenant_id).actor("admin:parity-admin")
 
-        # Create the target node.
-        plan = scope.plan(idempotency_key=f"share-create-{tenant_id}")
+        # Create the target node as the owner.
+        plan = owner_scope.plan(idempotency_key=f"share-create-{tenant_id}")
         plan.create(pb.User(email="share@example.com", name="Share Target"), as_="u")
         cr = await plan.commit(wait_applied=True)
         results.append(cr)
         node_id = cr.created_node_ids[0]
 
-        # Share it with bob (read permission).
-        ok = await scope.share(node_id, "user:bob")
+        # Share/revoke driven by the admin actor (parity-stable path).
+        ok = await admin_scope.share(node_id, "user:bob")
         results.append({"share_ok": bool(ok)})
 
-        # Revoke.
-        ok2 = await scope.revoke(node_id, "user:bob")
+        ok2 = await admin_scope.revoke(node_id, "user:bob")
         results.append({"revoke_ok": bool(ok2)})
 
         return results

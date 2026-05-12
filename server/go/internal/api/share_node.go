@@ -16,7 +16,7 @@
 // and writes node_access. There is no direct CanonicalStore.ShareNode
 // call from this handler.
 //
-// # Auth model — trusted-actor / owner-only
+// # Auth model — trusted-actor + acl.Checker (Phase 4A.2)
 //
 //  1. checkTenant: sharding ownership + region pinning. Errors from
 //     the gate (UNAVAILABLE w/ redirect, FAILED_PRECONDITION on region
@@ -24,12 +24,12 @@
 //  2. Trusted-actor rebind: the wire-claimed actor is UNTRUSTED — we
 //     rebind to the interceptor-bound identity via auth.Authoritative.
 //     Privilege-escalation regression pinned by commit fece3fb.
-//  3. ACL pre-check: system: / admin: actors short-circuit allow.
-//     For a user: actor, the caller MUST own the target node. The
-//     full Python flow (_check_capability with CoreCapability.ADMIN
-//     and the share-grant fall-through) is deferred to a follow-up
-//     once the acl.Checker is wired into Server — until then, this
-//     handler enforces the strictly-narrower owner-only branch.
+//  3. ACL pre-check via acl.Checker.Check. The Checker handles, in
+//     order: system/admin actor bypass → node-owner short-circuit →
+//     explicit ADMIN grant on the node (a non-owner with ADMIN on the
+//     row can re-share). Mirrors the recommendation in
+//     .claude/triage/sharenode-owner-share-analysis.md §5.1: ship the
+//     "owner OR explicit-ADMIN-grant OR system/admin" semantic.
 //     Non-owner / unknown node → soft-fail (OK + success=false).
 //
 // # Error contract (matches Python soft-fail shape)
@@ -74,6 +74,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/acl"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -146,43 +147,46 @@ func (s *Server) ShareNode(
 		}, nil
 	}
 
-	// 4. ACL pre-check. system: / admin: actors short-circuit allow,
-	//    matching Python's _is_admin_or_system bypass at
-	//    grpc_server.py:498-499 / 341-347. Otherwise, the trusted
-	//    actor MUST own the node. NOT_FOUND on the underlying GetNode
-	//    surfaces as success=false (parity with Python's
-	//    PermissionError-via-missing-node behaviour at spec §Wire-
-	//    contract.NodeId — "existence is not pre-validated, the auth
-	//    check carries the existence signal").
-	if !(trusted.IsSystem() || trusted.IsAdmin()) {
-		node, err := s.store.GetNode(ctx, tenantID, nodeID)
-		if err != nil {
-			if errors.Is(err, errs.ErrNotFound) {
-				// Spec §Wire-contract.NodeId pins this as PERMISSION_DENIED-
-				// shaped (not NOT_FOUND); the Python handler returns
-				// success=false on PermissionError. We follow the soft-
-				// fail contract — a missing node is indistinguishable
-				// from "no grant" to the caller.
-				status = "denied"
-				return &pb.ShareNodeResponse{
-					Success: false,
-					Error:   "permission denied: missing-or-no-grant on node",
-				}, nil
-			}
-			status = "error"
-			return &pb.ShareNodeResponse{Success: false, Error: err.Error()}, nil
-		}
-		if node.OwnerActor != trusted.String() {
-			// Wave-2 narrowing: only owner / system / admin may share.
-			// The full share-grant-grants-share path (a node admin who
-			// is not the owner can re-share) is deferred to the follow-
-			// up that wires acl.Checker into Server.
+	// 4. ACL pre-check via acl.Checker. The Checker handles
+	//    system/admin bypass, owner short-circuit and grant-based
+	//    ADMIN (so a non-owner with an explicit ADMIN row on the node
+	//    can re-share). Mirrors Python's _check_capability +
+	//    canonical_store owner short-circuit (the two paths combined),
+	//    and matches the recommendation in
+	//    .claude/triage/sharenode-owner-share-analysis.md §5.1.
+	//
+	//    NOT_FOUND on the underlying GetNode (surfaced by the Checker
+	//    via NodeMetaReader) lowers to soft-fail success=false — a
+	//    missing node is indistinguishable from "no grant" to the
+	//    caller, matching the Python PermissionError-via-missing-node
+	//    behaviour at spec §Wire-contract.NodeId.
+	aclActor := authActorToACLActor(trusted)
+	if err := s.aclCheck(ctx, acl.CheckRequest{
+		TenantID:      tenantID,
+		ActorTenantID: tenantID,
+		Actor:         aclActor,
+		NodeID:        nodeID,
+		OpName:        "ShareNode",
+	}); err != nil {
+		if errors.Is(err, errs.ErrNotFound) {
 			status = "denied"
 			return &pb.ShareNodeResponse{
 				Success: false,
-				Error:   "permission denied: only the node owner can share",
+				Error:   "permission denied: missing-or-no-grant on node",
 			}, nil
 		}
+		if errs.Code(err) == codes.PermissionDenied {
+			status = "denied"
+			return &pb.ShareNodeResponse{
+				Success: false,
+				Error:   "permission denied: caller lacks ADMIN on node",
+			}, nil
+		}
+		// Anything else is an infra error (Unimplemented when the
+		// store is unwired, Internal on a reader fault, etc.). Surface
+		// via the soft-fail shape; the metric label is "error".
+		status = "error"
+		return &pb.ShareNodeResponse{Success: false, Error: err.Error()}, nil
 	}
 
 	// 5. Build the WAL op envelope. Mirror the Python applier's

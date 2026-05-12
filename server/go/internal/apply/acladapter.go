@@ -97,8 +97,20 @@ func (r *StoreReaders) GrantsForNode(ctx context.Context, tenantID, nodeID strin
 			GrantedBy: parseActorString(grantedBy),
 			GrantedAt: grantedAt,
 		}
+		// acl.PermDeny is the zero value of Permission, which makes
+		// IsDeny() flag any grant whose permission column is empty /
+		// unparseable as an explicit DENY — wrong for typed-cap-only
+		// rows (the Go ShareNode handler accepts an empty permission
+		// when CoreCaps is set). Default to PermRead for non-deny
+		// rows so the deny-pass in acl.Checker doesn't fire on a
+		// well-formed typed-cap grant. Mirrors the Python
+		// AclManager.check_permission contract where an unset
+		// permission column never means "deny" — only the literal
+		// "deny" string does.
 		if perm, ok := acl.ParsePermission(permStr); ok {
 			g.Permission = perm
+		} else {
+			g.Permission = acl.PermRead
 		}
 		if expires.Valid {
 			ms := expires.Int64
@@ -212,8 +224,15 @@ func getCanonicalDB(s *store.CanonicalStore, tenantID string) (*sql.DB, error) {
 	return s.AdminDB(tenantID)
 }
 
-// parseActor builds an acl.Actor from a (kind, id) pair.
+// parseActor builds an acl.Actor from a (kind, id) pair. The id may
+// be either bare ("alice") or already prefixed ("user:alice") — both
+// shapes appear in node_access depending on how the row was authored
+// (ShareNode handler normalises to "user:alice", legacy paths and
+// group rows use the bare form). We strip a leading "<kind>:" so the
+// returned Actor has a clean ID and its String() matches the form
+// used elsewhere in the acl package.
 func parseActor(kind, id string) acl.Actor {
+	id = stripKindPrefix(kind, id)
 	switch kind {
 	case "group":
 		return acl.Group(id)
@@ -222,6 +241,19 @@ func parseActor(kind, id string) acl.Actor {
 	default:
 		return acl.User(id)
 	}
+}
+
+// stripKindPrefix removes a leading "<kind>:" from id, if present.
+// Returns id unchanged when no matching prefix exists.
+func stripKindPrefix(kind, id string) string {
+	if kind == "" || id == "" {
+		return id
+	}
+	prefix := kind + ":"
+	if len(id) > len(prefix) && id[:len(prefix)] == prefix {
+		return id[len(prefix):]
+	}
+	return id
 }
 
 // parseActorString builds an acl.Actor from a "kind:id" string. Falls
