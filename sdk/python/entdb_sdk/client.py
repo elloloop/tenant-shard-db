@@ -301,6 +301,7 @@ class Plan:
         storage: Storage | None = None,
         as_: str | None = None,
         fanout_to: list[str] | None = None,
+        id_: str | None = None,
     ) -> Plan:
         """Create a node from a proto message.
 
@@ -322,6 +323,12 @@ class Plan:
                 endpoint).
             fanout_to: Optional list of mailbox user ids to fan this
                 node out to.
+            id_: Optional deterministic node id. When omitted, the
+                server generates a fresh UUID. When supplied, the
+                server uses the given id; duplicates in the same
+                tenant + type scope surface as
+                :class:`UniqueConstraintError`. Useful for idempotent
+                upserts where the id is derived from external content.
 
         Returns:
             Self for chaining.
@@ -356,6 +363,8 @@ class Plan:
             }
         }
 
+        if id_:
+            op["create_node"]["id"] = id_
         if acl_dicts:
             op["create_node"]["acl"] = acl_dicts
         if as_:

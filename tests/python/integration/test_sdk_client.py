@@ -50,6 +50,29 @@ class TestPlanBuilder:
         assert plan._operations[0]["create_node"]["type_id"] == 9001
         assert plan._operations[0]["create_node"]["as"] == "product1"
 
+    def test_plan_create_node_with_id(self):
+        """Plan.create accepts a deterministic id via id_."""
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        plan.create(
+            ts.Product(sku="DET-1", name="Deterministic", price_cents=10),
+            id_="11111111-2222-3333-4444-555555555555",
+        )
+
+        op = plan._operations[0]["create_node"]
+        assert op["id"] == "11111111-2222-3333-4444-555555555555"
+
+    def test_plan_create_node_without_id_omits_field(self):
+        """Plan.create without id_ leaves the id field out (server generates)."""
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        plan.create(ts.Product(sku="RND-1", name="Random", price_cents=1))
+
+        op = plan._operations[0]["create_node"]
+        assert "id" not in op
+
     def test_plan_multiple_operations(self):
         """Plan can hold multiple operations."""
         client = _mock_client()

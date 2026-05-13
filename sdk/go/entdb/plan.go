@@ -93,6 +93,7 @@ func (p *Plan) Create(msg proto.Message, opts ...CreateOption) string {
 	p.operations = append(p.operations, Operation{
 		Type:         OpCreateNode,
 		TypeID:       int(typeID),
+		NodeID:       cfg.id,
 		Alias:        cfg.alias,
 		Data:         payload,
 		ACL:          cfg.acl,

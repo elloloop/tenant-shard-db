@@ -109,6 +109,30 @@ func TestPlan_Create_InPublic(t *testing.T) {
 	}
 }
 
+func TestPlan_Create_WithID(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	const id = "11111111-2222-3333-4444-555555555555"
+	plan.Create(newProduct("D1", "Deterministic", 1), WithID(id))
+
+	ops := plan.Operations()
+	if ops[0].NodeID != id {
+		t.Errorf("NodeID = %q, want %q", ops[0].NodeID, id)
+	}
+}
+
+func TestPlan_Create_NoID_LeavesNodeIDEmpty(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	plan.Create(newProduct("R1", "Random", 1))
+
+	if got := plan.Operations()[0].NodeID; got != "" {
+		t.Errorf("NodeID = %q, want empty (server-generated)", got)
+	}
+}
+
 func TestPlan_Create_As_ExplicitAlias(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")
