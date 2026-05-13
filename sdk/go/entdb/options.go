@@ -104,6 +104,7 @@ type createConfig struct {
 	storage      StorageMode
 	targetUserID string
 	alias        string
+	id           string
 }
 
 // CreateOption configures a single Plan.Create call.
@@ -152,6 +153,20 @@ func InPublic() CreateOption {
 // unique alias automatically.
 func As(alias string) CreateOption {
 	return func(c *createConfig) { c.alias = alias }
+}
+
+// WithID requests the server use the supplied id when creating the
+// node, rather than generating a fresh UUID. Useful for idempotent
+// upserts where the caller derives the id from external content
+// (e.g. ``uuid.NewSHA1(ns, []byte(slug))``).
+//
+// The id must be a valid UUID string; validation happens server-side
+// — malformed ids surface as INVALID_ARGUMENT and duplicate ids in
+// the same tenant + type scope surface as ALREADY_EXISTS, which the
+// SDK reports as [*UniqueConstraintError]. Clients building
+// idempotent flows should treat ALREADY_EXISTS as "use Get instead".
+func WithID(id string) CreateOption {
+	return func(c *createConfig) { c.id = id }
 }
 
 // ── Scope.Query options ─────────────────────────────────────────────
