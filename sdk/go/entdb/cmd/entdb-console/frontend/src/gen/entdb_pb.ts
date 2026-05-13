@@ -109,6 +109,16 @@ export enum ReceiptStatus {
    * @generated from enum value: RECEIPT_STATUS_FAILED = 3;
    */
   FAILED = 3,
+
+  /**
+   * The batch was rejected because a conditional ``UpdateNodeOp``
+   * precondition was not met. The full failure coordinates live in
+   * ``ExecuteAtomicResponse.precondition_failure``. See GitHub issue
+   * #500.
+   *
+   * @generated from enum value: RECEIPT_STATUS_FAILED_PRECONDITION = 4;
+   */
+  FAILED_PRECONDITION = 4,
 }
 // Retrieve enum metadata with: proto3.getEnumType(ReceiptStatus)
 proto3.util.setEnumType(ReceiptStatus, "entdb.v1.ReceiptStatus", [
@@ -116,6 +126,7 @@ proto3.util.setEnumType(ReceiptStatus, "entdb.v1.ReceiptStatus", [
   { no: 1, name: "RECEIPT_STATUS_PENDING" },
   { no: 2, name: "RECEIPT_STATUS_APPLIED" },
   { no: 3, name: "RECEIPT_STATUS_FAILED" },
+  { no: 4, name: "RECEIPT_STATUS_FAILED_PRECONDITION" },
 ]);
 
 /**
@@ -613,6 +624,27 @@ export class UpdateNodeOp extends Message<UpdateNodeOp> {
    */
   patch?: Struct;
 
+  /**
+   * Optional single-field equality precondition (CAS).
+   *
+   * When set, the applier compares the node's current value at
+   * ``precondition.field`` against ``precondition.equals`` BEFORE
+   * applying the patch. If the values do not match — including the
+   * case where the field is absent from the stored payload — the
+   * ENTIRE batch aborts (no ops commit) and the failure is memoized
+   * in the idempotency cache. A retry with the same idempotency key
+   * replays the cached failure without re-evaluating against
+   * possibly-changed state. Callers re-evaluate by minting a new
+   * idempotency key.
+   *
+   * Equality is the only operator in v1; compound predicates and
+   * comparison operators (Lt/Gt/...) are deliberately out of scope.
+   * See GitHub issue #500 for the design rationale.
+   *
+   * @generated from field: entdb.v1.UpdateNodePrecondition precondition = 7;
+   */
+  precondition?: UpdateNodePrecondition;
+
   constructor(data?: PartialMessage<UpdateNodeOp>) {
     super();
     proto3.util.initPartial(data, this);
@@ -625,6 +657,7 @@ export class UpdateNodeOp extends Message<UpdateNodeOp> {
     { no: 2, name: "id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 4, name: "field_mask", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
     { no: 5, name: "patch", kind: "message", T: Struct },
+    { no: 7, name: "precondition", kind: "message", T: UpdateNodePrecondition },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): UpdateNodeOp {
@@ -641,6 +674,67 @@ export class UpdateNodeOp extends Message<UpdateNodeOp> {
 
   static equals(a: UpdateNodeOp | PlainMessage<UpdateNodeOp> | undefined, b: UpdateNodeOp | PlainMessage<UpdateNodeOp> | undefined): boolean {
     return proto3.util.equals(UpdateNodeOp, a, b);
+  }
+}
+
+/**
+ * UpdateNodePrecondition is the single-field equality CAS predicate
+ * attached to ``UpdateNodeOp.precondition``. The field is named, not
+ * numbered, on the wire — the server resolves it to a stable field_id
+ * against the schema registry at handler ingress and stores the id-keyed
+ * form in the WAL event. Unknown field names are rejected with
+ * INVALID_ARGUMENT at handler time so the WAL never sees a precondition
+ * that can never be evaluated.
+ *
+ * @generated from message entdb.v1.UpdateNodePrecondition
+ */
+export class UpdateNodePrecondition extends Message<UpdateNodePrecondition> {
+  /**
+   * Node field name as declared in the proto schema (NOT the on-disk
+   * field_id). The handler translates this to field_id before the
+   * event is appended.
+   *
+   * @generated from field: string field = 1;
+   */
+  field = "";
+
+  /**
+   * The expected current value of ``field``. Encoded as a
+   * ``google.protobuf.Value`` so callers can express scalar types
+   * (numbers, strings, booleans, null) without a parallel typed
+   * union. Lists and structs are accepted on the wire but the
+   * applier compares them by JSON-canonical form.
+   *
+   * @generated from field: google.protobuf.Value equals = 2;
+   */
+  equals$?: Value;
+
+  constructor(data?: PartialMessage<UpdateNodePrecondition>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.UpdateNodePrecondition";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "field", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "equals", kind: "message", T: Value },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): UpdateNodePrecondition {
+    return new UpdateNodePrecondition().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): UpdateNodePrecondition {
+    return new UpdateNodePrecondition().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): UpdateNodePrecondition {
+    return new UpdateNodePrecondition().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: UpdateNodePrecondition | PlainMessage<UpdateNodePrecondition> | undefined, b: UpdateNodePrecondition | PlainMessage<UpdateNodePrecondition> | undefined): boolean {
+    return proto3.util.equals(UpdateNodePrecondition, a, b);
   }
 }
 
@@ -961,6 +1055,15 @@ export class ExecuteAtomicResponse extends Message<ExecuteAtomicResponse> {
    */
   appliedStatus = ReceiptStatus.UNKNOWN;
 
+  /**
+   * Structured precondition-failure detail. Populated when
+   * ``applied_status == RECEIPT_STATUS_FAILED_PRECONDITION`` so the
+   * SDK can surface a typed error without re-fetching state.
+   *
+   * @generated from field: entdb.v1.PreconditionFailure precondition_failure = 7;
+   */
+  preconditionFailure?: PreconditionFailure;
+
   constructor(data?: PartialMessage<ExecuteAtomicResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -975,6 +1078,7 @@ export class ExecuteAtomicResponse extends Message<ExecuteAtomicResponse> {
     { no: 4, name: "error_code", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "created_node_ids", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
     { no: 6, name: "applied_status", kind: "enum", T: proto3.getEnumType(ReceiptStatus) },
+    { no: 7, name: "precondition_failure", kind: "message", T: PreconditionFailure },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ExecuteAtomicResponse {
@@ -991,6 +1095,79 @@ export class ExecuteAtomicResponse extends Message<ExecuteAtomicResponse> {
 
   static equals(a: ExecuteAtomicResponse | PlainMessage<ExecuteAtomicResponse> | undefined, b: ExecuteAtomicResponse | PlainMessage<ExecuteAtomicResponse> | undefined): boolean {
     return proto3.util.equals(ExecuteAtomicResponse, a, b);
+  }
+}
+
+/**
+ * PreconditionFailure carries the coordinates of a CAS miss inside an
+ * ExecuteAtomic batch so the caller can log/decide without a second
+ * round trip. See ``UpdateNodeOp.precondition`` and GitHub issue #500
+ * for the full design.
+ *
+ * @generated from message entdb.v1.PreconditionFailure
+ */
+export class PreconditionFailure extends Message<PreconditionFailure> {
+  /**
+   * Zero-based index of the failing op within
+   * ``ExecuteAtomicRequest.operations``.
+   *
+   * @generated from field: int32 op_index = 1;
+   */
+  opIndex = 0;
+
+  /**
+   * Field name the precondition referenced (handler-resolved from the
+   * wire ``UpdateNodePrecondition.field``).
+   *
+   * @generated from field: string field = 2;
+   */
+  field = "";
+
+  /**
+   * Value the precondition expected.
+   *
+   * @generated from field: google.protobuf.Value expected = 3;
+   */
+  expected?: Value;
+
+  /**
+   * Value the applier observed at the moment of evaluation. Absent
+   * fields collapse to a ``NullValue`` so consumers can distinguish
+   * "field missing" from "field set to JSON null" by inspecting the
+   * ``Value`` kind.
+   *
+   * @generated from field: google.protobuf.Value observed = 4;
+   */
+  observed?: Value;
+
+  constructor(data?: PartialMessage<PreconditionFailure>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.PreconditionFailure";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "op_index", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 2, name: "field", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "expected", kind: "message", T: Value },
+    { no: 4, name: "observed", kind: "message", T: Value },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): PreconditionFailure {
+    return new PreconditionFailure().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): PreconditionFailure {
+    return new PreconditionFailure().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): PreconditionFailure {
+    return new PreconditionFailure().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: PreconditionFailure | PlainMessage<PreconditionFailure> | undefined, b: PreconditionFailure | PlainMessage<PreconditionFailure> | undefined): boolean {
+    return proto3.util.equals(PreconditionFailure, a, b);
   }
 }
 
@@ -1051,6 +1228,16 @@ export class GetReceiptStatusResponse extends Message<GetReceiptStatusResponse> 
    */
   error = "";
 
+  /**
+   * Populated when ``status == RECEIPT_STATUS_FAILED_PRECONDITION``
+   * so a polling caller can reconstruct the same typed error that
+   * the originating ``ExecuteAtomic`` call would have produced. See
+   * GitHub issue #500.
+   *
+   * @generated from field: entdb.v1.PreconditionFailure precondition_failure = 3;
+   */
+  preconditionFailure?: PreconditionFailure;
+
   constructor(data?: PartialMessage<GetReceiptStatusResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1061,6 +1248,7 @@ export class GetReceiptStatusResponse extends Message<GetReceiptStatusResponse> 
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "status", kind: "enum", T: proto3.getEnumType(ReceiptStatus) },
     { no: 2, name: "error", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "precondition_failure", kind: "message", T: PreconditionFailure },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetReceiptStatusResponse {

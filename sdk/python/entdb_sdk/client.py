@@ -399,6 +399,8 @@ class Plan:
         self,
         node_id: str,
         msg: Any,
+        *,
+        precondition: tuple[str, Any] | None = None,
     ) -> Plan:
         """Update a node from a proto message.
 
@@ -417,6 +419,14 @@ class Plan:
             node_id: Id of the node to update.
             msg: A proto message instance whose descriptor carries an
                 ``(entdb.node)`` option.
+            precondition: Optional ``(field, expected_value)`` tuple
+                for CAS semantics (GitHub issue #500). When set, the
+                applier compares the node's current ``field`` against
+                ``expected_value`` BEFORE applying the patch. A
+                mismatch aborts the entire batch and ``Commit`` raises
+                :class:`~entdb_sdk.errors.PreconditionFailedError`.
+                Use this for state-machine transitions and single-use
+                tokens.
 
         Returns:
             Self for chaining.
@@ -433,13 +443,16 @@ class Plan:
         type_id = _node_type_id_from_descriptor(msg.DESCRIPTOR)
         patch = _proto_payload_from_set_fields(msg)
 
-        op: dict[str, Any] = {
-            "update_node": {
-                "type_id": type_id,
-                "id": node_id,
-                "patch": patch,
-            }
+        update_op: dict[str, Any] = {
+            "type_id": type_id,
+            "id": node_id,
+            "patch": patch,
         }
+        if precondition is not None:
+            field, equals = precondition
+            update_op["precondition"] = {"field": field, "equals": equals}
+
+        op: dict[str, Any] = {"update_node": update_op}
 
         self._operations.append(op)
         return self

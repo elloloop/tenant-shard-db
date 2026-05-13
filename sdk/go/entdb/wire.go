@@ -165,11 +165,22 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 			if err != nil {
 				return nil, err
 			}
-			po.Op = &pb.Operation_UpdateNode{UpdateNode: &pb.UpdateNodeOp{
+			upd := &pb.UpdateNodeOp{
 				TypeId: int32(op.TypeID),
 				Id:     op.NodeID,
 				Patch:  patch,
-			}}
+			}
+			if op.Precondition != nil {
+				eq, err := structpb.NewValue(op.Precondition.Equals)
+				if err != nil {
+					return nil, fmt.Errorf("entdb: precondition.Equals: %w", err)
+				}
+				upd.Precondition = &pb.UpdateNodePrecondition{
+					Field:  op.Precondition.Field,
+					Equals: eq,
+				}
+			}
+			po.Op = &pb.Operation_UpdateNode{UpdateNode: upd}
 		case OpDeleteNode:
 			po.Op = &pb.Operation_DeleteNode{DeleteNode: &pb.DeleteNodeOp{
 				TypeId: int32(op.TypeID),

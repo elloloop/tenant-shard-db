@@ -228,6 +228,52 @@ class TransactionError(EntDbError):
         self.idempotency_key = idempotency_key
 
 
+class PreconditionFailedError(EntDbError):
+    """Raised when a conditional ``UpdateNode`` op's precondition is not met.
+
+    See GitHub issue #500. The applier evaluates a single-field
+    equality predicate against the materialized node state before
+    applying the patch; on mismatch the WHOLE batch aborts (no ops
+    commit). The idempotency cache memoizes both success and CAS-miss
+    outcomes, so a retry with the same idempotency key replays the
+    cached failure without re-evaluating — callers re-evaluate by
+    minting a new key.
+
+    Attributes:
+        op_index: Zero-based index of the failing op within the
+            ``ExecuteAtomic`` operations list.
+        field: Node field name the precondition referenced.
+        expected: Value the precondition expected.
+        observed: Value the applier read at evaluation time. ``None``
+            means the field was absent from the stored payload (proto
+            NullValue on the wire).
+    """
+
+    def __init__(
+        self,
+        message: str = "precondition failed",
+        *,
+        op_index: int = 0,
+        field: str = "",
+        expected: Any = None,
+        observed: Any = None,
+    ) -> None:
+        super().__init__(
+            message,
+            code="FAILED_PRECONDITION",
+            details={
+                "op_index": op_index,
+                "field": field,
+                "expected": expected,
+                "observed": observed,
+            },
+        )
+        self.op_index = op_index
+        self.field = field
+        self.expected = expected
+        self.observed = observed
+
+
 class UniqueConstraintError(EntDbError):
     """Raised when a write would violate a declared unique field.
 

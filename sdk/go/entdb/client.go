@@ -382,14 +382,39 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 	if err != nil {
 		return nil, err
 	}
+	// Auto-enable wait_applied when any op carries a precondition.
+	// CAS is only useful synchronously — the caller needs to learn
+	// the outcome before the next request. We pick a generous
+	// 30s timeout to match the server's default cap; callers who
+	// need finer control can drop down to the raw transport.
+	// GitHub issue #500.
+	waitApplied := false
+	for _, op := range ops {
+		if op.Precondition != nil {
+			waitApplied = true
+			break
+		}
+	}
 	var trailer metadata.MD
-	resp, err := client.ExecuteAtomic(t.callContext(ctx, tenantID), &pb.ExecuteAtomicRequest{
+	req := &pb.ExecuteAtomicRequest{
 		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
 		IdempotencyKey: idempotencyKey,
 		Operations:     protoOps,
-	}, grpc.Trailer(&trailer))
+		WaitApplied:    waitApplied,
+	}
+	if waitApplied {
+		req.WaitTimeoutMs = 30000
+	}
+	resp, err := client.ExecuteAtomic(t.callContext(ctx, tenantID), req, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	// Precondition failure surfaces in-band: applied_status =
+	// RECEIPT_STATUS_FAILED_PRECONDITION + structured detail in
+	// precondition_failure. Return a typed error so callers can
+	// branch on errors.Is(err, ErrPreconditionFailed).
+	if resp.GetAppliedStatus() == pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION {
+		return nil, preconditionFailureFromProto(resp.GetPreconditionFailure())
 	}
 	var receipt *Receipt
 	if r := resp.GetReceipt(); r != nil && r.GetIdempotencyKey() != "" {
@@ -406,6 +431,26 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 		Applied:        resp.GetAppliedStatus() == pb.ReceiptStatus_RECEIPT_STATUS_APPLIED,
 		Error:          resp.GetError(),
 	}, nil
+}
+
+// preconditionFailureFromProto maps the wire-level
+// pb.PreconditionFailure detail to the SDK's typed error. A nil
+// detail still produces a non-nil error (with empty coordinates) so
+// callers always get the sentinel back.
+func preconditionFailureFromProto(pf *pb.PreconditionFailure) *PreconditionFailure {
+	out := &PreconditionFailure{}
+	if pf == nil {
+		return out
+	}
+	out.OpIndex = int(pf.GetOpIndex())
+	out.Field = pf.GetField()
+	if v := pf.GetExpected(); v != nil {
+		out.ExpectedValue = v.AsInterface()
+	}
+	if v := pf.GetObserved(); v != nil {
+		out.ObservedValue = v.AsInterface()
+	}
+	return out
 }
 
 func (t *grpcTransport) Share(ctx context.Context, tenantID, actor, nodeID, grantee, permission string) error {

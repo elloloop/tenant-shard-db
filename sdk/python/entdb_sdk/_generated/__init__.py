@@ -58,6 +58,8 @@ from .entdb_pb2 import (
     TenantInfo,
     TypedNodeRef,
     UpdateNodeOp,
+    UpdateNodePrecondition,
+    PreconditionFailure,
     # Wait for offset
     WaitForOffsetRequest,
     WaitForOffsetResponse,
@@ -137,6 +139,8 @@ __all__ = [
     "Operation",
     "CreateNodeOp",
     "UpdateNodeOp",
+    "UpdateNodePrecondition",
+    "PreconditionFailure",
     "DeleteNodeOp",
     "CreateEdgeOp",
     "DeleteEdgeOp",

@@ -44,6 +44,7 @@ from .codegen import register_proto_schema
 from .errors import (
     ConnectionError,
     EntDbError,
+    PreconditionFailedError,
     RateLimitError,
     SchemaError,
     UniqueConstraintError,
@@ -115,6 +116,7 @@ __all__ = [
     "UnknownFieldError",
     "RateLimitError",
     "UniqueConstraintError",
+    "PreconditionFailedError",
     # Comparison filters (issue #501)
     "Filter",
     "FilterOp",
