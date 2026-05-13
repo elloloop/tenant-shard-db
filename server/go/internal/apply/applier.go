@@ -4,6 +4,8 @@ package apply
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
@@ -175,7 +177,7 @@ func (a *Applier) Run(ctx context.Context) error {
 			if err := a.consumer.Commit(ctx, a.groupID, rec); err != nil {
 				return fmt.Errorf("apply: commit offset: %w", err)
 			}
-			if res.Status == StatusApplied || res.Status == StatusSkipped {
+			if res.Status == StatusApplied || res.Status == StatusSkipped || res.Status == StatusFailedPrecondition {
 				if err := a.store.UpdateAppliedOffset(ctx, res.TenantID, rec.Position.Topic, rec.Position.Partition, rec.Position.Offset); err != nil {
 					// Persisting the offset is best-effort; the in-
 					// memory tracker has already been updated by the
@@ -222,6 +224,14 @@ func (a *Applier) applyRecord(ctx context.Context, rec Record) Result {
 // applyEvent runs the per-event apply transaction. Idempotency check
 // happens INSIDE the txn (per docs/go-port/shared/applier.md), before
 // any mutation. The applied_events row is recorded in the same txn.
+//
+// GitHub issue #500: a conditional UpdateNodeOp that misses its
+// precondition aborts the batch, memoizes the failure to
+// applied_events (status=FAILED_PRECONDITION) in a SEPARATE
+// transaction, and returns without halting. The WAL offset still
+// advances — the failure is a deterministic outcome of replaying the
+// same event against the same materialised state, so a fresh applier
+// rebuilding from scratch will produce the same outcome.
 func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error {
 	if err := a.store.OpenTenant(ctx, ev.TenantID); err != nil {
 		return fmt.Errorf("apply: open tenant %q: %w", ev.TenantID, err)
@@ -237,22 +247,38 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 		}
 	}()
 
-	// In-txn idempotency probe.
+	// In-txn idempotency probe. Reads the cached status + failure_json
+	// so a retry with the same idem key after a memoized
+	// FAILED_PRECONDITION replays the same typed failure WITHOUT
+	// re-evaluating the predicate against possibly-changed state. See
+	// the GitHub-issue-#500 idempotency contract.
 	conn := tx.Conn()
-	var one int
+	var cachedStatus string
+	var cachedFailure sql.NullString
 	row := conn.QueryRowContext(ctx,
-		`SELECT 1 FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?`,
+		`SELECT status, failure_json FROM applied_events WHERE tenant_id = ? AND idempotency_key = ?`,
 		ev.TenantID, ev.IdempotencyKey,
 	)
-	if err := row.Scan(&one); err == nil {
-		// Already applied. Commit a no-op txn (the idempotency probe
-		// holds the RESERVED lock; releasing it via COMMIT is harmless
-		// and cheaper than ROLLBACK).
-		res.Status = StatusSkipped
+	if err := row.Scan(&cachedStatus, &cachedFailure); err == nil {
+		// Already recorded. Commit the no-op txn (the probe holds the
+		// RESERVED lock; releasing via COMMIT is cheaper than ROLLBACK).
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("apply: commit no-op: %w", err)
 		}
 		committed = true
+		// Replay the memoized failure on a cached precondition miss
+		// so callers see the same typed error on retry.
+		if cachedStatus == store.IdempotencyStatusFailedPrecondition {
+			res.Status = StatusFailedPrecondition
+			if cachedFailure.Valid && cachedFailure.String != "" {
+				var pf PreconditionFailure
+				if jerr := json.Unmarshal([]byte(cachedFailure.String), &pf); jerr == nil {
+					res.Precondition = &pf
+				}
+			}
+			return nil
+		}
+		res.Status = StatusSkipped
 		return nil
 	} else if !isNoRows(err) {
 		return fmt.Errorf("apply: idempotency probe: %w", err)
@@ -261,20 +287,30 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 	// Per-event alias map (per CLAUDE.md / spec; never global).
 	aliases := nodeAliasMap{}
 
-	for _, op := range ev.Ops {
+	for i, op := range ev.Ops {
 		if op == nil {
 			continue
 		}
-		if err := a.dispatch(ctx, tx, ev, op, aliases, res); err != nil {
+		if err := a.dispatch(ctx, tx, ev, op, aliases, res, i); err != nil {
+			// CAS miss: roll back the batch txn, memoize the failure
+			// in a fresh txn, advance the offset (without halting).
+			// This is the GitHub-issue-#500 hard-fail semantics — no
+			// op in the batch commits, but the WAL offset advances
+			// because the outcome is deterministic on replay.
+			if pf := AsPreconditionFailure(err); pf != nil {
+				_ = tx.Rollback()
+				committed = true // suppress deferred rollback
+				return a.memoizePreconditionFailure(ctx, ev, res, pf)
+			}
 			return err
 		}
 	}
 
 	// Record the applied_events row inside the same txn.
 	if _, err := conn.ExecContext(ctx, `
-		INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at)
-		VALUES (?, ?, ?, ?)`,
-		ev.TenantID, ev.IdempotencyKey, res.Position.String(), a.now(),
+		INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at, status)
+		VALUES (?, ?, ?, ?, ?)`,
+		ev.TenantID, ev.IdempotencyKey, res.Position.String(), a.now(), store.IdempotencyStatusApplied,
 	); err != nil {
 		return fmt.Errorf("apply: record applied_events: %w", err)
 	}
@@ -292,16 +328,56 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 	return nil
 }
 
+// memoizePreconditionFailure persists the FAILED_PRECONDITION row in a
+// fresh write-txn and returns nil so the consumer loop advances the
+// offset (CAS miss is a "successful" deterministic outcome, just not a
+// commit). The applier's offset-advance happens in
+// applyRecord/Run after applyEvent returns; we update the in-memory
+// offset tracker here too so receipt waiters wake on
+// store.WaitForOffset.
+func (a *Applier) memoizePreconditionFailure(ctx context.Context, ev *Event, res *Result, pf *PreconditionFailure) error {
+	res.Status = StatusFailedPrecondition
+	res.Precondition = pf
+	res.TenantID = ev.TenantID
+
+	failureJSON, err := json.Marshal(pf)
+	if err != nil {
+		// If we can't encode the failure detail we still want to
+		// memoize the status so retries are deterministic. Fall
+		// through with an empty failureJSON.
+		failureJSON = []byte("")
+	}
+	if err := a.store.RecordIdempotencyFailure(ctx, ev.TenantID, ev.IdempotencyKey, res.Position.String(), string(failureJSON)); err != nil {
+		// Idempotency-key collision means another writer (a parallel
+		// retry that won the race to memoize) recorded the failure
+		// first — treat that as a successful memoization.
+		if !errors.Is(err, store.ErrIdempotencyViolation) {
+			return fmt.Errorf("apply: memoize precondition failure: %w", err)
+		}
+	}
+	// Advance the persisted per-tenant offset so receipt observers
+	// (store.WaitForOffset) wake on the failed batch.
+	if err := a.store.UpdateAppliedOffset(ctx, ev.TenantID, res.Position.Topic, res.Position.Partition, res.Position.Offset); err != nil {
+		return fmt.Errorf("apply: precondition-failure offset: %w", err)
+	}
+	return nil
+}
+
 // dispatch routes one op to its handler. Unknown op types fail closed
 // (halt-on-poison) so a typo in a handler that raced ahead of the
 // applier surfaces immediately rather than silently dropping data —
 // the lesson the DelegateAccess bug taught us.
-func (a *Applier) dispatch(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, aliases nodeAliasMap, res *Result) error {
+//
+// opIndex is the zero-based position of the op in the enclosing event;
+// only applyUpdateNode currently consumes it (to surface
+// PreconditionFailure.OpIndex on a CAS miss) but it is passed to every
+// op for forward-compat — future structured errors will benefit.
+func (a *Applier) dispatch(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, aliases nodeAliasMap, res *Result, opIndex int) error {
 	switch opTypeOf(op) {
 	case OpCreateNode:
 		return a.applyCreateNode(ctx, tx, ev, op, aliases, res)
 	case OpUpdateNode:
-		return a.applyUpdateNode(ctx, tx, ev, op, aliases)
+		return a.applyUpdateNode(ctx, tx, ev, op, aliases, opIndex)
 	case OpDeleteNode:
 		return a.applyDeleteNode(ctx, tx, ev, op, aliases, res)
 	case OpCreateEdge:

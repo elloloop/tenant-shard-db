@@ -29,6 +29,7 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 // grpcMethodGetReceiptStatus is the metric label. Mirrors the Python
@@ -76,7 +77,7 @@ func (s *Server) GetReceiptStatus(ctx context.Context, req *pb.GetReceiptStatusR
 	// used for authorization or logging — see spec, "Auth" section
 	// (trusted-actor invariant).
 
-	applied, ierr := s.store.CheckIdempotency(ctx, tenantID, req.GetIdempotencyKey())
+	rec, ierr := s.store.CheckIdempotencyStatus(ctx, tenantID, req.GetIdempotencyKey())
 	if ierr != nil {
 		// Application-level fault. Python collapses this to UNKNOWN +
 		// error (grpc_server.py:966); do NOT upgrade to codes.Internal
@@ -88,9 +89,19 @@ func (s *Server) GetReceiptStatus(ctx context.Context, req *pb.GetReceiptStatusR
 		}, nil
 	}
 
-	status := pb.ReceiptStatus_RECEIPT_STATUS_PENDING
-	if applied {
-		status = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
+	resp = &pb.GetReceiptStatusResponse{Status: pb.ReceiptStatus_RECEIPT_STATUS_PENDING}
+	if rec.Present {
+		switch rec.Status {
+		case store.IdempotencyStatusFailedPrecondition:
+			// GitHub issue #500 — surface the memoized CAS miss so a
+			// polling caller sees the same typed outcome as the
+			// originating ExecuteAtomic. The detail is best-effort
+			// decoded; an empty failure_json collapses to status-only.
+			resp.Status = pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION
+			resp.PreconditionFailure = decodePreconditionFailureJSON(rec.FailureJSON)
+		default:
+			resp.Status = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
+		}
 	}
-	return &pb.GetReceiptStatusResponse{Status: status}, nil
+	return resp, nil
 }

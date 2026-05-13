@@ -191,4 +191,32 @@ type Operation struct {
 	// TargetUserID is required when StorageMode is
 	// StorageModeUserMailbox; ignored otherwise.
 	TargetUserID string `json:"target_user_id,omitempty"`
+
+	// Precondition is the optional CAS predicate for OpUpdateNode.
+	// When set, the applier compares the node's current value at
+	// Precondition.Field against Precondition.Equals BEFORE applying
+	// the patch. A mismatch aborts the ENTIRE batch (no ops commit)
+	// and the failure is memoized in the idempotency cache so a
+	// retry with the same key replays the cached failure. Callers
+	// re-evaluate by minting a new idempotency key. See GitHub
+	// issue #500.
+	//
+	// Only valid on OpUpdateNode. Ignored for other op types.
+	Precondition *Precondition `json:"precondition,omitempty"`
+}
+
+// Precondition is a single-field equality predicate evaluated by the
+// applier against the materialized node state before a patch is
+// applied. Equality is the only operator in v1.
+type Precondition struct {
+	// Field is the node field NAME as declared in the proto schema
+	// (NOT the on-disk field_id). The handler resolves it to a
+	// stable id at the gRPC boundary.
+	Field string `json:"field"`
+
+	// Equals is the expected current value of Field. Scalar Go
+	// types (string, bool, integers, floats) are encoded as the
+	// corresponding google.protobuf.Value scalars; nil maps to
+	// NullValue (matches "field absent" by JSON-null comparison).
+	Equals any `json:"equals"`
 }

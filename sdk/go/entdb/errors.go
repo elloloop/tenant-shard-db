@@ -3,6 +3,7 @@
 package entdb
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -12,6 +13,45 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// ErrPreconditionFailed is the sentinel error returned when a
+// conditional UpdateNode op's precondition is not met. Match with
+// ``errors.Is(err, entdb.ErrPreconditionFailed)``. See
+// [PreconditionFailure] for the typed wrapper that carries the
+// failure coordinates (op index, field, expected, observed). GitHub
+// issue #500.
+var ErrPreconditionFailed = errors.New("entdb: precondition failed")
+
+// PreconditionFailure is the typed error returned by ExecuteAtomic
+// when an op's precondition fails. It unwraps to
+// [ErrPreconditionFailed] for the common "did this batch lose a
+// CAS race?" branch and carries the structured detail so callers
+// can log/decide without a second round trip.
+//
+// The batch as a whole did not commit — every op (the conditional
+// one and any side-effect ops in the same batch) is a no-op.
+type PreconditionFailure struct {
+	// OpIndex is the zero-based index of the failing op within the
+	// ExecuteAtomic request.
+	OpIndex int
+	// Field is the node field name the precondition referenced.
+	Field string
+	// ExpectedValue is the value the caller's precondition expected.
+	ExpectedValue any
+	// ObservedValue is the value the applier read at evaluation
+	// time. A nil value means the field was absent from the stored
+	// payload (proto NullValue on the wire).
+	ObservedValue any
+}
+
+func (e *PreconditionFailure) Error() string {
+	return fmt.Sprintf("entdb: precondition failed at op %d on field %q (expected %v, observed %v)",
+		e.OpIndex, e.Field, e.ExpectedValue, e.ObservedValue)
+}
+
+// Unwrap reports [ErrPreconditionFailed] so callers can use
+// ``errors.Is`` for the common "did any precondition fail?" branch.
+func (e *PreconditionFailure) Unwrap() error { return ErrPreconditionFailed }
 
 // EntDBError is the base error type for all EntDB SDK errors.
 type EntDBError struct {

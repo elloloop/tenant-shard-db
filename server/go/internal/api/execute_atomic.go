@@ -53,6 +53,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -259,6 +260,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	// Optional apply-wait. Default 30s when wait_timeout_ms is zero
 	// (grpc_server.py:805). Honour ctx cancellation.
 	appliedStatus := pb.ReceiptStatus_RECEIPT_STATUS_PENDING
+	var preFailure *pb.PreconditionFailure
 	if req.GetWaitApplied() && posStr != "" && s.store != nil {
 		timeoutMs := int32(executeAtomicDefaultMs)
 		if v := req.GetWaitTimeoutMs(); v > 0 {
@@ -266,17 +268,113 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		}
 		waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 		if err := s.store.WaitForOffset(waitCtx, tenantID, parseStreamOffset(posStr)); err == nil {
-			appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
+			// Poll briefly for the idempotency row to be present.
+			// WaitForOffset's in-memory tracker can be advanced by
+			// non-event paths (e.g. the contract seed pre-bumps the
+			// offset), so the wait alone does not guarantee the
+			// applier has finalised THIS event's idempotency record.
+			// Polling closes the race without changing the wait
+			// semantics that the rest of the codebase relies on.
+			// GitHub issue #500.
+			rec := waitForIdempotencyRecord(ctx, s.store, tenantID, idem, time.Duration(timeoutMs)*time.Millisecond)
+			switch {
+			case rec.Present && rec.Status == store.IdempotencyStatusFailedPrecondition:
+				appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION
+				preFailure = decodePreconditionFailureJSON(rec.FailureJSON)
+			default:
+				appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
+			}
 		}
 		cancel()
 	}
 
-	return &pb.ExecuteAtomicResponse{
-		Success:        true,
-		Receipt:        receipt,
-		CreatedNodeIds: createdNodeIDs,
-		AppliedStatus:  appliedStatus,
-	}, nil
+	resp := &pb.ExecuteAtomicResponse{
+		Success:             appliedStatus != pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION,
+		Receipt:             receipt,
+		CreatedNodeIds:      createdNodeIDs,
+		AppliedStatus:       appliedStatus,
+		PreconditionFailure: preFailure,
+	}
+	// On a CAS miss the response carries `success=false` so the SDK
+	// can branch on the wire-level field without inspecting the
+	// applied_status enum. The gRPC status code stays OK — the
+	// failure is in-band so it composes with the existing
+	// idempotency-cache path. The structured detail rides on the
+	// precondition_failure field.
+	if appliedStatus == pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION {
+		resp.Error = "precondition failed"
+		resp.ErrorCode = "FAILED_PRECONDITION"
+	}
+	return resp, nil
+}
+
+// waitForIdempotencyRecord polls for the applied_events row keyed by
+// (tenantID, idem) to become Present, with a short ceiling. Returns
+// the (possibly still-absent) record at the end of the budget; the
+// caller decides how to interpret absence. Used by ExecuteAtomic's
+// wait_applied path to close a race between WaitForOffset returning
+// and the applier finishing its write — see the issue #500 fix note
+// at the call site.
+func waitForIdempotencyRecord(ctx context.Context, st *store.CanonicalStore, tenantID, idem string, budget time.Duration) store.IdempotencyRecord {
+	if budget <= 0 {
+		budget = time.Second
+	}
+	deadline := time.Now().Add(budget)
+	// Tight initial spin (≤5ms) for the common case where the
+	// applier finished microseconds before the handler queried.
+	delay := 1 * time.Millisecond
+	for {
+		rec, err := st.CheckIdempotencyStatus(ctx, tenantID, idem)
+		if err == nil && rec.Present {
+			return rec
+		}
+		if time.Now().After(deadline) {
+			return rec
+		}
+		select {
+		case <-ctx.Done():
+			return rec
+		case <-time.After(delay):
+		}
+		if delay < 25*time.Millisecond {
+			delay *= 2
+		}
+	}
+}
+
+// decodePreconditionFailureJSON parses the failure_json column blob
+// the applier writes and returns the wire-level proto message. Any
+// decode failure collapses to nil — the typed status code still
+// signals the CAS miss; the SDK will fall back to a non-detailed
+// error when the detail is missing.
+func decodePreconditionFailureJSON(blob string) *pb.PreconditionFailure {
+	if blob == "" {
+		return nil
+	}
+	var pf struct {
+		OpIndex      int    `json:"OpIndex"`
+		Field        string `json:"Field"`
+		Expected     any    `json:"Expected"`
+		Observed     any    `json:"Observed"`
+		FieldPresent bool   `json:"FieldPresent"`
+	}
+	if err := json.Unmarshal([]byte(blob), &pf); err != nil {
+		return nil
+	}
+	out := &pb.PreconditionFailure{
+		OpIndex: int32(pf.OpIndex),
+		Field:   pf.Field,
+	}
+	if v, err := structpb.NewValue(pf.Expected); err == nil {
+		out.Expected = v
+	}
+	// Field-absent reads back as observed=nil with FieldPresent=false;
+	// surface that as a NullValue Value so callers can distinguish the
+	// two cases by inspecting the proto.
+	if v, err := structpb.NewValue(pf.Observed); err == nil {
+		out.Observed = v
+	}
+	return out
 }
 
 // streamPosString renders a wal.StreamPos in the wire form the client
@@ -348,12 +446,26 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 			if err != nil {
 				return nil, err
 			}
-			out = append(out, map[string]any{
+			internal := map[string]any{
 				"op":      opUpdateNode,
 				"type_id": int(upd.GetTypeId()),
 				"id":      upd.GetId(),
 				"patch":   patch,
-			})
+			}
+			// GitHub issue #500 — optional CAS precondition. The wire
+			// payload carries the field NAME; we translate to the
+			// stable field_id at the boundary so the WAL event (and
+			// every replay) stores the rename-free identifier. Unknown
+			// names fail closed with INVALID_ARGUMENT — the WAL must
+			// never see a precondition the applier can't evaluate.
+			if pre := upd.GetPrecondition(); pre != nil {
+				resolved, err := s.translatePrecondition(upd.GetTypeId(), pre)
+				if err != nil {
+					return nil, err
+				}
+				internal["precondition"] = resolved
+			}
+			out = append(out, internal)
 
 		case *pb.Operation_DeleteNode:
 			del := v.DeleteNode
@@ -400,6 +512,54 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 		}
 	}
 	return out, nil
+}
+
+// translatePrecondition resolves the wire-side
+// UpdateNodePrecondition.field (a human-readable name) to the stable
+// field_id used on disk and returns the internal op-dict payload
+// consumed by the applier. The "equals" value is unboxed from the
+// *structpb.Value envelope at the boundary so the applier compares
+// raw Go scalars rather than wrapped proto values; the wire-side
+// nullability is preserved (nil → field-absence match).
+//
+// Error semantics:
+//
+//   - empty field name           → INVALID_ARGUMENT
+//   - unknown type_id            → INVALID_ARGUMENT (schema-registry miss)
+//   - unknown field name on type → INVALID_ARGUMENT (rename-free invariant
+//                                  means an unknown name can never resolve
+//                                  to a stable id)
+//
+// See GitHub issue #500.
+func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondition) (map[string]any, error) {
+	name := pre.GetField()
+	if name == "" {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"update_node: precondition.field is required")
+	}
+	if s.registry == nil {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"update_node: precondition requires schema registry")
+	}
+	fid, ok := s.registry.FieldIDByNameForType(typeID, name)
+	if !ok {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"update_node: precondition references unknown field %q on type_id=%d",
+			name, typeID)
+	}
+	// structpb.Value.AsInterface() unboxes scalars to Go-native types
+	// (float64 for numbers, string, bool, nil for NullValue, []any /
+	// map[string]any for compounds) — exactly the shape the applier's
+	// reflect.DeepEqual comparator wants.
+	var equals any
+	if eq := pre.GetEquals(); eq != nil {
+		equals = eq.AsInterface()
+	}
+	return map[string]any{
+		"field":    name, // human-readable, surfaced on failure detail
+		"field_id": fmt.Sprintf("%d", fid),
+		"equals":   equals,
+	}, nil
 }
 
 // translatePayload runs name->id translation for a create_node.data /

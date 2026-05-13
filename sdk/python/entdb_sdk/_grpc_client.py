@@ -19,7 +19,7 @@ from typing import Any
 
 import grpc
 from google.protobuf import json_format
-from google.protobuf.struct_pb2 import Struct
+from google.protobuf.struct_pb2 import Struct, Value
 from grpc import aio as grpc_aio
 
 from ._generated import (
@@ -80,9 +80,56 @@ from ._generated import (
     TransferUserContentRequest,
     TypedNodeRef,
     UpdateNodeOp,
+    UpdateNodePrecondition,
     UpdateUserRequest,
     WaitForOffsetRequest,
 )
+
+
+def _value_from_python(v: Any) -> Value:
+    """Box a Python scalar/None into a google.protobuf.Value.
+
+    Used for the equality side of an UpdateNode precondition (issue
+    #500). ``None`` maps to ``NullValue`` so the applier can
+    distinguish field-absence from a JSON-null payload.
+    """
+    out = Value()
+    if v is None:
+        out.null_value = 0  # NullValue.NULL_VALUE
+    elif isinstance(v, bool):
+        out.bool_value = v
+    elif isinstance(v, (int, float)):
+        out.number_value = float(v)
+    elif isinstance(v, str):
+        out.string_value = v
+    else:
+        # Compound (list / dict) — fall through to json_format for
+        # the structured-value encoding. Rare in practice; equality
+        # against compounds compares JSON-canonical form.
+        json_format.ParseDict({"v": v}, Struct()).fields["v"]
+        out.CopyFrom(json_format.ParseDict({"v": v}, Struct()).fields["v"])
+    return out
+
+
+def _python_from_value(v: Value | None) -> Any:
+    """Unbox a google.protobuf.Value into a Python scalar/None."""
+    if v is None:
+        return None
+    kind = v.WhichOneof("kind")
+    if kind == "null_value":
+        return None
+    if kind == "bool_value":
+        return v.bool_value
+    if kind == "number_value":
+        n = v.number_value
+        # Keep ints int when round-trippable so consumers can
+        # compare without float-precision surprises.
+        if n.is_integer():
+            return int(n)
+        return n
+    if kind == "string_value":
+        return v.string_value
+    return json_format.MessageToDict(v)
 
 
 def _dict_to_struct(d):
@@ -639,6 +686,16 @@ class GrpcClient:
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
+        # Auto-enable wait_applied when any op carries a precondition.
+        # CAS is only useful synchronously — the caller needs to learn
+        # the outcome before the next request. GitHub issue #500.
+        if not wait_applied:
+            for op in operations:
+                upd = op.get("update_node")
+                if upd is not None and upd.get("precondition") is not None:
+                    wait_applied = True
+                    break
+
         # Convert operations to protobuf format
         proto_ops = self._convert_operations(operations)
 
@@ -659,6 +716,22 @@ class GrpcClient:
                 metadata=metadata,
                 tenant_id=tenant_id,
             )
+
+            # GitHub issue #500 — CAS miss surfaces in-band:
+            # applied_status == FAILED_PRECONDITION + structured
+            # detail on precondition_failure. Raise a typed error so
+            # callers can branch on the dedicated exception class.
+            if response.applied_status == ReceiptStatus.RECEIPT_STATUS_FAILED_PRECONDITION:
+                from .errors import PreconditionFailedError
+
+                pf = response.precondition_failure
+                raise PreconditionFailedError(
+                    response.error or "precondition failed",
+                    op_index=pf.op_index,
+                    field=pf.field,
+                    expected=_python_from_value(pf.expected),
+                    observed=_python_from_value(pf.observed),
+                )
 
             receipt = None
             if response.receipt and response.receipt.idempotency_key:
@@ -784,6 +857,17 @@ class GrpcClient:
                     update_op.patch.update(patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
+                # GitHub issue #500 — optional single-field CAS
+                # precondition. The wire carries the field NAME; the
+                # server resolves it to a stable field_id at the
+                # boundary.
+                pre = update.get("precondition")
+                if pre is not None:
+                    eq = Value()
+                    eq.MergeFrom(_value_from_python(pre.get("equals")))
+                    update_op.precondition.CopyFrom(
+                        UpdateNodePrecondition(field=pre["field"], equals=eq)
+                    )
                 # 2026-04-14 SDK v0.3 — see CreateNodeOp note above.
                 proto_op.update_node.CopyFrom(update_op)
 

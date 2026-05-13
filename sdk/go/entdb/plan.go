@@ -125,6 +125,35 @@ func (p *Plan) Update(nodeID string, msg proto.Message) {
 	})
 }
 
+// UpdateIf accumulates a conditional update-node operation with a
+// single-field equality precondition (CAS). The applier compares the
+// node's current ``field`` against ``equals`` before applying the
+// patch; on mismatch the whole batch aborts and Commit returns a
+// [*PreconditionFailure] error matching [ErrPreconditionFailed].
+//
+// Use this for state-machine transitions and single-use tokens —
+// anywhere two concurrent writers must not both win. See GitHub
+// issue #500 for the design.
+//
+// The idempotency cache memoizes both success and CAS-miss outcomes,
+// so a retry with the SAME idempotency key returns the cached
+// result without re-evaluating. To re-evaluate against current
+// state, mint a new idempotency key.
+func (p *Plan) UpdateIf(nodeID string, msg proto.Message, field string, equals any) {
+	p.ensureNotCommitted()
+	typeID, patch, err := marshalSetFieldsForWire(msg)
+	if err != nil {
+		panic(fmt.Errorf("entdb: Plan.UpdateIf: %w", err))
+	}
+	p.operations = append(p.operations, Operation{
+		Type:         OpUpdateNode,
+		TypeID:       int(typeID),
+		NodeID:       nodeID,
+		Patch:        patch,
+		Precondition: &Precondition{Field: field, Equals: equals},
+	})
+}
+
 // Delete accumulates a delete-node operation.
 //
 // Delete is a free function rather than a method on Plan because

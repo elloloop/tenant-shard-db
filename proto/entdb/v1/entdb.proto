@@ -293,6 +293,44 @@ message UpdateNodeOp {
     // on the referenced field id.
     reserved 6;
     reserved "keys";
+
+    // Optional single-field equality precondition (CAS).
+    //
+    // When set, the applier compares the node's current value at
+    // ``precondition.field`` against ``precondition.equals`` BEFORE
+    // applying the patch. If the values do not match — including the
+    // case where the field is absent from the stored payload — the
+    // ENTIRE batch aborts (no ops commit) and the failure is memoized
+    // in the idempotency cache. A retry with the same idempotency key
+    // replays the cached failure without re-evaluating against
+    // possibly-changed state. Callers re-evaluate by minting a new
+    // idempotency key.
+    //
+    // Equality is the only operator in v1; compound predicates and
+    // comparison operators (Lt/Gt/...) are deliberately out of scope.
+    // See GitHub issue #500 for the design rationale.
+    UpdateNodePrecondition precondition = 7;
+}
+
+// UpdateNodePrecondition is the single-field equality CAS predicate
+// attached to ``UpdateNodeOp.precondition``. The field is named, not
+// numbered, on the wire — the server resolves it to a stable field_id
+// against the schema registry at handler ingress and stores the id-keyed
+// form in the WAL event. Unknown field names are rejected with
+// INVALID_ARGUMENT at handler time so the WAL never sees a precondition
+// that can never be evaluated.
+message UpdateNodePrecondition {
+    // Node field name as declared in the proto schema (NOT the on-disk
+    // field_id). The handler translates this to field_id before the
+    // event is appended.
+    string field = 1;
+
+    // The expected current value of ``field``. Encoded as a
+    // ``google.protobuf.Value`` so callers can express scalar types
+    // (numbers, strings, booleans, null) without a parallel typed
+    // union. Lists and structs are accepted on the wire but the
+    // applier compares them by JSON-canonical form.
+    google.protobuf.Value equals = 2;
 }
 
 message DeleteNodeOp {
@@ -368,6 +406,34 @@ message ExecuteAtomicResponse {
 
     // Application status (if wait_applied was true)
     ReceiptStatus applied_status = 6;
+
+    // Structured precondition-failure detail. Populated when
+    // ``applied_status == RECEIPT_STATUS_FAILED_PRECONDITION`` so the
+    // SDK can surface a typed error without re-fetching state.
+    PreconditionFailure precondition_failure = 7;
+}
+
+// PreconditionFailure carries the coordinates of a CAS miss inside an
+// ExecuteAtomic batch so the caller can log/decide without a second
+// round trip. See ``UpdateNodeOp.precondition`` and GitHub issue #500
+// for the full design.
+message PreconditionFailure {
+    // Zero-based index of the failing op within
+    // ``ExecuteAtomicRequest.operations``.
+    int32 op_index = 1;
+
+    // Field name the precondition referenced (handler-resolved from the
+    // wire ``UpdateNodePrecondition.field``).
+    string field = 2;
+
+    // Value the precondition expected.
+    google.protobuf.Value expected = 3;
+
+    // Value the applier observed at the moment of evaluation. Absent
+    // fields collapse to a ``NullValue`` so consumers can distinguish
+    // "field missing" from "field set to JSON null" by inspecting the
+    // ``Value`` kind.
+    google.protobuf.Value observed = 4;
 }
 
 // Receipt Status
@@ -380,6 +446,12 @@ message GetReceiptStatusRequest {
 message GetReceiptStatusResponse {
     ReceiptStatus status = 1;
     string error = 2;
+
+    // Populated when ``status == RECEIPT_STATUS_FAILED_PRECONDITION``
+    // so a polling caller can reconstruct the same typed error that
+    // the originating ``ExecuteAtomic`` call would have produced. See
+    // GitHub issue #500.
+    PreconditionFailure precondition_failure = 3;
 }
 
 enum ReceiptStatus {
@@ -387,6 +459,11 @@ enum ReceiptStatus {
     RECEIPT_STATUS_PENDING = 1;
     RECEIPT_STATUS_APPLIED = 2;
     RECEIPT_STATUS_FAILED = 3;
+    // The batch was rejected because a conditional ``UpdateNodeOp``
+    // precondition was not met. The full failure coordinates live in
+    // ``ExecuteAtomicResponse.precondition_failure``. See GitHub issue
+    // #500.
+    RECEIPT_STATUS_FAILED_PRECONDITION = 4;
 }
 
 // Read operations

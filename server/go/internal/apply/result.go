@@ -8,7 +8,8 @@ import "github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 // ExecuteAtomic (see docs/go-port/shared/applier.md "Receipt
 // construction"). APPLIED means the event committed; SKIPPED means the
 // idempotency-key probe inside the txn matched a prior row;
-// FAILED is the catch-all error path.
+// FAILED is the catch-all error path; FAILED_PRECONDITION is the
+// CAS-miss path that aborts the batch but advances the WAL offset.
 type Status uint8
 
 const (
@@ -18,10 +19,15 @@ const (
 	StatusSkipped
 	// StatusFailed means the apply errored. Result.Err carries the cause.
 	StatusFailed
+	// StatusFailedPrecondition means a conditional UpdateNodeOp's
+	// precondition did not match observed state. Result.Precondition
+	// carries the typed failure detail. See GitHub issue #500.
+	StatusFailedPrecondition
 )
 
-// String returns the wire form ("APPLIED" / "SKIPPED" / "FAILED").
-// Mirrors the Python ApplyResult.status enum values.
+// String returns the wire form ("APPLIED" / "SKIPPED" / "FAILED" /
+// "FAILED_PRECONDITION"). Mirrors the Python ApplyResult.status enum
+// values with the CAS extension.
 func (s Status) String() string {
 	switch s {
 	case StatusApplied:
@@ -30,6 +36,8 @@ func (s Status) String() string {
 		return "SKIPPED"
 	case StatusFailed:
 		return "FAILED"
+	case StatusFailedPrecondition:
+		return "FAILED_PRECONDITION"
 	default:
 		return "UNKNOWN"
 	}
@@ -58,6 +66,13 @@ type Result struct {
 	// post-commit; consumed by shared-index maintenance.
 	SharedAdded   []SharedRef
 	SharedRemoved []SharedRef
+
+	// Precondition carries the typed failure detail when Status is
+	// StatusFailedPrecondition. Lifted into the gRPC
+	// ExecuteAtomicResponse.precondition_failure by the handler when
+	// wait_applied=true; otherwise served from the idempotency cache
+	// via GetReceiptStatus.
+	Precondition *PreconditionFailure
 }
 
 // EdgeRef is the in-result representation of a created edge. Used for

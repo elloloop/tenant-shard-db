@@ -64,6 +64,18 @@ CREATE TABLE IF NOT EXISTS applied_events (
     idempotency_key TEXT NOT NULL,
     stream_pos      TEXT,
     applied_at      INTEGER NOT NULL,
+    -- status is one of 'APPLIED' or 'FAILED_PRECONDITION'. Default
+    -- 'APPLIED' keeps the legacy success-only rows correct after
+    -- the GitHub-issue-#500 (CAS) migration; the FAILED case is the
+    -- memoized precondition-miss path so retries with the same idem
+    -- key replay the cached failure without re-evaluating.
+    status          TEXT NOT NULL DEFAULT 'APPLIED',
+    -- failure_json carries a JSON encoding of the apply.PreconditionFailure
+    -- struct when status='FAILED_PRECONDITION'; NULL otherwise. The
+    -- structured fields (op_index, field, expected, observed,
+    -- field_present) survive a round-trip through the idempotency
+    -- cache so the wire-side typed error is identical on retry.
+    failure_json    TEXT,
     UNIQUE (tenant_id, idempotency_key)
 );
 CREATE INDEX IF NOT EXISTS idx_applied_events_key
@@ -124,6 +136,50 @@ INSERT OR IGNORE INTO schema_version (version, applied_at)
 func initSchema(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, schemaDDL); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)
+	}
+	// In-place column additions for tenant DBs created before the
+	// GitHub-issue-#500 CAS migration. SQLite has no IF NOT EXISTS on
+	// ADD COLUMN, so we probe pragma_table_info first.
+	if err := addColumnIfMissing(ctx, db, "applied_events", "status",
+		`ALTER TABLE applied_events ADD COLUMN status TEXT NOT NULL DEFAULT 'APPLIED'`,
+	); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "applied_events", "failure_json",
+		`ALTER TABLE applied_events ADD COLUMN failure_json TEXT`,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// addColumnIfMissing runs alterSQL when the given column is absent
+// from the table. Idempotent — re-runs are a no-op on fully-migrated
+// databases.
+func addColumnIfMissing(ctx context.Context, db *sql.DB, table, column, alterSQL string) error {
+	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return fmt.Errorf("store: probe %s columns: %w", table, err)
+	}
+	defer rows.Close()
+	have := false
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("store: scan %s column: %w", table, err)
+		}
+		if name == column {
+			have = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: iterate %s columns: %w", table, err)
+	}
+	if have {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, alterSQL); err != nil {
+		return fmt.Errorf("store: add column %s.%s: %w", table, column, err)
 	}
 	return nil
 }
