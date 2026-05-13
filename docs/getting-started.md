@@ -93,7 +93,42 @@ MemberOf = EdgeTypeDef(
 )
 ```
 
-### 4. Connect and Create Data
+### 4. Onboard the Tenant and User
+
+EntDB does not auto-create tenants or users — every tenant and every
+actor must be registered through admin RPCs before data-plane calls
+will succeed. See [Onboarding](onboarding.md) for the full contract.
+The minimum bring-up is three calls:
+
+```python
+import asyncio
+from entdb_sdk import DbClient
+
+async def onboard():
+    admin = DbClient(
+        endpoint="localhost:50051",
+        tenant_id="_admin",
+        actor="system:admin",
+    )
+    await admin.connect()
+
+    await admin.create_user(
+        user_id="admin", email="admin@example.com", name="Admin",
+        actor="system:admin",
+    )
+    await admin.create_tenant(
+        tenant_id="my_company", name="My Company", actor="system:admin",
+    )
+    await admin.add_tenant_member(
+        tenant_id="my_company", user_id="admin", role="member",
+        actor="system:admin",
+    )
+    await admin.close()
+
+asyncio.run(onboard())
+```
+
+### 5. Connect and Create Data
 
 ```python
 import asyncio
@@ -137,7 +172,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### 5. Verify in Redpanda Console
+### 6. Verify in Redpanda Console
 
 Open http://localhost:8081 to see events in the WAL stream.
 
@@ -167,6 +202,7 @@ my-app/
 
 ## Next Steps
 
+- [Onboarding](onboarding.md) - Tenant, user, and membership setup
 - [Schema Evolution](schema-evolution.md) - Learn about safe schema changes
 - [Durability Guarantees](durability.md) - Understand the durability model
 - [SDK Reference](sdk-reference.md) - Complete SDK documentation

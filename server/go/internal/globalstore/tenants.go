@@ -51,6 +51,56 @@ func (g *GlobalStore) CreateTenant(ctx context.Context, tenantID, name, region s
 	}, nil
 }
 
+// CreateTenantWithOwner atomically inserts the tenant_registry row and
+// the creator's tenant_members owner row in a single SQLite transaction.
+// Either both land or neither does — the orphan-tenant hazard that the
+// Python parity port carried (registry row written without an owner if
+// the process crashed between the two INSERTs) is closed here.
+//
+// Returns ErrAlreadyExists on duplicate tenant_id; the membership insert
+// is not attempted in that case. Empty `region` is filled with
+// DefaultRegion.
+func (g *GlobalStore) CreateTenantWithOwner(ctx context.Context, tenantID, name, region, ownerUserID string) (*Tenant, error) {
+	if region == "" {
+		region = DefaultRegion
+	}
+	tx, err := g.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("globalstore: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := g.now()
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO tenant_registry (tenant_id, name, status, created_at, region)
+		 VALUES (?, ?, 'active', ?, ?)`,
+		tenantID, name, now, region,
+	); err != nil {
+		if isUniqueViolation(err) {
+			return nil, errs.Errorf(codes.AlreadyExists,
+				"globalstore: tenant %q already exists", tenantID)
+		}
+		return nil, fmt.Errorf("globalstore: create tenant %q: %w", tenantID, err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO tenant_members (tenant_id, user_id, role, joined_at)
+		 VALUES (?, ?, 'owner', ?)`,
+		tenantID, ownerUserID, now,
+	); err != nil {
+		return nil, fmt.Errorf("globalstore: add owner member (%q,%q): %w", tenantID, ownerUserID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("globalstore: commit create tenant %q: %w", tenantID, err)
+	}
+	return &Tenant{
+		TenantID:  tenantID,
+		Name:      name,
+		Status:    "active",
+		CreatedAt: now,
+		Region:    region,
+	}, nil
+}
+
 // GetTenant returns the row, or (nil, nil) if not present.
 func (g *GlobalStore) GetTenant(ctx context.Context, tenantID string) (*Tenant, error) {
 	row := g.db.QueryRowContext(ctx,

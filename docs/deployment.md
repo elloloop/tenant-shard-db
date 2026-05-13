@@ -277,6 +277,18 @@ terraform plan -var="environment=production" -var="image_tag=v1.0.0"
 terraform apply -var="environment=production" -var="image_tag=v1.0.0"
 ```
 
+## Tenant Onboarding
+
+The Go server does not auto-create tenants, users, or memberships —
+every tenant and every actor that performs writes must be onboarded
+explicitly through `Admin.CreateUser` → `Admin.CreateTenant` →
+`Admin.AddTenantMember` from an admin/system caller. Wire your identity
+service to call these RPCs whenever a new customer or principal needs
+to be provisioned.
+
+See [Onboarding](onboarding.md) for the worked example, the admin-actor
+production wiring (OAuth/API-key/session), and the idempotency contract.
+
 ## Container Image
 
 ### Build and Push
