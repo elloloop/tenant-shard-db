@@ -30,7 +30,10 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .filter import Filter
 
 
 class _Unset(Enum):
@@ -985,6 +988,7 @@ class DbClient:
         actor: str,
         *,
         filter: dict[str, Any] | None = None,
+        where: list[Filter] | None = None,
         limit: int = 100,
         offset: int = 0,
         order_by: str = "created_at",
@@ -999,7 +1003,14 @@ class DbClient:
             node_type: Node type to query
             tenant_id: Tenant identifier
             actor: Actor making request
-            filter: Optional payload field filter (serialized as JSON)
+            filter: Optional payload field filter (equality-only map
+                shape; kept for backwards compatibility).
+            where: Optional typed comparison filters
+                (:class:`Filter` list, AND-ed together). Supports
+                Eq/Ne/Lt/Le/Gt/Ge per issue #501. Mutually exclusive
+                with ``filter`` — pass one or the other.
+                ``FilterOp.NE`` forces a full type scan; B-tree
+                indexes cannot serve a not-equal predicate.
             limit: Maximum nodes to return
             offset: Pagination offset
             order_by: Field to order results by
@@ -1017,13 +1028,23 @@ class DbClient:
         trace_id = trace_id or str(uuid.uuid4())
         resolved_offset = self._resolve_offset(tenant_id, after_offset)
 
+        # Local import to dodge a circular-import on package load.
+        from .filter import filters_to_filter_dict
+
+        if where:
+            if filter:
+                raise ValueError("query: pass either `filter` or `where`, not both")
+            wire_filter = filters_to_filter_dict(where)
+        else:
+            wire_filter = filter or {}
+
         nodes, _ = await self._grpc.query_nodes(
             tenant_id=tenant_id,
             actor=actor,
             type_id=node_type.type_id,
             limit=limit,
             offset=offset,
-            filter=filter or {},
+            filter=wire_filter,
             order_by=order_by,
             descending=descending,
             after_offset=resolved_offset,

@@ -17,10 +17,11 @@
 //     auth.Authoritative(ctx, claimed) — mirrors commit fece3fb.
 //  3. order_by, limit defaults are applied per spec (created_at, 100).
 //  4. filters: name-keyed FieldFilter entries are translated to id-keyed
-//     equality filters via payload.FilterNamesToIDs. Wave 2 supports
-//     EQ only — every other operator surfaces as INVALID_ARGUMENT
-//     (the full MongoDB-operator allow-list is W1.10's queryfilter
-//     package; QueryNodes inherits it once it lands).
+//     comparison filters via payload.FilterNamesToIDs. Eq/Ne/Lt/Le/Gt/Ge
+//     are supported as AND-ed predicates per issue #501. CONTAINS and IN
+//     remain reserved (the wire enum declares them but the server still
+//     surfaces them as INVALID_ARGUMENT pending the full MongoDB-operator
+//     allow-list in W1.10's queryfilter package).
 //  5. ACL post-filter on cross-tenant reads via acl.Filter.FilterReadable.
 //     The Python handler iterates can_access; the equivalent Go path is
 //     the bulk VisibleNodeIDs JOIN already implemented in
@@ -110,15 +111,10 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		typeName = nt.Name
 	}
 
-	// Translate FieldFilter wire shape -> id-keyed equality filters.
-	// Wave 2 supports EQ only; non-EQ operators surface as
-	// INVALID_ARGUMENT (parity-fix per spec — see file header).
-	nameFilter, err := fieldFiltersToNameDict(req.GetFilters())
-	if err != nil {
-		resultStatus = "error"
-		return nil, err
-	}
-	idFilter, err := payload.FilterNamesToIDs(s.registry, typeName, nameFilter)
+	// Translate FieldFilter wire shape -> id-keyed comparison filters.
+	// Eq/Ne/Lt/Le/Gt/Ge are supported (issue #501); CONTAINS / IN and
+	// any unknown operator value surface as INVALID_ARGUMENT.
+	storeFilters, err := s.fieldFiltersToStoreFilters(typeName, req.GetFilters())
 	if err != nil {
 		resultStatus = "error"
 		return nil, err
@@ -130,13 +126,13 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	}
 
 	nodes, err := s.store.QueryNodes(ctx, store.QueryNodesArgs{
-		TenantID:        tenantID,
-		TypeID:          typeID,
-		EqualityFilters: idFilter,
-		OrderBy:         req.GetOrderBy(),
-		Descending:      req.GetDescending(),
-		Limit:           limit,
-		Offset:          int(req.GetOffset()),
+		TenantID:   tenantID,
+		TypeID:     typeID,
+		Filters:    storeFilters,
+		OrderBy:    req.GetOrderBy(),
+		Descending: req.GetDescending(),
+		Limit:      limit,
+		Offset:     int(req.GetOffset()),
 	})
 	if err != nil {
 		resultStatus = "error"
@@ -172,56 +168,158 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	}, nil
 }
 
-// fieldFiltersToNameDict mirrors _field_filters_to_filter_dict in the
-// Python servicer (grpc_server.py:190-228) but constrained to the
-// Wave-2 supported subset: FilterOp.EQ only. Non-EQ operators surface
-// as INVALID_ARGUMENT — the spec calls this out as a behaviour fix
-// over Python's silent exception swallow (grpc_server.py:1379-1382).
+// fieldFiltersToStoreFilters translates the wire-shape FieldFilter
+// slice into the canonical store's id-keyed [store.QueryFilter]
+// list, applying name-to-id resolution against the schema registry.
 //
-// Multiple EQ filters on the same field collapse to the last value
-// (mirrors the Python merge behaviour where equality on the same field
-// is rewritten to $eq and merged; in the EQ-only subset this is
-// equivalent to "last write wins").
-func fieldFiltersToNameDict(filters []*pb.FieldFilter) (map[string]any, error) {
-	out := map[string]any{}
+// Supported operators (issue #501):
+//
+//   - EQ, NEQ, LT, LTE, GT, GTE
+//
+// CONTAINS and IN remain unsupported — they need a separate compiler
+// (LIKE-with-wildcards, parameterised IN-list) and the issue defers
+// them. Both surface as INVALID_ARGUMENT.
+//
+// Inlined operator shape: the Python SDK historically smuggled non-EQ
+// operators through ``Op=EQ, Value=Struct{"$gt": v}``. We honour that
+// shape so the existing SDK call site keeps working — the inlined
+// operator overrides the wire ``op`` field. Unknown inlined keys (e.g.
+// ``$nin``, ``$between``) still surface as INVALID_ARGUMENT.
+func (s *Server) fieldFiltersToStoreFilters(typeName string, filters []*pb.FieldFilter) ([]store.QueryFilter, error) {
+	if len(filters) == 0 {
+		return nil, nil
+	}
+	// Resolve field name -> id via a single-entry call through
+	// payload.FilterNamesToIDs. We re-use that helper per distinct
+	// name so the unknown-field error shape stays identical to the
+	// equality path and the schema-less unit-test path keeps working.
+	resolveField := func(name string) (uint32, error) {
+		ids, err := payload.FilterNamesToIDs(s.registry, typeName, map[string]any{name: nil})
+		if err != nil {
+			return 0, err
+		}
+		for id := range ids {
+			return id, nil
+		}
+		// Defensive: FilterNamesToIDs always returns one id on success.
+		return 0, errs.Errorf(codes.InvalidArgument,
+			"QueryNodes: filter references unknown field %q", name)
+	}
+
+	nameToID := map[string]uint32{}
+	out := make([]store.QueryFilter, 0, len(filters))
 	for _, f := range filters {
 		if f == nil {
 			continue
 		}
-		if f.GetOp() != pb.FilterOp_EQ {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"QueryNodes: filter operator %s on field %q is not yet supported (Wave 2 supports EQ only)",
-				f.GetOp(), f.GetField())
+		field := f.GetField()
+		raw := f.GetValue().AsInterface()
+
+		fid, ok := nameToID[field]
+		if !ok {
+			id, err := resolveField(field)
+			if err != nil {
+				return nil, err
+			}
+			nameToID[field] = id
+			fid = id
 		}
-		// Reject the legacy inlined-operator shape: a Struct value
-		// carrying $-prefixed keys is the Python SDK's way of smuggling
-		// a non-EQ operator through Op=EQ. The Wave-2 cut treats this
-		// as INVALID_ARGUMENT for the same reason — surface it instead
-		// of silently dropping rows.
-		if iv, ok := inlinedOperatorKey(f.GetValue().AsInterface()); ok {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"QueryNodes: inlined operator %q on field %q is not yet supported (Wave 2 supports EQ only)",
-				iv, f.GetField())
+
+		// Inlined operator detection: a Struct value carrying
+		// ``$gt``/``$lt``/... keys. The Python SDK uses this shape to
+		// fan a single FieldFilter into a multi-op predicate (e.g.
+		// ``{"price": {"$gte": 100, "$lt": 200}}``). Emit one store
+		// filter per inlined entry.
+		if subs, ok := inlinedFilterOps(raw); ok {
+			for _, sub := range subs {
+				op, ok := storeFilterOpFromInlineKey(sub.key)
+				if !ok {
+					return nil, errs.Errorf(codes.InvalidArgument,
+						"QueryNodes: inlined operator %q on field %q is not supported", sub.key, field)
+				}
+				out = append(out, store.QueryFilter{FieldID: fid, Op: op, Value: sub.value})
+			}
+			continue
 		}
-		out[f.GetField()] = f.GetValue().AsInterface()
+
+		op, err := storeFilterOpFromWire(field, f.GetOp())
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, store.QueryFilter{FieldID: fid, Op: op, Value: raw})
 	}
 	return out, nil
 }
 
-// inlinedOperatorKey detects the Python SDK's inlined-operator shape
-// (Op=EQ, Value=Struct{"$gte": …}). Returns the offending key and true
-// when the value is a map whose first key starts with "$".
-func inlinedOperatorKey(v any) (string, bool) {
+// storeFilterOpFromWire maps the wire FilterOp enum to the store's
+// comparison-operator type. CONTAINS / IN / unknown values surface as
+// INVALID_ARGUMENT — the issue #501 cut covers Eq/Ne/Lt/Le/Gt/Ge only.
+func storeFilterOpFromWire(field string, op pb.FilterOp) (store.QueryFilterOp, error) {
+	switch op {
+	case pb.FilterOp_EQ:
+		return store.QueryFilterEq, nil
+	case pb.FilterOp_NEQ:
+		return store.QueryFilterNe, nil
+	case pb.FilterOp_LT:
+		return store.QueryFilterLt, nil
+	case pb.FilterOp_LTE:
+		return store.QueryFilterLe, nil
+	case pb.FilterOp_GT:
+		return store.QueryFilterGt, nil
+	case pb.FilterOp_GTE:
+		return store.QueryFilterGe, nil
+	default:
+		return 0, errs.Errorf(codes.InvalidArgument,
+			"QueryNodes: filter operator %s on field %q is not supported (Eq/Ne/Lt/Le/Gt/Ge only)",
+			op, field)
+	}
+}
+
+// storeFilterOpFromInlineKey maps the MongoDB-style ``$gt`` keys used
+// by the Python SDK when smuggling non-EQ operators through Op=EQ.
+func storeFilterOpFromInlineKey(key string) (store.QueryFilterOp, bool) {
+	switch key {
+	case "$eq":
+		return store.QueryFilterEq, true
+	case "$ne":
+		return store.QueryFilterNe, true
+	case "$lt":
+		return store.QueryFilterLt, true
+	case "$lte":
+		return store.QueryFilterLe, true
+	case "$gt":
+		return store.QueryFilterGt, true
+	case "$gte":
+		return store.QueryFilterGe, true
+	}
+	return 0, false
+}
+
+// inlinedFilterOps reports whether the FieldFilter value carries the
+// inlined operator shape (a JSON object whose first key starts with
+// ``$``) and, if so, returns the (op-key, value) pairs in iteration
+// order. The shape historically lets callers express ``{"price":
+// {"$gt": 10, "$lt": 100}}``.
+type inlinedFilterOp struct {
+	key   string
+	value any
+}
+
+func inlinedFilterOps(v any) ([]inlinedFilterOp, bool) {
 	m, ok := v.(map[string]any)
-	if !ok {
-		return "", false
+	if !ok || len(m) == 0 {
+		return nil, false
 	}
 	for k := range m {
-		if len(k) > 0 && k[0] == '$' {
-			return k, true
+		if len(k) == 0 || k[0] != '$' {
+			return nil, false
 		}
 	}
-	return "", false
+	out := make([]inlinedFilterOp, 0, len(m))
+	for k, val := range m {
+		out = append(out, inlinedFilterOp{key: k, value: val})
+	}
+	return out, true
 }
 
 // applyQueryACLFilter is the cross-tenant post-filter. It mirrors the

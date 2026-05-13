@@ -24,6 +24,7 @@ from .typed import ACLEntry, Actor, Permission, TypedEdge, TypedNode
 
 if TYPE_CHECKING:
     from ._grpc_client import Edge, Node
+    from .filter import Filter
 
 
 class ScopedPlan:
@@ -210,6 +211,7 @@ class ActorScope:
         node_type: Any,
         *,
         filter: dict[str, Any] | None = None,
+        where: list[Filter] | None = None,
         limit: int = 100,
         offset: int = 0,
         order_by: str = "created_at",
@@ -218,13 +220,18 @@ class ActorScope:
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
-        """Query nodes by type with MongoDB-style filter operators.
+        """Query nodes by type.
 
-        ``node_type`` is the proto message class. ``filter`` accepts
-        the eight operators frozen in the 2026-04-14 SDK v0.3 decision:
-        ``$eq`` (default), ``$ne``, ``$gt``, ``$gte``, ``$lt``,
-        ``$lte``, ``$in``, ``$nin``, ``$like``, ``$between``, plus
-        top-level ``$and`` / ``$or`` composition.
+        ``node_type`` is the proto message class.
+
+        ``where`` is the typed comparison-filter shape added in issue
+        #501 — a list of :class:`Filter` values AND-ed together, with
+        operator support for Eq/Ne/Lt/Le/Gt/Ge. Prefer ``where`` for
+        new code; the legacy ``filter`` map shape is kept for
+        backwards compatibility.
+
+        ``FilterOp.NE`` cannot use a B-tree index — it forces a full
+        type scan. Use sparingly on large tables.
         """
         kwargs: dict[str, Any] = {
             "limit": limit,
@@ -233,7 +240,13 @@ class ActorScope:
             "descending": descending,
         }
         kwargs.update(
-            _optional(filter=filter, after_offset=after_offset, trace_id=trace_id, timeout=timeout)
+            _optional(
+                filter=filter,
+                where=where,
+                after_offset=after_offset,
+                trace_id=trace_id,
+                timeout=timeout,
+            )
         )
         return await self._client.query(
             _resolve_node_type(node_type), self._tenant_id, self._actor, **kwargs
