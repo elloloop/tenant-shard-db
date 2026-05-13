@@ -205,6 +205,55 @@ func (s *CanonicalStore) GetNodes(ctx context.Context, tenantID string, nodeIDs 
 	return nodes, missing, nil
 }
 
+// QueryFilterOp is the comparison operator carried by a [QueryFilter].
+// The values map 1:1 to SQL comparison operators on a
+// ``json_extract(payload_json, '$."<field_id>"')`` expression.
+type QueryFilterOp uint8
+
+const (
+	// QueryFilterEq compiles to ``=``. The default when an operator
+	// is unset.
+	QueryFilterEq QueryFilterOp = iota
+	// QueryFilterNe compiles to ``<>``. Cannot use a B-tree index
+	// — forces a scan over the type's rows.
+	QueryFilterNe
+	// QueryFilterLt compiles to ``<``.
+	QueryFilterLt
+	// QueryFilterLe compiles to ``<=``.
+	QueryFilterLe
+	// QueryFilterGt compiles to ``>``.
+	QueryFilterGt
+	// QueryFilterGe compiles to ``>=``.
+	QueryFilterGe
+)
+
+// sqlOp returns the SQL operator for the receiver. Defaults to ``=``.
+func (op QueryFilterOp) sqlOp() string {
+	switch op {
+	case QueryFilterNe:
+		return "<>"
+	case QueryFilterLt:
+		return "<"
+	case QueryFilterLe:
+		return "<="
+	case QueryFilterGt:
+		return ">"
+	case QueryFilterGe:
+		return ">="
+	default:
+		return "="
+	}
+}
+
+// QueryFilter is one AND-ed predicate evaluated by [CanonicalStore.QueryNodes].
+// FieldID is the on-disk payload field id (CLAUDE.md invariant #6);
+// Op is the comparison operator; Value is bound as a SQLite parameter.
+type QueryFilter struct {
+	FieldID uint32
+	Op      QueryFilterOp
+	Value   any
+}
+
 // QueryNodesArgs is the input to QueryNodes. Mirrors
 // canonical_store.py:_sync_query_nodes (2394) signature minus the
 // MongoDB filter (deferred to W1.10 query_filter port).
@@ -212,15 +261,19 @@ type QueryNodesArgs struct {
 	TenantID string
 	TypeID   int32
 	// EqualityFilters apply ``json_extract(payload_json, '$."<field_id>"') = ?``
-	// for each entry. Field ids and equality-only filters are the
-	// minimum surface needed by Wave 2 read handlers; the full
-	// MongoDB-operator allow-list lives in W1.10 (see
-	// docs/go-port/rpcs/QueryNodes.md).
+	// for each entry. Equality-only — kept for backwards compatibility
+	// with existing call sites that only need the equality shape.
 	EqualityFilters map[uint32]any
-	OrderBy         string // one of {"created_at","updated_at","node_id","type_id"}; default created_at
-	Descending      bool
-	Limit           int
-	Offset          int
+	// Filters carries comparison predicates (Eq/Ne/Lt/Le/Gt/Ge). All
+	// filters are AND-ed together, and AND-ed with EqualityFilters when
+	// both are supplied. Multiple filters on the same field are
+	// permitted (a range is expressed as two filters: ``x >= lo`` AND
+	// ``x < hi``). See issue #501.
+	Filters    []QueryFilter
+	OrderBy    string // one of {"created_at","updated_at","node_id","type_id"}; default created_at
+	Descending bool
+	Limit      int
+	Offset     int
 }
 
 // QueryNodes returns up to args.Limit nodes of args.TypeID, optionally
@@ -254,6 +307,12 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 			`json_extract(payload_json, '$."%d"') = ?`, fid,
 		))
 		params = append(params, val)
+	}
+	for _, f := range args.Filters {
+		whereParts = append(whereParts, fmt.Sprintf(
+			`json_extract(payload_json, '$."%d"') %s ?`, f.FieldID, f.Op.sqlOp(),
+		))
+		params = append(params, f.Value)
 	}
 	params = append(params, limit, args.Offset)
 

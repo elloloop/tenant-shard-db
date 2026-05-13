@@ -166,31 +166,126 @@ func TestQueryNodes_EqualityFilter(t *testing.T) {
 	}
 }
 
-// TestQueryNodes_RangeFilterRejected pins the parity-fix: a non-EQ
-// FilterOp (here GTE) MUST surface as INVALID_ARGUMENT. Python's
-// handler swallows the failure and returns an empty list; the Go port
-// rejects it loudly per spec.
-func TestQueryNodes_RangeFilterRejected(t *testing.T) {
+// TestQueryNodes_RangeOperators exercises the comparison operators
+// added by issue #501. Each branch seeds the same three rows and
+// asserts that the matching subset is returned. CONTAINS / IN are
+// covered separately by TestQueryNodes_UnsupportedOperator.
+func TestQueryNodes_RangeOperators(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name    string
+		op      pb.FilterOp
+		value   any
+		wantIDs []string
+	}{
+		{"lt", pb.FilterOp_LT, 30, []string{"n2"}},   // age < 30 → n2 (25)
+		{"lte", pb.FilterOp_LTE, 30, []string{"n1", "n2"}},
+		{"gt", pb.FilterOp_GT, 30, []string{"n3"}}, // age > 30 → n3 (40)
+		{"gte", pb.FilterOp_GTE, 30, []string{"n1", "n3"}},
+		{"neq", pb.FilterOp_NEQ, 30, []string{"n2", "n3"}},
+		{"eq", pb.FilterOp_EQ, 30, []string{"n1"}},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newQueryNodesFixture(t)
+			f.seedNode("n1", "user:alice", "alice@example.com", 30)
+			f.seedNode("n2", "user:alice", "bob@example.com", 25)
+			f.seedNode("n3", "user:alice", "carol@example.com", 40)
+
+			resp, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
+				Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
+				TypeId:  1,
+				OrderBy: "node_id",
+				Filters: []*pb.FieldFilter{
+					{Field: "age", Op: tc.op, Value: mustValue(t, tc.value)},
+				},
+			})
+			if err != nil {
+				t.Fatalf("QueryNodes: %v", err)
+			}
+			got := make([]string, 0, len(resp.GetNodes()))
+			for _, n := range resp.GetNodes() {
+				got = append(got, n.GetNodeId())
+			}
+			if len(got) != len(tc.wantIDs) {
+				t.Fatalf("got %v, want %v", got, tc.wantIDs)
+			}
+			for i := range tc.wantIDs {
+				if got[i] != tc.wantIDs[i] {
+					t.Fatalf("got %v, want %v", got, tc.wantIDs)
+				}
+			}
+		})
+	}
+}
+
+// TestQueryNodes_RangeOperatorsANDed pins the "all filters AND-ed"
+// contract: ``age >= 25 AND age < 40`` is expressed as two filters
+// on the same field and returns only the rows that satisfy both.
+func TestQueryNodes_RangeOperatorsANDed(t *testing.T) {
+	t.Parallel()
+	f := newQueryNodesFixture(t)
+	f.seedNode("n1", "user:alice", "alice@example.com", 30)
+	f.seedNode("n2", "user:alice", "bob@example.com", 25)
+	f.seedNode("n3", "user:alice", "carol@example.com", 40)
+
+	resp, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
+		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
+		TypeId:  1,
+		OrderBy: "node_id",
+		Filters: []*pb.FieldFilter{
+			{Field: "age", Op: pb.FilterOp_GTE, Value: mustValue(t, 25)},
+			{Field: "age", Op: pb.FilterOp_LT, Value: mustValue(t, 40)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(resp.GetNodes()) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(resp.GetNodes()))
+	}
+	want := map[string]struct{}{"n1": {}, "n2": {}}
+	for _, n := range resp.GetNodes() {
+		if _, ok := want[n.GetNodeId()]; !ok {
+			t.Fatalf("unexpected node %q in result", n.GetNodeId())
+		}
+	}
+}
+
+// TestQueryNodes_UnsupportedOperator pins the still-rejected operators.
+// CONTAINS and IN remain INVALID_ARGUMENT pending the W1.10 queryfilter
+// package; issue #501 explicitly scoped them out.
+func TestQueryNodes_UnsupportedOperator(t *testing.T) {
 	t.Parallel()
 	f := newQueryNodesFixture(t)
 	f.seedNode("n1", "user:alice", "alice@example.com", 30)
 
-	_, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
-		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
-		TypeId:  1,
-		Filters: []*pb.FieldFilter{
-			{Field: "age", Op: pb.FilterOp_GTE, Value: mustValue(t, 25)},
-		},
-	})
-	if err == nil {
-		t.Fatalf("expected INVALID_ARGUMENT for unsupported FilterOp, got nil")
-	}
-	st, ok := status.FromError(err)
-	if !ok {
-		t.Fatalf("error is not a grpc status: %v", err)
-	}
-	if st.Code() != codes.InvalidArgument {
-		t.Fatalf("code: got %v, want InvalidArgument", st.Code())
+	for _, op := range []pb.FilterOp{pb.FilterOp_CONTAINS, pb.FilterOp_IN} {
+		op := op
+		t.Run(op.String(), func(t *testing.T) {
+			t.Parallel()
+			_, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
+				Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
+				TypeId:  1,
+				Filters: []*pb.FieldFilter{
+					{Field: "age", Op: op, Value: mustValue(t, 25)},
+				},
+			})
+			if err == nil {
+				t.Fatalf("expected INVALID_ARGUMENT for %s, got nil", op)
+			}
+			st, ok := status.FromError(err)
+			if !ok {
+				t.Fatalf("error is not a grpc status: %v", err)
+			}
+			if st.Code() != codes.InvalidArgument {
+				t.Fatalf("code: got %v, want InvalidArgument", st.Code())
+			}
+		})
 	}
 }
 
@@ -309,18 +404,59 @@ func TestQueryNodes_ACLPostFilter(t *testing.T) {
 	}
 }
 
-// TestQueryNodes_InlinedOperatorRejected pins the parity-fix for the
-// legacy Python-SDK shape: Op=EQ, Value=Struct{"$gte": …}. The Python
-// servicer normalises this into a $gte operator dict; the Go Wave-2 cut
-// only supports EQ-as-equality and surfaces the inlined operator as
-// INVALID_ARGUMENT. Once the queryfilter package lands (W1.10) this
-// branch flips to a happy-path range query.
-func TestQueryNodes_InlinedOperatorRejected(t *testing.T) {
+// TestQueryNodes_InlinedOperator pins the inlined-operator shape: a
+// Struct value carrying ``$gte`` / ``$lt`` / ... keys fans into one
+// store filter per inlined entry. This is the wire shape the Python
+// SDK has historically emitted; issue #501 wires the server to accept
+// it natively.
+func TestQueryNodes_InlinedOperator(t *testing.T) {
+	t.Parallel()
+	f := newQueryNodesFixture(t)
+	f.seedNode("n1", "user:alice", "a@x", 10)
+	f.seedNode("n2", "user:alice", "b@x", 20)
+	f.seedNode("n3", "user:alice", "c@x", 30)
+
+	inlined, err := structpb.NewStruct(map[string]any{
+		"$gte": float64(15),
+		"$lt":  float64(30),
+	})
+	if err != nil {
+		t.Fatalf("structpb.NewStruct: %v", err)
+	}
+
+	resp, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
+		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
+		TypeId:  1,
+		OrderBy: "node_id",
+		Filters: []*pb.FieldFilter{
+			{
+				Field: "age",
+				Op:    pb.FilterOp_EQ,
+				Value: structpb.NewStructValue(inlined),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(resp.GetNodes()) != 1 || resp.GetNodes()[0].GetNodeId() != "n2" {
+		ids := make([]string, len(resp.GetNodes()))
+		for i, n := range resp.GetNodes() {
+			ids[i] = n.GetNodeId()
+		}
+		t.Fatalf("got %v, want [n2]", ids)
+	}
+}
+
+// TestQueryNodes_InlinedOperatorUnknownRejected pins that the inlined
+// shape still rejects operators outside the Eq/Ne/Lt/Le/Gt/Ge set —
+// the same INVALID_ARGUMENT path as ``$nin`` / ``$between``.
+func TestQueryNodes_InlinedOperatorUnknownRejected(t *testing.T) {
 	t.Parallel()
 	f := newQueryNodesFixture(t)
 	f.seedNode("n1", "user:alice", "a@x", 10)
 
-	inlined, err := structpb.NewStruct(map[string]any{"$gte": float64(5)})
+	inlined, err := structpb.NewStruct(map[string]any{"$nin": float64(5)})
 	if err != nil {
 		t.Fatalf("structpb.NewStruct: %v", err)
 	}
@@ -337,7 +473,7 @@ func TestQueryNodes_InlinedOperatorRejected(t *testing.T) {
 		},
 	})
 	if err == nil {
-		t.Fatalf("expected INVALID_ARGUMENT for inlined operator, got nil")
+		t.Fatalf("expected INVALID_ARGUMENT for unsupported inlined op, got nil")
 	}
 	st, ok := status.FromError(err)
 	if !ok {

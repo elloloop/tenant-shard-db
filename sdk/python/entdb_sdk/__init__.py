@@ -50,6 +50,7 @@ from .errors import (
     UnknownFieldError,
     ValidationError,
 )
+from .filter import Filter, FilterOp
 from .keys import Mailbox, Public, Storage, Tenant, UniqueKey
 from .registry import (
     SchemaRegistry,
@@ -114,6 +115,9 @@ __all__ = [
     "UnknownFieldError",
     "RateLimitError",
     "UniqueConstraintError",
+    # Comparison filters (issue #501)
+    "Filter",
+    "FilterOp",
     # SDK v0.3 typed unique keys + storage descriptors
     "UniqueKey",
     "Tenant",

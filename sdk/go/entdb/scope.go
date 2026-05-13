@@ -170,6 +170,29 @@ func GetByKey[T any](ctx context.Context, s *Scope, key UniqueKey[T], value T) (
 	return s.client.transport.GetNodeByKey(ctx, s.tenantID, s.actor.String(), key.TypeID, key.FieldID, pv)
 }
 
+// QueryWhere is the typed counterpart of [Query]: callers pass a
+// slice of [Filter] values rather than a MongoDB-style map. The two
+// helpers share the same transport, so the wire result is identical.
+//
+// All filters are AND-ed. Issue #501 (entdb v1) scopes the operator
+// set to Eq/Ne/Lt/Le/Gt/Ge — there is no OR, no nesting, no sorting,
+// no cursor. Pagination is via WithLimit / WithOffset.
+//
+// Example sweeper pattern:
+//
+//	expired, err := entdb.QueryWhere[*authn.Challenge](ctx, scope,
+//	    []entdb.Filter{
+//	        {Field: "expires_at", Op: entdb.FilterLt, Value: nowMs},
+//	    },
+//	    entdb.WithLimit(500))
+//
+// Index usage caveat: FilterNe forces a full type scan because a
+// B-tree expression index cannot serve a not-equal predicate. Prefer
+// a positive predicate for sweeper-style hot paths.
+func QueryWhere[T proto.Message](ctx context.Context, s *Scope, filters []Filter, opts ...QueryOption) ([]T, error) {
+	return Query[T](ctx, s, filtersToMap(filters), opts...)
+}
+
 // Query fetches nodes by filter.
 //
 // T determines the type_id and the result type. The filter map
@@ -181,6 +204,8 @@ func GetByKey[T any](ctx context.Context, s *Scope, key UniqueKey[T], value T) (
 //
 // Field names are proto field names; the server resolves them to
 // field ids at the ingress boundary.
+//
+// For the typed-Filter form preferred by issue #501 see [QueryWhere].
 func Query[T proto.Message](ctx context.Context, s *Scope, filter map[string]any, opts ...QueryOption) ([]T, error) {
 	witness := newZeroMessage[T]()
 	typeID, err := typeIDFromMessage(witness)
