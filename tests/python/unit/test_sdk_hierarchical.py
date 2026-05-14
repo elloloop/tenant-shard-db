@@ -306,8 +306,9 @@ class TestScopedPlan:
         assert "update_node" in op
         assert op["update_node"]["id"] == "n1"
         # Patch contains only the explicitly-set field — that's the
-        # SDK v0.3 partial-update semantics.
-        assert op["update_node"]["patch"] == {"name": "Updated"}
+        # SDK v0.3 partial-update semantics. Keyed by field_id on the
+        # wire per CLAUDE.md invariant #6; Product.name is field 2.
+        assert op["update_node"]["patch"] == {"2": "Updated"}
 
     def test_scoped_plan_delete(self, proto_client):
         scope = proto_client.tenant("t1").actor("user:bob")

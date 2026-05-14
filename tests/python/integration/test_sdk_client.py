@@ -95,7 +95,9 @@ class TestPlanBuilder:
         assert "update_node" in op
         assert op["update_node"]["type_id"] == 9001
         assert op["update_node"]["id"] == "node_123"
-        assert op["update_node"]["patch"] == {"name": "Updated Name"}
+        # Patch is id-keyed on the wire per CLAUDE.md invariant #6.
+        # Product.name is field_id 2.
+        assert op["update_node"]["patch"] == {"2": "Updated Name"}
 
     def test_plan_delete_node(self):
         """Plan can delete nodes — type witness is the proto class."""

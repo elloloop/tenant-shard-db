@@ -294,6 +294,60 @@ func TestPayloadToStruct_BytesEncodedAsBase64(t *testing.T) {
 	}
 }
 
+// TestStructToPayload_SchemalessIdKeyedAccepted: name-keyed ingress is
+// rejected on an unregistered type, but id-keyed ingress is accepted
+// and preserved verbatim. This is the schemaless contract: the SDK
+// pre-translates names to field_ids client-side, so the wire is
+// always id-keyed even when the server has no schema for the type.
+func TestStructToPayload_SchemalessIdKeyedAccepted(t *testing.T) {
+	// Empty (but frozen) registry — no types registered.
+	reg := schema.NewRegistry()
+	if _, err := reg.Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	s := mustStruct(t, map[string]any{
+		"1": "alice@example.com",
+		"2": "Alice",
+	})
+	got, err := StructToPayload(reg, "Unknown", s)
+	if err != nil {
+		t.Fatalf("StructToPayload(schemaless, id-keyed): %v", err)
+	}
+	if got[1] != "alice@example.com" || got[2] != "Alice" {
+		t.Fatalf("expected id-keyed passthrough, got %v", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %v", len(got), got)
+	}
+}
+
+// TestStructToPayload_SchemalessNameKeyedRejected: name-keyed ingress
+// on an unregistered type returns INVALID_ARGUMENT. Without a schema
+// the server has no name→id mapping; silently dropping the keys
+// (the prior behavior) caused silent data loss.
+func TestStructToPayload_SchemalessNameKeyedRejected(t *testing.T) {
+	reg := schema.NewRegistry()
+	if _, err := reg.Freeze(); err != nil {
+		t.Fatalf("freeze: %v", err)
+	}
+	s := mustStruct(t, map[string]any{
+		"email": "alice@example.com",
+		"name":  "Alice",
+	})
+	_, err := StructToPayload(reg, "Unknown", s)
+	if err == nil {
+		t.Fatal("expected INVALID_ARGUMENT, got nil")
+	}
+	if !errors.Is(err, errs.ErrInvalidArgument) {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+	// The error message should name the offending field so the SDK author
+	// can locate the bug.
+	if !strings.Contains(err.Error(), "email") && !strings.Contains(err.Error(), "name") {
+		t.Fatalf("error should mention offending field, got: %v", err)
+	}
+}
+
 func TestPayloadToStruct_TimestampInt64IsNumberValue(t *testing.T) {
 	reg := fixtureRegistry(t)
 	got, err := PayloadToStruct(reg, "User", map[uint32]any{6: int64(1715000000000)})
@@ -561,22 +615,34 @@ func TestPayloadJSONToNames_InverseOfStructToPayload(t *testing.T) {
 
 // --- Schema-less ingress -------------------------------------------------
 
+// Schema-less ingress accepts id-keyed payloads (CLAUDE.md invariant #6:
+// the SDKs pre-translate names client-side from the proto descriptor,
+// so the wire is always id-keyed). A mixed payload with even one
+// name key is rejected — that signals a misconfigured or out-of-date
+// SDK and the prior silent-drop behavior caused silent data loss.
 func TestStructToPayload_SchemaLessDigitKeyPassthrough(t *testing.T) {
+	// Pure id-keyed: accepted, passed through verbatim.
 	got, err := StructToPayload(nil, "", mustStruct(t, map[string]any{
+		"1": "id-keyed",
+		"2": "also-id-keyed",
+	}))
+	if err != nil {
+		t.Fatalf("StructToPayload(schema-less, id-keyed): %v", err)
+	}
+	if got[1] != "id-keyed" || got[2] != "also-id-keyed" {
+		t.Fatalf("expected id-keyed passthrough, got %v", got)
+	}
+	if len(got) != 2 {
+		t.Fatalf("expected 2 entries, got %d (%v)", len(got), got)
+	}
+
+	// Mixed payload with a name key: rejected.
+	_, err = StructToPayload(nil, "", mustStruct(t, map[string]any{
 		"1":    "id-keyed",
 		"name": "name-keyed-but-no-schema",
 	}))
-	if err != nil {
-		t.Fatalf("StructToPayload(schema-less): %v", err)
-	}
-	if got[1] != "id-keyed" {
-		t.Fatalf("expected digit passthrough, got %v", got)
-	}
-	if _, ok := got[0]; ok {
-		t.Fatalf("schema-less: name keys should be dropped (no resolver), got %v", got)
-	}
-	if len(got) != 1 {
-		t.Fatalf("expected 1 entry, got %d (%v)", len(got), got)
+	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
+		t.Fatalf("expected InvalidArgument for mixed payload, got %v", err)
 	}
 }
 

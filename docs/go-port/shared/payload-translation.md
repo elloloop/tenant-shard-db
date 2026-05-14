@@ -104,9 +104,16 @@ against any handler that silently depends on Go map iteration order or
   `schema/types.py:427`.
 - Lookup table built per call: `name → field_id` from `node_type.fields`
   (`field_id_translation.py:107`).
-- **Schema-less mode**: when the registry has no entry for `type_id`, the
-  payload passes through unchanged (`field_id_translation.py:101`). This
-  keeps tests and legacy schema-less tenants working.
+- **Schema-less mode** (Go server, post v1.12.2): when the registry has
+  no entry for `type_id`, only **id-keyed** payloads are accepted. A
+  payload with any name-keyed entry is rejected with
+  `INVALID_ARGUMENT`, since without a schema the server has no
+  name→id mapping. This is the post-fix tightening of the Python-era
+  silent-passthrough — silently dropping or persisting name-keyed
+  fields on a schemaless type violated invariant #6. The SDKs do the
+  name→id translation client-side from the proto descriptor (where
+  `fd.Number()` IS the `field_id` by ADR-006), so the wire is
+  always id-keyed regardless of whether the server has the schema.
 - **Pre-translated keys**: a digit-only string that matches a known
   `field_id` is left alone, allowing typed clients (Go SDK) to send
   pre-translated payloads (`field_id_translation.py:114`).
@@ -217,12 +224,15 @@ Notes:
    2^53. Document the cutoff; reject values outside it on ingress.
 5. **Missing schema (chicken-and-egg on first write).** A tenant's first
    `RegisterSchema` op itself carries no payload, but subsequent ops
-   before the schema is durably applied will hit `get_node_type → nil`
-   and pass through as schema-less. Risk: a row written in this window is
-   stored name-keyed and later re-read against a now-present schema gets
-   the legacy fallback path (`field_id_translation.py:166`). Mitigation:
-   the existing `migrate_payloads_to_field_ids` helper. Go port must
-   provide an equivalent and run it on tenant init.
+   before the schema is durably applied will hit
+   `get_node_type → nil`. Since v1.12.2 the schema-less ingress
+   accepts **only id-keyed payloads** (and rejects any name-keyed
+   entry with `INVALID_ARGUMENT`); the SDK does the name→id
+   translation client-side from the proto descriptor, so the wire
+   is id-keyed regardless of the server's schema state. No
+   migration helper is needed: rows stored during the
+   schema-not-yet-applied window are already id-keyed and remain
+   correct once the schema lands.
 6. **Pre-translated digit keys colliding with names.** If a future schema
    names a field literally `"1"`, the digit-key passthrough heuristic
    (`field_id_translation.py:114`) becomes ambiguous. Document and

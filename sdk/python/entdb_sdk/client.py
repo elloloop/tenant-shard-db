@@ -106,12 +106,10 @@ def _proto_payload_from_set_fields(msg: Any) -> dict[str, Any]:
     Uses ``ListFields()`` (which only yields explicitly-set fields)
     so that ``Product(price_cents=1499)`` produces ``{"price_cents":
     1499}`` and not the full set of scalar defaults. This is the
-    exact semantics we want for both create (only the fields the
-    caller intends to set are sent) and update (the patch is exactly
-    the set of fields present on the message). The wire-level
-    translation from field name to field id happens server-side via
-    the schema registry — see CLAUDE.md "Field IDs, not field names,
-    on disk".
+    name-keyed form consumed by the SDK-local ``validate_payload``
+    check; callers re-key to ``field_id``-keyed via ``_names_to_ids``
+    before the payload leaves the SDK boundary, since the wire
+    format is id-keyed per CLAUDE.md invariant #6.
 
     We read scalars directly off the proto message rather than going
     through ``MessageToDict`` so that 64-bit integers stay as Python
@@ -149,6 +147,41 @@ def _proto_payload_from_set_fields(msg: Any) -> dict[str, Any]:
         else:
             out[fd.name] = value
     return out
+
+
+def _names_to_ids(name_to_id: dict[str, int], payload: dict[str, Any]) -> dict[str, Any]:
+    """Re-key a name-keyed payload to id-keyed for the wire.
+
+    Per CLAUDE.md invariant #6 the wire and on-disk storage are keyed
+    by stable numeric ``field_id``. The mapping comes from the proto
+    descriptor (``fd.number`` IS the ``field_id`` by ADR-006) or from
+    the SDK-local ``NodeTypeDef.fields``. Digit-only keys are passed
+    through — they're already id-keyed (e.g. bulk import via
+    ``dynamicpb``).
+
+    Unknown names are dropped silently. In normal flow ``validate_payload``
+    rejects them before this runs, so reaching here with an unknown
+    name means a typed caller bypassed validation deliberately.
+    """
+    out: dict[str, Any] = {}
+    for key, value in payload.items():
+        if isinstance(key, str) and key.isdigit():
+            out[key] = value
+            continue
+        fid = name_to_id.get(key)
+        if fid is not None:
+            out[str(fid)] = value
+    return out
+
+
+def _name_to_id_from_proto(descriptor: Any) -> dict[str, int]:
+    """Build ``{field_name: field_number}`` from a proto descriptor."""
+    return {fd.name: fd.number for fd in descriptor.fields}
+
+
+def _name_to_id_from_node_type(node_type: Any) -> dict[str, int]:
+    """Build ``{field_name: field_id}`` from an SDK-local NodeTypeDef."""
+    return {f.name: f.field_id for f in node_type.fields}
 
 
 def _resolve_create_input(
@@ -357,6 +390,12 @@ class Plan:
                 raise UnknownFieldError(field_name, node_type.name, suggestions)
             raise ValidationError("; ".join(errors), errors=errors)
 
+        if _is_proto_message(msg):
+            name_to_id = _name_to_id_from_proto(msg.DESCRIPTOR)
+        else:
+            name_to_id = _name_to_id_from_node_type(node_type)
+        payload = _names_to_ids(name_to_id, payload)
+
         acl_dicts = _acl_entries_to_dicts(acl) if acl else None
 
         op: dict[str, Any] = {
@@ -442,6 +481,7 @@ class Plan:
 
         type_id = _node_type_id_from_descriptor(msg.DESCRIPTOR)
         patch = _proto_payload_from_set_fields(msg)
+        patch = _names_to_ids(_name_to_id_from_proto(msg.DESCRIPTOR), patch)
 
         update_op: dict[str, Any] = {
             "type_id": type_id,
@@ -539,7 +579,9 @@ class Plan:
         }
 
         if props:
-            op["create_edge"]["props"] = props
+            op["create_edge"]["props"] = _names_to_ids(
+                _name_to_id_from_proto(edge_type.DESCRIPTOR), props
+            )
 
         self._operations.append(op)
         return self
