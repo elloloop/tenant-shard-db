@@ -1,4 +1,4 @@
-# ADR-014: All design decisions live in `docs/adr/`; CLAUDE.md is execution-only
+# ADR-019: All design decisions live in `docs/adr/`; CLAUDE.md is execution-only
 
 **Status:** Accepted
 **Decided:** 2026-05-14
@@ -22,19 +22,23 @@ must be corrected.
 The 6 "Architecture Invariants" originally embedded in CLAUDE.md §
 "Architecture Invariants" (#1 WAL is source of truth, #2 WAL is the
 audit log, #3 single applier goroutine, #4 per-tenant SQLite
-isolation, #5 proto is the type system, #6 field-ids on disk) get
-evaluated one at a time during the move. The result is one of two
-outcomes per invariant: lifted into its own ADR, or dropped if
-analysis shows it's an implementation fact rather than a design
-decision. ADR numbering does **not** strictly track invariant order
-— invariants are processed in the order they get discussed, so e.g.
-ADR-015 covers invariant #2 (most urgent contradictions to resolve)
-and ADR-016 covers invariant #1. Invariant #3 was dropped after
-analysis (it restated standard Kafka consumer-group semantics rather
-than a project-specific design constraint). Until the migration is
-complete, the CLAUDE.md section is read-only — edits must land as
-the corresponding new ADR (or a deletion), not as a CLAUDE.md
-content change.
+isolation, #5 proto is the type system, #6 field-ids on disk) have
+all been migrated. Final mapping:
+
+- #1 → [ADR-016](016-handlers-append-applier-writes.md)
+- #2 → [ADR-015](015-wal-and-s3-object-lock-as-audit-log.md)
+- #3 → dropped (analysis showed it restated standard Kafka
+  consumer-group semantics, not a project-specific design)
+- #4 → already covered by [ADR-001](001-storage-architecture.md);
+  CLAUDE.md duplication removed
+- #5 → folded into [ADR-006](006-proto-schema-definition.md),
+  which already covered proto-as-schema; ADR-006 widened to
+  "proto is the type system end-to-end"
+- #6 → [ADR-018](018-field-id-keyed-payloads.md)
+
+The "Architecture Invariants" header is gone from CLAUDE.md.
+CLAUDE.md now lists ADR pointers under "Architecture decisions" as
+an orientation aid; the ADRs themselves are normative.
 
 ### ADR template
 
@@ -169,9 +173,10 @@ that doesn't need design-decision provenance.
 - The canonical decision corpus is `docs/adr/NNN-*.md`. New ADRs use
   the next available number.
 - CLAUDE.md is execution-only. The "Architecture Invariants" section
-  stays read-only until it's fully migrated (one ADR per invariant);
-  agents and humans MUST land changes to those decisions as ADR
-  commits, not as CLAUDE.md edits.
+  has been removed; design decisions live exclusively in `docs/adr/`.
+  CLAUDE.md may carry ADR pointers (number + one-line summary) under
+  an "Architecture decisions" orientation block, but normative
+  content lives in the ADRs.
 - When a new ADR removes content from earlier ADRs, the new ADR's
   `References` section names the file(s) it touched and the commit
   doing the removal is the authoritative record (no `Superseded by:`

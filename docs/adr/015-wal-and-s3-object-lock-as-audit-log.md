@@ -68,7 +68,7 @@ Implementation status:
   the storage layer, not at the application layer — qualitatively
   different threat model. (3) Doubles write amplification:
   every operation pays one WAL append + one audit-table insert. (4)
-  Breaks invariant #1 (the audit row would be a direct SQLite write
+  Breaks ADR-016 (the audit row would be a direct SQLite write
   bypassing the WAL).
 
 - **Hash-chained table on top of WAL events (no separate row, but
@@ -158,8 +158,8 @@ Implementation status:
 
 ## References
 
-- CLAUDE.md invariant #2 (lifted into this ADR; CLAUDE.md updated to
-  a one-line pointer in the same commit).
+- This ADR is the home of the audit-log design (lifted from
+  CLAUDE.md's pre-ADR-019 "Architecture Invariants" section).
 - `server/go/internal/store/schema.go:133-135` — DDL omits
   `audit_log` table, citing this invariant.
 - EPIC #510 — Close admin-op WAL carve-out (correctness half).

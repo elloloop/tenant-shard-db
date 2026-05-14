@@ -1,6 +1,6 @@
 # EntDB — Agent Instructions
 
-> **Scope of this file (per [ADR-014](docs/adr/014-decision-records-home.md)).**
+> **Scope of this file (per [ADR-019](docs/adr/019-decision-records-home.md)).**
 > CLAUDE.md is agent execution rules only: workflow, release process,
 > directory map, testing commands, code-style hints, pointers to where
 > things live. Design decisions live in `docs/adr/` and are referenced
@@ -36,31 +36,25 @@ Tagging `vX.Y.Z` on `main` triggers `.github/workflows/release.yml` which:
 
 Go modules don't need a registry — the Go proxy pulls directly from git tags. Sub-module tags MUST be prefixed `sdk/go/entdb/vX.Y.Z` (the release workflow creates them automatically).
 
-## Architecture Invariants (MUST NOT violate)
+## Architecture decisions
 
-> **Migration notice (per [ADR-014](docs/adr/014-decision-records-home.md)).**
-> The six invariants below are being lifted into their own ADRs
-> (one per invariant), each evaluated for current relevance during the
-> move. The numbering does not strictly track invariant order — invariants
-> migrate in the order they're discussed. **This section is read-only
-> until that migration completes.** If you need to update one of these
-> invariants, land the change as the corresponding ADR commit, not as a
-> CLAUDE.md edit.
+CLAUDE.md does not embed design decisions — they live in `docs/adr/`
+per [ADR-019](docs/adr/019-decision-records-home.md). The current
+in-force ADRs are listed in `docs/adr/`; read them when you need
+design context.
 
-### 1. Handlers append to the WAL; only the applier writes SQLite
-See [ADR-016](docs/adr/016-handlers-append-applier-writes.md). Handlers call `wal.Append(event)`; the applier (`server/go/internal/apply/applier.go`) is the only writer of per-tenant SQLite and globalstore. SQLite is a materialized view of the WAL. To add a new mutating RPC: define an op type in `server/go/internal/wal/event.go`, add an `Apply*` method in the applier, write a handler that builds the event and appends. The handler does not touch SQLite.
+Quick orientation (one-liners, not normative — the ADR is normative):
 
-### 2. The WAL is the audit log
-See [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md). WAL + S3 Object Lock COMPLIANCE is the single audit log; no per-tenant `audit_log` table.
-
-### 4. Per-tenant SQLite isolation
-Each tenant has its own SQLite file (via `modernc.org/sqlite`, managed by `server/go/internal/store/pool.go`). Never read/write across tenant boundaries in a single SQLite transaction. Cross-tenant operations go through `server/go/internal/globalstore/` (which has its own SQLite).
-
-### 5. Proto is the type system
-Standard `protoc-gen-go` / `protoc-gen-go-grpc` generates typed stubs into `server/go/internal/pb/`. Do NOT build custom codegen that reimplements what protobuf provides (enums, typed fields, message classes). Use `register_proto_schema()` in the SDK to register proto types with the SDK registry.
-
-### 6. Field IDs, not field names, on disk
-Payloads are stored keyed by `field_id` (e.g. `{"1": "value"}`), not by name. Translation happens at the gRPC boundary only (`server/go/internal/payload/`). This makes field renames free.
+- [ADR-001](docs/adr/001-storage-architecture.md) — per-tenant SQLite as the tenant data boundary (physical layout owned by ADR-014)
+- [ADR-003](docs/adr/003-acl-model.md) — ACL model (read with [decisions/acl.md](docs/decisions/acl.md) which carries the typed-capability update)
+- [ADR-005](docs/adr/005-event-sourcing-wal.md) — event sourcing via WAL
+- [ADR-006](docs/adr/006-proto-schema-definition.md) — proto is the type system end-to-end
+- [ADR-011](docs/adr/011-security-and-compliance.md) — security + compliance posture
+- [ADR-014](docs/adr/014-physical-storage-layout.md) — physical file layout: per-tenant, global, mailbox, public; scale, mobility, public.db semantics
+- [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md) — WAL + S3 Object Lock is the audit log
+- [ADR-016](docs/adr/016-handlers-append-applier-writes.md) — handlers append to the WAL; only the applier writes SQLite
+- [ADR-018](docs/adr/018-field-id-keyed-payloads.md) — payloads keyed by `field_id` on wire and disk; proto field number IS the `field_id`
+- [ADR-019](docs/adr/019-decision-records-home.md) — `docs/adr/` is the only home for design decisions; CLAUDE.md is execution-only
 
 ## Project Structure
 
@@ -118,7 +112,7 @@ uvx ruff@0.15.7 format --check .                        # format
 ## Key Patterns
 
 - Store methods accept `context.Context` as the first argument; the per-tenant SQLite pool is keyed by `tenant_id` (`server/go/internal/store/pool.go`); writes go through `BatchTxn` (`server/go/internal/store/txn.go`) so the applier can commit a multi-op event atomically.
-- The schema registry (`server/go/internal/schema/`) holds node/edge type definitions — register via the schema RPCs; the SDK mirrors them through `register_proto_schema()`.
+- The schema registry (`server/go/internal/schema/`) holds node/edge type definitions; it's populated at server boot from `.schema-snapshot.json` (loaded via `server/go/internal/schema/loader.go`). The SDK maintains its own client-side registry via `register_proto_schema(my_pb2)`. There is no `RegisterSchema` RPC. Read-only `GetSchema` exposes the server's current registry.
 - GDPR: `user_id` (e.g. `"alice"`) vs `tenant_principal` (e.g. `"user:alice"`) — translate at the gRPC boundary, never deeper.
 - ACL grants use the `Permission` enum, not raw strings.
 - Actors use `Actor.user("bob")` / `Actor.group("admins")`, not `"user:bob"` strings.

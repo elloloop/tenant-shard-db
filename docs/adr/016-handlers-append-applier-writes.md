@@ -191,7 +191,7 @@ same recipe #510 used — add a cascade op, route through the applier.
   S3 Object Lock as the audit log. ADR-016 makes ADR-015 work:
   without "all writes through WAL," the audit log is incomplete.
 - [ADR-005](005-event-sourcing-wal.md) — Event sourcing
-  architecture overview (predates ADR-014's "one home" policy;
+  architecture overview (predates ADR-019. "one home" policy;
   some content in ADR-005 is dated and will be migrated when we
   touch it).
 - EPIC [#510](https://github.com/elloloop/tenant-shard-db/issues/510)
@@ -202,6 +202,5 @@ same recipe #510 used — add a cascade op, route through the applier.
 - Source: `server/go/internal/wal/` (producer + consumer),
   `server/go/internal/apply/applier.go` (the only SQLite writer),
   `server/go/internal/wal/event.go` (op type definitions).
-- Files this commit removes content from:
-  - `CLAUDE.md` — invariant #1 body replaced with a one-line
-    pointer to this ADR (per ADR-014).
+- This ADR is the home of the write-path design (lifted from
+  CLAUDE.md's pre-ADR-019 "Architecture Invariants" section).
