@@ -2,8 +2,6 @@
 
 **Status:** Accepted
 **Decided:** 2026-05-14
-**Supersedes:** none
-**Superseded by:** none
 **Tags:** process, documentation
 **Implementation:** _this commit_
 
@@ -37,10 +35,8 @@ Every new ADR uses this header:
 ```markdown
 # ADR-NNN: Short title
 
-**Status:** Accepted | Superseded | Proposed | Deprecated
+**Status:** Accepted | Proposed
 **Decided:** YYYY-MM-DD
-**Supersedes:** ADR-MMM (if any), or `none`
-**Superseded by:** ADR-PPP (if any), or `none`
 **Tags:** comma, separated, kebab-case
 **Implementation:** PR #NNN / commit SHA / "_this commit_"
 
@@ -72,19 +68,47 @@ art / incidents if any.)
 ### Status lifecycle
 
 ```
-Proposed -> Accepted -> Superseded
-                    \-> Deprecated
+Proposed -> Accepted -> (deleted)
 ```
 
 - **Proposed**: discussion draft, not load-bearing.
 - **Accepted**: in force; code MUST honor it.
-- **Superseded**: replaced by a later ADR; keep the file for history,
-  link forward from `Superseded by:`.
-- **Deprecated**: no longer in force AND nothing replaces it (the
-  problem went away). Keep the file so audit trails resolve.
 
-A superseded ADR is **not deleted**. The supersede chain is the
-project's design history.
+There are only two states. When a decision is superseded or no longer
+in force, the **content is deleted from the repo** — not retained as a
+"superseded" file with a forward link. Contradictions are corrosive:
+LLMs (and humans) loading a doc set with both the old and new
+decisions cannot reliably tell which is current, and the supersede
+marker is too easy to miss.
+
+Deletion granularity:
+
+- **Partial supersede:** edit the old ADR to remove the parts that
+  no longer apply. The rest of the file stays under its original
+  number and `Status: Accepted`.
+- **Full supersede:** delete the file entirely. The number is retired
+  (do not reuse it; the next ADR uses the next unused number).
+
+The new ADR's `Alternatives considered` section is where rejected /
+former approaches live in their proper context (as deliberate
+rejections with reasoning), not as scattered "Superseded" banners.
+
+The **commit log is the long-term design history.** `git log --follow
+docs/adr/` and `git log -S 'audit_log'` reach the same forensic
+content a "Superseded" file would have preserved, without polluting
+the working tree.
+
+### Frontmatter changes
+
+Drop the `Supersedes:` / `Superseded by:` fields from the template
+above — they're meaningless under the deletion policy. Keep
+`Status`, `Decided`, `Tags`, `Implementation`.
+
+When an ADR replaces or removes content from earlier ADRs, the new
+ADR's `References` section lists the file(s) it removed content
+from, with a one-liner ("removed `audit_log` row from ADR-001 tables
+list; removed §Audit logging from ADR-011"). The commit doing the
+removal is the authoritative record.
 
 ## Context
 
@@ -118,8 +142,7 @@ that doesn't need design-decision provenance.
 - **Move everything to `docs/decisions/`, deprecate `docs/adr/`.**
   Rejected: the "ADR" name is widely recognized industry vocabulary
   (Architectural Decision Record). New contributors look for `adr/`
-  first. The dated supersede chain from `decisions/` is the better
-  template; the folder name from `adr/` is the better convention.
+  first. The folder name from `adr/` is the better convention.
 
 - **Leave invariants in CLAUDE.md, just stop adding new ones there.**
   Rejected: drift is already present (CLAUDE.md #2 contradicts ADR-001
@@ -128,8 +151,8 @@ that doesn't need design-decision provenance.
 
 - **Embed decisions in code comments next to the relevant package.**
   Rejected: decisions outlive individual code paths. Decisions get
-  superseded; code gets rewritten. Coupling them puts the
-  supersede chain in `git log` instead of in a navigable index.
+  replaced; code gets rewritten. Coupling them puts the history in
+  `git log` instead of in a navigable index.
 
 ## Consequences
 
@@ -141,21 +164,22 @@ that doesn't need design-decision provenance.
   stays read-only until it's migrated to ADR-015-020; agents and
   humans MUST land changes to those decisions as ADR commits, not as
   CLAUDE.md edits.
-- A superseding ADR updates the predecessor's `Superseded by:` line
-  in the same commit. The chain is bidirectional.
+- When a new ADR removes content from earlier ADRs, the new ADR's
+  `References` section names the file(s) it touched and the commit
+  doing the removal is the authoritative record (no `Superseded by:`
+  banner; the old content is just gone).
 - The 10 entries in `docs/decisions/` are valid until migrated. The
   migration happens lazily — when a discussion or fix touches a
-  given decision, it moves into `docs/adr/` with a new number, the
-  supersede chain is updated, and the old `decisions/` file is
-  removed.
+  given decision, it moves into `docs/adr/` with a new number, and
+  the old `decisions/` file is deleted in the same commit.
 
 **What this makes easy:**
 
 - Agents and humans have one place to look for design rationale.
-- Supersede chains are navigable from the file's frontmatter, both
-  forward and backward.
-- The `Status` field tells a reader at a glance whether an ADR is in
-  force, history, or proposal.
+- Every file in `docs/adr/` is currently in force. No contradictions
+  to reconcile. LLM context loads cleanly.
+- The `Status` field tells a reader at a glance whether an ADR is
+  in force or still a proposal.
 - Discovering contradictions becomes a mechanical check
   (`grep -l 'Status:.*Accepted' docs/adr/` + cross-link audit).
 
@@ -174,9 +198,10 @@ that doesn't need design-decision provenance.
   audits should grep CLAUDE.md for embedded rule language ("MUST",
   "MUST NOT", "do not", "always", "never") and flag anything that
   isn't a workflow rule.
-- A new ADR lands without updating its predecessor's `Superseded by:`
-  line. Detected by: backward-link audit. Could be enforced by a
-  pre-commit hook later (out of scope here).
+- A new ADR lands without deleting the superseded content from
+  earlier ADRs. Detected by: cross-ADR contradiction audit (grep
+  for the rejected design term across `docs/adr/`). The deletion
+  must land in the same commit as the new ADR.
 - The migration from `docs/decisions/` to `docs/adr/` stalls
   partway, leaving the corpus split again. Mitigation: complete
   ADR-015 through ADR-020 (the 6 invariants) within the same
