@@ -1,5 +1,12 @@
 # EntDB — Agent Instructions
 
+> **Scope of this file (per [ADR-014](docs/adr/014-decision-records-home.md)).**
+> CLAUDE.md is agent execution rules only: workflow, release process,
+> directory map, testing commands, code-style hints, pointers to where
+> things live. Design decisions live in `docs/adr/` and are referenced
+> here by number, never restated. When CLAUDE.md and an ADR disagree,
+> the ADR wins.
+
 > Server is Go-only as of EPIC #407 Phase 4D; the historical Python server has
 > been deleted. See `docs/decisions/python-server-retired.md` for the
 > retirement evidence ladder (contract parity, e2e parity, perf, release-image
@@ -23,13 +30,20 @@ Do NOT push code that you haven't verified locally. Do NOT rely on GitHub CI to 
 ### Releases
 
 Tagging `vX.Y.Z` on `main` triggers `.github/workflows/release.yml` which:
-1. Builds + pushes the Go server Docker image to `ghcr.io/elloloop/tenant-shard-db:vX.Y.Z` (same image name as before; Go binary inside).
+1. Builds + pushes the Go server Docker image. **Note the tag normalization**: the git tag is `vX.Y.Z`, but `docker/metadata-action` strips the leading `v`, so the image is pulled as `ghcr.io/elloloop/tenant-shard-db:X.Y.Z` (also `:X.Y`, `:X`, `:latest`, `:sha-<7>`). Multi-arch (linux/amd64 + linux/arm64).
 2. Publishes Python SDK to PyPI (`pip install entdb-sdk==X.Y.Z`).
 3. Publishes Go SDK by tagging `sdk/go/entdb/vX.Y.Z` and warming the Go module proxy. Consumers install with `go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@vX.Y.Z`. Docs auto-render at `pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb`.
 
 Go modules don't need a registry — the Go proxy pulls directly from git tags. Sub-module tags MUST be prefixed `sdk/go/entdb/vX.Y.Z` (the release workflow creates them automatically).
 
 ## Architecture Invariants (MUST NOT violate)
+
+> **Migration notice (per [ADR-014](docs/adr/014-decision-records-home.md)).**
+> The six invariants below are being lifted into ADR-015 through ADR-020
+> (one per invariant), each evaluated for current relevance during the
+> move. **This section is read-only until that migration completes.**
+> If you need to update one of these invariants, land the change as the
+> corresponding ADR commit, not as a CLAUDE.md edit.
 
 ### 1. All writes go through the WAL
 EntDB is event-sourced. The WAL (Kafka/Redpanda, in-memory for tests) is the **source of truth**. SQLite is a materialized view rebuilt by replaying the WAL.
