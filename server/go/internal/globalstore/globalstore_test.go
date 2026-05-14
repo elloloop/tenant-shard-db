@@ -196,6 +196,41 @@ func TestTenantIdempotentCreate(t *testing.T) {
 	}
 }
 
+// TestCreateTenantWithOwner_Atomic verifies the registry row + owner
+// membership row land in a single transaction: success leaves both, and
+// a duplicate tenant_id leaves the prior owner intact without mutating
+// state. Closes the Python-parity orphan-tenant hazard.
+func TestCreateTenantWithOwner_Atomic(t *testing.T) {
+	gs := newStore(t, nil)
+	ctx := context.Background()
+
+	tn, err := gs.CreateTenantWithOwner(ctx, "acme", "Acme", "", "root")
+	if err != nil {
+		t.Fatalf("CreateTenantWithOwner: %v", err)
+	}
+	if tn.Region != globalstore.DefaultRegion {
+		t.Fatalf("region: got %q, want %q", tn.Region, globalstore.DefaultRegion)
+	}
+	members, err := gs.GetTenantMembers(ctx, "acme")
+	if err != nil {
+		t.Fatalf("GetTenantMembers: %v", err)
+	}
+	if len(members) != 1 || members[0].UserID != "root" || members[0].Role != "owner" {
+		t.Fatalf("members: got %+v, want [{root owner}]", members)
+	}
+
+	// Duplicate tenant_id → ALREADY_EXISTS, and the prior owner row is
+	// unchanged (no second membership row appended).
+	_, err = gs.CreateTenantWithOwner(ctx, "acme", "Acme2", "", "intruder")
+	if errs.Code(err) != codes.AlreadyExists {
+		t.Fatalf("dup: code=%v err=%v", errs.Code(err), err)
+	}
+	members, _ = gs.GetTenantMembers(ctx, "acme")
+	if len(members) != 1 || members[0].UserID != "root" {
+		t.Fatalf("members after dup: got %+v, want unchanged [{root owner}]", members)
+	}
+}
+
 // TestLegalHoldStatus toggles tenant_registry.status between active and
 // legal_hold.
 func TestLegalHoldStatus(t *testing.T) {

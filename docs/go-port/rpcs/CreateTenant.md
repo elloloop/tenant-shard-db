@@ -222,12 +222,17 @@ each individual step is independently idempotent.
   (b) Document `global_store.db` as a non-WAL control-plane and rely on
       filesystem snapshots for DR. Risk: divergence between control-plane
       DBs across regions.
-- **Non-atomic three-step write.** Crash between `create_tenant`,
-  `initialize_tenant`, and `add_member` leaves an orphan registry row, an
-  orphan SQLite file, or a tenant with no owner. Filesystem ops are
-  particularly risky: an SQLite file half-created is invalid. Mitigation:
-  WAL-driven applier with idempotent steps; or a startup self-heal pass
-  that completes interrupted creations.
+- **Non-atomic three-step write.** *Closed in the Go port (post Phase
+  4D).* The registry row and the owner-membership row are now written
+  in a single SQLite transaction via
+  `globalstore.CreateTenantWithOwner` (see
+  `server/go/internal/globalstore/tenants.go`), so a crash between
+  those two steps cannot leave an orphan tenant. The per-tenant SQLite
+  file is still created lazily on first data-plane use and is
+  independently idempotent (open-or-create), so no `initialize_tenant`
+  step exists at create time. The Python-parity carve-out comment in
+  `server/go/internal/api/create_tenant.go` was removed alongside this
+  change.
 - **Replay determinism for filesystem init.** If `initialize_tenant` is
   driven by the `Applier` on WAL replay across a fresh disk, the SQLite
   file MUST end up at the same path with the same schema version. Risk:

@@ -5,13 +5,14 @@ EntDB is a production-grade Database-as-a-Service (DBaaS) system designed for mu
 ## Table of Contents
 
 1. [Getting Started](getting-started.md)
-2. [Architecture Overview](architecture.md)
-3. [Schema Evolution](schema-evolution.md)
-4. [Durability Guarantees](durability.md)
-5. [Deployment Guide](deployment.md)
-6. [SDK Reference](sdk-reference.md)
-7. [API Reference](api-reference.md)
-8. [Operations Guide](operations.md)
+2. [Onboarding](onboarding.md)
+3. [Architecture Overview](architecture.md)
+4. [Schema Evolution](schema-evolution.md)
+5. [Durability Guarantees](durability.md)
+6. [Deployment Guide](deployment.md)
+7. [SDK Reference](sdk-reference.md)
+8. [API Reference](api-reference.md)
+9. [Operations Guide](operations.md)
 
 ## Quick Start
 

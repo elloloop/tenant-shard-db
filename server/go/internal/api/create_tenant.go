@@ -22,22 +22,17 @@ import (
 // tenant-registry control plane): the write goes directly into the
 // globalstore SQLite without a WAL append. tenant_registry is a
 // non-WAL-backed control plane in this port; the per-tenant SQLite file
-// is created lazily on first data-plane use, NOT here. Wave 2 deliberately
-// keeps this carve-out so the bring-up path doesn't depend on the WAL
-// applier landing first; a follow-up may either (a) introduce a
-// TenantCreated WAL op or (b) document the control plane formally.
+// is created lazily on first data-plane use, NOT here.
 //
-// Three-step shape (non-atomic, mirrors Python):
+// Two-step shape:
 //
 //  1. validate (admin gate, non-empty fields)
-//  2. globalstore.CreateTenant (registry row + region pin column)
-//  3. globalstore.AddTenantMember (creator → "owner")
+//  2. globalstore.CreateTenantWithOwner (registry row + owner member,
+//     atomic in a single SQLite transaction)
 //
-// A crash between steps 2 and 3 leaves an orphan tenant with no owner.
-// This is the Python parity hazard flagged in the spec under "Open
-// questions / risks: Non-atomic three-step write" — preserved here on
-// purpose so the contract matches; do NOT wrap these in a single SQLite
-// transaction without updating the spec and Python source together.
+// The registry + member writes are now atomic — the Python-parity orphan-
+// tenant hazard (crash between the registry INSERT and the membership
+// INSERT) was closed when the Python source was retired in Phase 4D.
 //
 // Auth contract:
 //   - Wire actor (req.Actor) is UNTRUSTED. The trusted principal is
@@ -100,11 +95,11 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 		region = s.region
 	}
 
-	// Step 2: globalstore write. UNIQUE on tenant_registry.tenant_id
-	// surfaces as ALREADY_EXISTS; the handler maps that to a typed gRPC
-	// error (NOT the Python success=false channel — Wave-2 decision per
-	// task spec, gives SDKs a real status code to dispatch on).
-	tenant, err := s.global.CreateTenant(ctx, req.GetTenantId(), req.GetName(), region)
+	// Step 2: atomic globalstore write. The registry row and the owner
+	// membership row land (or don't) in a single SQLite transaction.
+	// UNIQUE on tenant_registry.tenant_id surfaces as ALREADY_EXISTS;
+	// the handler maps that to a typed gRPC error.
+	tenant, err := s.global.CreateTenantWithOwner(ctx, req.GetTenantId(), req.GetName(), region, principal.ID())
 	if err != nil {
 		resultStatus = "error"
 		if errors.Is(err, errs.ErrAlreadyExists) {
@@ -112,18 +107,6 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 		}
 		return nil, errs.Errorf(codes.Internal,
 			"create_tenant: %v", err)
-	}
-
-	// Step 3: record the creator as owner. Idempotent on retry — an
-	// already-existing membership is swallowed so a crash-then-retry
-	// after step 2 succeeds without surfacing a spurious error. The
-	// step is non-atomic with step 2 by design (see top-of-file note).
-	if err := s.global.AddTenantMember(ctx, tenant.TenantID, principal.ID(), "owner"); err != nil {
-		if !errors.Is(err, errs.ErrAlreadyExists) {
-			resultStatus = "error"
-			return nil, errs.Errorf(codes.Internal,
-				"add_tenant_member: %v", err)
-		}
 	}
 
 	return &pb.CreateTenantResponse{
