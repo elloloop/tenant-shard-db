@@ -189,6 +189,175 @@ func TestApplier_HappyPathCreateNode(t *testing.T) {
 	}
 }
 
+func TestApplier_GlobalTenantCreatedReplay(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	ev := apply.Event{
+		TenantID:       wal.GlobalTenantID,
+		Scope:          wal.ScopeGlobal,
+		Actor:          "admin:root",
+		IdempotencyKey: "global-tenant-create",
+		TsMs:           1700000000000,
+		Ops: []map[string]any{{
+			"op":            string(apply.OpTenantCreated),
+			"tenant_id":     "acme",
+			"name":          "Acme",
+			"region":        "us-east-1",
+			"owner_user_id": "alice",
+			"created_at":    int64(1700000000),
+		}},
+	}
+	f.appendEvent(t, ev)
+	if err := f.store.OpenTenant(context.Background(), wal.GlobalTenantID); err != nil {
+		t.Fatalf("OpenTenant global sentinel: %v", err)
+	}
+	f.runApplierUntilApplied(t)
+	f.waitForIdempKey(t, wal.GlobalTenantID, "global-tenant-create")
+
+	tenant, err := f.global.GetTenant(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("GetTenant: %v", err)
+	}
+	if tenant == nil || tenant.Name != "Acme" || tenant.Region != "us-east-1" || tenant.Status != "active" {
+		t.Fatalf("tenant = %+v; want active Acme in us-east-1", tenant)
+	}
+	members, err := f.global.GetTenantMembers(context.Background(), "acme")
+	if err != nil {
+		t.Fatalf("GetTenantMembers: %v", err)
+	}
+	if len(members) != 1 || members[0].UserID != "alice" || members[0].Role != "owner" {
+		t.Fatalf("members = %+v; want alice owner", members)
+	}
+}
+
+func TestApplier_GlobalCreateConflictMemoizedAndDoesNotHalt(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	events := []apply.Event{
+		{
+			TenantID:       wal.GlobalTenantID,
+			Scope:          wal.ScopeGlobal,
+			Actor:          "admin:root",
+			IdempotencyKey: "global-user-alice",
+			Ops: []map[string]any{{
+				"op":         string(apply.OpUserCreated),
+				"user_id":    "alice",
+				"email":      "alice@example.com",
+				"name":       "Alice",
+				"status":     "active",
+				"created_at": int64(1700000000),
+				"updated_at": int64(1700000000),
+			}},
+		},
+		{
+			TenantID:       wal.GlobalTenantID,
+			Scope:          wal.ScopeGlobal,
+			Actor:          "admin:root",
+			IdempotencyKey: "global-user-conflict",
+			Ops: []map[string]any{{
+				"op":         string(apply.OpUserCreated),
+				"user_id":    "alice",
+				"email":      "alice2@example.com",
+				"name":       "Alice 2",
+				"status":     "active",
+				"created_at": int64(1700000001),
+				"updated_at": int64(1700000001),
+			}},
+		},
+		{
+			TenantID:       wal.GlobalTenantID,
+			Scope:          wal.ScopeGlobal,
+			Actor:          "admin:root",
+			IdempotencyKey: "global-user-bob",
+			Ops: []map[string]any{{
+				"op":         string(apply.OpUserCreated),
+				"user_id":    "bob",
+				"email":      "bob@example.com",
+				"name":       "Bob",
+				"status":     "active",
+				"created_at": int64(1700000002),
+				"updated_at": int64(1700000002),
+			}},
+		},
+	}
+	for _, ev := range events {
+		f.appendEvent(t, ev)
+	}
+	if err := f.store.OpenTenant(context.Background(), wal.GlobalTenantID); err != nil {
+		t.Fatalf("OpenTenant global sentinel: %v", err)
+	}
+	f.runApplierUntilApplied(t)
+	f.waitForIdempKey(t, wal.GlobalTenantID, "global-user-bob")
+
+	rec, err := f.store.CheckIdempotencyStatus(context.Background(), wal.GlobalTenantID, "global-user-conflict")
+	if err != nil {
+		t.Fatalf("CheckIdempotencyStatus: %v", err)
+	}
+	if !rec.Present || rec.Status != store.IdempotencyStatusFailedPrecondition {
+		t.Fatalf("conflict idempotency = %+v, want FAILED_PRECONDITION", rec)
+	}
+	var failure struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal([]byte(rec.FailureJSON), &failure); err != nil {
+		t.Fatalf("failure_json decode: %v", err)
+	}
+	if failure.Code != "ALREADY_EXISTS" {
+		t.Fatalf("failure code = %q, want ALREADY_EXISTS", failure.Code)
+	}
+	bob, err := f.global.GetUser(context.Background(), "bob")
+	if err != nil {
+		t.Fatalf("GetUser(bob): %v", err)
+	}
+	if bob == nil {
+		t.Fatalf("bob was not applied after deterministic global conflict")
+	}
+}
+
+func TestApplier_GlobalExactReplayRemainsApplied(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	if _, err := f.global.ApplyUserCreated(context.Background(), globalstore.UserApply{
+		UserID:    "alice",
+		Email:     "alice@example.com",
+		Name:      "Alice",
+		Status:    "active",
+		CreatedAt: 1700000000,
+		UpdatedAt: 1700000000,
+	}); err != nil {
+		t.Fatalf("seed ApplyUserCreated: %v", err)
+	}
+	ev := apply.Event{
+		TenantID:       wal.GlobalTenantID,
+		Scope:          wal.ScopeGlobal,
+		Actor:          "admin:root",
+		IdempotencyKey: "global-user-exact-replay",
+		Ops: []map[string]any{{
+			"op":         string(apply.OpUserCreated),
+			"user_id":    "alice",
+			"email":      "alice@example.com",
+			"name":       "Alice",
+			"status":     "active",
+			"created_at": int64(1700000000),
+			"updated_at": int64(1700000000),
+		}},
+	}
+	f.appendEvent(t, ev)
+	if err := f.store.OpenTenant(context.Background(), wal.GlobalTenantID); err != nil {
+		t.Fatalf("OpenTenant global sentinel: %v", err)
+	}
+	f.runApplierUntilApplied(t)
+	f.waitForIdempKey(t, wal.GlobalTenantID, "global-user-exact-replay")
+
+	rec, err := f.store.CheckIdempotencyStatus(context.Background(), wal.GlobalTenantID, "global-user-exact-replay")
+	if err != nil {
+		t.Fatalf("CheckIdempotencyStatus: %v", err)
+	}
+	if rec.Status != store.IdempotencyStatusApplied {
+		t.Fatalf("status = %q, want APPLIED", rec.Status)
+	}
+}
+
 // TestApplier_DelegateAccessFix is the contract-pinning regression for
 // PLAN.md §6.4 item 1 — the Python applier silently drops
 // admin_delegate_access events. The Go applier MUST materialise the

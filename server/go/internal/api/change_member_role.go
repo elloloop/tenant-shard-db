@@ -9,11 +9,9 @@
 // (request/response, error code asymmetry between auth-failure and
 // missing-row), but two PLAN.md §6 drifts are folded in here:
 //
-//  1. WAL-invariant carve-out (HIGH risk in the spec's "Open questions"
-//     §1). tenant_members is a control-plane table on globalstore; per
-//     the §6 carve-out it is intentionally non-WAL'd. The Go handler
-//     writes directly via globalstore.ChangeMemberRole, matching Python
-//     by construction.
+//  1. WAL-first global mutation. The handler appends a global
+//     `member_role_changed` op and waits for the applier to update the
+//     tenant_members row; it does not write globalstore directly.
 //
 //  2. Last-owner demotion protection. The Python handler (spec §"Open
 //     questions" item 2) lets the sole owner demote themselves and
@@ -34,6 +32,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -102,18 +101,25 @@ func (s *Server) ChangeMemberRole(
 		}
 	}
 
-	// Last-owner demotion guard. We compute this before the UPDATE so
+	members, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
+	if err != nil {
+		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		return nil, errs.Errorf(codes.Internal, "list tenant members: %v", err)
+	}
+	var targetJoinedAt int64
+	targetFound := false
+
+	// Last-owner demotion guard. We compute this before appending so
 	// the caller sees a deterministic FAILED_PRECONDITION rather than a
 	// post-hoc "tenant has no owners" surprise.
 	if req.GetNewRole() != "owner" {
-		members, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
-		if err != nil {
-			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
-			return nil, errs.Errorf(codes.Internal, "list tenant members: %v", err)
-		}
 		ownerCount := 0
 		targetIsOwner := false
 		for _, m := range members {
+			if m.UserID == req.GetUserId() {
+				targetJoinedAt = m.JoinedAt
+				targetFound = true
+			}
 			if m.Role == "owner" {
 				ownerCount++
 				if m.UserID == req.GetUserId() {
@@ -126,19 +132,35 @@ func (s *Server) ChangeMemberRole(
 			return nil, errs.Errorf(codes.FailedPrecondition,
 				"cannot demote the last owner of tenant %q", req.GetTenantId())
 		}
+	} else {
+		for _, m := range members {
+			if m.UserID == req.GetUserId() {
+				targetJoinedAt = m.JoinedAt
+				targetFound = true
+				break
+			}
+		}
 	}
 
-	updated, err := s.global.ChangeMemberRole(
-		ctx, req.GetTenantId(), req.GetUserId(), req.GetNewRole(),
-	)
-	if err != nil {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
-		return &pb.ChangeMemberRoleResponse{Success: false, Error: err.Error()}, nil
-	}
-	if !updated {
+	if !targetFound {
 		// Soft failure (matches Python: gRPC OK, response.success=false).
 		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "ok", time.Since(start))
 		return &pb.ChangeMemberRoleResponse{Success: false, Error: "Member not found"}, nil
+	}
+	if targetJoinedAt == 0 {
+		targetJoinedAt = time.Now().Unix()
+	}
+
+	_, _, err = s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":        string(apply.OpMemberRoleChanged),
+		"tenant_id": req.GetTenantId(),
+		"user_id":   req.GetUserId(),
+		"role":      req.GetNewRole(),
+		"joined_at": targetJoinedAt,
+	})
+	if err != nil {
+		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		return nil, err
 	}
 
 	metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "ok", time.Since(start))

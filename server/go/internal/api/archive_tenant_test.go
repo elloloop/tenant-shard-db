@@ -32,13 +32,14 @@ import (
 func TestArchiveTenant_AdminHappyPath(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.ArchiveTenant(ctx, &pb.ArchiveTenantRequest{
 		Actor:    "admin:root",
@@ -73,13 +74,14 @@ func TestArchiveTenant_AdminHappyPath(t *testing.T) {
 func TestArchiveTenant_SystemHappyPath(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.ArchiveTenant(ctx, &pb.ArchiveTenantRequest{
 		Actor:    "system:control-plane",
@@ -99,13 +101,14 @@ func TestArchiveTenant_SystemHappyPath(t *testing.T) {
 func TestArchiveTenant_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	_, err := srv.ArchiveTenant(ctx, &pb.ArchiveTenantRequest{
 		Actor:    "user:bob",
@@ -160,13 +163,14 @@ func TestArchiveTenant_UnknownTenant(t *testing.T) {
 func TestArchiveTenant_AlreadyArchivedIsIdempotent(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	first, err := srv.ArchiveTenant(ctx, &pb.ArchiveTenantRequest{
 		Actor:    "admin:root",

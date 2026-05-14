@@ -39,13 +39,14 @@ import (
 func TestSetLegalHold_AdminEnable_HappyPath(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
 		Actor:    "admin:root",
@@ -83,13 +84,14 @@ func TestSetLegalHold_AdminEnable_HappyPath(t *testing.T) {
 func TestSetLegalHold_SystemEnable_HappyPath(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
 		Actor:    "system:compliance",
@@ -111,13 +113,14 @@ func TestSetLegalHold_SystemEnable_HappyPath(t *testing.T) {
 func TestSetLegalHold_Clear_TogglesBackToActive(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Step 1: enable.
 	if _, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
@@ -152,13 +155,14 @@ func TestSetLegalHold_Clear_TogglesBackToActive(t *testing.T) {
 func TestSetLegalHold_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	_, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
 		Actor: "user:bob", TenantId: "acme", Enabled: true,
@@ -184,7 +188,8 @@ func TestSetLegalHold_NonAdminPermissionDenied(t *testing.T) {
 func TestSetLegalHold_GroupActorPermissionDenied(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
@@ -205,7 +210,8 @@ func TestSetLegalHold_GroupActorPermissionDenied(t *testing.T) {
 func TestSetLegalHold_EmptyActor(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	srv := api.New(api.WithGlobalStore(gs))
 
 	_, err := srv.SetLegalHold(context.Background(), &pb.LegalHoldRequest{
@@ -281,19 +287,14 @@ func TestSetLegalHold_UnknownTenantNotFound(t *testing.T) {
 func TestSetLegalHold_AppendsWALEvent_WhenProducerWired(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	mem := wal.NewInMemory(0)
-	if err := mem.Connect(ctx); err != nil {
-		t.Fatalf("wal.Connect: %v", err)
-	}
-	t.Cleanup(func() { _ = mem.Close(context.Background()) })
-
-	srv := api.New(api.WithGlobalStore(gs), api.WithWALProducer(mem))
+	srv := f.srv
 
 	if _, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
 		Actor: "admin:root", TenantId: "acme", Enabled: true,
@@ -301,21 +302,24 @@ func TestSetLegalHold_AppendsWALEvent_WhenProducerWired(t *testing.T) {
 		t.Fatalf("SetLegalHold: %v", err)
 	}
 
-	recs := mem.GetAllRecords("entdb-wal")
+	recs := f.wal.GetAllRecords("entdb-wal")
 	if len(recs) != 1 {
 		t.Fatalf("WAL records = %d; want 1", len(recs))
 	}
 	rec := recs[0]
-	if rec.Key != "acme" {
-		t.Errorf("record.Key = %q; want %q (per-tenant partition)", rec.Key, "acme")
+	if rec.Key != wal.GlobalTenantID {
+		t.Errorf("record.Key = %q; want %q", rec.Key, wal.GlobalTenantID)
 	}
 
 	ev, err := wal.DecodeEvent(rec.Value)
 	if err != nil {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
-	if ev.TenantID != "acme" {
-		t.Errorf("event.TenantID = %q; want acme", ev.TenantID)
+	if ev.TenantID != wal.GlobalTenantID {
+		t.Errorf("event.TenantID = %q; want %s", ev.TenantID, wal.GlobalTenantID)
+	}
+	if ev.Scope != wal.ScopeGlobal {
+		t.Errorf("event.Scope = %q; want %q", ev.Scope, wal.ScopeGlobal)
 	}
 	if ev.Actor != "admin:root" {
 		t.Errorf("event.Actor = %q; want admin:root", ev.Actor)
@@ -324,15 +328,17 @@ func TestSetLegalHold_AppendsWALEvent_WhenProducerWired(t *testing.T) {
 		t.Fatalf("event.Ops = %d; want 1", len(ev.Ops))
 	}
 	op := ev.Ops[0]
-	if got, _ := op["op"].(string); got != "set_legal_hold" {
-		t.Errorf("op.op = %v; want set_legal_hold", op["op"])
+	if got, _ := op["op"].(string); got != "legal_hold_set" {
+		t.Errorf("op.op = %v; want legal_hold_set", op["op"])
+	}
+	if got, _ := op["tenant_id"].(string); got != "acme" {
+		t.Errorf("op.tenant_id = %v; want acme", op["tenant_id"])
 	}
 	if got, _ := op["held_by"].(string); got != "admin:root" {
 		t.Errorf("op.held_by = %v; want admin:root", op["held_by"])
 	}
-	// `clear` is the inverse of `enabled`; for enable=true we expect false.
-	if got, _ := op["clear"].(bool); got {
-		t.Errorf("op.clear = true; want false (enable path)")
+	if got, _ := op["enabled"].(bool); !got {
+		t.Errorf("op.enabled = false; want true")
 	}
 	if got, _ := op["reason"].(string); got != "SetLegalHold RPC" {
 		t.Errorf("op.reason = %q; want non-empty for enable path", got)
@@ -352,19 +358,14 @@ func TestSetLegalHold_AppendsWALEvent_WhenProducerWired(t *testing.T) {
 func TestSetLegalHold_ClearAppendsWALEventWithClearTrue(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	mem := wal.NewInMemory(0)
-	if err := mem.Connect(ctx); err != nil {
-		t.Fatalf("wal.Connect: %v", err)
-	}
-	t.Cleanup(func() { _ = mem.Close(context.Background()) })
-
-	srv := api.New(api.WithGlobalStore(gs), api.WithWALProducer(mem))
+	srv := f.srv
 
 	if _, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
 		Actor: "admin:root", TenantId: "acme", Enabled: false,
@@ -372,7 +373,7 @@ func TestSetLegalHold_ClearAppendsWALEventWithClearTrue(t *testing.T) {
 		t.Fatalf("SetLegalHold(clear): %v", err)
 	}
 
-	recs := mem.GetAllRecords("entdb-wal")
+	recs := f.wal.GetAllRecords("entdb-wal")
 	if len(recs) != 1 {
 		t.Fatalf("WAL records = %d; want 1", len(recs))
 	}
@@ -381,15 +382,13 @@ func TestSetLegalHold_ClearAppendsWALEventWithClearTrue(t *testing.T) {
 		t.Fatalf("DecodeEvent: %v", err)
 	}
 	op := ev.Ops[0]
-	if got, _ := op["clear"].(bool); !got {
-		t.Errorf("op.clear = false; want true (clear path)")
+	if got, _ := op["enabled"].(bool); got {
+		t.Errorf("op.enabled = true; want false (clear path)")
 	}
 }
 
-// TestSetLegalHold_NoProducer_FlagStillFlips: when the producer is not
-// wired, the synchronous tenant_registry status flip still happens —
-// the WAL append is best-effort. This is the "globalstore is the
-// authoritative gate today" trade-off documented in the spec.
+// TestSetLegalHold_NoProducer_Unimplemented: global admin mutations now
+// require a durable WAL producer.
 func TestSetLegalHold_NoProducer_FlagStillFlips(t *testing.T) {
 	t.Parallel()
 
@@ -404,16 +403,15 @@ func TestSetLegalHold_NoProducer_FlagStillFlips(t *testing.T) {
 	resp, err := srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
 		Actor: "admin:root", TenantId: "acme", Enabled: true,
 	})
-	if err != nil {
-		t.Fatalf("SetLegalHold: %v", err)
+	if err == nil {
+		t.Fatalf("SetLegalHold: expected error, got resp=%+v", resp)
 	}
-	if !resp.GetSuccess() || resp.GetStatus() != "legal_hold" {
-		t.Errorf("response: success=%v status=%q; want true/legal_hold",
-			resp.GetSuccess(), resp.GetStatus())
+	if got := errs.Code(err); got != codes.Unimplemented {
+		t.Fatalf("SetLegalHold: code = %v; want Unimplemented", got)
 	}
 	tnt, _ := gs.GetTenant(ctx, "acme")
-	if tnt.Status != "legal_hold" {
-		t.Errorf("registry status = %q; want legal_hold", tnt.Status)
+	if tnt.Status != "active" {
+		t.Errorf("registry status = %q; want active", tnt.Status)
 	}
 }
 
@@ -430,12 +428,13 @@ func TestSetLegalHold_NoProducer_FlagStillFlips(t *testing.T) {
 func TestSetLegalHold_PrivilegeEscalation_NoIdentityFallback(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// No Identity on ctx -> Authoritative falls back to claim. Claim
 	// is admin:root => allowed.

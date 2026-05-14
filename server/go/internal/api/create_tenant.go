@@ -4,13 +4,14 @@ package api
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
@@ -18,21 +19,20 @@ import (
 // CreateTenant implements the entdb.v1.EntDBService/CreateTenant RPC.
 // Spec: docs/go-port/rpcs/CreateTenant.md.
 //
-// Carve-out from CLAUDE.md invariant #1 (intentional, scoped to the
-// tenant-registry control plane): the write goes directly into the
-// globalstore SQLite without a WAL append. tenant_registry is a
-// non-WAL-backed control plane in this port; the per-tenant SQLite file
-// is created lazily on first data-plane use, NOT here.
+// WAL-first control-plane write: the handler appends a global-scope
+// tenant_created event and waits for the applier to materialize both
+// the tenant_registry row and the owner membership into globalstore.
+// The per-tenant SQLite file is created lazily on first data-plane use,
+// NOT here.
 //
 // Two-step shape:
 //
 //  1. validate (admin gate, non-empty fields)
-//  2. globalstore.CreateTenantWithOwner (registry row + owner member,
-//     atomic in a single SQLite transaction)
+//  2. append/wait for tenant_created on the global WAL scope
 //
-// The registry + member writes are now atomic — the Python-parity orphan-
-// tenant hazard (crash between the registry INSERT and the membership
-// INSERT) was closed when the Python source was retired in Phase 4D.
+// The registry + member writes are applied atomically by globalstore's
+// ApplyTenantCreated path, so a replay against a fresh global.db
+// reconstructs both rows from the WAL.
 //
 // Auth contract:
 //   - Wire actor (req.Actor) is UNTRUSTED. The trusted principal is
@@ -94,29 +94,41 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 	if region == "" {
 		region = s.region
 	}
+	if region == "" {
+		region = globalstore.DefaultRegion
+	}
 
-	// Step 2: atomic globalstore write. The registry row and the owner
-	// membership row land (or don't) in a single SQLite transaction.
-	// UNIQUE on tenant_registry.tenant_id surfaces as ALREADY_EXISTS;
-	// the handler maps that to a typed gRPC error.
-	tenant, err := s.global.CreateTenantWithOwner(ctx, req.GetTenantId(), req.GetName(), region, principal.ID())
+	if existing, err := s.global.GetTenant(ctx, req.GetTenantId()); err != nil {
+		resultStatus = "error"
+		return nil, errs.Errorf(codes.Internal, "get tenant: %v", err)
+	} else if existing != nil {
+		resultStatus = "error"
+		return nil, errs.Errorf(codes.AlreadyExists,
+			"globalstore: tenant %q already exists", req.GetTenantId())
+	}
+
+	createdAt := time.Now().Unix()
+	_, _, err := s.appendGlobalAdminOp(ctx, principal.String(), map[string]any{
+		"op":            string(apply.OpTenantCreated),
+		"tenant_id":     req.GetTenantId(),
+		"name":          req.GetName(),
+		"region":        region,
+		"owner_user_id": principal.ID(),
+		"created_at":    createdAt,
+	})
 	if err != nil {
 		resultStatus = "error"
-		if errors.Is(err, errs.ErrAlreadyExists) {
-			return nil, err
-		}
-		return nil, errs.Errorf(codes.Internal,
-			"create_tenant: %v", err)
+		return nil, err
 	}
 
 	return &pb.CreateTenantResponse{
 		Success: true,
 		Tenant: &pb.TenantDetail{
-			TenantId:  tenant.TenantID,
-			Name:      tenant.Name,
-			Status:    tenant.Status,
-			CreatedAt: tenant.CreatedAt,
-			Region:    tenant.Region,
+			TenantId:  req.GetTenantId(),
+			Name:      req.GetName(),
+			Status:    "active",
+			CreatedAt: createdAt,
+			Region:    region,
 		},
 	}, nil
 }

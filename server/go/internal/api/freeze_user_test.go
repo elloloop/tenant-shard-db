@@ -33,13 +33,14 @@ import (
 // Mirrors test_freeze_user_handler at test_gdpr_engine.py:707-717.
 func TestFreezeUser_Admin_HappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.FreezeUser(withTrustedUser(ctx, "admin:root"), &pb.FreezeUserRequest{
 		Actor:   "admin:root",
@@ -74,13 +75,14 @@ func TestFreezeUser_Admin_HappyPath(t *testing.T) {
 // test_freeze_user_rejects_writes at test_gdpr_engine.py:734-751.
 func TestFreezeUser_FrozenUserMutation_DeniedViaInterceptor(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Step 1: admin freezes alice.
 	if _, err := srv.FreezeUser(withTrustedUser(ctx, "admin:root"), &pb.FreezeUserRequest{
@@ -124,13 +126,14 @@ func TestFreezeUser_FrozenUserMutation_DeniedViaInterceptor(t *testing.T) {
 // test_frozen_user_can_still_read at test_gdpr_engine.py:754-767.
 func TestFreezeUser_FrozenUserRead_StillAllowed(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Freeze alice.
 	if _, err := srv.FreezeUser(withTrustedUser(ctx, "admin:root"), &pb.FreezeUserRequest{
@@ -168,13 +171,14 @@ func TestFreezeUser_FrozenUserRead_StillAllowed(t *testing.T) {
 // Mirrors test_unfreeze_user_handler at test_gdpr_engine.py:721-731.
 func TestFreezeUser_Unfreeze_Idempotent(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Unfreeze (alice is already active).
 	resp, err := srv.FreezeUser(withTrustedUser(ctx, "admin:root"), &pb.FreezeUserRequest{
@@ -198,13 +202,14 @@ func TestFreezeUser_Unfreeze_Idempotent(t *testing.T) {
 // Article 18 but matches Python today.
 func TestFreezeUser_Self_HappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.FreezeUser(withTrustedUser(ctx, "alice"), &pb.FreezeUserRequest{
 		Actor:   "user:alice",

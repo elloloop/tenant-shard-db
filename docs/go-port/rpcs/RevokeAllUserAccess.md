@@ -146,29 +146,34 @@ func (s *EntDBServer) RevokeAllUserAccess(
        TenantID: req.TenantId,
        Actor:    trustedActor,
        IdempotencyKey: deriveKey(req),  // see open-question below
-       Ops: []wal.Op{{Type: "admin_revoke_access", UserID: req.UserId}},
+       Ops: []wal.Op{
+           {Type: "admin_revoke_access", UserID: req.UserId},
+           {Type: "access_revoked", TenantID: req.TenantId, UserID: req.UserId},
+       },
    }
    receipt, err := s.wal.Append(ctx, ev)
    ```
-   On WAL failure → return `INTERNAL`, no partial state. The applier handles the deletes inside one `BEGIN IMMEDIATE` (already the pattern; extend it from `apply/applier.py:1240-1245` to also delete from `node_access` and `group_users` and return tallies).
-5. `s.wal.WaitForApplied(ctx, receipt, timeout=5s)` so the response can quote rowcounts. If timeout, return `success=true, revoked_grants=0, revoked_groups=0, error="applied wait timed out"` — preserves Python's "best-effort tally" feel.
-6. Read tallies from the applier's per-event result channel (or, if absent, query `node_access`/`group_users` row-deltas via the audit row).
-7. **Cross-tenant cleanup** (best-effort, do NOT fail the RPC):
-   - `entries := s.globalStore.GetSharedWithMe(ctx, req.UserId, 10000, 0)`.
-   - For each `e` where `e.SourceTenant == req.TenantId`: `s.globalStore.RemoveShared(ctx, req.UserId, req.TenantId, e.NodeID)`. Increment `revokedShared` only on success.
-   - Catch all errors → `log.Warn("shared_index cleanup failed on RevokeAllUserAccess", "err", err)`. Do not propagate.
-8. `s.audit.Append(...)` — S3 Object Lock entry. (Python does this inside `revoke_user_access`; in Go put it after the WAL applies so the audit row reflects realized state.)
-9. `outcome = "ok"`; return `&pb.RevokeAllUserAccessResponse{Success: true, RevokedGrants: g, RevokedGroups: gr, RevokedShared: rs}`.
+   On WAL failure → return `INTERNAL`, no partial state. The applier handles
+   tenant deletes inside one `BEGIN IMMEDIATE`, then applies the paired
+   global `shared_index` cleanup before the tenant transaction commits.
+5. Wait for the event's offset and idempotency record before returning.
+6. Tallies are pre-append counts from `node_access`, `group_users`, and
+   matching `shared_index` rows.
+7. `s.audit.Append(...)` — S3 Object Lock entry. (Python does this inside `revoke_user_access`; in Go put it after the WAL applies so the audit row reflects realized state.)
+8. `outcome = "ok"`; return `&pb.RevokeAllUserAccessResponse{Success: true, RevokedGrants: g, RevokedGroups: gr, RevokedShared: rs}`.
 
 **Atomicity boundaries:**
 - Tenant-SQLite deletes: atomic (single applier txn).
-- Cross-tenant `shared_index` deletes: NOT atomic with the tenant deletes — they live in a different SQLite (`global_store`). Partial failure leaves `shared_index` rows behind; an admin can re-run the RPC, which is idempotent.
+- Cross-tenant `shared_index` deletes: applied from the same WAL event. There
+  is still no cross-SQLite transaction, but replay converges because
+  `access_revoked` is idempotent.
 - Idempotency: re-running the same WAL event (same `idempotency_key`) is a no-op via the `applied_events` dedupe in the applier. `revoked_grants/groups` will be `0` on retry — matches Python.
 
 **Partial-failure modes:**
 - WAL append succeeds, applier slow → `success=true` with zero tallies (caveat above).
 - WAL append fails → no SQLite change, `INTERNAL` returned, retry-safe.
-- `global_store` unavailable → tenant deletes still applied, `revoked_shared=0`, RPC succeeds with a `WARN` log.
+- `global_store` unavailable → `UNIMPLEMENTED`; the paired
+  `access_revoked` op requires globalstore wiring.
 
 ## Open questions / risks
 
@@ -177,7 +182,7 @@ func (s *EntDBServer) RevokeAllUserAccess(
   - Option B: block when held, return `FAILED_PRECONDITION`. Risk: blocks emergency offboarding during litigation, which is when you most need it. Reject.
   - Option C: still revoke, but emit an enhanced audit row with `legal_hold_active=true`. Cheap and forensics-friendly. Recommended add-on.
 - **Idempotency key derivation.** Request has no `idempotency_key` field. Server must synthesize (`sha256(tenant_id|user_id|trusted_actor|day_bucket)`?) so retries dedupe but a same-day rerun by a different admin still produces a fresh event. Confirm with EPIC #407.
-- **Tally fidelity vs. Python.** Python returns rowcounts from the synchronous `revoke_user_access` call. Go's WAL-first path makes this asynchronous. If an SDK consumer treats `revoked_grants > 0` as "definitely happened," fine; but `==0` is now ambiguous (zero matches vs. apply pending). Surface a `pending=true` boolean? Or always `WaitForApplied` with a generous timeout? Decide per #407.
+- **Tally fidelity vs. Python.** Python returns rowcounts from the synchronous `revoke_user_access` call. Go returns pre-append counts after waiting for the applier to materialize the WAL event, so `==0` means no rows matched before append, not apply pending.
 - **Group fan-out.** Today the handler removes the user from `group_users` but does NOT iterate groups they were in to revoke node-level grants held *via group membership*. The visibility cleanup (`node_visibility WHERE principal=user`) catches this in materialized form, but if visibility was never recomputed for a stale node, the user could retain phantom access until the next ACL recompute. Confirm whether the Go port should explicitly recompute or trust the lazy path. Leaning toward an explicit recompute job triggered by the `admin_revoke_access` event.
 - **Cross-tenant cleanup at scale.** Hard cap of `limit=10000` shared rows (`grpc_server.py:2895`). Users who were shared > 10k nodes won't be fully cleaned in one call. Page through, or raise the cap with a streaming variant. Track as follow-up.
 - **No actor metadata in `revoked_shared` audit.** The current code does not append a `global_store` audit row for the per-row removals. Add one in the Go port — important for compliance reconstruction.

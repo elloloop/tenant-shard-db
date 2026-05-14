@@ -30,7 +30,7 @@ Proto: `proto/entdb/v1/entdb.proto:130` (rpc), `:953-958` (request),
 | Field | Tag | Type | Semantics |
 |------|-----|------|------|
 | `success` | 1 | `bool` | `true` on append + bookkeeping success; `false` for non-abort errors (handler returns the response with `error` populated). |
-| `transferred` | 2 | `int32` | **Pre-apply count.** SELECT `COUNT(*) FROM nodes WHERE owner_actor = from_user` performed AFTER the WAL append (`grpc_server.py:2727-2736`). Reflects nodes still owned at the time of the call; the Applier materializes the rename asynchronously. Pinned by `test_admin_ops.py:404`. |
+| `transferred` | 2 | `int32` | **Pre-apply count.** SELECT `COUNT(*) FROM nodes WHERE owner_actor = from_user` before append. Reflects nodes still owned at the time of the call; the handler waits for WAL materialization before returning. |
 | `error` | 3 | `string` | Non-empty only on caught (non-abort) exceptions; abort cases use gRPC status, not this field. |
 
 ## Auth (admin; trusted-actor)
@@ -62,24 +62,21 @@ keeping the side effect.
 Order in the Python handler (`grpc_server.py:2715-2725` ->
 `api/admin_handlers.py:27-67`):
 
-1. **Global-store membership upsert (direct write).**
-   `global_store.transfer_user_content` (`global_store.py:921-963`) inserts a
-   `tenant_members` row for `to_user` with role `'member'` if absent. Returns
-   `{membership_created: bool}`. This is global metadata, not per-tenant
-   WAL-sourced data — invariant 1 explicitly carves this out
-   (`admin_handlers.py:7-11`).
-
-2. **WAL append.** Single event with one op:
+1. **WAL append.** Single tenant-scope event carrying both the tenant
+   ownership rewrite and the paired global membership upsert:
    ```json
    {"tenant_id": T, "actor": <trusted>,
     "idempotency_key": "admin-transfer-<uuid4>",
     "ts_ms": <now>,
     "ops": [{"op": "admin_transfer_content",
-             "from_user": F, "to_user": T2}]}
+             "from_user": F, "to_user": T2},
+            {"op": "access_transferred",
+             "tenant_id": T, "from_user": F, "to_user": T2,
+             "joined_at": <now>}]}
    ```
    Topic: `self.topic` (default `"entdb-wal"`), key: `tenant_id`.
 
-3. **Applier materialization** (`apply/applier.py:1231-1238`): single
+2. **Applier materialization** (`apply/applier.py:1231-1238`): single
    `UPDATE nodes SET owner_actor=?, updated_at=? WHERE tenant_id=? AND
    owner_actor=?`. Bulk-rewrites ownership in one SQL statement — O(rows) but
    one round-trip per event.
@@ -90,7 +87,7 @@ Order in the Python handler (`grpc_server.py:2715-2725` ->
    match the Applier path: add visibility-index refresh inside the applier
    handler so behavior survives rebuild. See "Open questions".
 
-4. **Audit log.** Eager `canonical_store.transfer_user_content` writes
+3. **Audit log.** Eager `canonical_store.transfer_user_content` writes
    `action="transfer_content"` (`canonical_store.py:3753-3766`). Under the
    WAL-first handler this path is NOT called (handler does not invoke
    `canonical_store`). Audit trail comes from the WAL itself + S3 Object
@@ -112,12 +109,12 @@ Order in the Python handler (`grpc_server.py:2715-2725` ->
 | Unknown / archived tenant, wrong region | per `_check_tenant` | `:2700` |
 | Caller not admin/owner (and not `system:*`) | `PERMISSION_DENIED` | `:2685-2689` |
 | Claimed-admin actor with non-admin trusted identity | `PERMISSION_DENIED`, no WAL append | `test_privilege_escalation.py:344-365` |
-| Other internal failure (WAL append, count query) | `success=false`, `error=str(e)` (NOT abort) | `:2740-2745` |
+| Missing WAL/store/globalstore wiring | `UNIMPLEMENTED` | Go WAL-first dependency gate |
+| WAL encode/append failure | `success=false`, `error=str(e)` (NOT abort) | `:2740-2745` |
+| Wait-applied timeout/failure | gRPC status (`DEADLINE_EXCEEDED` / typed apply failure) | Go WAL-first wait contract |
 
-Note: the count-query failure path is swallowed (`:2735-2736`) — `transferred=0`
-is returned even if SELECT fails post-append. The Go port should preserve
-this exact behavior for contract parity, though it is arguably a bug worth
-calling out (see "Open questions").
+Note: the count-query failure path is swallowed — `transferred=0` is returned
+even if SELECT fails before append.
 
 `grpc.RpcError` / abort exceptions re-raise; everything else is mapped to
 the response with `success=false`.
@@ -184,34 +181,29 @@ func (s *Server) TransferUserContent(ctx, req) (*resp, error) {
     trusted, err := s.auth.RequireAdminOrOwner(ctx, req.TenantId, "TransferUserContent")
     if err != nil { return nil, err }   // PERMISSION_DENIED on non-admin
 
-    // 1. Global membership upsert (direct write — global metadata).
-    if _, err := s.gstore.TransferUserContent(ctx, req.TenantId, req.FromUser, req.ToUser); err != nil {
-        return &resp{Success: false, Error: err.Error()}, nil
-    }
-    // 2. WAL append (source of truth for the rename).
-    payload := event.BuildAdminTransferContent(req.TenantId, trusted, req.FromUser, req.ToUser)
-    if _, err := s.wal.Append(ctx, s.topic, req.TenantId, payload); err != nil {
-        return &resp{Success: false, Error: err.Error()}, nil
-    }
-    // 3. Best-effort pre-apply count (errors swallowed, count -> 0).
     n, _ := s.cstore.CountOwnedNodes(ctx, req.TenantId, req.FromUser)
+    // One tenant WAL event carries admin_transfer_content + access_transferred.
+    payload := event.BuildAdminTransferContentAndAccessTransferred(req.TenantId, trusted, req.FromUser, req.ToUser)
+    pos, idem, err := s.wal.Append(ctx, s.topic, req.TenantId, payload)
+    if err != nil {
+        return &resp{Success: false, Error: err.Error()}, nil
+    }
+    if err := s.waitForAdminApplied(ctx, req.TenantId, pos.Offset, idem); err != nil { return nil, err }
     return &resp{Success: true, Transferred: n}, nil
 }
 ```
 
-**Atomicity.** There is NO cross-store transaction. Steps 1 (global SQLite)
-and 2 (WAL) are independent — failure ordering matters:
-- If step 1 succeeds and step 2 fails: stale `tenant_members` row for
-  `to_user` exists but no ownership rewrite. Acceptable (membership is
-  idempotent and benign).
-- If step 1 fails: handler returns early; nothing else runs. Safe.
-The Applier's UPDATE (step 3 / on consume) is itself atomic per tenant
-SQLite (single statement in `BEGIN IMMEDIATE`-equivalent via SQLite
-auto-commit). Applier visibility-index refresh, if added, must run inside
-the same transaction as the UPDATE.
+**Atomicity.** There is NO cross-store transaction, but the Go handler now
+puts the global membership op in the same tenant WAL event. If the global op
+fails before tenant commit, the tenant batch rolls back. If the global write
+materializes and tenant commit later fails, replay converges because
+`access_transferred` is idempotent.
+The Applier's UPDATE is itself atomic per tenant SQLite. Applier
+visibility-index refresh, if added, must run inside the same transaction as
+the UPDATE.
 
-**Streaming.** Not needed. Even tenants with millions of nodes -> one bulk
-`UPDATE` in the Applier. Memory cost is bounded.
+**Streaming.** Not needed at the RPC layer. Go chunks large owners into
+multiple WAL events so each applier transaction stays bounded.
 
 **Idempotency.** Event idempotency key is `admin-transfer-<uuid4>` — every
 call produces a NEW key, so retries cause repeat applies. The bulk UPDATE
@@ -226,22 +218,11 @@ out: visibility-index refresh must also be idempotent.
    tenant-scoped semantically. Confirm Go port keeps `tenant_id` as the
    WAL partition key.
 
-2. **Large user (10M+ owned nodes).** Applier issues a single
-   `UPDATE nodes ... WHERE owner_actor=?`. SQLite will hold a write lock
-   for the duration; gRPC clients on the same tenant block on writes (not
-   reads). Risks: WAL consumer lag spike; potential statement timeout if
-   applier sets one. Mitigation options for the Go port: chunked update by
-   `node_id` rowid range; or accept the lock and document. **Decision
-   needed.**
+2. **Large user (10M+ owned nodes).** Go mitigates this by enumerating
+   owned node IDs and chunking events. Each applier transaction updates at
+   most the configured chunk size.
 
-3. **Partial failure between global membership upsert and WAL append.**
-   See atomicity note. Current behavior leaves a benign membership row.
-   Alternative: append WAL first, then upsert membership. But then a
-   replay-from-WAL on a fresh global store would miss the membership row
-   (global store is not WAL-sourced). Current order is correct; just risky
-   on the failure surface. Document it.
-
-4. **Visibility-index drift after rebuild.** The eager
+3. **Visibility-index drift after rebuild.** The eager
    `canonical_store.transfer_user_content` path refreshes
    `node_visibility` per node (`canonical_store.py:3707-3715`). The
    Applier path (the only one used by the handler) does NOT
@@ -251,11 +232,10 @@ out: visibility-index refresh must also be idempotent.
    same op handler** to close this gap, and a contract test should pin
    it.
 
-5. **Pre-apply count is a lie under concurrent writes.** The count is
-   taken AFTER the WAL append but BEFORE the Applier consumes — between
-   those moments, other handlers can mutate ownership. Returning a
-   post-apply count would require waiting on the receipt (see
-   `WaitForOffset.md`). For parity, keep current semantics; document.
+5. **Pre-apply count can race concurrent writes.** The count is taken
+   before the WAL append. Other handlers can mutate ownership between the
+   count and applier materialization, so the returned count is advisory,
+   not a post-apply rowcount.
 
 6. **`actor` field is wire-untrusted but required to be non-empty.** The
    non-empty check (`:2701`) runs before `_require_admin_or_owner`

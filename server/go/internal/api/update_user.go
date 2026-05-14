@@ -26,10 +26,9 @@
 //     test_user_registry.py:330-345).
 //   - User-not-found is also reported in-band: success=false,
 //     error="User not found" (no NOT_FOUND status).
-//   - NO WAL append. The user registry is intentionally not
-//     event-sourced today — see CLAUDE.md "Architecture Invariants" #1
-//     and the spec's "Side effects" / "Open questions" sections. Do
-//     NOT route this RPC through wal.append.
+//   - WAL-first global mutation. The handler appends a global
+//     `user_updated` op carrying the full desired user_registry row and
+//     waits for the applier; it does not write globalstore directly.
 //   - Metrics: emits entdb_grpc_requests_total{method="UpdateUser",
 //     status="ok"|"error"} via the shared chokepoint. Note "ok" is
 //     recorded for in-band failures (no-fields, not-found) because
@@ -45,8 +44,8 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
@@ -57,8 +56,8 @@ const updateUserMethod = "UpdateUser"
 //
 // See file header for the full semantic contract. The handler is
 // stateless apart from the globalstore handle: each call resolves the
-// trusted actor, gates on self-or-admin, builds a partial update, and
-// applies it via globalstore.UpdateUser.
+// trusted actor, gates on self-or-admin, builds the full desired row,
+// and appends it to the global WAL scope.
 func (s *Server) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb.UpdateUserResponse, error) {
 	start := time.Now()
 	outcome := "ok"
@@ -93,40 +92,55 @@ func (s *Server) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb
 			"UpdateUser requires the user themselves or admin actor")
 	}
 
-	// Truthy-only partial update. Empty strings are not forwarded —
-	// matches grpc_server.py:2209-2214 and the unit-test pin at
-	// test_user_registry.py:255-271 (only `name=` is forwarded when
-	// only name is set).
-	var upd globalstore.UserUpdates
-	if v := req.GetEmail(); v != "" {
-		upd.Email = stringPtr(v)
-	}
-	if v := req.GetName(); v != "" {
-		upd.Name = stringPtr(v)
-	}
-	if v := req.GetStatus(); v != "" {
-		upd.Status = stringPtr(v)
-	}
-	if upd.Email == nil && upd.Name == nil && upd.Status == nil {
+	if req.GetEmail() == "" && req.GetName() == "" && req.GetStatus() == "" {
 		// In-band failure (no abort). Python returns "ok" metric here;
 		// we do the same.
 		return &pb.UpdateUserResponse{Success: false, Error: "No fields to update"}, nil
 	}
 
-	updated, err := s.global.UpdateUser(ctx, userID, upd)
+	user, err := s.global.GetUser(ctx, userID)
 	if err != nil {
-		// Catch-all in-band failure mirroring grpc_server.py:2222-2227.
-		// Python writes the metric label as "error" on this arm; we
-		// match. Spec note: do NOT promote to codes.Internal until the
-		// contract tests are loosened — clients pin success/error on
-		// the response body, not status codes.
 		outcome = "error"
 		return &pb.UpdateUserResponse{Success: false, Error: err.Error()}, nil
 	}
-	if !updated {
+	if user == nil {
 		// In-band not-found. Same metric label ("ok") as Python — no
 		// abort fires.
 		return &pb.UpdateUserResponse{Success: false, Error: "User not found"}, nil
+	}
+
+	email := user.Email
+	if req.GetEmail() != "" {
+		email = req.GetEmail()
+		if existing, err := s.global.GetUserByEmail(ctx, email); err != nil {
+			outcome = "error"
+			return &pb.UpdateUserResponse{Success: false, Error: err.Error()}, nil
+		} else if existing != nil && existing.UserID != userID {
+			outcome = "error"
+			return &pb.UpdateUserResponse{Success: false, Error: "Email already exists"}, nil
+		}
+	}
+	name := user.Name
+	if req.GetName() != "" {
+		name = req.GetName()
+	}
+	userStatus := user.Status
+	if req.GetStatus() != "" {
+		userStatus = req.GetStatus()
+	}
+	updatedAt := time.Now().Unix()
+	_, _, err = s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":         string(apply.OpUserUpdated),
+		"user_id":    userID,
+		"email":      email,
+		"name":       name,
+		"status":     userStatus,
+		"created_at": user.CreatedAt,
+		"updated_at": updatedAt,
+	})
+	if err != nil {
+		outcome = "error"
+		return nil, err
 	}
 	return &pb.UpdateUserResponse{Success: true}, nil
 }

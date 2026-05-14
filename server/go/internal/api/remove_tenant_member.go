@@ -19,11 +19,9 @@
 //     actor returned by auth.Authoritative before any privilege check,
 //     so a forged `actor="system:admin"` from a regular user loses.
 //
-//   - WAL: this RPC bypasses the WAL — direct globalstore write. This
-//     is the documented control-plane carve-out (CLAUDE.md invariant
-//     #1 violation, ported as-is from Python for parity; see spec
-//     "Open questions" §1). Do NOT add WAL coupling to this handler
-//     without an ADR.
+//   - WAL: this RPC appends a global `member_removed` op and waits for
+//     the applier to delete the tenant_members row. The handler does
+//     not write globalstore directly.
 //
 //   - Tenant gate: NOT called. The tenant registry is global, not
 //     region-pinned. (spec §"Side effects" step 2 only checks
@@ -55,6 +53,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -161,14 +160,16 @@ func (s *Server) RemoveTenantMember(
 		}, nil
 	}
 
-	// Direct globalstore DELETE — control-plane carve-out from
-	// invariant #1. global_store.py:582-596.
-	removed, err := s.global.RemoveTenantMember(ctx, req.GetTenantId(), req.GetUserId())
+	_, _, err = s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":        string(apply.OpMemberRemoved),
+		"tenant_id": req.GetTenantId(),
+		"user_id":   req.GetUserId(),
+	})
 	if err != nil {
 		status = "error"
-		return nil, errs.Errorf(codes.Internal, "RemoveTenantMember: delete: %v", err)
+		return nil, err
 	}
-	return &pb.TenantMemberResponse{Success: removed}, nil
+	return &pb.TenantMemberResponse{Success: true}, nil
 }
 
 // isAdminOrSystemActor mirrors grpc_server.py:2053-2069. The trusted

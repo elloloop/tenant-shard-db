@@ -23,13 +23,14 @@ import (
 // pin at test_grpc_contract.py:448-453.
 func TestUpdateUser_Self_HappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.UpdateUser(withTrustedUser(ctx, "alice"), &pb.UpdateUserRequest{
 		Actor:  "user:alice",
@@ -62,13 +63,14 @@ func TestUpdateUser_Self_HappyPath(t *testing.T) {
 // Mirrors test_user_registry.py:273-290.
 func TestUpdateUser_Admin_UpdatesOther(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "bob", "bob@example.com", "Bob"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.UpdateUser(withTrustedUser(ctx, "admin:root"), &pb.UpdateUserRequest{
 		Actor:  "admin:root",
@@ -88,6 +90,34 @@ func TestUpdateUser_Admin_UpdatesOther(t *testing.T) {
 	}
 	if got.Status != "suspended" {
 		t.Errorf("Status: got %q, want %q", got.Status, "suspended")
+	}
+}
+
+func TestUpdateUser_DuplicateEmail_InBandFailure(t *testing.T) {
+	t.Parallel()
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
+		t.Fatalf("seed alice: %v", err)
+	}
+	if _, err := gs.CreateUser(ctx, "bob", "bob@example.com", "Bob"); err != nil {
+		t.Fatalf("seed bob: %v", err)
+	}
+
+	srv := api.New(api.WithGlobalStore(gs))
+	resp, err := srv.UpdateUser(withTrustedUser(ctx, "admin:root"), &pb.UpdateUserRequest{
+		Actor:  "admin:root",
+		UserId: "bob",
+		Email:  "alice@example.com",
+	})
+	if err != nil {
+		t.Fatalf("UpdateUser: expected in-band duplicate-email failure, got %v", err)
+	}
+	if resp.GetSuccess() {
+		t.Fatalf("UpdateUser: expected success=false, got %+v", resp)
+	}
+	if resp.GetError() != "Email already exists" {
+		t.Fatalf("UpdateUser: error = %q; want Email already exists", resp.GetError())
 	}
 }
 

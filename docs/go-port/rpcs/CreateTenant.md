@@ -185,54 +185,28 @@ func (s *EntDBServer) CreateTenant(ctx context.Context, req *pb.CreateTenantRequ
    state where the registry row exists but the SQLite filename is illegal.
 4. `principal := auth.PrincipalFromContext(ctx)` — trusted; ignore `req.Actor`.
 5. `region := req.Region; if region == "" { region = s.servedRegion }; if region == "" { region = "us-east-1" }`.
-6. `tenant, err := s.globalStore.CreateTenant(ctx, req.TenantId, req.Name, region)`.
-   - `errors.Is(err, errs.ErrTenantExists)` → return `&pb.CreateTenantResponse{Success: false, Error: "Tenant already exists: " + err.Error()}, nil` (no abort). Set `status = "error"`.
-   - other err → `Success: false, Error: err.Error()`.
-7. `if err := s.canonicalStore.InitializeTenant(ctx, req.TenantId); err != nil { ... }`.
-   - **Replay-safety (filesystem invariant)**: `InitializeTenant` MUST be
-     idempotent. Treat "file already exists with valid schema" as success.
-     On crash between step 6 and step 7, a retry of `CreateTenant` will fail
-     at step 6 with `ErrTenantExists`; the Go handler MUST detect this case
-     and re-run step 7 + step 8 if the SQLite file or owner row is missing,
-     OR (preferred) gate the entire op behind a single WAL `TenantCreated`
-     event applied by `Applier` so each replay-step is independently retry-
-     safe. See Open questions.
-8. `s.globalStore.AddMember(ctx, req.TenantId, principal.UserID(), "owner")`
-   — ignore `ErrAlreadyMember` (replay).
-9. (If invariant #1 is honored) `s.wal.Append(ctx, topic, req.TenantId,
-   marshal(TenantCreatedEvent{...}))` BEFORE step 6, and have the `Applier`
-   perform steps 6-8. This is the architecturally correct shape.
-10. Build `TenantDetail` from the `Tenant` struct via a single conversion
+6. Preflight duplicate lookup via `globalStore.GetTenant(ctx, req.TenantId)`.
+   - Existing row → return `ALREADY_EXISTS` before appending a second event.
+   - Lookup error → `INTERNAL`.
+7. Append a global-scope WAL event keyed by `__global__` with
+   `op="tenant_created"` carrying `tenant_id`, `name`, `region`,
+   `owner_user_id`, and `created_at`.
+8. Wait for the applier to materialize that offset. The global applier
+   calls `globalstore.ApplyTenantCreated`, which inserts the registry row
+   and owner membership in one SQLite transaction.
+9. Build `TenantDetail` from the event payload via a single conversion
     helper (mirror `_tenant_dict_to_proto`). Return `Success: true`.
 
-Filesystem side effects MUST be replay-safe. The combination of (registry
-INSERT, SQLite file create, member INSERT) is **not** atomic today; the Go
-port has the chance to fix this by routing through the WAL. If that change is
-out of scope for the port, document the residual non-atomicity and ensure
-each individual step is independently idempotent.
+Filesystem side effects remain lazy and replay-safe: no per-tenant SQLite
+file is created by `CreateTenant`; the canonical store opens/creates it on
+first data-plane use.
 
 ## Open questions / risks (replay determinism with FS init)
 
-- **WAL invariant violation (largest risk).** Python writes directly to
-  `global_store` SQLite without a WAL append, contradicting CLAUDE.md
-  invariant #1. A WAL replay against an empty `global_store.db` will not
-  reconstruct any tenants. EPIC #407 owners must decide:
-  (a) Add `TenantCreated` to `TransactionEvent.ops`, apply via `Applier`,
-      delete the direct call from the handler. Recommended.
-  (b) Document `global_store.db` as a non-WAL control-plane and rely on
-      filesystem snapshots for DR. Risk: divergence between control-plane
-      DBs across regions.
-- **Non-atomic three-step write.** *Closed in the Go port (post Phase
-  4D).* The registry row and the owner-membership row are now written
-  in a single SQLite transaction via
-  `globalstore.CreateTenantWithOwner` (see
-  `server/go/internal/globalstore/tenants.go`), so a crash between
-  those two steps cannot leave an orphan tenant. The per-tenant SQLite
-  file is still created lazily on first data-plane use and is
-  independently idempotent (open-or-create), so no `initialize_tenant`
-  step exists at create time. The Python-parity carve-out comment in
-  `server/go/internal/api/create_tenant.go` was removed alongside this
-  change.
+- **Global WAL reconstruction.** *Closed in the Go port.* `CreateTenant`
+  now emits `tenant_created` and the applier writes registry + owner rows
+  through `globalstore.ApplyTenantCreated`, so replay against a fresh
+  `global.db` reconstructs onboarding state.
 - **Replay determinism for filesystem init.** If `initialize_tenant` is
   driven by the `Applier` on WAL replay across a fresh disk, the SQLite
   file MUST end up at the same path with the same schema version. Risk:

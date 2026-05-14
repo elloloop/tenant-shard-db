@@ -35,19 +35,18 @@
 //     tests/python/unit/test_admin_operations.py:781-797.
 //
 //   - Tally semantics. Python returns rowcounts from the synchronous
-//     SQLite delete. The Go path is WAL-first (asynchronous applier),
-//     so we read the current row counts BEFORE appending the WAL event
-//     and return those as the tallies. Re-running is idempotent (the
-//     applier's per-event dedupe via applied_events) and the second
-//     call will see zero rows pre-append, matching Python's "no-op on
-//     retry" tally.
+//     SQLite delete. The Go path is WAL-first, so we read the current
+//     row counts BEFORE appending the WAL event, wait for the applier,
+//     and return those pre-append counts as the tallies. Re-running is
+//     idempotent (the applier's per-event dedupe via applied_events)
+//     and the second call will see zero rows pre-append, matching
+//     Python's "no-op on retry" tally.
 //
-//   - Cross-tenant cleanup (shared_index). Best-effort, does NOT fail
-//     the RPC. Mirrors grpc_server.py:2891-2907: list shared rows for
-//     the user (capped at 10k), delete only those whose source_tenant
-//     equals req.tenant_id, leave other-tenant rows intact. Errors are
-//     swallowed; revoked_shared reflects whatever was successfully
-//     removed before the failure.
+//   - Cross-tenant cleanup (shared_index). The same tenant WAL event
+//     carries an `access_revoked` op, applied by the applier after the
+//     tenant-scoped revoke op. The returned revoked_shared count is
+//     read before append, matching Python's synchronous-rowcount
+//     semantics.
 //
 //   - Idempotency key. Synthesized from (tenant_id, user_id,
 //     trusted_actor) so retries within the same admin's session
@@ -61,7 +60,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"log"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -144,10 +142,10 @@ func (s *Server) RevokeAllUserAccess(
 	// Required deps for the WAL-first path. Without a producer or a
 	// store we can't honour the contract; surface UNIMPLEMENTED so the
 	// caller sees a structural problem instead of silent success.
-	if s.producer == nil || s.store == nil {
+	if s.producer == nil || s.store == nil || s.global == nil {
 		status = "error"
 		return nil, errs.Errorf(codes.Unimplemented,
-			"RevokeAllUserAccess: WAL/store not wired")
+			"RevokeAllUserAccess: WAL/store/globalstore not wired")
 	}
 
 	// Pre-append tallies. Reading from the per-tenant SQLite gives the
@@ -163,6 +161,7 @@ func (s *Server) RevokeAllUserAccess(
 		return nil, errs.Errorf(codes.Internal,
 			"RevokeAllUserAccess: count rows: %v", err)
 	}
+	revokedShared := s.countSharedIndexRows(ctx, req.GetUserId(), req.GetTenantId())
 
 	// WAL append: a single `admin_revoke_access` op. The applier's
 	// W1.10-broadened branch (apply/ops_admin_revoke_access.go) deletes
@@ -174,10 +173,17 @@ func (s *Server) RevokeAllUserAccess(
 		TenantID:       req.GetTenantId(),
 		Actor:          trusted.String(),
 		IdempotencyKey: idempKey,
-		Ops: []map[string]any{{
-			"op":      string(apply.OpAdminRevokeAccess),
-			"user_id": req.GetUserId(),
-		}},
+		Ops: []map[string]any{
+			{
+				"op":      string(apply.OpAdminRevokeAccess),
+				"user_id": req.GetUserId(),
+			},
+			{
+				"op":        string(apply.OpAccessRevoked),
+				"tenant_id": req.GetTenantId(),
+				"user_id":   req.GetUserId(),
+			},
+		},
 	}
 	encoded, err := ev.Encode()
 	if err != nil {
@@ -188,17 +194,18 @@ func (s *Server) RevokeAllUserAccess(
 	headers := map[string][]byte{
 		wal.HeaderIdempotencyKey: []byte(idempKey),
 	}
-	if _, err := s.producer.Append(ctx,
+	pos, err := s.producer.Append(ctx,
 		revokeAllUserAccessTopic, req.GetTenantId(), encoded, headers,
-	); err != nil {
+	)
+	if err != nil {
 		status = "error"
 		return nil, errs.Errorf(codes.Internal,
 			"RevokeAllUserAccess: wal append: %v", err)
 	}
-
-	// Cross-tenant shared_index cleanup. Best-effort: errors are
-	// logged but never fail the RPC, mirroring grpc_server.py:2891-2907.
-	revokedShared := s.cleanupSharedIndex(ctx, req.GetUserId(), req.GetTenantId())
+	if err := s.waitForAdminApplied(ctx, req.GetTenantId(), pos.Offset, idempKey, "revoke all user access event"); err != nil {
+		status = "error"
+		return nil, err
+	}
 
 	return &pb.RevokeAllUserAccessResponse{
 		Success:       true,
@@ -234,11 +241,10 @@ func (s *Server) countAccessRowsForUser(
 	return grants, groups, nil
 }
 
-// cleanupSharedIndex removes shared_index rows for userID whose
-// source_tenant matches tenantID. Best-effort; errors are logged at
-// WARN and the function returns whatever was successfully removed.
-// Mirrors grpc_server.py:2891-2907.
-func (s *Server) cleanupSharedIndex(
+// countSharedIndexRows counts shared_index rows for userID whose
+// source_tenant matches tenantID. The paired access_revoked WAL op
+// materializes the actual cleanup through the applier before return.
+func (s *Server) countSharedIndexRows(
 	ctx context.Context, userID, tenantID string,
 ) int {
 	if s.global == nil {
@@ -246,23 +252,14 @@ func (s *Server) cleanupSharedIndex(
 	}
 	entries, err := s.global.ListSharedToUser(ctx, userID, revokeAllUserAccessSharedLimit, 0)
 	if err != nil {
-		log.Printf("RevokeAllUserAccess: list shared_index for %q: %v", userID, err)
 		return 0
 	}
-	revoked := 0
+	count := 0
 	for _, e := range entries {
 		if e.SourceTenant != tenantID {
 			continue
 		}
-		ok, err := s.global.RemoveShared(ctx, userID, e.SourceTenant, e.NodeID)
-		if err != nil {
-			log.Printf("RevokeAllUserAccess: remove shared (%q,%q,%q): %v",
-				userID, e.SourceTenant, e.NodeID, err)
-			continue
-		}
-		if ok {
-			revoked++
-		}
+		count++
 	}
-	return revoked
+	return count
 }

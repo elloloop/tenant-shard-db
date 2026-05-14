@@ -30,7 +30,8 @@ import (
 // tests can re-seed extra rows or reach into the store for assertions.
 func changeRoleFixture(t *testing.T) (*api.Server, *globalstore.GlobalStore, context.Context) {
 	t.Helper()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
@@ -46,8 +47,7 @@ func changeRoleFixture(t *testing.T) (*api.Server, *globalstore.GlobalStore, con
 		t.Fatalf("AddTenantMember carol: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
-	return srv, gs, ctx
+	return f.srv, gs, ctx
 }
 
 // TestChangeMemberRole_AdminPromotesMember pins the happy path: an

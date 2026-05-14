@@ -195,9 +195,9 @@ All three onboarding RPCs are safe to retry:
 - **`CreateUser`** — duplicate `user_id` (or duplicate `email`) returns
   `ALREADY_EXISTS`. Callers can treat this as success.
 - **`CreateTenant`** — duplicate `tenant_id` returns `ALREADY_EXISTS`.
-  The registry row and owner membership are inserted in a single SQLite
-  transaction (`globalstore.CreateTenantWithOwner`), so a crashed call
-  cannot leave an orphan tenant; either both land or neither does.
+  The RPC appends a global `tenant_created` WAL event and waits for the
+  applier; the applier inserts the registry row and owner membership in
+  a single globalstore transaction, so WAL replay reconstructs both rows.
 - **`AddTenantMember`** — duplicate `(tenant_id, user_id)` returns
   `ALREADY_EXISTS`. Role changes go through `Admin.ChangeMemberRole`,
   not a re-add.
@@ -209,8 +209,9 @@ exists" handling and proceeds to the next step on either outcome.
 
 - Admin RPC handlers: `server/go/internal/api/create_user.go`,
   `create_tenant.go`, `add_tenant_member.go`.
-- Atomic registry+owner write:
-  `server/go/internal/globalstore/tenants.go` (`CreateTenantWithOwner`).
+- Global admin WAL apply path:
+  `server/go/internal/apply/global.go` and
+  `server/go/internal/globalstore/apply.go`.
 - Tenant gate (rejects RPCs on unknown tenants):
   `server/go/internal/tenant/check.go`, wired via
   `Server.checkTenant` in `server/go/internal/api/server.go`.

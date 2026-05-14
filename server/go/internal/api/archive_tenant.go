@@ -19,24 +19,17 @@
 //     member-role lookup (`:2421-2427`); the Go port restricts this to
 //     admin-only for now. The owner branch will land alongside the WAL-
 //     first restoration (see "Known gaps" below).
-//   - Calls globalstore.SetTenantStatus(tenant_id, "archived") synchronously
-//     and returns success=true iff the row existed. Re-archiving an already-
-//     archived tenant is idempotent and returns success=true (the UPDATE
-//     still matches the row) — pinned by spec "Open questions" item 6.
+//   - Appends a global `tenant_archived` WAL op and waits for the applier
+//     to set tenant_registry.status = "archived". Re-archiving an already-
+//     archived tenant is idempotent and returns success=true.
 //   - Returns OK + success=false + error="Tenant not found" when the row is
 //     missing (`:2431-2433`). Asymmetric error contract preserved.
 //
-// Known gaps (preserved for parity, NOT fixed in this PR):
+// Known gaps:
 //
-//  1. No WAL append. CLAUDE.md invariant #1 says every mutation flows
-//     through the WAL → Applier → SQLite. The Python handler does a direct
-//     globalstore SQLite UPDATE (a long-standing gap also called out in the
-//     spec). The WAL-first restoration for tenant-archive is in scope of a
-//     future PR — it requires a new applier op `archive_tenant` which the
-//     Wave-2 applier does not yet handle. See PLAN.md §6.
-//  2. No archiver / cold-storage handoff, no member or API-key revocation.
+//  1. No archiver / cold-storage handoff, no member or API-key revocation.
 //     Mirrors Python's no-op-after-flag behaviour.
-//  3. Legal-hold collision: `archived` and `legal_hold` share one status
+//  2. Legal-hold collision: `archived` and `legal_hold` share one status
 //     column. Spec "Open questions" item 1 flags this. We do not gate on
 //     current status here — Python doesn't either.
 
@@ -48,6 +41,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -97,29 +91,31 @@ func (s *Server) ArchiveTenant(
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
 	// Wave-2 narrowing: admin-only. The Python handler also allows the
-	// tenant owner via a member-role lookup; we defer that branch until
-	// the WAL-first restoration lands (see file header gap #1).
+	// tenant owner via a member-role lookup; owner-allowed archive remains
+	// a separate authz follow-up.
 	if !trusted.IsAdmin() && !trusted.IsSystem() {
 		status = "error"
 		return nil, errs.Errorf(codes.PermissionDenied,
 			"Only tenant owner can archive a tenant")
 	}
 
-	// Synchronous archive: direct global_store UPDATE. No WAL append today
-	// — see file header gap #1.
-	updated, err := s.global.SetTenantStatus(ctx, req.GetTenantId(), "archived")
-	if err != nil {
-		// Mirrors Python's broad except (`:2437-2440`): swallow as
-		// OK + success=false. Note: this leaks the Go error string to
-		// the wire. Spec "Open questions" item 5 flags this; matching
-		// Python parity for now.
+	if existing, err := s.global.GetTenant(ctx, req.GetTenantId()); err != nil {
+		status = "error"
 		return &pb.ArchiveTenantResponse{Success: false, Error: err.Error()}, nil
-	}
-	if !updated {
+	} else if existing == nil {
 		// Tenant id not found in registry. Asymmetric contract: OK +
 		// success=false rather than a NOT_FOUND status code (parity
 		// with `:2431-2433`).
 		return &pb.ArchiveTenantResponse{Success: false, Error: "Tenant not found"}, nil
+	}
+
+	_, _, err := s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":        string(apply.OpTenantArchived),
+		"tenant_id": req.GetTenantId(),
+	})
+	if err != nil {
+		status = "error"
+		return nil, err
 	}
 	return &pb.ArchiveTenantResponse{Success: true}, nil
 }

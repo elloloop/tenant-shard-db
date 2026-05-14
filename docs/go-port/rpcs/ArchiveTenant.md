@@ -58,10 +58,9 @@ behavioural impact is enforced lazily by `_check_tenant_access`
 
 **What the handler does NOT do today** (intentional flags for the Go port):
 
-- **No WAL append.** The status flip is a direct global-store write,
-  bypassing the event log. This violates CLAUDE.md invariant #1 ("All writes
-  go through the WAL") for the per-tenant case but `global_store` is a
-  cross-tenant store with its own SQLite — see Open questions.
+- **No archiver trigger from the handler.** The status flip is a global
+  `tenant_archived` WAL event materialized by the applier, but the handler
+  still does not invoke cold-storage/archive workflows.
 - **No archiver handoff.** The `Archiver` subsystem
   (`server/python/entdb_server/archive/archiver.py`) is a *WAL-stream* archiver
   (Kafka/Kinesis → S3 segments); it is NOT triggered by `ArchiveTenant`. Name
@@ -203,11 +202,8 @@ deferred — see Open questions.
    reject with `FAILED_PRECONDITION` when current status is `legal_hold`,
    or store legal-hold separately from lifecycle status. Pin behaviour with
    a new contract test before changing.
-2. **No WAL append (CLAUDE.md invariant #1).** `set_tenant_status` writes
-   directly to global-store SQLite. Since global_store is cross-tenant, it
-   does not flow through per-tenant WALs — but the invariant still implies
-   *some* event log for replay/audit. Decision needed: introduce a control-
-   plane WAL topic, or document global_store as an explicit exception.
+2. **Global WAL routing.** Closed in the Go port: `ArchiveTenant` emits
+   `tenant_archived` and the applier updates globalstore.
 3. **GDPR collision.** A tenant under a pending `DeleteUser` grace period
    may have outstanding GDPR obligations (right-to-erasure timer). Archiving
    the tenant must not pause that timer; the Go port should verify the

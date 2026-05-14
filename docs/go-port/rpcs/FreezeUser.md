@@ -62,18 +62,12 @@ add `_check_tenant_access` on the port.
 
 ## Side effects (WAL append; flag in global_store; subsequent auth checks reject mutating ops)
 
-**INVARIANT VIOLATION IN PYTHON (carry-forward risk).** Python calls
-`global_store.set_user_status(user_id, new_status)` (grpc_server.py:
-3093 → global_store.py:434-447), writing directly to global-store
-SQLite and bypassing the WAL. Per `CLAUDE.md` invariant #1, freeze
-events are silently lost on WAL rebuild. Same shape as RevokeAccess.
-
-**Go-port decision: fix on port.** Append a WAL op
-`set_user_status` and apply it via the applier:
+The Go port appends a global `user_frozen` WAL op and waits for the
+applier to update `user_registry.status`:
 
 ```
 TransactionEvent.ops = [{
-    "type": "set_user_status",
+    "op": "user_frozen",
     "user_id": <string>,
     "status": "frozen" | "active",
 }]

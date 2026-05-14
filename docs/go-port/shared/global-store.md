@@ -93,10 +93,11 @@ SQLite connection) via `_run_sync`. Each `async def foo` has a paired
 
 ## WAL coupling
 
-**`GlobalStore` has no WAL.** All writes are direct SQLite operations
-inside the single connection's autocommit/manual-txn model. This is a
-documented carve-out from CLAUDE.md invariant #1 ("all writes go
-through the WAL"); the Python implementation also reflects this.
+The Go server routes admin control-plane writes through global-scope WAL
+events keyed by the sentinel tenant id `__global__`. `GlobalStore`
+remains the SQLite materialized view, but mutation entrypoints used by
+RPC handlers are `globalstore.Apply*` methods called by the applier, not
+direct handler writes.
 
 Coupling to the per-tenant WAL pipeline:
 
@@ -107,20 +108,21 @@ Coupling to the per-tenant WAL pipeline:
    `increment_usage` after each successful commit
    (`apply/applier.py:1319`). These are **best-effort**: errors are
    logged, not raised — the WAL has already been durable.
-2. **Handlers** (gRPC) write directly to `global_store` for ops that
-   have no per-tenant analogue: `CreateUser`, `CreateTenant`,
-   `AddTenantMember`, `RemoveTenantMember`, `ChangeMemberRole`,
-   `UpdateUser`, `ArchiveTenant`, GDPR delete-account, legal hold
-   admin ops (see `grpc_server.py:2127,2335,2477,2534,2637,2429,2950`
-   and `admin_handlers.py:42,130,156`).
+2. **Global admin events** dispatch through `apply/global.go` to
+   `globalstore.Apply*` methods. This covers `CreateUser`,
+   `CreateTenant`, `AddTenantMember`, `RemoveTenantMember`,
+   `ChangeMemberRole`, `UpdateUser`, `ArchiveTenant`, GDPR
+   delete/cancel/freeze, legal hold, transfer-recipient membership, and
+   revoke shared-index cleanup.
 3. **Quotas/usage** are read by `quota_interceptor`
    (`auth/quota_interceptor.py:278,314`).
 
-**Recovery story:** because there's no WAL, `global.db` is itself the
-durable record for cross-tenant state. SQLite `journal_mode=WAL` +
-`synchronous=NORMAL` (`global_store.py:172-174`) is the only crash
-safety. There is no rebuild-from-events path. **This is an open
-question for the Go port** (see "Open questions").
+**Recovery story:** replaying the WAL into a fresh `global.db`
+reconstructs the registry, user, membership, legal-hold, deletion, and
+shared-index control-plane state covered by those global admin events.
+SQLite `journal_mode=WAL` + `synchronous=NORMAL` still provides local
+crash safety for the materialized view, but the source of truth is now
+the WAL.
 
 ## Identifier translation
 
@@ -270,14 +272,12 @@ New Go tests (`globalstore_test.go`):
 
 ## Open questions / risks
 
-1. **Recovery / durability.** The Python store relies entirely on
-   `global.db` being durable. Snapshot/Archive (server/python/.../snapshot.py)
-   does **not** capture `global.db`. For the Go port, decide:
-   (a) keep status quo and document it as a non-replayable substrate,
-   (b) emit a parallel global-WAL stream, or
-   (c) snapshot `global.db` to S3 alongside per-tenant snapshots.
-   Recommend (c) — minimal new code, preserves the "S3 Object Lock is
-   the audit trail" invariant.
+1. **Recovery / durability.** The Go port now uses global-scope WAL
+   events for admin writes, so `global.db` is rebuildable for the
+   control-plane mutations covered by issue #510. Python's snapshot code
+   still does not capture `global.db`; any remaining non-admin global
+   writes should either move to WAL or be explicitly snapshotted before
+   production use.
 2. **`shared_index` is a hint.** Python comments call it
    "not authoritative" (`global_store.py:755`). Authoritative ACLs
    live in canonical_store. The Go port must preserve this — never
@@ -288,11 +288,10 @@ New Go tests (`globalstore_test.go`):
    `legal_holds`). Today they're called from different RPCs and can
    drift. Consider unifying in Go behind one `SetLegalHold(record)`
    API.
-4. **No transactional boundary across stores.** A failure between
-   `global_store.create_tenant` and `global_store.add_member` (creator
-   becomes owner, `grpc_server.py:2335,2344`) leaves a tenant with no
-   owner. Wrap related ops in a single SQLite transaction in Go
-   (currently each `_sync_*` opens its own implicit txn).
+4. **No transactional boundary across stores.** `CreateTenant` registry
+   + owner membership is atomic in `ApplyTenantCreated`. There is still
+   no transaction spanning globalstore and a tenant SQLite database;
+   cross-store workflows must remain idempotent under replay.
 5. **Mailbox routing has no table.** Several RPCs (`SearchMailbox`,
    `GetMailbox`, `ListMailboxUsers`) are deprecated stubs. Confirm
    the Go port can drop them entirely (proto deprecated?) before

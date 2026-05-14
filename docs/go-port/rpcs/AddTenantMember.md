@@ -50,21 +50,16 @@ question below). Storage column: `tenant_members.role TEXT NOT NULL DEFAULT
 
 ## Side effects (WAL append; global_store membership table; mailbox notification?)
 
-**WAL append: NONE.** Tenant-membership operations are global-store admin ops
-that do NOT flow through the per-tenant Kafka/Kinesis WAL. Confirmed: no
-`wal.append`, no `TransactionEvent.ops` entry for membership; `wal/` and
-`apply/` packages contain zero references to `add_member` or
-`AddTenantMember`. This is a deliberate exception to the CLAUDE.md "all writes
-go through the WAL" invariant — see `global_store.py` schema comment at
-`:43-220` documenting `tenant_members` as a non-event-sourced control plane
-table. **Go port MUST NOT add a WAL event for parity**: doing so would change
-rebuild semantics and break the contract tests.
+**WAL append required.** The Go handler appends a global-scope
+`member_added` event and waits for the applier to materialize it into
+`global_store.tenant_members`.
 
-**Direct write to `global_store.tenant_members`** (the only side effect):
+**Global-store materialization:**
 1. `INSERT INTO tenant_members (tenant_id, user_id, role, joined_at) VALUES
    (?, ?, ?, ?)` with `joined_at = now()` (`global_store.py:571-580`).
-2. PRIMARY KEY `(tenant_id, user_id)` enforces uniqueness; second insert
-   raises `sqlite3.IntegrityError`.
+2. PRIMARY KEY `(tenant_id, user_id)` enforces uniqueness; incompatible
+   duplicate materialization is memoized as an `ALREADY_EXISTS`
+   idempotency failure rather than halting the WAL consumer.
 
 **Mailbox / notification: NONE.** No fanout, no `notifications` table write,
 no `mailbox` write (legacy mailbox is removed; see
@@ -100,11 +95,9 @@ Same reason: keep parity, file a hardening ticket separately.
 
 - `pb` (`server/go/internal/pb/entdbv1`) — `TenantMemberRequest`,
   `TenantMemberResponse`. Required.
-- `globalstore` (new, mirrors `global_store.py`) — `AddMember(ctx, tenantID,
-  userID, role string) error`, `GetMembers(ctx, tenantID) ([]Member, error)`.
-  Required. Must surface unique-constraint violations as a sentinel error
-  (e.g. `globalstore.ErrMemberExists`) so the handler can map to the
-  soft-failure path.
+- `globalstore` — duplicate/member-role reads in the handler and
+  `ApplyMemberAdded` in the applier. Required.
+- `wal` / `apply` — global `member_added` op and wait-applied path.
 - `auth` — `TrustedActor(ctx, wireActor string) string` and
   `IsAdminOrSystem(trusted string) bool`. Required. Must read the
   `ContextVar`-equivalent set by the auth interceptor (Go port: `context.Value`
@@ -114,8 +107,8 @@ Same reason: keep parity, file a hardening ticket separately.
 - `errs` — helpers for `status.Errorf(codes.X, ...)` with consistent message
   shape across handlers.
 
-NOT used and MUST NOT be imported here: `wal`, `apply`, `canonicalstore`,
-`schema`, `acl`, `quota`, `crypto`, `audit`. Importing any signals a bug.
+NOT used and MUST NOT be imported here: `canonicalstore`, `schema`, `acl`,
+`quota`, `crypto`, `audit`.
 
 ## Other-RPC deps (RemoveTenantMember, ChangeMemberRole)
 
@@ -219,10 +212,8 @@ Notes for the implementer:
   fallback for one release. Out of scope for the port.
 - **No FK validation on `user_id` / `tenant_id`** lets the handler create
   orphan rows. Preserve for parity; harden in a separate ticket.
-- **WAL bypass is intentional but undocumented in the proto.** When porting,
-  add a comment in the Go handler citing CLAUDE.md §1 and explaining the
-  global-store control-plane exception, so future readers don't "fix" it by
-  adding a WAL append.
+- **WAL routing.** The Go port emits global `member_added`; no direct
+  globalstore write remains in the handler.
 - **Last-admin guard is missing on this RPC** (only `RemoveTenantMember`
   guards last-owner). An admin can demote themselves indirectly via
   `ChangeMemberRole` — but `AddTenantMember` cannot lock anyone out. No
