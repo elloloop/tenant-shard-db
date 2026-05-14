@@ -24,6 +24,9 @@ and tenant-local derived state:
 /data/
   tenant_acme.db        — Acme data, ACL, notifications, apply metadata
   tenant_smith.db       — Smith tenant data, ACL, notifications, apply metadata
+  tenant_acme.db        — all of Acme's data, ACL, notifications
+  tenant_alice.db       — all of Alice's personal data
+  tenant_smith.db       — all of Smith family data
 ```
 
 ADR-014 owns the full physical file strategy, including global control-
@@ -55,7 +58,7 @@ schema_version      — migration tracking
 
 ### Why single file per tenant
 
-1. **Atomic operations**: create node + notify + audit in one transaction
+1. **Atomic operations**: create node + notify in one transaction
 2. **Simple backup**: one file = complete tenant state
 3. **Simple recovery**: replay WAL into one file
 4. **No cross-file consistency**: notifications and data always in sync

@@ -42,42 +42,12 @@ Global: TLS between nodes
 
 Certificate management: support for ACME (Let's Encrypt), custom certs, and mutual TLS (mTLS) for service-to-service.
 
-### Audit logging (tamper-evident)
+### Audit logging
 
-Every action is logged. Audit logs are append-only and cryptographically chained.
-
-```sql
-CREATE TABLE audit_log (
-    event_id     TEXT PRIMARY KEY,
-    prev_hash    TEXT NOT NULL,       -- hash of previous entry (tamper detection)
-    actor_id     TEXT NOT NULL,
-    action       TEXT NOT NULL,
-    target_type  TEXT NOT NULL,
-    target_id    TEXT NOT NULL,
-    ip_address   TEXT,
-    user_agent   TEXT,
-    metadata     TEXT,
-    created_at   INTEGER NOT NULL
-);
-```
-
-Each entry includes the hash of the previous entry. Any modification breaks the chain — detectable.
-
-What gets logged:
-```
-ALL writes:        create, update, delete (nodes, edges)
-ALL ACL changes:   share, revoke, group add/remove, transfer ownership
-ALL admin actions:  add/remove member, change role, change settings
-ALL auth events:   login, logout, API key creation/revocation
-ALL GDPR actions:  export, delete, anonymize, freeze, legal hold
-ALL schema changes: type added, field added, breaking change attempted
-```
-
-Audit logs are:
-- Append-only (never updated or deleted)
-- Anonymized after user deletion (identity removed, event preserved)
-- Retained per legal_basis or minimum 1 year
-- Exportable for compliance audits
+Audit posture is owned by **ADR-015** (WAL + S3 Object Lock is the
+audit log). Every operation flows through the WAL; the WAL is archived
+to S3 with Object Lock COMPLIANCE mode for tamper evidence. This ADR
+does not duplicate that decision.
 
 ### Authentication
 
@@ -188,7 +158,7 @@ Alerting:
   - Authentication failure spike
   - Disk usage > 80%
   - Error rate > 1%
-  - Audit log chain broken (tamper detection)
+  - S3 Object Lock archive lag > N events (see ADR-015)
 ```
 
 ### Session and token management
@@ -243,7 +213,7 @@ Backup encryption:
 EntDB provides (built into the database):
   ✅ Encryption at rest (SQLCipher)
   ✅ Encryption in transit (TLS required)
-  ✅ Audit logging (tamper-evident, append-only)
+  ✅ Audit logging (WAL + S3 Object Lock; see ADR-015)
   ✅ Access control (ACL v2, role-based)
   ✅ Data classification (proto schema)
   ✅ GDPR operations (delete, export, anonymize, freeze)
@@ -271,7 +241,6 @@ The deployment provides (infrastructure):
 
 - SQLCipher adds ~5-10% overhead on SQLite operations
 - Per-tenant encryption keys require key management infrastructure
-- Tamper-evident audit logs add ~1KB per operation
 - TLS-only means no plaintext development mode (use self-signed certs for dev)
 - Data residency requires multi-region deployment for global customers
 - Compliance documentation is an ongoing effort beyond technical controls

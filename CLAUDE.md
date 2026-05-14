@@ -58,7 +58,7 @@ WRONG:     handler → store.WriteSomething() (direct)
 If you need a new operation type, add it to the `Event`/`Op` types in `server/go/internal/wal/event.go` and handle it in `server/go/internal/apply/applier.go`.
 
 ### 2. The WAL is the audit log
-S3 Object Lock (COMPLIANCE mode) layered over the Kafka/Redpanda backend in `server/go/internal/wal/kafka.go` provides tamper-evident, immutable audit trails. Do NOT build separate audit log tables with hash chains — they're redundant and weaker than S3 Object Lock.
+See [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md). WAL + S3 Object Lock COMPLIANCE is the single audit log; no per-tenant `audit_log` table.
 
 ### 3. Single consumer goroutine for the applier
 The applier runs as a single consumer goroutine per server (Python-parity ordering guarantee). A per-tenant worker pool is deferred — do NOT add ad-hoc per-tenant goroutines that fan out applies, as it breaks per-tenant offset ordering and rebuild determinism. gRPC handlers themselves are goroutine-per-request (Go-native); the invariant is only about the apply path.

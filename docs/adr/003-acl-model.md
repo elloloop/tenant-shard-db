@@ -94,7 +94,7 @@ export_user_content(tenant, user)                     — GDPR portability
 revoke_user_access(tenant, user)                      — immediate termination
 ```
 
-All logged in audit_log.
+All flow through the WAL and are therefore in the audit log (see [ADR-015](015-wal-and-s3-object-lock-as-audit-log.md)).
 
 ## Consequences
 
