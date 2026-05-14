@@ -1,4 +1,4 @@
-# ADR-014: Decision records home & CLAUDE.md scope
+# ADR-014: All design decisions live in `docs/adr/`; CLAUDE.md is execution-only
 
 **Status:** Accepted
 **Decided:** 2026-05-14
@@ -23,10 +23,13 @@ The 6 "Architecture Invariants" currently embedded in CLAUDE.md §
 "Architecture Invariants" (#1 WAL is source of truth, #2 WAL is the
 audit log, #3 single applier goroutine, #4 per-tenant SQLite
 isolation, #5 proto is the type system, #6 field-ids on disk) get
-lifted to ADR-015 through ADR-020 in follow-up commits, each
-evaluated for current relevance during the move. Until that migration
-is complete, the CLAUDE.md section is read-only — edits must land as
-the corresponding new ADR, not as a CLAUDE.md change.
+lifted into their own ADRs, each evaluated for current relevance
+during the move. The numbering does **not** strictly track invariant
+order — invariants are migrated in the order they get discussed, so
+e.g. ADR-015 covers invariant #2 (it had the most urgent
+contradictions to resolve) and ADR-016 covers invariant #1. Until the
+migration is complete, the CLAUDE.md section is read-only — edits
+must land as the corresponding new ADR, not as a CLAUDE.md change.
 
 ### ADR template
 
@@ -161,9 +164,9 @@ that doesn't need design-decision provenance.
 - The canonical decision corpus is `docs/adr/NNN-*.md`. New ADRs use
   the next available number.
 - CLAUDE.md is execution-only. The "Architecture Invariants" section
-  stays read-only until it's migrated to ADR-015-020; agents and
-  humans MUST land changes to those decisions as ADR commits, not as
-  CLAUDE.md edits.
+  stays read-only until it's fully migrated (one ADR per invariant);
+  agents and humans MUST land changes to those decisions as ADR
+  commits, not as CLAUDE.md edits.
 - When a new ADR removes content from earlier ADRs, the new ADR's
   `References` section names the file(s) it touched and the commit
   doing the removal is the authoritative record (no `Superseded by:`
@@ -203,8 +206,8 @@ that doesn't need design-decision provenance.
   for the rejected design term across `docs/adr/`). The deletion
   must land in the same commit as the new ADR.
 - The migration from `docs/decisions/` to `docs/adr/` stalls
-  partway, leaving the corpus split again. Mitigation: complete
-  ADR-015 through ADR-020 (the 6 invariants) within the same
+  partway, leaving the corpus split again. Mitigation: lift each of
+  the 6 CLAUDE.md invariants into its own ADR within the same
   multi-PR effort that opened this ADR. Existing `decisions/`
   entries can migrate as discussions touch them, but the CLAUDE.md
   invariants must clear out fast.

@@ -39,23 +39,16 @@ Go modules don't need a registry — the Go proxy pulls directly from git tags. 
 ## Architecture Invariants (MUST NOT violate)
 
 > **Migration notice (per [ADR-014](docs/adr/014-decision-records-home.md)).**
-> The six invariants below are being lifted into ADR-015 through ADR-020
+> The six invariants below are being lifted into their own ADRs
 > (one per invariant), each evaluated for current relevance during the
-> move. **This section is read-only until that migration completes.**
-> If you need to update one of these invariants, land the change as the
-> corresponding ADR commit, not as a CLAUDE.md edit.
+> move. The numbering does not strictly track invariant order — invariants
+> migrate in the order they're discussed. **This section is read-only
+> until that migration completes.** If you need to update one of these
+> invariants, land the change as the corresponding ADR commit, not as a
+> CLAUDE.md edit.
 
-### 1. All writes go through the WAL
-EntDB is event-sourced. The WAL (Kafka/Redpanda, in-memory for tests) is the **source of truth**. SQLite is a materialized view rebuilt by replaying the WAL.
-
-**Every mutation** — including admin ops, GDPR, transfers, revocations — MUST be appended to the WAL via `wal.Append` and applied by the `Applier` in `server/go/internal/apply/`. Direct SQLite writes from handlers bypass the event log and will be **silently lost** on rebuild.
-
-```
-CORRECT:   handler → wal.Append(event) → Applier.Apply() → store (SQLite)
-WRONG:     handler → store.WriteSomething() (direct)
-```
-
-If you need a new operation type, add it to the `Event`/`Op` types in `server/go/internal/wal/event.go` and handle it in `server/go/internal/apply/applier.go`.
+### 1. Handlers append to the WAL; only the applier writes SQLite
+See [ADR-016](docs/adr/016-handlers-append-applier-writes.md). Handlers call `wal.Append(event)`; the applier (`server/go/internal/apply/applier.go`) is the only writer of per-tenant SQLite and globalstore. SQLite is a materialized view of the WAL. To add a new mutating RPC: define an op type in `server/go/internal/wal/event.go`, add an `Apply*` method in the applier, write a handler that builds the event and appends. The handler does not touch SQLite.
 
 ### 2. The WAL is the audit log
 See [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md). WAL + S3 Object Lock COMPLIANCE is the single audit log; no per-tenant `audit_log` table.
