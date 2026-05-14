@@ -65,23 +65,14 @@ Response `UpdateUserResponse` (proto:835):
 
 ## Side effects
 
-- Writes a single `UPDATE user_registry SET … WHERE user_id = ?` to the
-  global SQLite via `_sync_update_user` (global_store.py:404-409),
-  off-loaded from the asyncio loop by `_run_sync` (thread pool).
-- **NOT WAL-routed today.** The user registry lives in `global_store`
-  and is not event-sourced through `TransactionEvent` /
-  `Applier.apply_event`. This is a deliberate carve-out for cross-
-  tenant identity rows; per CLAUDE.md the per-tenant data plane is
-  WAL-sourced, but the global registry tables are direct SQLite. Go
-  port MUST preserve this — do **not** route `UpdateUser` through
-  `wal.append`. If event-sourcing the global registry is desired, it
-  is a separate epic and a proto change.
+- Appends a global-scope `user_updated` WAL event carrying the full
+  desired `user_registry` row state and waits for the applier.
+- The applier materializes the row via `globalstore.ApplyUserUpdated`.
+  The handler does not write globalstore directly.
 - Metrics: `record_grpc_request("UpdateUser", "ok"|"error", elapsed)`
   (grpc_server.py:2217, 2222, 2227). Note "ok" is recorded even for
   in-band failures (no-fields, not-found) because no abort fires.
-- No audit-log write. Compliance trail for global-registry mutations
-  is not in scope of this RPC; `audit/compliance.py` exports the WAL,
-  which does not contain user-registry edits.
+- The WAL is the audit/replay source for the global-registry mutation.
 
 ## Error contract
 

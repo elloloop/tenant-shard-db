@@ -30,7 +30,8 @@ import (
 //  2. SetUserStatus flips user_registry.status back to "active".
 func TestCancelUserDeletion_Self_HappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
@@ -46,7 +47,7 @@ func TestCancelUserDeletion_Self_HappyPath(t *testing.T) {
 		t.Fatalf("seed SetUserStatus: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.CancelUserDeletion(withTrustedUser(ctx, "alice"), &pb.CancelUserDeletionRequest{
 		Actor:  "user:alice",

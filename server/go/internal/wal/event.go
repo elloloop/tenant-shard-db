@@ -8,6 +8,23 @@ import (
 	"time"
 )
 
+// Event scope values. Tenant-scoped events materialize into the
+// per-tenant canonical store keyed by Event.TenantID. Global-scoped
+// events materialize into globalstore and use GlobalTenantID as the WAL
+// partition key / idempotency tenant.
+type Scope string
+
+const (
+	ScopeTenant Scope = "tenant"
+	ScopeGlobal Scope = "global"
+
+	// GlobalTenantID is the synthetic tenant key used for control-plane
+	// WAL events. It is intentionally filesystem-safe so the applier can
+	// reuse the canonical store's applied_events / applied_offsets
+	// machinery for global events.
+	GlobalTenantID = "__global__"
+)
+
 // Event mirrors server/python/entdb_server/apply/applier.py:204
 // (TransactionEvent). It is the wire-level payload appended to the WAL
 // for every mutation. Required fields: TenantID, Actor, IdempotencyKey,
@@ -21,6 +38,7 @@ import (
 // preserve the same encoded byte layout for cross-impl contract tests.
 type Event struct {
 	TenantID          string           `json:"tenant_id"`
+	Scope             Scope            `json:"scope,omitempty"`
 	Actor             string           `json:"actor"`
 	IdempotencyKey    string           `json:"idempotency_key"`
 	SchemaFingerprint string           `json:"schema_fingerprint,omitempty"`
@@ -66,6 +84,14 @@ func DecodeEvent(value []byte) (Event, error) {
 	}
 	if len(missing) > 0 {
 		return Event{}, fmt.Errorf("wal: missing required fields: %v", missing)
+	}
+	if e.Scope == "" {
+		e.Scope = ScopeTenant
+	}
+	switch e.Scope {
+	case ScopeTenant, ScopeGlobal:
+	default:
+		return Event{}, fmt.Errorf("wal: unknown scope %q", e.Scope)
 	}
 	return e, nil
 }

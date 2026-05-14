@@ -13,12 +13,9 @@
 //     item 1). The Python handler writes the status flip directly to
 //     globalstore SQLite — a WAL replay against a blank globalstore
 //     loses the hold. The Go port closes that gap by appending a
-//     `set_legal_hold` op to the WAL when the producer is wired.
-//     The W1.10 applier (server/go/internal/apply/ops_set_legal_hold.go)
-//     materialises the op against globalstore.legal_holds. The
-//     tenant_registry.status flip is performed synchronously here too
-//     (parity with Python's gating-flag semantics) so downstream RPCs
-//     gating on the registry status see the change immediately.
+//     `legal_hold_set` op to the global WAL scope. The applier
+//     materialises the op against globalstore.legal_holds and flips
+//     tenant_registry.status before the handler returns.
 //
 //  2. Compliance-officer trusted-actor gate (spec §"Auth"). Today only
 //     admin: / system: actors may set or clear a hold. The "compliance
@@ -54,21 +51,15 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
 const (
 	grpcMethodSetLegalHold = "SetLegalHold"
-
-	// setLegalHoldWALTopic is the topic used when the producer is wired.
-	// Matches the default in cmd/entdb-server/main.go (--wal-topic flag).
-	// The applier subscribes to the same topic so the op materialises
-	// into globalstore.legal_holds via apply/ops_set_legal_hold.go.
-	setLegalHoldWALTopic = "entdb-wal"
 
 	// statusActive / statusLegalHold are the two literals that
 	// tenant_registry.status takes for this RPC. Pinned by
@@ -78,9 +69,8 @@ const (
 )
 
 // SetLegalHold toggles tenant_registry.status between "active" and
-// "legal_hold" for tenant_id, and (when the WAL producer is wired)
-// appends a `set_legal_hold` op so the flag is reproducible from a WAL
-// replay. See file header for the full contract.
+// "legal_hold" for tenant_id by appending a global `legal_hold_set`
+// WAL op. See file header for the full contract.
 func (s *Server) SetLegalHold(
 	ctx context.Context,
 	req *pb.LegalHoldRequest,
@@ -142,72 +132,26 @@ func (s *Server) SetLegalHold(
 			"SetLegalHold requires admin or owner role")
 	}
 
-	// Synchronous tenant_registry status flip. This is the *gating*
-	// flag downstream RPCs (DeleteNode, ExecuteAtomic delete ops,
-	// future DeleteUser/ArchiveTenant) consult to refuse mutations.
-	// Parity with Python: if the row is missing we'd never reach here
-	// (CheckTenant rejects with NOT_FOUND); if the row exists the
-	// UPDATE always matches, so `updated` is true on the happy path.
 	newStatus := statusActive
 	if req.GetEnabled() {
 		newStatus = statusLegalHold
 	}
-	updated, err := s.global.SetTenantStatus(ctx, req.GetTenantId(), newStatus)
+
+	reason := ""
+	if req.GetEnabled() {
+		reason = "SetLegalHold RPC"
+	}
+	_, _, err := s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":         string(apply.OpLegalHoldSet),
+		"tenant_id":  req.GetTenantId(),
+		"held_by":    trusted.String(),
+		"reason":     reason,
+		"enabled":    req.GetEnabled(),
+		"created_at": time.Now().Unix(),
+	})
 	if err != nil {
 		resultStatus = "error"
-		return nil, errs.Errorf(codes.Internal, "set_tenant_status: %v", err)
-	}
-	if !updated {
-		// Defence in depth: the row vanished between CheckTenant and
-		// here (concurrent delete). Surface as NOT_FOUND rather than
-		// the Python OK + success=false channel.
-		resultStatus = "error"
-		return nil, errs.Errorf(codes.NotFound, "tenant %q not found", req.GetTenantId())
-	}
-
-	// WAL-first restoration. Append a `set_legal_hold` op so a future
-	// global-store rebuild reproduces the flag. The applier
-	// (apply/ops_set_legal_hold.go) writes the legal_holds row in
-	// globalstore. Best-effort against the producer: a WAL append
-	// failure here is logged via metrics but does NOT roll back the
-	// status flip — auditors prefer the asymmetric "flag set, audit
-	// might be missing" over "flag silently dropped".
-	//
-	// When the producer is not wired (e.g. unit tests against the
-	// Server with only globalstore), we skip the WAL append and rely
-	// on the synchronous SetTenantStatus above. Same trade-off the
-	// applier makes when global is nil.
-	if s.producer != nil {
-		op := map[string]any{
-			"op":      "set_legal_hold",
-			"held_by": trusted.String(),
-			"clear":   !req.GetEnabled(),
-		}
-		if req.GetEnabled() {
-			op["reason"] = "SetLegalHold RPC"
-		}
-		// Best-effort WAL audit row. Failures here are not surfaced
-		// to the client — the synchronous SetTenantStatus above is the
-		// authoritative side effect. An idempotency-key alloc failure
-		// (crypto/rand error, vanishingly rare) skips the append; the
-		// status flip still stands.
-		if idempKey, keyErr := newIdempotencyKey(); keyErr == nil {
-			ev := wal.Event{
-				TenantID:       req.GetTenantId(),
-				Actor:          trusted.String(),
-				IdempotencyKey: idempKey,
-				TsMs:           time.Now().UnixMilli(),
-				Ops:            []map[string]any{op},
-			}
-			value, encErr := ev.Encode()
-			if encErr == nil {
-				headers := map[string][]byte{
-					wal.HeaderIdempotencyKey: []byte(ev.IdempotencyKey),
-				}
-				// Audit row in WAL is the immutable record (CLAUDE.md §2).
-				_, _ = s.producer.Append(ctx, setLegalHoldWALTopic, req.GetTenantId(), value, headers)
-			}
-		}
+		return nil, err
 	}
 
 	return &pb.LegalHoldResponse{

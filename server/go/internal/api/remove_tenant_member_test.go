@@ -41,14 +41,15 @@ func seedTenantWithMembers(t *testing.T, gs *globalstore.GlobalStore, tenantID s
 // admin-role enforcement that Go layers on top.
 func TestRemoveTenantMember_AdminHappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	seedTenantWithMembers(t, gs, "acme", map[string]string{
 		"alice": "owner",
 		"carol": "admin",
 		"bob":   "member",
 	})
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Trusted actor on ctx is admin "carol"; the wire actor matches.
 	ctx := auth.WithIdentity(context.Background(), auth.Identity{

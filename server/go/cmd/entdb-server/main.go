@@ -1,9 +1,8 @@
 // Command entdb-server is the Go reimplementation of the EntDB
 // gRPC server (tracking issue #407). Wave-1 wiring binds a gRPC
-// server (every RPC still returns codes.Unimplemented), opens the
-// per-tenant SQLite + globalstore handles, and starts the WAL
-// applier in a background goroutine. Real RPC handlers land one PR
-// at a time as Wave-2 issues are completed.
+// server, opens the per-tenant SQLite + globalstore handles, and
+// starts the WAL applier in a background goroutine before accepting
+// writes.
 package main
 
 import (
@@ -57,9 +56,8 @@ func main() {
 	seedProfile := flag.String("seed-profile", "", "test-only: seed profile {none, contract, e2e}; default 'contract' when --seed-tenant is set")
 	flag.Parse()
 
-	lis, err := net.Listen("tcp", *addr)
-	if err != nil {
-		log.Fatalf("entdb-server: listen %s: %v", *addr, err)
+	if strings.TrimSpace(*dataDir) == "" {
+		log.Fatalf("entdb-server: --data-dir is required")
 	}
 
 	// Resolve --seed-profile. Empty profile + non-empty --seed-tenant
@@ -102,29 +100,19 @@ func main() {
 	}
 	srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
 
-	// Per-tenant canonical store (optional in Wave-1; if data-dir is
-	// unset, RPCs will be served as Unimplemented anyway and the
-	// applier won't start).
-	var (
-		canonical *store.CanonicalStore
-		global    *globalstore.GlobalStore
-		applier   *apply.Applier
-	)
-	if *dataDir != "" {
-		canonical, err = store.New(store.Options{RootDir: *dataDir, WALMode: true, Registry: registry})
-		if err != nil {
-			log.Fatalf("entdb-server: open canonical store: %v", err)
-		}
-		defer func() { _ = canonical.Close() }()
-		srvOpts = append(srvOpts, api.WithStore(canonical))
-
-		global, err = globalstore.New(globalstore.Options{DataDir: *dataDir, WALMode: true})
-		if err != nil {
-			log.Fatalf("entdb-server: open global store: %v", err)
-		}
-		defer func() { _ = global.Close() }()
-		srvOpts = append(srvOpts, api.WithGlobalStore(global))
+	canonical, err := store.New(store.Options{RootDir: *dataDir, WALMode: true, Registry: registry})
+	if err != nil {
+		log.Fatalf("entdb-server: open canonical store: %v", err)
 	}
+	defer func() { _ = canonical.Close() }()
+	srvOpts = append(srvOpts, api.WithStore(canonical))
+
+	global, err := globalstore.New(globalstore.Options{DataDir: *dataDir, WALMode: true})
+	if err != nil {
+		log.Fatalf("entdb-server: open global store: %v", err)
+	}
+	defer func() { _ = global.Close() }()
+	srvOpts = append(srvOpts, api.WithGlobalStore(global))
 
 	// WAL backend wiring. memory: in-process, lost on restart (dev /
 	// short-running tests). kafka: Kafka/Redpanda; production-grade,
@@ -151,25 +139,27 @@ func main() {
 	}
 	srvOpts = append(srvOpts, api.WithWALProducer(walImpl), api.WithWALTopic(*walTopic))
 
-	// Applier: only when we have a canonical store.
-	if canonical != nil {
-		applier, err = apply.New(apply.Options{
-			Store:    canonical,
-			Global:   global,
-			Consumer: walImpl,
-			Topic:    *walTopic,
-			GroupID:  *walGroup,
-		})
-		if err != nil {
-			log.Fatalf("entdb-server: applier: %v", err)
-		}
+	applier, err := apply.New(apply.Options{
+		Store:    canonical,
+		Global:   global,
+		Consumer: walImpl,
+		Topic:    *walTopic,
+		GroupID:  *walGroup,
+	})
+	if err != nil {
+		log.Fatalf("entdb-server: applier: %v", err)
 	}
-
-	srv := grpc.NewServer()
-	pb.RegisterEntDBServiceServer(srv, api.New(srvOpts...))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Run the applier before the gRPC server starts accepting writes.
+	// Halt-on-poison errors surface here; the supervisor logs and
+	// starts shutdown.
+	applierErr := make(chan error, 1)
+	go func() {
+		applierErr <- applier.Run(ctx)
+	}()
 
 	// Test-only seed: the cross-impl harnesses boot the binary with
 	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
@@ -178,9 +168,6 @@ func main() {
 	if profile != "none" {
 		if *seedTenant == "" {
 			log.Fatalf("entdb-server: --seed-profile=%s requires --seed-tenant", profile)
-		}
-		if canonical == nil || global == nil {
-			log.Fatalf("entdb-server: --seed-profile=%s requires --data-dir", profile)
 		}
 		switch profile {
 		case "contract":
@@ -196,13 +183,12 @@ func main() {
 		}
 	}
 
-	// Run the applier in a background goroutine. Halt-on-poison errors
-	// surface here; the supervisor (this loop) logs and shuts down.
-	applierErr := make(chan error, 1)
-	if applier != nil {
-		go func() {
-			applierErr <- applier.Run(ctx)
-		}()
+	srv := grpc.NewServer()
+	pb.RegisterEntDBServiceServer(srv, api.New(srvOpts...))
+
+	lis, err := net.Listen("tcp", *addr)
+	if err != nil {
+		log.Fatalf("entdb-server: listen %s: %v", *addr, err)
 	}
 
 	stop := make(chan os.Signal, 1)
@@ -210,26 +196,20 @@ func main() {
 	go func() {
 		<-stop
 		log.Printf("entdb-server: shutting down")
-		if applier != nil {
-			applier.Stop()
-		}
+		applier.Stop()
 		cancel()
 		srv.GracefulStop()
 	}()
 
-	log.Printf("entdb-server: listening on %s (all RPCs return Unimplemented; applier=%v)", *addr, applier != nil)
+	log.Printf("entdb-server: listening on %s (applier running)", *addr)
 	go func() {
 		if err := srv.Serve(lis); err != nil {
 			log.Fatalf("entdb-server: serve: %v", err)
 		}
 	}()
 
-	if applier != nil {
-		if err := <-applierErr; err != nil && err != context.Canceled {
-			log.Printf("entdb-server: applier exited: %v", err)
-		}
-	} else {
-		<-ctx.Done()
+	if err := <-applierErr; err != nil && err != context.Canceled {
+		log.Printf("entdb-server: applier exited: %v", err)
 	}
 }
 

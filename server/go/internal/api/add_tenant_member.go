@@ -3,18 +3,12 @@
 // Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2442-2490.
 // Port spec: docs/go-port/rpcs/AddTenantMember.md.
 //
-// # WAL bypass — explicit carve-out from CLAUDE.md §1
+// # WAL-first global mutation
 //
-// Tenant-membership writes go DIRECTLY to the cross-tenant globalstore
-// (the `tenant_members` table). They MUST NOT be appended to the
-// per-tenant Kafka/Kinesis WAL. This is a deliberate exception to the
-// "all writes go through the WAL" invariant: globalstore is a
-// non-event-sourced control-plane store (see
-// server/go/internal/globalstore/doc — package comment "Carve-out from
-// invariant #1"). Adding a WAL event for membership would change
-// rebuild semantics and break the cross-language contract suite. If
-// you are tempted to "fix" this by routing through the Applier, stop
-// and read the package doc on globalstore first.
+// Tenant-membership writes are appended as global-scope WAL events
+// (`member_added`) and materialized by the applier into the
+// cross-tenant `tenant_members` table. The handler performs validation
+// and duplicate prechecks, but it does not write globalstore directly.
 //
 // # Auth model — trusted-actor admin-only
 //
@@ -33,8 +27,7 @@
 //
 // # Side effects (intentionally minimal)
 //
-//   - Direct INSERT into globalstore.tenant_members. UNIQUE constraint
-//     on (tenant_id, user_id).
+//   - Append/wait for a global `member_added` WAL op.
 //   - NO mailbox / notification fanout. The added member is silent —
 //     discovery is via GetUserTenants. Matches Python parity.
 //   - NO FK validation on tenant_id / user_id. Both can refer to rows
@@ -59,20 +52,20 @@ package api
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
 
-// AddTenantMember inserts a (tenant_id, user_id, role) row into the
-// cross-tenant globalstore. See package-level doc for the WAL-bypass
-// carve-out and auth model.
+// AddTenantMember appends a global WAL op that inserts a
+// (tenant_id, user_id, role) row into globalstore. See the file-level
+// doc for the auth model.
 func (s *Server) AddTenantMember(
 	ctx context.Context,
 	req *pb.TenantMemberRequest,
@@ -139,25 +132,27 @@ func (s *Server) AddTenantMember(
 		role = "member"
 	}
 
-	if err := s.global.AddTenantMember(ctx, req.GetTenantId(), req.GetUserId(), role); err != nil {
-		// Soft-failure path: duplicate (tenant_id, user_id). Returns
-		// gRPC OK with success=false so SDK retries on transient
-		// network errors observe an idempotent-replay signal.
-		// Pinned by grpc_server.py:2484-2487.
-		if errors.Is(err, errs.ErrAlreadyExists) {
-			status = "error"
-			return &pb.TenantMemberResponse{
-				Success: false,
-				Error:   "Member already exists in this tenant",
-			}, nil
-		}
-		// Any other globalstore error: same swallow shape — gRPC OK
-		// with success=false. Mirrors grpc_server.py:2488-2490.
+	if exists, err := s.global.IsMember(ctx, req.GetTenantId(), req.GetUserId()); err != nil {
+		status = "error"
+		return &pb.TenantMemberResponse{Success: false, Error: err.Error()}, nil
+	} else if exists {
 		status = "error"
 		return &pb.TenantMemberResponse{
 			Success: false,
-			Error:   err.Error(),
+			Error:   "Member already exists in this tenant",
 		}, nil
+	}
+
+	_, _, err := s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":        string(apply.OpMemberAdded),
+		"tenant_id": req.GetTenantId(),
+		"user_id":   req.GetUserId(),
+		"role":      role,
+		"joined_at": time.Now().Unix(),
+	})
+	if err != nil {
+		status = "error"
+		return nil, err
 	}
 
 	return &pb.TenantMemberResponse{Success: true}, nil

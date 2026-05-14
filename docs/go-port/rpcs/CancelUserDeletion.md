@@ -61,28 +61,19 @@ status codes.
   in the handler — the worker's pass over `get_executable_deletions`
   (global_store.py:865-885) is the de-facto deadline.
 
-## Side effects (WAL append; flip pending → cancelled)
+## Side effects (global WAL append; flip pending → active)
 
-**IMPORTANT carve-out vs CLAUDE.md invariant #1.** Despite the global
-"all writes go through the WAL" rule, `CancelUserDeletion` (like
-`DeleteUser`, `UpdateUser`, and the rest of the user-registry RPCs)
-writes directly to the global SQLite via `global_store`, bypassing
-`wal.append` / `Applier`. The user registry and `deletion_queue` are
-deliberate cross-tenant carve-outs — they are not event-sourced
-through `TransactionEvent`. Go port MUST preserve this. Do NOT add a
-`wal.append(CancelDeletion)` call: there is no matching
-`Applier.apply_event` arm and routing it through the WAL would create
-a divergent rebuild.
+The Go handler appends a global-scope `user_deletion_canceled` WAL
+event and waits for the applier. The user registry and `deletion_queue`
+are no longer direct-write carve-outs.
 
 What the handler actually does (grpc_server.py:3002-3004):
-1. `await self.global_store.cancel_deletion(user_id)` — deletes the
-   row from `deletion_queue` where `status='pending'`. Returns bool
-   from `cursor.rowcount > 0` (global_store.py:842-848). The semantic
-   is "remove pending entry", not "flip pending → cancelled" — the
-   row is hard-deleted, no `cancelled` tombstone is retained.
-2. If step 1 returned True, `await self.global_store.set_user_status(
-   user_id, "active")` flips `user_registry.status` from
-   `pending_deletion` back to `active` (global_store.py:434-450).
+1. Pre-read the pending `deletion_queue` row. If none exists, return the
+   Python-compatible in-band no-op response.
+2. Append `op="user_deletion_canceled"` with `user_id` and `updated_at`.
+3. The applier hard-deletes the pending row and flips
+   `user_registry.status` from `pending_deletion` back to `active` in one
+   globalstore transaction.
    The status flip is **conditional** on cancel succeeding; if the
    row was already gone, status is left untouched.
 3. `record_grpc_request("CancelUserDeletion", "ok"|"error", elapsed)`
@@ -229,20 +220,9 @@ user in `pending_deletion` until a retry — same as Python today).
   (separate epic): add an `ALREADY_EXECUTED` enum or promote to a
   gRPC status code, plus retain a `cancelled`/`completed` tombstone
   in `deletion_queue` instead of hard-deleting on cancel.
-- **Step-1/step-2 atomicity.** `cancel_deletion` and
-  `set_user_status` are two separate sync calls (grpc_server.py:3002-
-  3004). A crash between them leaves `deletion_queue` empty but
-  `user_registry.status='pending_deletion'` — orphan state. Today
-  this is self-healing on retry (cancel returns False, status is left
-  alone, user can re-issue). Go port should keep the same shape;
-  wrapping both in a single SQL transaction is a defensible quality
-  improvement but changes observable error timing — flag for review.
-- **WAL carve-out.** Global registry mutations bypass the WAL
-  (CLAUDE.md invariant #1 carve-out). Identity changes are NOT in
-  the audit trail exported by `audit/compliance.py`. If GDPR/SOC2
-  auditors require an immutable record of "deletion was requested,
-  then cancelled by X at T", that is a separate event-sourcing epic
-  (`GlobalEvent` topic).
+- **Step-1/step-2 atomicity.** Closed in the Go global WAL path:
+  `ApplyUserDeletionCanceled` removes the pending row and updates
+  user status in one SQLite transaction.
 - **Trusted-actor coverage.** Unit tests mostly run without the
   AuthInterceptor (FakeContext path). The Go port MUST add a
   contract test that asserts a forged `actor="admin:root"` in the

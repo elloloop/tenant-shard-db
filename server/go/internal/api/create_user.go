@@ -6,9 +6,7 @@
 // server/python/entdb_server/api/grpc_server.py:2099-2147 and
 // server/python/entdb_server/global_store.py:336-369.
 //
-// Semantics (this is a deliberate carve-out from the CLAUDE.md "all
-// writes go through the WAL" invariant — user_registry is global_store
-// control-plane state, not per-tenant event-sourced data):
+// Semantics:
 //
 //   - Admin-only. Caller must resolve to a system:* / admin:* trusted
 //     actor via auth.Authoritative. The request.actor field is UNTRUSTED
@@ -16,10 +14,9 @@
 //     tests). Privilege-escalation pin:
 //     tests/python/integration/test_privilege_escalation.py:321-341.
 //
-//   - Single SQLite write to global_store.user_registry. No WAL append,
-//     no canonical-store touch, no audit hook. The Python handler calls
-//     global_store.create_user(...) directly; the Go port does the same
-//     via globalstore.CreateUser.
+//   - WAL-first global mutation. The handler appends a global
+//     `user_created` op and waits for the applier to insert the
+//     user_registry row. It does not write globalstore directly.
 //
 //   - user_id boundary: the wire / storage form is bare ("alice"); the
 //     "user:alice" tenant_principal form is added by ACL / membership
@@ -41,11 +38,11 @@ package api
 
 import (
 	"context"
-	"errors"
 	"time"
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -102,30 +99,47 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 		return nil, errs.Errorf(codes.InvalidArgument, "name is required")
 	}
 
-	user, err := s.global.CreateUser(ctx, req.GetUserId(), req.GetEmail(), req.GetName())
+	if existing, err := s.global.GetUser(ctx, req.GetUserId()); err != nil {
+		outcome = "error"
+		return nil, errs.Errorf(codes.Internal, "get user: %v", err)
+	} else if existing != nil {
+		outcome = "error"
+		return nil, errs.Errorf(codes.AlreadyExists,
+			"globalstore: user %q already exists", req.GetUserId())
+	}
+	if existing, err := s.global.GetUserByEmail(ctx, req.GetEmail()); err != nil {
+		outcome = "error"
+		return nil, errs.Errorf(codes.Internal, "get user by email: %v", err)
+	} else if existing != nil {
+		outcome = "error"
+		return nil, errs.Errorf(codes.AlreadyExists,
+			"globalstore: email %q already exists", req.GetEmail())
+	}
+
+	now := time.Now().Unix()
+	_, _, err := s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":         string(apply.OpUserCreated),
+		"user_id":    req.GetUserId(),
+		"email":      req.GetEmail(),
+		"name":       req.GetName(),
+		"status":     "active",
+		"created_at": now,
+		"updated_at": now,
+	})
 	if err != nil {
 		outcome = "error"
-		// globalstore.CreateUser already wraps duplicate-key collisions
-		// as errs.Errorf(codes.AlreadyExists, …) using a typed sqlite
-		// driver sentinel — propagate that verbatim.
-		if errors.Is(err, errs.ErrAlreadyExists) {
-			return nil, err
-		}
-		// Anything else is an unexpected backend failure: surface it as
-		// INTERNAL rather than the Python OK+success=false swallow path.
-		// The spec flags this as a deliberate Go-port improvement.
-		return nil, errs.Errorf(codes.Internal, "create user: %v", err)
+		return nil, err
 	}
 
 	return &pb.CreateUserResponse{
 		Success: true,
 		User: &pb.UserInfo{
-			UserId:    user.UserID,
-			Email:     user.Email,
-			Name:      user.Name,
-			Status:    user.Status,
-			CreatedAt: user.CreatedAt,
-			UpdatedAt: user.UpdatedAt,
+			UserId:    req.GetUserId(),
+			Email:     req.GetEmail(),
+			Name:      req.GetName(),
+			Status:    "active",
+			CreatedAt: now,
+			UpdatedAt: now,
 		},
 	}, nil
 }

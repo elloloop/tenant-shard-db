@@ -72,17 +72,9 @@ In-order narration of the Python handler (`grpc_server.py:2498-2537`):
 9. Return `success=removed`, metric `ok` (`:2536-2537`).
 10. Outer `except`: log + return `success=false, error=str(e)`, metric `error` (`:2538-2541`).
 
-**WAL append: Python does NOT append.** This is an Architecture Invariant #1
-violation (CLAUDE.md: "Every mutation … MUST be appended to the WAL"). The
-`global_store` write is direct SQLite. Go port has two choices:
-- (A) Match Python bug-for-bug (lowest risk; ports the parity tests). File a
-  follow-up to add a `tenant_member_removed` op to `TransactionEvent.ops`.
-- (B) Fix-during-port: emit a `TenantMemberRemoved` event onto the tenant
-  registry WAL stream and let `Applier` apply it. Requires extending
-  `Applier.apply_event` in lockstep across Python + Go (contract test risk).
-
-Recommended: **(A) for the initial Go port**, with a tracked invariant-debt
-ticket. Do NOT silently diverge from Python.
+**WAL append:** the Go handler emits global `member_removed` and waits
+for the applier to delete the `tenant_members` row. The handler does not
+write globalstore directly.
 
 **ACL cascade: Python does NOT cascade.** The Go SDK doc string says so
 explicitly (`sdk/go/entdb/admin.go:68-71`): "drops a membership row. It does
@@ -120,9 +112,8 @@ add an "admin" guard in Go without an ADR.
 - `metrics` — `RecordGRPCRequest("RemoveTenantMember", status, dur)`. Required.
 - `errs` — wraps `status.Error(codes.X, msg)` with the exact strings above. Required.
 
-NOT used and MUST NOT be imported: `wal`, `apply`, `canonicalstore`, `acl`,
-`schema`, `quota`, `crypto`, `audit`, `mailbox`. Importing any signals
-scope creep — file an ADR first.
+NOT used and MUST NOT be imported: `canonicalstore`, `acl`, `schema`,
+`quota`, `crypto`, `audit`, `mailbox`. Importing any signals scope creep.
 
 ## Other-RPC deps (overlaps with RevokeAllUserAccess)
 

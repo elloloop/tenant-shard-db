@@ -62,6 +62,23 @@ func (g *GlobalStore) GetUser(ctx context.Context, userID string) (*User, error)
 	return &u, nil
 }
 
+// GetUserByEmail returns the user with email, or (nil, nil) if not present.
+func (g *GlobalStore) GetUserByEmail(ctx context.Context, email string) (*User, error) {
+	row := g.db.QueryRowContext(ctx,
+		`SELECT user_id, email, name, status, created_at, updated_at
+		 FROM user_registry WHERE email = ?`,
+		email,
+	)
+	var u User
+	if err := row.Scan(&u.UserID, &u.Email, &u.Name, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("globalstore: get user by email %q: %w", email, err)
+	}
+	return &u, nil
+}
+
 // UserUpdates carries the optional patch for UpdateUser. Nil pointer
 // fields are skipped (matches the Python kwargs whitelist of
 // {email, name, status} at global_store.py:397).

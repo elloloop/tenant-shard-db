@@ -259,6 +259,68 @@ func TestRevokeAllUserAccess_AdminHappyPath(t *testing.T) {
 	}
 }
 
+func TestRevokeAllUserAccess_WALEventCarriesSharedIndexCleanup(t *testing.T) {
+	t.Parallel()
+	f := newRevokeAllFixture(t)
+	const tenantID = "acme"
+	const target = "user:bob"
+	f.openTenant(tenantID)
+	if _, err := f.global.CreateTenant(context.Background(), tenantID, tenantID, "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant(%q): %v", tenantID, err)
+	}
+	if err := f.global.AddShared(context.Background(), target, tenantID, "doc1", "read"); err != nil {
+		t.Fatalf("AddShared: %v", err)
+	}
+
+	ctx := auth.WithIdentity(context.Background(), auth.Identity{
+		Method:  auth.MethodOAuth,
+		Subject: "admin:root",
+	})
+	if _, err := f.srv.RevokeAllUserAccess(ctx, &pb.RevokeAllUserAccessRequest{
+		Actor:    "admin:root",
+		TenantId: tenantID,
+		UserId:   target,
+	}); err != nil {
+		t.Fatalf("RevokeAllUserAccess: %v", err)
+	}
+
+	if got := f.walImpl.GetRecordCount("entdb-wal"); got != 1 {
+		t.Fatalf("WAL records = %d, want 1 tenant event with paired ops", got)
+	}
+	records, err := f.walImpl.PollBatch(context.Background(), "entdb-wal", "revoke-shape-drain", 10, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("PollBatch: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("PollBatch records = %d, want 1", len(records))
+	}
+	ev, err := wal.DecodeEvent(records[0].Value)
+	if err != nil {
+		t.Fatalf("DecodeEvent: %v", err)
+	}
+	if ev.Scope == wal.ScopeGlobal {
+		t.Fatalf("event scope = global, want tenant-scoped paired event")
+	}
+	if ev.TenantID != tenantID {
+		t.Fatalf("event tenant = %q, want %q", ev.TenantID, tenantID)
+	}
+	if len(ev.Ops) != 2 {
+		t.Fatalf("ops = %d, want admin_revoke_access + access_revoked", len(ev.Ops))
+	}
+	if got, _ := ev.Ops[0]["op"].(string); got != string(apply.OpAdminRevokeAccess) {
+		t.Fatalf("first op = %q, want %s", got, apply.OpAdminRevokeAccess)
+	}
+	if got, _ := ev.Ops[1]["op"].(string); got != string(apply.OpAccessRevoked) {
+		t.Fatalf("second op = %q, want %s", got, apply.OpAccessRevoked)
+	}
+	if got, _ := ev.Ops[1]["tenant_id"].(string); got != tenantID {
+		t.Fatalf("access_revoked tenant_id = %q, want %q", got, tenantID)
+	}
+	if got, _ := ev.Ops[1]["user_id"].(string); got != target {
+		t.Fatalf("access_revoked user_id = %q, want %q", got, target)
+	}
+}
+
 // TestRevokeAllUserAccess_NonAdminDenied: a regular member calling
 // against another user is rejected with PERMISSION_DENIED. No WAL
 // event is appended, no SQLite state changes. Pinned by

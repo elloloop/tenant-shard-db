@@ -18,9 +18,8 @@ import (
 )
 
 // Options configures a new Applier. Required fields: Store, Consumer,
-// Topic, GroupID. Global is optional (no globalstore wiring => set_legal_hold
-// and tenant-membership ops degrade to no-ops, matching the Python
-// optional-store guards).
+// Topic, GroupID. Global is required for wal.ScopeGlobal records; an
+// applier without Global treats those records as poison.
 type Options struct {
 	Store    *store.CanonicalStore
 	Global   *globalstore.GlobalStore
@@ -213,9 +212,18 @@ func (a *Applier) applyRecord(ctx context.Context, rec Record) Result {
 		return res
 	}
 	res.TenantID = ev.TenantID
-	if err := a.applyEvent(ctx, &ev, &res); err != nil {
+	var applyErr error
+	switch ev.Scope {
+	case "", wal.ScopeTenant:
+		applyErr = a.applyEvent(ctx, &ev, &res)
+	case wal.ScopeGlobal:
+		applyErr = a.applyGlobalEvent(ctx, &ev, &res)
+	default:
+		applyErr = fmt.Errorf("%w: unknown event scope %q", ErrPoisonEvent, ev.Scope)
+	}
+	if applyErr != nil {
 		res.Status = StatusFailed
-		res.Err = err
+		res.Err = applyErr
 		return res
 	}
 	return res
@@ -408,9 +416,35 @@ func (a *Applier) dispatch(ctx context.Context, tx *BatchTxn, ev *Event, op map[
 		return a.applyRemoveTenantMember(ctx, ev, op)
 	case OpChangeMemberRole:
 		return a.applyChangeMemberRole(ctx, ev, op)
+	case OpAccessTransferred:
+		return a.applyAccessTransferred(ctx, ev, op)
+	case OpAccessRevoked:
+		return a.applyAccessRevoked(ctx, ev, op)
 	default:
 		return fmt.Errorf("%w: %q", ErrUnknownOpType, opTypeOf(op))
 	}
+}
+
+func (a *Applier) applyAccessTransferred(ctx context.Context, ev *Event, op map[string]any) error {
+	if a.global == nil {
+		return fmt.Errorf("%w: access_transferred without globalstore", ErrPoisonEvent)
+	}
+	tenantID := stringField(op, "tenant_id")
+	if tenantID == "" {
+		tenantID = ev.TenantID
+	}
+	return a.global.ApplyAccessTransferred(ctx, tenantID, stringField(op, "to_user"), int64Field(op, "joined_at"))
+}
+
+func (a *Applier) applyAccessRevoked(ctx context.Context, ev *Event, op map[string]any) error {
+	if a.global == nil {
+		return fmt.Errorf("%w: access_revoked without globalstore", ErrPoisonEvent)
+	}
+	tenantID := stringField(op, "tenant_id")
+	if tenantID == "" {
+		tenantID = ev.TenantID
+	}
+	return a.global.ApplyAccessRevoked(ctx, tenantID, stringField(op, "user_id"))
 }
 
 // Replay drives the applier from a specific WAL offset for one tenant.

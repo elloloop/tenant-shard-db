@@ -12,10 +12,7 @@
 // preserves all data (vs `DeleteUser` which tombstones, vs
 // `RevokeAllUserAccess` which removes ACL grants).
 //
-// Semantics (deliberate carve-out from the CLAUDE.md "all writes go
-// through the WAL" invariant — user_registry is global_store
-// control-plane state, not per-tenant event-sourced data; same shape as
-// CreateUser / UpdateUser):
+// Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
 //     codes.Unimplemented "User registry not configured" — mirrors
@@ -30,12 +27,9 @@
 //   - No tenant scope. FreezeUser is a global-store operation;
 //     CheckTenant is NOT called. Mirrors the Python handler which
 //     delegates only to global_store.set_user_status.
-//   - Direct globalstore write (NO WAL append). Wave 2 preserves
-//     bug-for-bug parity with Python — the user-registry status flag
-//     is control-plane state, written directly. Same carve-out as
-//     CreateUser, UpdateUser, RevokeAccess. Future fix-on-port (per
-//     spec "Side effects" section) will route through wal.append +
-//     applier; out of scope here.
+//   - WAL-first global mutation. The handler appends a global
+//     `user_frozen` op and waits for the applier to set the
+//     user-registry status flag.
 //   - User-not-found is reported in-band: success=false,
 //     error="User not found" (no NOT_FOUND status; mirrors
 //     grpc_server.py:3094-3096).
@@ -60,6 +54,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
@@ -111,22 +106,25 @@ func (s *Server) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb
 		newStatus = "frozen"
 	}
 
-	// Direct globalstore write (control-plane carve-out). Mirrors
-	// grpc_server.py:3093 — global_store.set_user_status(user_id,
-	// new_status). Returns true iff a row matched.
-	updated, err := s.global.SetUserStatus(ctx, userID, newStatus)
+	user, err := s.global.GetUser(ctx, userID)
 	if err != nil {
-		// Catch-all in-band failure mirroring grpc_server.py:3099-3104.
-		// Python writes the metric label as "error" on this arm; we
-		// match. Spec note: do NOT promote to codes.Internal — clients
-		// pin success/error on the response body, not status codes.
 		outcome = "error"
 		return &pb.FreezeUserResponse{Success: false, Error: err.Error()}, nil
 	}
-	if !updated {
+	if user == nil {
 		// In-band not-found. Same metric label ("ok") as Python — no
 		// abort fires. Mirrors grpc_server.py:3094-3096.
 		return &pb.FreezeUserResponse{Success: false, Error: "User not found"}, nil
+	}
+	_, _, err = s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":         string(apply.OpUserFrozen),
+		"user_id":    userID,
+		"status":     newStatus,
+		"updated_at": time.Now().Unix(),
+	})
+	if err != nil {
+		outcome = "error"
+		return nil, err
 	}
 	return &pb.FreezeUserResponse{Success: true, Status: newStatus}, nil
 }

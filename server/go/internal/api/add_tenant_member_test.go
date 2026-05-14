@@ -30,13 +30,14 @@ import (
 func TestAddTenantMember_AdminHappyPath(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Trusted admin identity attested by the (simulated) interceptor.
 	// Wire-claimed actor matches but, per the trusted-actor invariant,
@@ -91,7 +92,8 @@ func TestAddTenantMember_AdminHappyPath(t *testing.T) {
 func TestAddTenantMember_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
@@ -101,7 +103,7 @@ func TestAddTenantMember_NonAdminPermissionDenied(t *testing.T) {
 		t.Fatalf("seed AddTenantMember: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	// Privilege-escalation regression pin (commit fece3fb): bob's
 	// session is bound to user:bob, but the request claims
@@ -133,13 +135,14 @@ func TestAddTenantMember_NonAdminPermissionDenied(t *testing.T) {
 func TestAddTenantMember_DuplicateSoftFailure(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 	authedCtx := auth.WithIdentity(ctx, auth.Identity{
 		Method:  auth.MethodAPIKey,
 		Subject: "admin:root",

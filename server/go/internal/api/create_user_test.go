@@ -36,8 +36,8 @@ import (
 func TestCreateUser_HappyPath_AdminActor(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
-	srv := api.New(api.WithGlobalStore(gs))
+	f := newAdminWALFixture(t)
+	srv := f.srv
 
 	resp, err := srv.CreateUser(context.Background(), &pb.CreateUserRequest{
 		Actor:  "admin:root",
@@ -84,8 +84,8 @@ func TestCreateUser_HappyPath_AdminActor(t *testing.T) {
 func TestCreateUser_HappyPath_SystemActor(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
-	srv := api.New(api.WithGlobalStore(gs))
+	f := newAdminWALFixture(t)
+	srv := f.srv
 
 	resp, err := srv.CreateUser(context.Background(), &pb.CreateUserRequest{
 		Actor:  "system:bootstrap",
@@ -108,8 +108,8 @@ func TestCreateUser_HappyPath_SystemActor(t *testing.T) {
 func TestCreateUser_DuplicateUserID(t *testing.T) {
 	t.Parallel()
 
-	gs := newGlobalStore(t)
-	srv := api.New(api.WithGlobalStore(gs))
+	f := newAdminWALFixture(t)
+	srv := f.srv
 	ctx := context.Background()
 
 	if _, err := srv.CreateUser(ctx, &pb.CreateUserRequest{
@@ -132,6 +132,36 @@ func TestCreateUser_DuplicateUserID(t *testing.T) {
 	}
 	if got := errs.Code(err); got != codes.AlreadyExists {
 		t.Fatalf("CreateUser (duplicate): code = %v, want AlreadyExists (err=%v)", got, err)
+	}
+}
+
+func TestCreateUser_DuplicateEmail(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminWALFixture(t)
+	srv := f.srv
+	ctx := context.Background()
+
+	if _, err := srv.CreateUser(ctx, &pb.CreateUserRequest{
+		Actor:  "admin:root",
+		UserId: "alice",
+		Email:  "alice@example.com",
+		Name:   "Alice",
+	}); err != nil {
+		t.Fatalf("CreateUser (first): unexpected error: %v", err)
+	}
+
+	_, err := srv.CreateUser(ctx, &pb.CreateUserRequest{
+		Actor:  "admin:root",
+		UserId: "alice2",
+		Email:  "alice@example.com",
+		Name:   "Alice the Second",
+	})
+	if err == nil {
+		t.Fatalf("CreateUser (duplicate email): expected ALREADY_EXISTS, got nil")
+	}
+	if got := errs.Code(err); got != codes.AlreadyExists {
+		t.Fatalf("CreateUser (duplicate email): code = %v, want AlreadyExists (err=%v)", got, err)
 	}
 }
 

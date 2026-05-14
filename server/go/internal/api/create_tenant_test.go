@@ -48,8 +48,9 @@ func userCtx() context.Context {
 // side effects on globalstore (registry row + owner membership).
 func TestCreateTenant_AdminHappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
-	srv := api.New(api.WithGlobalStore(gs), api.WithRegion("eu-west-1"))
+	f := newAdminWALFixture(t, api.WithRegion("eu-west-1"))
+	gs := f.gs
+	srv := f.srv
 
 	resp, err := srv.CreateTenant(adminCtx(), &pb.CreateTenantRequest{
 		Actor:    "admin:root",
@@ -109,8 +110,8 @@ func TestCreateTenant_AdminHappyPath(t *testing.T) {
 // tests/python/integration/test_region_pinning.py:81-106.
 func TestCreateTenant_RegionDefaultsToServedRegion(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
-	srv := api.New(api.WithGlobalStore(gs), api.WithRegion("eu-west-1"))
+	f := newAdminWALFixture(t, api.WithRegion("eu-west-1"))
+	srv := f.srv
 
 	resp, err := srv.CreateTenant(adminCtx(), &pb.CreateTenantRequest{
 		Actor:    "admin:root",
@@ -163,8 +164,8 @@ func TestCreateTenant_NonAdminPermissionDenied(t *testing.T) {
 // port.)
 func TestCreateTenant_DuplicateAlreadyExists(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
-	srv := api.New(api.WithGlobalStore(gs), api.WithRegion("us-east-1"))
+	f := newAdminWALFixture(t, api.WithRegion("us-east-1"))
+	srv := f.srv
 
 	if _, err := srv.CreateTenant(adminCtx(), &pb.CreateTenantRequest{
 		Actor:    "admin:root",

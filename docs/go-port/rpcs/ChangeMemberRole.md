@@ -68,14 +68,9 @@ In-order narration of the Python handler:
 7. Map result to `ChangeMemberRoleResponse{success, error}` and emit
    `record_grpc_request("ChangeMemberRole", "ok"|"error", elapsed)`.
 
-**WAL append: NOT performed.** The handler writes directly to
-`global_store`'s SQLite file. This is in tension with CLAUDE.md invariant
-#1 ("All writes go through the WAL"); see "Open questions / risks". The
-Go port MUST decide between (a) preserving exact parity (direct write,
-no WAL) or (b) introducing a `CHANGE_MEMBER_ROLE` op on
-`TransactionEvent.ops` and routing through the global-store applier.
-Default for v1 port: **preserve parity (direct write)** to avoid
-divergence from the contract tests; flag for a follow-up issue.
+**WAL append:** the Go handler emits global `member_role_changed` and
+waits for the applier to update `tenant_members`. The handler does not
+write globalstore directly.
 
 **ACL recompute: NOT performed.** Roles in `tenant_members` do not feed
 the per-tenant `acl` table; permission grants are independent. No cache

@@ -39,13 +39,14 @@ const secondsPerDay = int64(86400)
 // 7-day grace. Mirrors test_gdpr_engine.py:625-633.
 func TestDeleteUser_Self_HappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.DeleteUser(withTrustedUser(ctx, "alice"), &pb.DeleteUserRequest{
 		Actor:     "user:alice",
@@ -88,13 +89,14 @@ func TestDeleteUser_Self_HappyPath(t *testing.T) {
 // Default grace (grace_days=0) normalizes to 30 days.
 func TestDeleteUser_Admin_HappyPath(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "bob", "bob@example.com", "Bob"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	resp, err := srv.DeleteUser(withTrustedUser(ctx, "admin:root"), &pb.DeleteUserRequest{
 		Actor:  "admin:root",
@@ -130,7 +132,8 @@ func TestDeleteUser_Admin_HappyPath(t *testing.T) {
 // at queue time); see DeleteUser.md "Side effects" §4.
 func TestDeleteUser_LegalHold_Blocks(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
@@ -183,13 +186,14 @@ func TestDeleteUser_LegalHold_Blocks(t *testing.T) {
 // test_gdpr_engine.py:637-643.
 func TestDeleteUser_Idempotent_ReturnsExisting(t *testing.T) {
 	t.Parallel()
-	gs := newGlobalStore(t)
+	f := newAdminWALFixture(t)
+	gs := f.gs
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
 
-	srv := api.New(api.WithGlobalStore(gs))
+	srv := f.srv
 
 	first, err := srv.DeleteUser(withTrustedUser(ctx, "alice"), &pb.DeleteUserRequest{
 		Actor:     "user:alice",

@@ -43,18 +43,12 @@ Proto: `proto/entdb/v1/entdb.proto:112` (rpc), `:802-814` (messages),
 - **Rate limit / quota.** Standard interceptors apply (admin actors typically
   bypass per-tenant limiters; not unique to this RPC).
 
-## Side effects (global_store write — NOT WAL)
+## Side effects (global WAL write)
 
-**Single SQLite write to `global_store.user_registry`. No WAL append.**
-
-This is a deliberate exception to the "all writes go through the WAL"
-invariant in CLAUDE.md §1: the user registry lives in `global_store`
-(cross-tenant control plane), not in any per-tenant SQLite, and is not
-part of the event-sourced data plane. The Python handler calls
-`global_store.create_user(...)` directly (`grpc_server.py:2127-2131`),
-which executes `INSERT INTO user_registry ...` synchronously inside
-`_run_sync` (`global_store.py:352-369`). Confirm with EPIC #407 owner
-before changing this — see Open questions.
+The Go handler appends a global-scope `user_created` WAL event keyed by
+`__global__` and waits for the applier to materialize the
+`global_store.user_registry` row. The handler does not write globalstore
+directly.
 
 In-order narration:
 
@@ -66,22 +60,15 @@ In-order narration:
    `__system__` → abort `PERMISSION_DENIED "CreateUser requires admin or system actor"`.
 5. Validate `user_id`, `email`, `name` non-empty (in that order) → abort
    `INVALID_ARGUMENT "<field> is required"`.
-6. Call `globalStore.CreateUser(ctx, user_id, email, name)` →
-   `INSERT INTO user_registry(user_id,email,name,status,created_at,updated_at)
-   VALUES(?,?,?, 'active', now, now)`.
-7. On `UNIQUE constraint` error → return `CreateUserResponse{success:false,
-   error:"User already exists: <msg>"}` with gRPC code `OK`. Record metric
-   `("CreateUser","error",elapsed)`.
-8. On any other error → log + return `{success:false, error:<msg>}` with
-   gRPC code `OK`. Record `("CreateUser","error",…)`. (Python preserves
-   this; Go port should keep it for contract parity but file a follow-up
-   to surface `INTERNAL` instead — see risks.)
+6. Preflight duplicate `user_id` via `globalStore.GetUser`.
+7. Append `op="user_created"` carrying the full row state
+   (`user_id`, `email`, `name`, `status`, `created_at`, `updated_at`).
+8. Wait for the applier to apply that offset via
+   `globalstore.ApplyUserCreated`.
 9. On success → record `("CreateUser","ok",…)` and return
    `{success:true, user: UserInfo{...}}`.
 
-No WAL append. No `canonical_store` touch. No tenant-scoped SQLite.
-No quota charge. No audit-export hook (S3 Object Lock covers the WAL
-only; user-registry mutations aren't on the WAL — see risks).
+No `canonical_store` touch. No tenant-scoped SQLite. No quota charge.
 
 ## Error contract (uniqueness + validation)
 
@@ -90,28 +77,24 @@ only; user-registry mutations aren't on the WAL — see risks).
 | `UNIMPLEMENTED` | `global_store` not configured. | `grpc_server.py:2107-2111` |
 | `INVALID_ARGUMENT` | Empty `actor`, `user_id`, `email`, or `name`. | `grpc_server.py:2113-2125`; pinned `test_user_registry.py:171-187`, `test_grpc_contract.py:443-446` |
 | `PERMISSION_DENIED` | Trusted actor is not `system:*` / `admin:*` / `__system__`. | `grpc_server.py:2115-2119`; pinned `test_user_registry.py:126-145`, `test_privilege_escalation.py:321-341`, `test_grpc_contract.py:436-441` |
-| `OK` + `success=false, error="User already exists: …"` | Duplicate `user_id` (PK) or `email` (UNIQUE). Detected by string-match on `"UNIQUE constraint"` or exception type name `"IntegrityError"`. | `grpc_server.py:2138-2144`; pinned `test_user_registry.py:147-169` |
-| `OK` + `success=false, error=<msg>` | Any other store exception. Logged at `ERROR`. | `grpc_server.py:2145-2147` |
+| `ALREADY_EXISTS` | Duplicate `user_id` preflight collision. | Go port hardening for WAL-first path |
+| `INTERNAL` / `DEADLINE_EXCEEDED` | WAL append or wait-applied failure. | Go port WAL-first path |
 
-Go port detail: do NOT translate the duplicate-key path to
-`ALREADY_EXISTS`. The contract test asserts `success=false` on a
-non-aborted call (`test_user_registry.py:168`); changing the code is a
-wire break. Detect duplicates via the SQLite driver sentinel (e.g.
-`sqlite3.ErrConstraintUnique` from `modernc.org/sqlite/lib`) instead
-of string-matching, but keep the response shape.
+Go port detail: the duplicate-key path is promoted to `ALREADY_EXISTS`
+because the handler must decide before appending a durable WAL event.
 
 ## Shared Go package deps
 
 - `pb` (`server/go/internal/pb/entdbv1`) — generated `CreateUserRequest`, `CreateUserResponse`, `UserInfo`.
-- `globalstore` (`server/go/internal/globalstore`) — `CreateUser(ctx, userID, email, name string) (User, error)`. Mirrors `global_store.py:336-369`. Must surface a typed `ErrUserAlreadyExists` so the handler can map without string-matching.
+- `globalstore` (`server/go/internal/globalstore`) — duplicate precheck via
+  `GetUser`; applier write via `ApplyUserCreated`.
+- `wal` / `apply` — global `user_created` op and wait-applied path.
 - `auth` (`server/go/internal/auth`) — `TrustedActorFromContext(ctx) (string, bool)` mirroring `auth_interceptor.py:92`. Required.
 - `metrics` — `RecordGRPCRequest("CreateUser", status, dur)`.
 - `clock` — injectable `Now() time.Time` for deterministic tests; `_now()` in Python is `int(time.time())` (`global_store.py`).
 
-NOT used and MUST NOT be imported: `wal`, `apply`, `canonicalstore`,
-`acl`, `schema`, `quota`, `crypto`, `audit`. Importing `wal` here is the
-canonical signal that someone misread CLAUDE.md §1 — user registry is
-control-plane state, not event-sourced.
+NOT used and MUST NOT be imported: `canonicalstore`, `acl`, `schema`,
+`quota`, `crypto`, `audit`.
 
 ## Other-RPC deps
 

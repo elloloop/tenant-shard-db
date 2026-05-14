@@ -35,9 +35,10 @@
 //     unix-second timestamps the queue row carries. The state machine is
 //     scheduled (=='pending') -> executing -> completed. The handler only
 //     ever returns the scheduled state; the worker advances the row.
-//   - User status flipped to "pending_deletion" via SetUserStatus AFTER
-//     the queue insert. A failure here is non-fatal — the queue row is
-//     the source of truth (parity with grpc_server.py:2967).
+//   - On success, the handler appends a global `user_deletion_scheduled`
+//     WAL op and waits for the applier to insert the deletion_queue row
+//     and flip user_registry.status to "pending_deletion" in one
+//     globalstore transaction.
 //
 // Legal-hold gate (NEW behavior, behind a flag):
 //
@@ -50,12 +51,10 @@
 // the gate disabled; production deployments MUST flip this on once a
 // contract test has pinned the new behavior.
 //
-// NO WAL append. The user registry and deletion_queue are global_store
-// control-plane state, not per-tenant event-sourced data — see
-// CLAUDE.md "Architecture Invariants" #4 and the spec's "Side effects"
-// section. The actual erasure events emitted by the GDPR worker
-// (anonymize_user, delete_tenant, remove_membership) DO go through
-// per-tenant WALs; the DeleteUser handler itself never appends.
+// DeleteUser is a global WAL mutation. The actual erasure events emitted
+// by the GDPR worker (anonymize_user, delete_tenant, remove_membership)
+// still go through per-tenant WALs; this handler schedules the global
+// queue/status state through the global WAL scope.
 
 package api
 
@@ -66,6 +65,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
@@ -84,7 +84,7 @@ const defaultDeleteUserGraceDays = 30
 // stateless apart from the globalstore handle: it gates on
 // trusted-actor + self-or-admin, looks up an existing queue row to
 // preserve idempotency, optionally enforces a legal-hold precondition,
-// then queues the deletion and flips the user's status.
+// then appends the global queue/status mutation.
 func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb.DeleteUserResponse, error) {
 	start := time.Now()
 	outcome := "ok"
@@ -174,23 +174,24 @@ func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb
 		grace = defaultDeleteUserGraceDays
 	}
 
-	entry, qErr := s.global.QueueDeletion(ctx, userID, grace)
-	if qErr != nil {
-		// Catch-all in-band failure mirroring grpc_server.py:2976-2981.
+	requestedAt := time.Now().Unix()
+	executeAt := requestedAt + int64(grace)*86400
+	_, _, err = s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{
+		"op":           string(apply.OpUserDeletionScheduled),
+		"user_id":      userID,
+		"requested_at": requestedAt,
+		"execute_at":   executeAt,
+		"status":       "pending",
+	})
+	if err != nil {
 		outcome = "error"
-		return &pb.DeleteUserResponse{Success: false, Error: qErr.Error()}, nil
+		return nil, err
 	}
-
-	// Flip user status to "pending_deletion". Failure here is non-fatal
-	// — the queue row is the source of truth. We deliberately ignore
-	// the (bool, error) return for parity with the Python handler which
-	// also doesn't gate on it (grpc_server.py:2967).
-	_, _ = s.global.SetUserStatus(ctx, userID, "pending_deletion")
 
 	return &pb.DeleteUserResponse{
 		Success:     true,
-		RequestedAt: entry.RequestedAt,
-		ExecuteAt:   entry.ExecuteAt,
+		RequestedAt: requestedAt,
+		ExecuteAt:   executeAt,
 		Status:      "pending",
 	}, nil
 }

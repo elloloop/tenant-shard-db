@@ -83,13 +83,16 @@ func newTransferFixture(t *testing.T) *transferFixture {
 		api.WithWALProducer(w),
 	)
 
-	return &transferFixture{
+	f := &transferFixture{
 		srv:      srv,
 		gs:       gs,
 		cs:       cs,
 		w:        w,
 		tenantID: "acme",
 	}
+	f.startApplier(t)
+	t.Cleanup(func() { f.stopApplier(t) })
+	return f
 }
 
 // startApplier launches the apply.Applier in a background goroutine so
@@ -97,8 +100,12 @@ func newTransferFixture(t *testing.T) *transferFixture {
 // the test must invoke before assertions on terminal state.
 func (f *transferFixture) startApplier(t *testing.T) {
 	t.Helper()
+	if f.stopApply != nil {
+		return
+	}
 	a, err := apply.New(apply.Options{
 		Store:    f.cs,
+		Global:   f.gs,
 		Consumer: f.w,
 		Topic:    "entdb-wal",
 		GroupID:  "test-applier",
@@ -118,11 +125,15 @@ func (f *transferFixture) stopApplier(t *testing.T) {
 	if f.stopApply == nil {
 		return
 	}
-	f.stopApply()
+	cancel := f.stopApply
+	done := f.doneApply
+	f.stopApply = nil
+	f.doneApply = nil
+	cancel()
+	_ = f.w.Close(context.Background())
 	select {
-	case <-f.doneApply:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("applier did not stop")
+	case <-done:
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 
@@ -181,6 +192,22 @@ func (f *transferFixture) drainWAL(t *testing.T) []wal.Event {
 	return out
 }
 
+func transferContentEvents(events []wal.Event) []wal.Event {
+	out := []wal.Event{}
+	for _, ev := range events {
+		if ev.Scope == wal.ScopeGlobal {
+			continue
+		}
+		if len(ev.Ops) == 0 {
+			continue
+		}
+		if got, _ := ev.Ops[0]["op"].(string); got == "admin_transfer_content" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
 // TestTransferUserContent_AdminHappySmallBatch: the canonical
 // happy-path. An owner (alice) transfers a handful of nodes to a new
 // user (bob). The handler must emit exactly one WAL event with op
@@ -209,8 +236,9 @@ func TestTransferUserContent_AdminHappySmallBatch(t *testing.T) {
 		t.Fatalf("Transferred = %d, want %d", got, want)
 	}
 
-	// WAL trace: exactly one event, exactly one op, op == admin_transfer_content.
-	events := f.drainWAL(t)
+	// WAL trace: exactly one event with the tenant transfer op plus
+	// the paired global membership op.
+	events := transferContentEvents(f.drainWAL(t))
 	if len(events) != 1 {
 		t.Fatalf("WAL events: got %d, want 1", len(events))
 	}
@@ -224,8 +252,8 @@ func TestTransferUserContent_AdminHappySmallBatch(t *testing.T) {
 	if !strings.HasPrefix(ev.IdempotencyKey, "admin-transfer-") {
 		t.Fatalf("idempotency_key = %q, want prefix %q", ev.IdempotencyKey, "admin-transfer-")
 	}
-	if len(ev.Ops) != 1 {
-		t.Fatalf("ops: got %d, want 1", len(ev.Ops))
+	if len(ev.Ops) != 2 {
+		t.Fatalf("ops: got %d, want 2", len(ev.Ops))
 	}
 	if got, _ := ev.Ops[0]["op"].(string); got != "admin_transfer_content" {
 		t.Fatalf("op = %q, want admin_transfer_content", got)
@@ -235,6 +263,12 @@ func TestTransferUserContent_AdminHappySmallBatch(t *testing.T) {
 	}
 	if got, _ := ev.Ops[0]["to_user"].(string); got != "user:bob" {
 		t.Fatalf("to_user = %q, want user:bob", got)
+	}
+	if got, _ := ev.Ops[1]["op"].(string); got != "access_transferred" {
+		t.Fatalf("paired op = %q, want access_transferred", got)
+	}
+	if got, _ := ev.Ops[1]["to_user"].(string); got != "user:bob" {
+		t.Fatalf("paired to_user = %q, want user:bob", got)
 	}
 
 	// Membership upsert is visible in the global store.
@@ -281,7 +315,7 @@ func TestTransferUserContent_AdminLargeBatchChunked(t *testing.T) {
 		t.Fatalf("Transferred = %d, want %d", got, want)
 	}
 
-	events := f.drainWAL(t)
+	events := transferContentEvents(f.drainWAL(t))
 	if len(events) < 2 {
 		t.Fatalf("WAL events: got %d, want >= 2 (chunked)", len(events))
 	}
@@ -391,7 +425,7 @@ func TestTransferUserContent_NonAdminPermissionDenied(t *testing.T) {
 	}
 
 	// No WAL events: the auth check must fail BEFORE the append.
-	events := f.drainWAL(t)
+	events := transferContentEvents(f.drainWAL(t))
 	if len(events) != 0 {
 		t.Fatalf("WAL events on denied call: got %d, want 0; first=%s",
 			len(events), mustJSON(t, events[0]))

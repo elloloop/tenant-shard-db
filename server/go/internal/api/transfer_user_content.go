@@ -30,19 +30,18 @@
 //     the wire actor must all be non-empty BEFORE the auth substitution
 //     (mirrors :2701-2706 — non-empty `actor` quirk preserved).
 //
-//   - Side effects, in order:
-//       1. global_store.TransferUserContent — idempotent membership
-//          upsert for `to_user` with role 'member'. Direct write; this
-//          is the documented control-plane carve-out.
-//       2. WAL append of `admin_transfer_content`. Single event for
-//          small batches; chunked into multiple events for large
-//          owners (CHUNK_SIZE) so a single SQLite write transaction
-//          stays bounded — addresses the spec "Open question" §2
-//          (large user → write-lock spike).
-//       3. Pre-apply count via store.CountOwnedNodes — best-effort,
-//          errors swallowed (returns 0). This count reflects nodes
-//          *still* owned at the time of the call (the Applier
-//          materialises the rename asynchronously). Pinned semantics.
+//   - Side effects: each tenant WAL event carries both
+//     `admin_transfer_content` and the global `access_transferred`
+//     membership upsert, so the applier either rolls back the tenant
+//     transaction before commit or converges on replay if the global
+//     write already materialized. Small batches emit one event; large
+//     owners are chunked (CHUNK_SIZE) so a single SQLite write
+//     transaction stays bounded — addresses the spec "Open question"
+//     §2 (large user → write-lock spike).
+//
+//   - Pre-apply count via store.CountOwnedNodes. This count reflects
+//     nodes still owned at the time of the call, before the WAL event
+//     materializes.
 //
 //   - Visibility refresh. Performed by the Applier handler
 //     (apply/ops_admin_transfer_content.go). The handler does NOT
@@ -51,10 +50,10 @@
 //   - Mailbox / notifications cascade. Out of scope. Existing per-node
 //     ACL grants survive — only owner_actor changes.
 //
-//   - On global-store failure or WAL-append failure, the handler
-//     returns gRPC OK with `success=false`, `error=<msg>` (matches
-//     Python's :2740-2745 catch-all). gRPC-level codes are reserved
-//     for tenant gate, validation, and auth.
+//   - WAL encode/append failures return gRPC OK with `success=false`,
+//     `error=<msg>` (matches Python's :2740-2745 catch-all). Missing
+//     structural dependencies and wait-applied failures use gRPC
+//     status errors.
 
 package api
 
@@ -66,6 +65,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -164,20 +164,7 @@ func (s *Server) TransferUserContent(
 		}
 	}
 
-	// Side effect 1: idempotent global-store membership upsert for
-	// to_user. Direct write — control-plane carve-out (spec §"Side
-	// effects" #1, admin_handlers.py:7-11).
-	if _, err := s.global.TransferUserContent(
-		ctx, req.GetTenantId(), req.GetFromUser(), req.GetToUser(),
-	); err != nil {
-		statusLabel = "error"
-		return &pb.TransferUserContentResponse{
-			Success: false,
-			Error:   err.Error(),
-		}, nil
-	}
-
-	// Side effect 2: WAL append. Source of truth for the rename. The
+	// Tenant WAL append. Source of truth for the ownership rename. The
 	// op shape mirrors apply/ops_admin_transfer_content.go (W1.10).
 	//
 	// Chunking: when the producer is wired AND a canonical store is
@@ -194,11 +181,24 @@ func (s *Server) TransferUserContent(
 			Error:   "WAL producer not configured",
 		}, nil
 	}
+	if s.store == nil {
+		statusLabel = "error"
+		return nil, errs.Errorf(codes.Unimplemented,
+			"TransferUserContent: canonical store not configured")
+	}
+
+	var transferred int32
+	if n, err := s.store.CountOwnedNodes(
+		ctx, req.GetTenantId(), req.GetFromUser(),
+	); err == nil {
+		transferred = n
+	}
 
 	chunks := s.transferUserContentChunks(ctx, req.GetTenantId(), req.GetFromUser())
+	joinedAt := time.Now().Unix()
 	for _, chunk := range chunks {
 		op := map[string]any{
-			"op":        "admin_transfer_content",
+			"op":        string(apply.OpAdminTransferContent),
 			"from_user": req.GetFromUser(),
 			"to_user":   req.GetToUser(),
 		}
@@ -216,7 +216,16 @@ func (s *Server) TransferUserContent(
 			Actor:          trusted.String(),
 			IdempotencyKey: "admin-transfer-" + randHex16(),
 			TsMs:           time.Now().UnixMilli(),
-			Ops:            []map[string]any{op},
+			Ops: []map[string]any{
+				op,
+				{
+					"op":        string(apply.OpAccessTransferred),
+					"tenant_id": req.GetTenantId(),
+					"from_user": req.GetFromUser(),
+					"to_user":   req.GetToUser(),
+					"joined_at": joinedAt,
+				},
+			},
 		}
 		payload, err := event.Encode()
 		if err != nil {
@@ -229,25 +238,19 @@ func (s *Server) TransferUserContent(
 		headers := map[string][]byte{
 			wal.HeaderIdempotencyKey: []byte(event.IdempotencyKey),
 		}
-		if _, err := s.producer.Append(
+		pos, err := s.producer.Append(
 			ctx, transferUserContentTopic, req.GetTenantId(), payload, headers,
-		); err != nil {
+		)
+		if err != nil {
 			statusLabel = "error"
 			return &pb.TransferUserContentResponse{
 				Success: false,
 				Error:   err.Error(),
 			}, nil
 		}
-	}
-
-	// Side effect 3: best-effort pre-apply count. Errors swallowed —
-	// matches grpc_server.py:2735-2736.
-	var transferred int32
-	if s.store != nil {
-		if n, err := s.store.CountOwnedNodes(
-			ctx, req.GetTenantId(), req.GetFromUser(),
-		); err == nil {
-			transferred = n
+		if err := s.waitForAdminApplied(ctx, req.GetTenantId(), pos.Offset, event.IdempotencyKey, "transfer user content event"); err != nil {
+			statusLabel = "error"
+			return nil, err
 		}
 	}
 

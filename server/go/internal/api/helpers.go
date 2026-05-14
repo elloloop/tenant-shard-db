@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -36,6 +37,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
 // userToProto maps a globalstore.User row to its proto wire form,
@@ -418,4 +420,86 @@ func newIdempotencyKey() (string, error) {
 		return "", fmt.Errorf("idempotency key: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
+}
+
+const adminGlobalWaitAppliedTimeout = 30 * time.Second
+
+type adminApplyFailure struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+// appendGlobalAdminOp appends one global-scope admin op and waits for
+// the applier to materialize it into globalstore. Admin RPCs default to
+// wait-applied semantics because their pre-WAL contract returned only
+// after the global SQLite write committed.
+func (s *Server) appendGlobalAdminOp(ctx context.Context, actor string, op map[string]any) (wal.StreamPos, string, error) {
+	if s.producer == nil {
+		return wal.StreamPos{}, "", errs.Errorf(codes.Unimplemented, "WAL producer not configured")
+	}
+	if s.store == nil {
+		return wal.StreamPos{}, "", errs.Errorf(codes.Unimplemented, "Canonical store not configured")
+	}
+	idem, err := newIdempotencyKey()
+	if err != nil {
+		return wal.StreamPos{}, "", errs.Errorf(codes.Internal, "%v", err)
+	}
+	ev := wal.Event{
+		TenantID:       wal.GlobalTenantID,
+		Scope:          wal.ScopeGlobal,
+		Actor:          actor,
+		IdempotencyKey: idem,
+		TsMs:           time.Now().UnixMilli(),
+		Ops:            []map[string]any{op},
+	}
+	value, err := ev.Encode()
+	if err != nil {
+		return wal.StreamPos{}, "", errs.Errorf(codes.Internal, "encode global admin event: %v", err)
+	}
+	headers := map[string][]byte{
+		wal.HeaderIdempotencyKey: []byte(idem),
+	}
+	pos, err := s.producer.Append(ctx, s.walTopic(), wal.GlobalTenantID, value, headers)
+	if err != nil {
+		return wal.StreamPos{}, "", errs.Errorf(codes.Internal, "append global admin event: %v", err)
+	}
+
+	if err := s.waitForAdminApplied(ctx, wal.GlobalTenantID, pos.Offset, idem, "global admin event"); err != nil {
+		return pos, idem, err
+	}
+	return pos, idem, nil
+}
+
+func (s *Server) waitForAdminApplied(ctx context.Context, tenantID string, offset int64, idem, label string) error {
+	waitCtx, cancel := context.WithTimeout(ctx, adminGlobalWaitAppliedTimeout)
+	defer cancel()
+	if err := s.store.WaitForOffset(waitCtx, tenantID, offset); err != nil {
+		return errs.Errorf(codes.DeadlineExceeded, "wait %s: %v", label, err)
+	}
+	rec := waitForIdempotencyRecord(ctx, s.store, tenantID, idem, adminGlobalWaitAppliedTimeout)
+	if !rec.Present {
+		return errs.Errorf(codes.DeadlineExceeded, "wait %s: idempotency record not visible", label)
+	}
+	if rec.Status == store.IdempotencyStatusFailedPrecondition {
+		return adminApplyFailureError(label, rec.FailureJSON)
+	}
+	return nil
+}
+
+func adminApplyFailureError(label, failureJSON string) error {
+	failure := adminApplyFailure{
+		Code:    "FAILED_PRECONDITION",
+		Message: "deterministic apply failure",
+	}
+	if failureJSON != "" {
+		_ = json.Unmarshal([]byte(failureJSON), &failure)
+	}
+	if failure.Message == "" {
+		failure.Message = "deterministic apply failure"
+	}
+	code := codes.FailedPrecondition
+	if failure.Code == "ALREADY_EXISTS" {
+		code = codes.AlreadyExists
+	}
+	return errs.Errorf(code, "%s: %s", label, failure.Message)
 }

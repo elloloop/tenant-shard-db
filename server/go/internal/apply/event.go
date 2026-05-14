@@ -14,8 +14,8 @@
 //     set_legal_hold.
 //   - admin_revoke_access broadened to also delete node_access and
 //     group_users.
-//   - add_tenant_member / remove_tenant_member / change_member_role added
-//     so global-store membership writes can be replayed.
+//   - global admin ops added so control-plane globalstore writes can be
+//     replayed from the WAL.
 //
 // Concurrency model: a single consumer goroutine drives Run; per-tenant
 // SQLite isolation comes from the store package's per-tenant write
@@ -23,9 +23,7 @@
 // a non-nil error and does not advance the WAL offset.
 package apply
 
-import (
-	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
-)
+import "github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 
 // Event is the in-Go transaction event the applier consumes from the
 // WAL. It is a re-export of wal.Event so callers (and tests) don't need
@@ -62,12 +60,28 @@ const (
 	OpRemoveGroupMember OpType = "remove_group_member"
 	OpSetLegalHold      OpType = "set_legal_hold"
 
-	// Global-store membership ops. globalstore is its own durable
-	// substrate (carve-out from CLAUDE.md invariant #1), but recording
-	// these in the WAL keeps audit history reconstructible.
+	// Legacy tenant-scoped membership op names retained for replay of
+	// older test fixtures; issue #510 uses the global op names below.
 	OpAddTenantMember    OpType = "add_tenant_member"
 	OpRemoveTenantMember OpType = "remove_tenant_member"
 	OpChangeMemberRole   OpType = "change_member_role"
+
+	// Global admin ops. These are control-plane WAL records scoped to
+	// wal.ScopeGlobal and keyed by wal.GlobalTenantID. They materialize
+	// globalstore rows without touching a tenant SQLite batch.
+	OpTenantCreated         OpType = "tenant_created"
+	OpUserCreated           OpType = "user_created"
+	OpMemberAdded           OpType = "member_added"
+	OpMemberRemoved         OpType = "member_removed"
+	OpMemberRoleChanged     OpType = "member_role_changed"
+	OpTenantArchived        OpType = "tenant_archived"
+	OpUserUpdated           OpType = "user_updated"
+	OpLegalHoldSet          OpType = "legal_hold_set"
+	OpUserDeletionScheduled OpType = "user_deletion_scheduled"
+	OpUserDeletionCanceled  OpType = "user_deletion_canceled"
+	OpUserFrozen            OpType = "user_frozen"
+	OpAccessTransferred     OpType = "access_transferred"
+	OpAccessRevoked         OpType = "access_revoked"
 )
 
 // opTypeOf extracts the "op" field as a typed OpType, returning an
