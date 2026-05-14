@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Decided:** 2026-05-14
 **Tags:** audit, durability, compliance, wal
-**Implementation:** _this commit_ (design); #510, #511 (code)
+**Implementation:** _this commit_ (design); #510 (admin-plane WAL routing — closed by d8d0afd); #511 (S3 Object Lock archive — open); #513 (residual shared_index cascade — open)
 
 ## Decision
 
@@ -42,21 +42,21 @@ even root). The Go port deliberately omitted the SQLite table
 (verified: `server/go/internal/store/schema.go:133` cites this
 invariant).
 
-Concurrently, two implementation gaps exist:
+Implementation status:
 
-- **Admin-op carve-out.** 13 admin RPCs (CreateTenant, CreateUser,
-  AddTenantMember, ...) write directly to `globalstore` SQLite
-  without appending to the WAL. They are therefore not in the audit
-  log today. Tracked as EPIC #510.
-- **S3 archive not ported.** Python had `audit/s3_lock.py` and an
-  archiver goroutine; neither has a Go counterpart. The WAL today
-  lives only in the Kafka/Redpanda topic, which is durable but not
-  tamper-evident against a sufficiently-privileged operator. Tracked
-  as EPIC #511.
+- **Admin-plane WAL routing — closed (#510, commit `d8d0afd`).**
+  The 13 admin RPCs (CreateTenant, CreateUser, AddTenantMember, ...)
+  now flow through the WAL via dedicated op types; the applier is
+  the sole writer of `globalstore`. One residual cascade
+  (`RemoveGroupMember` shared_index cleanup) remains and is tracked
+  in #513.
 
-This ADR locks the **design** — single audit log, WAL + S3 OL — even
-though the two implementation pieces ship in follow-up EPICs. The
-direction is correct; future work converges to it.
+- **S3 Object Lock archive — open (EPIC #511).** Python had
+  `audit/s3_lock.py` and an archiver goroutine; neither has a Go
+  counterpart yet. The WAL today lives only in the Kafka/Redpanda
+  topic, which is durable but not tamper-evident against a
+  sufficiently-privileged operator. The tamper-evidence half of
+  the design is design-locked; implementation is queued.
 
 ## Alternatives considered
 
@@ -139,8 +139,10 @@ direction is correct; future work converges to it.
 
 - An admin RPC slips a direct globalstore write past code review.
   Detected by: grep for `globalstore.{CreateTenant,CreateUser,Add*}`
-  call sites outside `server/go/internal/apply/`. Fixed by EPIC #510
-  closing the carve-out at the source.
+  call sites outside `server/go/internal/apply/`. EPIC #510 already
+  closed the original 13-RPC carve-out; the grep currently has one
+  expected hit (`RemoveGroupMember` cascade, #513). Any other hit is
+  a regression.
 - The S3 archiver lags or crashes, leaving a window where events
   exist in Kafka but not in tamper-evident storage. Detected by:
   `entdb_archive_lag_events` metric. Mitigated by: Kafka retention
@@ -161,6 +163,9 @@ direction is correct; future work converges to it.
 - `server/go/internal/store/schema.go:133-135` — DDL omits
   `audit_log` table, citing this invariant.
 - EPIC #510 — Close admin-op WAL carve-out (correctness half).
+  Closed by commit `d8d0afd`.
+- Issue #513 — Residual `RemoveGroupMember` shared_index cascade
+  follow-up to #510.
 - EPIC #511 — S3 Object Lock archive of WAL (tamper-evidence half).
 - Files this commit removes content from:
   - `docs/adr/001-storage-architecture.md` — removed `audit_log` row

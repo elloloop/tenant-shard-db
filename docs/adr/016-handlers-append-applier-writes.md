@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Decided:** 2026-05-14
 **Tags:** event-sourcing, wal, write-path, durability
-**Implementation:** _this commit_ (design); #510 (closes the residual admin-op carve-out)
+**Implementation:** _this commit_ (design); #510 (admin-op carve-out — closed by d8d0afd); #513 (residual shared_index cleanup, open)
 
 ## Decision
 
@@ -59,31 +59,31 @@ The event-sourcing architecture is described in ADR-005 at a
 high level. ADR-016 is the executable rule that makes that
 architecture actually work.
 
-### Implementation status (and known gap)
+### Implementation status
+
+The rule holds across all 44 RPCs in `entdb.v1.EntDBService`:
 
 - **Tenant-data RPCs** (`ExecuteAtomic`, `ShareNode`, `RevokeAccess`,
   `TransferOwnership`, `AddGroupMember`, `RemoveGroupMember`,
-  `SetLegalHold` on nodes, GDPR ops on nodes): correctly append to
-  the WAL. The applier writes SQLite. The rule holds.
+  `SetLegalHold` on nodes, GDPR ops on nodes): append to the WAL;
+  the applier writes per-tenant SQLite.
 
 - **Admin RPCs** (`CreateTenant`, `CreateUser`, `AddTenantMember`,
   `RemoveTenantMember`, `ChangeMemberRole`, `ArchiveTenant`,
   `UpdateUser`, `SetLegalHold` on tenants, `DeleteUser`,
   `CancelUserDeletion`, `FreezeUser`, `TransferUserContent`,
-  `RevokeAllUserAccess`): **today these write directly to
-  globalstore SQLite without a WAL event.** This is a deliberate
-  carve-out inherited from the Python source, preserved during
-  the Phase 4D port. It contradicts this ADR.
+  `RevokeAllUserAccess`): also through WAL. EPIC #510 (commit
+  `d8d0afd`) closed the inherited Python-era carve-out: added new
+  op types (`TenantCreated`, `UserCreated`, `MemberAdded`, ...),
+  routed every admin handler through `wal.Append`, made the applier
+  the sole writer of `globalstore`.
 
-  EPIC #510 closes the carve-out: it adds new WAL op types
-  (`TenantCreated`, `UserCreated`, `MemberAdded`, ...), routes
-  every admin handler through `wal.Append`, and makes the applier
-  the sole writer of `globalstore`. After #510 lands, this ADR
-  matches reality with no edits needed.
-
-  Until #510 ships, the carve-out is documented as a known
-  exception. New admin RPCs MUST follow the rule (route through
-  WAL); the only exceptions are the existing 13 enumerated above.
+One known residual write path remains, tracked in **issue #513**:
+`RemoveGroupMember` does a best-effort `shared_index` cascade
+directly via `s.global.RemoveShared` after the main WAL append.
+This is a side-effect cleanup (not the primary mutation, which is
+WAL-driven) but it still violates the rule strictly. The fix is the
+same recipe #510 used — add a cascade op, route through the applier.
 
 ## Alternatives considered
 
@@ -165,11 +165,11 @@ architecture actually work.
 - A new handler writes SQLite directly. Detected by code review
   + an audit:
   ```sh
-  git grep -nE 'store\.(Begin|Insert|Update|Delete)|globalstore\.(Create|Update|Delete|Add|Remove|Change)' server/go/internal/api/
+  grep -nE 's\.global\.(Create|Update|Add|Remove|Change|Archive|Set|Delete|Freeze|Transfer|Revoke)' \
+    server/go/internal/api/*.go | grep -v "_test.go\|Get"
   ```
-  Should only return matches inside `server/go/internal/apply/`
-  (when EPIC #510 closes), or inside the 13 enumerated admin
-  handlers (until #510 closes).
+  Currently returns exactly one expected hit (the `RemoveGroupMember`
+  cascade tracked in #513). Any other hit is a regression.
 
 - Applier writes from outside its consumer goroutine (breaks
   ordering). Detected by code review; the applier's `Apply`
@@ -181,8 +181,9 @@ architecture actually work.
   fresh data dir and assert state matches.
 
 - The carve-out widens (new admin RPC added with direct-write
-  pattern). Detected by the audit grep above. Mitigated by
-  closing #510 so the pattern goes away entirely.
+  pattern). Detected by the audit grep above. The grep currently
+  has one known exception (#513); any additional match is a
+  regression to investigate.
 
 ## References
 
@@ -194,8 +195,10 @@ architecture actually work.
   some content in ADR-005 is dated and will be migrated when we
   touch it).
 - EPIC [#510](https://github.com/elloloop/tenant-shard-db/issues/510)
-  — Close admin-op WAL carve-out. After it lands, the
-  "Implementation status: known gap" section above can be deleted.
+  — Closed by commit `d8d0afd`. 13 admin RPCs now route through WAL.
+- Issue [#513](https://github.com/elloloop/tenant-shard-db/issues/513)
+  — Residual `RemoveGroupMember` shared_index cascade still writes
+  globalstore directly. Same recipe as #510; small follow-up.
 - Source: `server/go/internal/wal/` (producer + consumer),
   `server/go/internal/apply/applier.go` (the only SQLite writer),
   `server/go/internal/wal/event.go` (op type definitions).
