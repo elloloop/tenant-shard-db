@@ -53,9 +53,6 @@ See [ADR-016](docs/adr/016-handlers-append-applier-writes.md). Handlers call `wa
 ### 2. The WAL is the audit log
 See [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md). WAL + S3 Object Lock COMPLIANCE is the single audit log; no per-tenant `audit_log` table.
 
-### 3. Single consumer goroutine for the applier
-The applier runs as a single consumer goroutine per server (Python-parity ordering guarantee). A per-tenant worker pool is deferred — do NOT add ad-hoc per-tenant goroutines that fan out applies, as it breaks per-tenant offset ordering and rebuild determinism. gRPC handlers themselves are goroutine-per-request (Go-native); the invariant is only about the apply path.
-
 ### 4. Per-tenant SQLite isolation
 Each tenant has its own SQLite file (via `modernc.org/sqlite`, managed by `server/go/internal/store/pool.go`). Never read/write across tenant boundaries in a single SQLite transaction. Cross-tenant operations go through `server/go/internal/globalstore/` (which has its own SQLite).
 

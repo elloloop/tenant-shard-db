@@ -19,17 +19,22 @@ ADRs by number and one-line summary, but never restates the body of a
 decision. When CLAUDE.md and an ADR disagree, the ADR wins — CLAUDE.md
 must be corrected.
 
-The 6 "Architecture Invariants" currently embedded in CLAUDE.md §
+The 6 "Architecture Invariants" originally embedded in CLAUDE.md §
 "Architecture Invariants" (#1 WAL is source of truth, #2 WAL is the
 audit log, #3 single applier goroutine, #4 per-tenant SQLite
 isolation, #5 proto is the type system, #6 field-ids on disk) get
-lifted into their own ADRs, each evaluated for current relevance
-during the move. The numbering does **not** strictly track invariant
-order — invariants are migrated in the order they get discussed, so
-e.g. ADR-015 covers invariant #2 (it had the most urgent
-contradictions to resolve) and ADR-016 covers invariant #1. Until the
-migration is complete, the CLAUDE.md section is read-only — edits
-must land as the corresponding new ADR, not as a CLAUDE.md change.
+evaluated one at a time during the move. The result is one of two
+outcomes per invariant: lifted into its own ADR, or dropped if
+analysis shows it's an implementation fact rather than a design
+decision. ADR numbering does **not** strictly track invariant order
+— invariants are processed in the order they get discussed, so e.g.
+ADR-015 covers invariant #2 (most urgent contradictions to resolve)
+and ADR-016 covers invariant #1. Invariant #3 was dropped after
+analysis (it restated standard Kafka consumer-group semantics rather
+than a project-specific design constraint). Until the migration is
+complete, the CLAUDE.md section is read-only — edits must land as
+the corresponding new ADR (or a deletion), not as a CLAUDE.md
+content change.
 
 ### ADR template
 

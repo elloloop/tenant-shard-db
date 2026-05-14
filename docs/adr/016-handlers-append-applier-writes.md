@@ -26,8 +26,9 @@ The rule, restated:
   `store.*` or `globalstore.*` write methods directly.
 - **The applier writes.** `server/go/internal/apply/applier.go` is
   the only code path that writes per-tenant SQLite or globalstore
-  rows. It runs as a single consumer goroutine per server (ADR-017,
-  forthcoming).
+  rows. It runs as one consumer per Kafka partition; events apply
+  serially within a partition (standard Kafka consumer-group
+  semantics, no fan-out within the consumer).
 - **SQLite is derived.** Per-tenant SQLite files and `global.db` are
   materialized views of the WAL. They can be deleted and rebuilt by
   replaying the WAL from the earliest retained offset.
