@@ -31,20 +31,31 @@ import (
 // id-keyed internal payload representation map[uint32]any. Used on the
 // ingress side of CreateNode / UpdateNode.
 //
-// Behavior (mirrors name_to_id_keys in the Python port):
+// Wire shape (per CLAUDE.md invariant #6):
+// The wire payload is keyed by stringified field_ids ("1", "2", ...).
+// The SDKs do the name→id translation client-side from the proto
+// descriptor (where fd.Number() IS the field_id per ADR-006). Storage
+// and WAL events deal exclusively with id-keyed maps; renames are
+// metadata-only, so storage cannot key on names.
+//
+// Behavior:
 //
 //   - nil / empty s -> empty map (never nil) so downstream JSON
 //     marshalling stays deterministic.
 //   - reg == nil OR nodeTypeName == "" OR registry has no entry for
-//     nodeTypeName -> schema-less passthrough: keys are interpreted
-//     verbatim. Digit-only keys parse to uint32 ids; non-digit keys
-//     are dropped (silently) since the internal map is uint32-keyed.
+//     nodeTypeName -> schema-less ingress: only digit-string keys are
+//     accepted. Name-keyed payloads on an unregistered type are
+//     rejected with INVALID_ARGUMENT (rather than silently dropped)
+//     so the client learns immediately that its SDK is misconfigured
+//     or out of date.
 //   - Schema-aware path:
 //       - Digit-only key matching a known field_id is kept as-is.
-//       - String key matching a field name is translated to its id.
-//       - Unknown name keys are dropped silently (matches Python
-//         contract: ingress is permissive so legacy clients sending
-//         deprecated fields don't break writes).
+//       - String key matching a field name is translated to its id
+//         (back-compat for pre-fix SDKs; new SDKs send id-keyed and
+//         skip this path).
+//       - Unknown name keys are dropped silently (Python parity:
+//         ingress is permissive so legacy clients sending deprecated
+//         fields don't break writes).
 //   - Field-kind coercion (only when schema is known):
 //       - BYTES: structpb has no bytes type; the wire carries base64
 //         strings. Decode to []byte for storage.
@@ -61,15 +72,32 @@ func StructToPayload(reg *schema.Registry, nodeTypeName string, s *structpb.Stru
 		return map[uint32]any{}, nil
 	}
 
-	// Schema-less passthrough: the wire is treated as already id-keyed.
-	// Digit-only keys map to uint32; everything else is dropped.
+	// Schema-less ingress: the wire is required to be id-keyed because
+	// without a registered schema the server has no name→id mapping.
+	// Silently dropping name keys (the prior behavior) caused silent
+	// data loss for SDKs that emitted name-keyed payloads.
 	nt := lookupNodeType(reg, nodeTypeName)
 	if nt == nil {
 		out := make(map[uint32]any, len(s.GetFields()))
+		var firstName string
 		for k, v := range s.GetFields() {
 			if id, ok := parseFieldID(k); ok {
 				out[id] = v.AsInterface()
+				continue
 			}
+			if firstName == "" {
+				firstName = k
+			}
+		}
+		if firstName != "" {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"payload for type_id with name %q (not in schema registry) "+
+					"contains name-keyed field %q; wire payload must be "+
+					"id-keyed (e.g. {\"1\": value}). Either register the "+
+					"schema for this type or upgrade the SDK to one that "+
+					"pre-translates names to field_ids client-side "+
+					"(CLAUDE.md invariant #6).",
+				nodeTypeName, firstName)
 		}
 		return out, nil
 	}

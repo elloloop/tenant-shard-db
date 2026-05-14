@@ -148,7 +148,9 @@ class TestCanonicalFlow:
         await plan2.commit(wait_applied=True)
         last_call = db._grpc.execute_atomic.call_args
         ops = last_call.kwargs["operations"]
-        assert ops[0]["update_node"]["patch"] == {"price_cents": 1499}
+        # Wire patch is id-keyed per CLAUDE.md invariant #6.
+        # Product.price_cents is field_id 3.
+        assert ops[0]["update_node"]["patch"] == {"3": 1499}
         assert ops[0]["update_node"]["type_id"] == 9001
         assert ops[0]["update_node"]["id"] == node_id
 
