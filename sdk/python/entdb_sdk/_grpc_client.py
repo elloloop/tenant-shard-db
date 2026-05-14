@@ -393,14 +393,61 @@ def _node_from_proto(n: Any, registry: Any = None) -> Node:
     )
 
 
-def _edge_from_proto(e: Any) -> Edge:
-    """Build a user-facing Edge directly from a proto Edge message."""
+def _edge_props_id_to_name(
+    props: dict[str, Any], edge_type_id: int, registry: Any
+) -> dict[str, Any]:
+    """Translate an id-keyed edge props dict to a name-keyed dict.
+
+    Mirrors ``_payload_id_to_name`` for node payloads. Edge props
+    on the wire are id-keyed per CLAUDE.md invariant #6; the SDK
+    re-keys to names using the local registry's
+    :class:`EdgeTypeDef.props` for ergonomic user code.
+
+    Falls back to the raw dict when the registry doesn't know the
+    edge type (schemaless / forward-compat).
+    """
+    if not props:
+        return {}
+    if registry is None or not hasattr(registry, "get_edge_type"):
+        return dict(props)
+    edge_type = registry.get_edge_type(edge_type_id)
+    if edge_type is None:
+        return dict(props)
+    id_to_name: dict[int, str] = {}
+    for p in getattr(edge_type, "props", ()) or ():
+        fid = getattr(p, "field_id", None)
+        fname = getattr(p, "name", None)
+        if fid is not None and fname is not None:
+            id_to_name[int(fid)] = fname
+    out: dict[str, Any] = {}
+    for key, value in props.items():
+        if isinstance(key, str) and key.isdigit():
+            name = id_to_name.get(int(key))
+            out[name if name is not None else key] = value
+        else:
+            out[key] = value
+    return out
+
+
+def _edge_from_proto(e: Any, registry: Any = None) -> Edge:
+    """Build a user-facing Edge directly from a proto Edge message.
+
+    The wire props are id-keyed; the SDK re-keys to names via the
+    supplied registry. When no registry is supplied (or the edge type
+    is not registered) the props pass through unchanged.
+    """
+    raw_props = _struct_to_dict(e.props)
+    props = (
+        _edge_props_id_to_name(raw_props, e.edge_type_id, registry)
+        if registry is not None
+        else raw_props
+    )
     return Edge(
         tenant_id=e.tenant_id,
         edge_type_id=e.edge_type_id,
         from_node_id=e.from_node_id,
         to_node_id=e.to_node_id,
-        props=_struct_to_dict(e.props),
+        props=props,
         created_at=e.created_at,
     )
 
@@ -1278,7 +1325,7 @@ class GrpcClient:
             tenant_id=tenant_id,
         )
 
-        edges = [_edge_from_proto(e) for e in response.edges]
+        edges = [_edge_from_proto(e, self._registry) for e in response.edges]
 
         return edges, response.has_more
 
@@ -1325,7 +1372,7 @@ class GrpcClient:
             tenant_id=tenant_id,
         )
 
-        edges = [_edge_from_proto(e) for e in response.edges]
+        edges = [_edge_from_proto(e, self._registry) for e in response.edges]
 
         return edges, response.has_more
 
