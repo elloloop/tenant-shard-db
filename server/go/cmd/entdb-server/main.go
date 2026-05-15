@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -94,25 +95,13 @@ func main() {
 
 	srvOpts := []api.Option{}
 
-	// Schema registry. Populated below when a seed profile selects one
-	// so the cross-impl suites' GetSchema/ExecuteAtomic asserts hold;
-	// left empty for profile=none (production wiring lands in a later
-	// wave once the loader hook is connected to a config source).
-	registry := schema.NewRegistry()
-	switch profile {
-	case "contract":
-		if err := testseed.RegisterContractSchema(registry); err != nil {
-			log.Fatalf("entdb-server: register contract schema: %v", err)
-		}
-	case "e2e":
-		if err := testseed.RegisterE2ESchema(registry); err != nil {
-			log.Fatalf("entdb-server: register e2e schema: %v", err)
-		}
+	registry, err := schemaRegistryForProfile(profile)
+	if err != nil {
+		log.Fatalf("entdb-server: schema registry: %v", err)
 	}
-	if _, err := registry.Freeze(); err != nil {
-		log.Fatalf("entdb-server: freeze registry: %v", err)
+	if registry != nil {
+		srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
 	}
-	srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
 
 	canonical, err := store.New(store.Options{RootDir: *dataDir, WALMode: true, Registry: registry})
 	if err != nil {
@@ -280,6 +269,37 @@ func main() {
 			log.Printf("entdb-server: archive sidecar exited: %v", err)
 		}
 	}
+}
+
+// schemaRegistryForProfile returns nil for profile=none because a nil
+// registry is the API server's schema-less mode. An empty frozen
+// registry is materially different: QueryNodes rejects every type_id
+// as unknown.
+func schemaRegistryForProfile(profile string) (*schema.Registry, error) {
+	switch profile {
+	case "none":
+		return nil, nil
+	case "contract", "e2e":
+		// handled below
+	default:
+		return nil, fmt.Errorf("invalid profile %q", profile)
+	}
+
+	registry := schema.NewRegistry()
+	switch profile {
+	case "contract":
+		if err := testseed.RegisterContractSchema(registry); err != nil {
+			return nil, fmt.Errorf("register contract schema: %w", err)
+		}
+	case "e2e":
+		if err := testseed.RegisterE2ESchema(registry); err != nil {
+			return nil, fmt.Errorf("register e2e schema: %w", err)
+		}
+	}
+	if _, err := registry.Freeze(); err != nil {
+		return nil, fmt.Errorf("freeze registry: %w", err)
+	}
+	return registry, nil
 }
 
 // splitBrokers parses a comma-separated broker list and returns
