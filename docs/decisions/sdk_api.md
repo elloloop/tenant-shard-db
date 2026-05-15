@@ -188,6 +188,6 @@ The codegen sidecar is the load-bearing piece. Without it, the only way to get a
 
 - Conversation: 2026-04-14 — "we should not give way for agent to make mistakes" → "there should always be only one way to do anything"
 - Supersedes parts of: [unique_keys.md — 2026-04-13](unique_keys.md#2026-04-13-client-asserted-unique-keys--secondary-lookup-keys-via-one-node_keys-table)
-- Related: [acl.md — 2026-04-13 Typed capability-based permissions](acl.md#2026-04-13-typed-capability-based-permissions-core--per-type-extensions) (proto-first schema authority)
+- Related: [ADR-003](../adr/003-acl-model.md) (proto-first schema authority; typed capability ACL is in the same family)
 - Related: [storage.md — 2026-04-13 Immutable storage mode](storage.md#2026-04-13-immutable-storage-mode-no-built-in-drafts-primitive) (storage modes are now options to `Create`, not separate methods)
 - Implementation: SDK v0.3 single-shape API PR (in progress)

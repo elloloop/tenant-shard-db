@@ -8,8 +8,10 @@ One line per decision. Newest within each topic first. Rebuilt on each freeze.
 - **2026-04-13** — [Immutable storage mode, no built-in drafts primitive](storage.md#2026-04-13-immutable-storage-mode-no-built-in-drafts-primitive) — frozen
 
 ### acl
-- **2026-04-13** — [Typed capability-based permissions (core + per-type extensions)](acl.md#2026-04-13-typed-capability-based-permissions-core--per-type-extensions) — frozen
-- **2026-04-13** — [Cross-tenant ACL via `tenant:<id>` grantee and PUBLIC write role](acl.md#2026-04-13-cross-tenant-acl-via-tenantid-grantee-and-public-write-role) — frozen
+- See [ADR-003](../adr/003-acl-model.md) — the prior `decisions/acl.md`
+  entries (typed capabilities + cross-tenant `tenant:<id>` grantee)
+  were merged into ADR-003 per the ADR-019 single-home policy and
+  the file was deleted.
 
 ### quotas
 - **2026-04-13** — [Three-layer rate limit model, implement Phase 1 (monthly quota) first](quotas.md#2026-04-13-three-layer-rate-limit-model-implement-phase-1-monthly-quota-first) — frozen
