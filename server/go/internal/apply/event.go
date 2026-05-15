@@ -52,13 +52,14 @@ const (
 	// WAL-first restorations from PLAN.md §6.1. The Python handlers
 	// write SQLite directly today; the Go port appends a WAL event and
 	// the dispatch branches below apply it on replay.
-	OpShareNode         OpType = "share_node"
-	OpRevokeAccess      OpType = "revoke_access"
-	OpDelegateAccess    OpType = "delegate_access"
-	OpTransferOwnership OpType = "transfer_ownership"
-	OpAddGroupMember    OpType = "add_group_member"
-	OpRemoveGroupMember OpType = "remove_group_member"
-	OpSetLegalHold      OpType = "set_legal_hold"
+	OpShareNode          OpType = "share_node"
+	OpRevokeAccess       OpType = "revoke_access"
+	OpDelegateAccess     OpType = "delegate_access"
+	OpTransferOwnership  OpType = "transfer_ownership"
+	OpAddGroupMember     OpType = "add_group_member"
+	OpRemoveGroupMember  OpType = "remove_group_member"
+	OpSharedIndexCleanup OpType = "shared_index_cleanup"
+	OpSetLegalHold       OpType = "set_legal_hold"
 
 	// Legacy tenant-scoped membership op names retained for replay of
 	// older test fixtures; issue #510 uses the global op names below.

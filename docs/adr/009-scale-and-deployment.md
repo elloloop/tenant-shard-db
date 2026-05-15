@@ -2,6 +2,13 @@
 
 ## Status: Accepted
 
+## Supersedure note
+
+ADR-014 supersedes this document's physical file-layout and tenant-scale
+boundary assumptions. This ADR remains the historical deployment-scale
+target and recovery/availability sketch where not contradicted by
+ADR-014.
+
 ## Context
 
 EntDB must scale from a single-node development setup to multi-node production serving thousands of tenants with up to 1000 users each.
@@ -100,5 +107,6 @@ Tier 3: Kafka lost too          → restore snapshot from S3 + replay archive (m
 - 0.25 vCPU machines are viable for small deployments
 - Multi-node requires shared Kafka + global store
 - Tenant reassignment on node failure requires coordination
-- Very large tenants (>100GB) need per-tenant sharding (future work)
+- Very large tenants near the SQLite envelope follow ADR-014's explicit
+  migration or future sharded-tenant design; no implicit file split.
 - Connection pool size limits concurrent active tenants per node

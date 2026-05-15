@@ -22,6 +22,9 @@ func (a *Applier) fanout(ctx context.Context, ev *Event, res *Result) {
 	if a.fanoutHook != nil {
 		a.fanoutHook(ctx, ev, res)
 	}
+	if res.Status != StatusApplied {
+		return
+	}
 	// shared_index maintenance is the only mandatory post-commit hook
 	// today. It belongs here (and not inside the txn) for the same
 	// reason as notification fanout: best-effort against a different

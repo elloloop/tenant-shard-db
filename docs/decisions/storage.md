@@ -10,15 +10,23 @@ Frozen architectural decisions about where data lives in EntDB. Newest first.
 **Decided:** 2026-04-13
 **Tags:** architecture, storage, isolation, drafts, privacy
 **Supersedes:** none
-**Superseded by:** none
+**Superseded by:** ADR-014 for physical file mapping, scale, mobility, and
+`public.db` semantics. This decision still owns immutable logical storage
+mode and the rejection of built-in publish/move primitives.
 
 ### Decision
 
 Every node has a `storage_mode` chosen at creation time. Three values:
 
-- `TENANT` — default. Lives in `tenant.db`, sharable via ACL.
-- `USER_MAILBOX` — lives in `{tenant}/user_{user_id}.db`, private to one user.
-- `PUBLIC` — lives in `public.db`, readable by any tenant (see cross-tenant decision).
+- `TENANT` — default tenant scope, sharable via ACL.
+- `USER_MAILBOX` — private user scope, reserved for mailbox data with an
+  independent lifecycle.
+- `PUBLIC` — public logical scope, reserved until ADR-014's ownership,
+  delete, billing, moderation, region, and WAL-keying rules are satisfied.
+
+ADR-014 owns the physical file mapping for those logical modes. Do not
+infer a new SQLite file type from a new logical scope unless ADR-014's
+lifecycle-boundary rule is met.
 
 **Storage mode is immutable.** It cannot be changed by `update_node`. Data cannot be moved between files after creation. This is enforced server-side.
 
@@ -54,7 +62,9 @@ None of these need a cross-file move. The built-in primitive would have added ~1
 
 - The server validates `storage_mode` as immutable. Any `update_node` that changes it is rejected.
 - Edges respect the privacy hierarchy: `USER_MAILBOX → TENANT → PUBLIC`. References can only point to equal-or-less-private data. Tenant → mailbox edges are rejected at write time. Public → anything-private is rejected.
-- GDPR delete on a user is `rm {tenant}_{user}.db` for mailbox data plus a per-tenant cleanup query for tenant-stored drafts owned by the user.
+- GDPR delete on a user follows the physical storage strategy in ADR-014:
+  mailbox data only gets a dedicated file when that lifecycle boundary is
+  implemented; tenant-stored drafts are cleaned up in tenant files.
 - SDK exposes mailbox creation as a **separate method** (e.g. `CreateInMailbox` / `create_in_mailbox`) so the immutable choice is visible at the call site, not a parameter the reviewer might miss.
 - Loud SDK documentation warns: "Storage mode is immutable. If you might ever share this data, use TENANT with ACL instead."
 

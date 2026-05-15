@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
@@ -102,6 +103,44 @@ func findRemoveGroupMemberRecords(t *testing.T, mem *wal.InMemory) []wal.Event {
 		}
 	}
 	return out
+}
+
+func (f *rgmFixture) runApplier(t *testing.T) {
+	t.Helper()
+	a, err := apply.New(apply.Options{
+		Store:       f.cs,
+		Global:      f.gs,
+		Consumer:    f.walMem,
+		Topic:       removeGroupMemberTestTopic,
+		GroupID:     "remove-group-member-applier",
+		PollTimeout: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("apply.New: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+}
+
+func (f *rgmFixture) waitApplied(t *testing.T, idempotencyKey string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec, err := f.cs.CheckIdempotencyStatus(context.Background(), f.tenant, idempotencyKey)
+		if err != nil {
+			t.Fatalf("CheckIdempotencyStatus: %v", err)
+		}
+		if rec.Present {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("applier did not record idempotency key %q", idempotencyKey)
 }
 
 // TestRemoveGroupMember_AdminHappyPath_WALAndCascade pins the WAL-first
@@ -194,6 +233,35 @@ func TestRemoveGroupMember_AdminHappyPath_WALAndCascade(t *testing.T) {
 	if got, want := ev.Ops[0]["member_actor_id"], "user:bob"; got != want {
 		t.Errorf("WAL: op.member_actor_id=%v, want %v", got, want)
 	}
+	if len(ev.Ops) != 2 {
+		t.Fatalf("WAL: ops=%d, want remove_group_member + shared_index_cleanup", len(ev.Ops))
+	}
+	if got, _ := ev.Ops[1]["op"].(string); got != string(apply.OpSharedIndexCleanup) {
+		t.Fatalf("WAL: second op=%q, want %s", got, apply.OpSharedIndexCleanup)
+	}
+
+	// The handler must not write globalstore directly. Before the
+	// applier consumes the WAL event, the group-derived shared_index
+	// rows are still present.
+	for _, nid := range []string{"n1", "n2"} {
+		entries, err := f.gs.ListSharedFromNode(ctx, f.tenant, nid)
+		if err != nil {
+			t.Fatalf("ListSharedFromNode(%q) before apply: %v", nid, err)
+		}
+		found := false
+		for _, e := range entries {
+			if e.UserID == "user:bob" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("shared_index row (bob,%s) removed before applier ran", nid)
+		}
+	}
+
+	f.runApplier(t)
+	f.waitApplied(t, ev.IdempotencyKey)
 
 	// 2. Cascade: shared_index for (bob, acme, n1) and (bob, acme, n2)
 	//    removed; the direct grant on n3 survives.
