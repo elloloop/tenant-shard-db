@@ -507,3 +507,49 @@ func TestQueryNodes_UnknownTypeID(t *testing.T) {
 		t.Fatalf("code: got %v, want InvalidArgument", st.Code())
 	}
 }
+
+// TestQueryNodes_SchemaLessAllowsUnknownTypeID pins the profile=none
+// contract used by entdb-server: with no registry wired, QueryNodes
+// treats type_id as an opaque storage discriminator instead of rejecting
+// it as unknown.
+func TestQueryNodes_SchemaLessAllowsUnknownTypeID(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	cs := newCanonicalStore(t)
+	gs := newGlobalStore(t)
+
+	const tenantID = "tenant-schemaless"
+	if err := cs.OpenTenant(ctx, tenantID); err != nil {
+		t.Fatalf("OpenTenant: %v", err)
+	}
+	if _, err := gs.CreateTenant(ctx, tenantID, "Tenant Schemaless", ""); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	if _, err := cs.CreateNodeRaw(ctx, tenantID, store.NodeInput{
+		NodeID:     "node-508",
+		TypeID:     508,
+		OwnerActor: "user:alice",
+		Payload:    map[string]any{"1": "schemaless"},
+	}); err != nil {
+		t.Fatalf("CreateNodeRaw: %v", err)
+	}
+
+	srv := api.New(
+		api.WithStore(cs),
+		api.WithGlobalStore(gs),
+	)
+	resp, err := srv.QueryNodes(ctx, &pb.QueryNodesRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: "user:alice"},
+		TypeId:  508,
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if got := len(resp.GetNodes()); got != 1 {
+		t.Fatalf("nodes: got %d, want 1", got)
+	}
+	if got := resp.GetNodes()[0].GetNodeId(); got != "node-508" {
+		t.Fatalf("node_id: got %q, want node-508", got)
+	}
+}
