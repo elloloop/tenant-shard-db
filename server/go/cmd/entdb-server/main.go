@@ -14,11 +14,15 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/grpc"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/audit"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
@@ -38,6 +42,16 @@ func main() {
 	// etc.) so the cross-impl e2e stack can swap targets without
 	// re-jiggering compose env-vars.
 	walBrokers := flag.String("wal-brokers", "localhost:9092", "comma-separated Kafka bootstrap brokers (used when --wal-backend=kafka)")
+	archiveEnabled := flag.Bool("archive-enabled", false, "enable S3 Object Lock WAL archive sidecar (requires --wal-backend=kafka)")
+	archiveBucket := flag.String("archive-bucket", "", "S3 bucket for immutable WAL archives")
+	archiveRegion := flag.String("archive-region", "", "AWS region for --archive-bucket")
+	archiveGroup := flag.String("archive-group", "entdb-wal-archive", "WAL consumer group id for the archive sidecar")
+	archiveRetentionDays := flag.Int("archive-retention-days", 2557, "S3 Object Lock COMPLIANCE retention window in days")
+	archiveKMSKeyID := flag.String("archive-kms-key-id", "", "optional AWS KMS key id for archive object SSE-KMS")
+	archiveBatchSize := flag.Int("archive-batch-size", 128, "maximum WAL records per archive poll")
+	archiveBatchBytes := flag.Int("archive-batch-bytes", 10<<20, "approximate maximum uncompressed bytes per archive object")
+	archivePollTimeout := flag.Duration("archive-poll-timeout", time.Second, "how long the archive sidecar polls for WAL records")
+	archiveRetryBackoff := flag.Duration("archive-retry-backoff", 5*time.Second, "retry backoff after archive poll/write failures")
 	// --seed-tenant is a test-only flag honoured by the cross-impl
 	// contract harness (docs/go-port/shared/test-harness.md). When set,
 	// the binary pre-creates a tenant + the actors / nodes the chosen
@@ -139,6 +153,51 @@ func main() {
 	}
 	srvOpts = append(srvOpts, api.WithWALProducer(walImpl), api.WithWALTopic(*walTopic))
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var archiver *audit.Archiver
+	if *archiveEnabled {
+		if *walBackend != "kafka" {
+			log.Fatalf("entdb-server: --archive-enabled requires --wal-backend=kafka")
+		}
+		if strings.TrimSpace(*archiveBucket) == "" {
+			log.Fatalf("entdb-server: --archive-enabled requires --archive-bucket")
+		}
+		if strings.TrimSpace(*archiveRegion) == "" {
+			log.Fatalf("entdb-server: --archive-enabled requires --archive-region")
+		}
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(strings.TrimSpace(*archiveRegion)))
+		if err != nil {
+			log.Fatalf("entdb-server: load AWS config for archive: %v", err)
+		}
+		archiveStore := audit.NewS3ObjectLockStore(
+			s3.NewFromConfig(awsCfg),
+			strings.TrimSpace(*archiveBucket),
+			strings.TrimSpace(*archiveKMSKeyID),
+		)
+		archiver, err = audit.NewArchiver(audit.Options{
+			Consumer:        walImpl,
+			Store:           archiveStore,
+			Topic:           *walTopic,
+			GroupID:         *archiveGroup,
+			RetentionDays:   *archiveRetentionDays,
+			BatchSize:       *archiveBatchSize,
+			BatchBytes:      *archiveBatchBytes,
+			PollTimeout:     *archivePollTimeout,
+			RetryBackoff:    *archiveRetryBackoff,
+			LegalHoldFunc:   global.IsLegalHoldSet,
+			SkipVerifyOnRun: true,
+		})
+		if err != nil {
+			log.Fatalf("entdb-server: archive sidecar: %v", err)
+		}
+		if err := archiver.Verify(ctx); err != nil {
+			log.Fatalf("entdb-server: archive object lock verification: %v", err)
+		}
+		log.Printf("entdb-server: S3 Object Lock archive enabled (bucket=%s group=%s)", strings.TrimSpace(*archiveBucket), *archiveGroup)
+	}
+
 	applier, err := apply.New(apply.Options{
 		Store:    canonical,
 		Global:   global,
@@ -150,9 +209,6 @@ func main() {
 		log.Fatalf("entdb-server: applier: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	// Run the applier before the gRPC server starts accepting writes.
 	// Halt-on-poison errors surface here; the supervisor logs and
 	// starts shutdown.
@@ -160,6 +216,12 @@ func main() {
 	go func() {
 		applierErr <- applier.Run(ctx)
 	}()
+	archiveErr := make(chan error, 1)
+	if archiver != nil {
+		go func() {
+			archiveErr <- archiver.Run(ctx)
+		}()
+	}
 
 	// Test-only seed: the cross-impl harnesses boot the binary with
 	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
@@ -208,8 +270,15 @@ func main() {
 		}
 	}()
 
-	if err := <-applierErr; err != nil && err != context.Canceled {
-		log.Printf("entdb-server: applier exited: %v", err)
+	select {
+	case err := <-applierErr:
+		if err != nil && err != context.Canceled {
+			log.Printf("entdb-server: applier exited: %v", err)
+		}
+	case err := <-archiveErr:
+		if err != nil && err != context.Canceled {
+			log.Printf("entdb-server: archive sidecar exited: %v", err)
+		}
 	}
 }
 

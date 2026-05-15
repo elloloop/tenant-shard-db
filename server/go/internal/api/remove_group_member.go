@@ -15,9 +15,9 @@
 //     `remove_group_member` op (W1.10 applier handler at
 //     server/go/internal/apply/ops_remove_group_member.go), so a
 //     replay-from-empty-WAL reconstructs the same group_users state.
-//     The handler still owns the cascade because the Python contract
-//     pins shared_index cleanup to the synchronous response (best-
-//     effort, swallowed on error).
+//     The group-derived shared_index cleanup is represented as a
+//     paired WAL op and applied best-effort by the applier, not by the
+//     handler.
 //
 //   - Auth (Go HARDENS vs Python). Python's capability registry does
 //     NOT map RemoveGroupMember to a capability — any caller passing
@@ -47,7 +47,7 @@
 //     success=false, error="" with code OK (parity with Python and
 //     spec §"Error contract"). Repeats are safe — the op is a
 //     DELETE with no rows-affected tracking on the apply path, the
-//     pre-read is a SELECT, and global_store.RemoveShared is a
+//     pre-read is a SELECT, and the shared_index cleanup op is
 //     delete-if-exists.
 //
 //   - role on Remove. Proto carries `role` (shared with AddGroupMember)
@@ -65,6 +65,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -85,8 +86,9 @@ const removeGroupMemberMethod = "RemoveGroupMember"
 const removeGroupMemberWALTopic = "entdb-wal"
 
 // RemoveGroupMember removes (group_id, member_actor_id) from a tenant's
-// group_users table by appending a `remove_group_member` op to the WAL
-// and best-effort cascading the cross-tenant shared_index projection.
+// group_users table by appending a `remove_group_member` op to the WAL.
+// When the row existed, the same event carries a best-effort
+// `shared_index_cleanup` projection op for the applier.
 func (s *Server) RemoveGroupMember(
 	ctx context.Context, req *pb.GroupMemberRequest,
 ) (*pb.GroupMemberResponse, error) {
@@ -191,17 +193,30 @@ func (s *Server) RemoveGroupMember(
 		status = "error"
 		return &pb.GroupMemberResponse{Success: false, Error: err.Error()}, nil
 	}
+	ops := []map[string]any{
+		{
+			"op":              string(apply.OpRemoveGroupMember),
+			"group_id":        groupID,
+			"member_actor_id": memberID,
+		},
+	}
+	if found && s.global != nil && len(groupAccess) > 0 {
+		nodeIDs := make([]any, 0, len(groupAccess))
+		for _, e := range groupAccess {
+			nodeIDs = append(nodeIDs, e.NodeID)
+		}
+		ops = append(ops, map[string]any{
+			"op":        string(apply.OpSharedIndexCleanup),
+			"tenant_id": tenantID,
+			"user_id":   memberID,
+			"node_ids":  nodeIDs,
+		})
+	}
 	ev := wal.Event{
 		TenantID:       tenantID,
 		Actor:          trusted.String(),
 		IdempotencyKey: idempKey,
-		Ops: []map[string]any{
-			{
-				"op":              "remove_group_member",
-				"group_id":        groupID,
-				"member_actor_id": memberID,
-			},
-		},
+		Ops:            ops,
 	}
 	value, err := ev.Encode()
 	if err != nil {
@@ -220,21 +235,6 @@ func (s *Server) RemoveGroupMember(
 			Success: false,
 			Error:   fmt.Sprintf("wal append: %v", werr),
 		}, nil
-	}
-
-	// Best-effort shared_index cascade — only when the pair existed
-	// (parity with Python grpc_server.py:2014-2020: skipped entirely
-	// on found=false). Failures are logged and swallowed; the RPC
-	// returns success=found.
-	if found && s.global != nil {
-		for _, e := range groupAccess {
-			if _, rerr := s.global.RemoveShared(ctx, memberID, tenantID, e.NodeID); rerr != nil {
-				slog.WarnContext(ctx,
-					"RemoveGroupMember: shared_index cascade failed",
-					"tenant", tenantID, "group", groupID,
-					"member", memberID, "node", e.NodeID, "err", rerr)
-			}
-		}
 	}
 
 	return &pb.GroupMemberResponse{Success: found}, nil

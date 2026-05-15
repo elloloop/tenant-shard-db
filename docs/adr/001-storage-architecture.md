@@ -2,22 +2,33 @@
 
 ## Status: Accepted
 
+## Supersedure note
+
+ADR-014 supersedes this document's physical file map, scale envelope, and
+tenant-mobility assumptions. This ADR remains the historical decision for
+tenant isolation and colocating tenant data, ACLs, notifications, and
+apply metadata in the tenant file.
+
 ## Context
 
 EntDB is a multi-tenant graph database. We need to decide how data is physically stored, partitioned, and accessed.
 
 ## Decision
 
-### One SQLite file per tenant
+### Tenant file as the primary data boundary
 
-Every tenant gets a single SQLite file containing ALL of that tenant's state:
+Every tenant gets a SQLite file containing that tenant's application data
+and tenant-local derived state:
 
 ```
 /data/
-  tenant_acme.db        — all of Acme's data, ACL, notifications, audit
-  tenant_alice.db       — all of Alice's personal data
-  tenant_smith.db       — all of Smith family data
+  tenant_acme.db        — Acme data, ACL, notifications, apply metadata
+  tenant_smith.db       — Smith tenant data, ACL, notifications, apply metadata
 ```
+
+ADR-014 owns the full physical file strategy, including global control-
+plane state, reserved mailbox/public modes, scale limits, and tenant
+mobility.
 
 ### Tables per tenant file
 
@@ -38,21 +49,8 @@ notifications       — all users' notifications in this tenant
 read_cursors        — per-user read position per channel/thread
 
 -- System
-audit_log           — all actions in this tenant
 applied_events      — idempotency tracking
 schema_version      — migration tracking
-```
-
-### Global store (separate from tenant files)
-
-Single database shared across all tenants:
-
-```sql
-user_registry       — global user identities
-tenant_registry     — what tenants exist
-tenant_members      — who belongs where
-shared_index        — cross-tenant direct shares
-deletion_queue      — GDPR deletion processing
 ```
 
 ### Why single file per tenant
@@ -62,7 +60,7 @@ deletion_queue      — GDPR deletion processing
 3. **Simple recovery**: replay WAL into one file
 4. **No cross-file consistency**: notifications and data always in sync
 5. **Tenant isolation**: one tenant's SQLite cannot affect another's
-6. **GDPR deletion**: delete one file = tenant gone
+6. **GDPR deletion**: tenant-local application data is bounded by one file
 
 ### Why NOT per-user mailbox files
 
@@ -78,5 +76,4 @@ Moving notifications into the tenant file:
 - Connection pool manages one connection per active tenant
 - SQLite WAL mode required for concurrent reads during writes
 - Single-threaded executor per tenant (SQLite is not thread-safe)
-- Maximum tenant size limited by single-file SQLite (~281 TB theoretical, ~100 GB practical)
-- Tenants with >100GB data need sharding strategy (future ADR)
+- Maximum tenant size and sharding/migration strategy are governed by ADR-014.

@@ -133,5 +133,5 @@ A first-class `keys` mechanism inside the node schema is cheap (one new table, o
 - Conversation: 2026-04-13 architecture discussion on unique constraints + secondary keys
 - Related decisions:
   - [acl.md — 2026-04-13 Typed capability-based permissions](acl.md#2026-04-13-typed-capability-based-permissions-core--per-type-extensions) — proto-first schema establishes where keys are declared
-  - [storage.md — 2026-04-13 Immutable storage mode](storage.md#2026-04-13-immutable-storage-mode-no-built-in-drafts-primitive) — node_keys table lives in whichever physical file the node lives in (tenant / mailbox / public)
+  - [storage.md — 2026-04-13 Immutable storage mode](storage.md#2026-04-13-immutable-storage-mode-no-built-in-drafts-primitive) and ADR-014 — node_keys follows the node's logical storage mode and ADR-014's physical file strategy.
 - Implementation: planned as follow-up PR after `feature/security-and-shutdown-fixes` merges

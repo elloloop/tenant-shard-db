@@ -408,6 +408,8 @@ func (a *Applier) dispatch(ctx context.Context, tx *BatchTxn, ev *Event, op map[
 		return a.applyAddGroupMember(ctx, tx, ev, op)
 	case OpRemoveGroupMember:
 		return a.applyRemoveGroupMember(ctx, tx, ev, op)
+	case OpSharedIndexCleanup:
+		return a.applySharedIndexCleanup(ev, op, res)
 	case OpSetLegalHold:
 		return a.applySetLegalHold(ctx, ev, op)
 	case OpAddTenantMember:

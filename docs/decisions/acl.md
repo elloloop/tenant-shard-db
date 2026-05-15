@@ -171,7 +171,7 @@ The typed, two-layer model gives compile-time safety, per-type vocabulary, IDE a
 **Decided:** 2026-04-13
 **Tags:** acl, cross-tenant, permissions, billing, gdpr
 **Supersedes:** none
-**Superseded by:** none
+**Superseded by:** ADR-014 for the physical `public.db` storage mapping.
 
 ### Decision
 
@@ -186,7 +186,7 @@ When a user from tenant B reads a node owned by tenant A, the server consults th
 
 **No separate cross-tenant grant table.** Bulk grants (e.g. "B can read all of A's shared Tasks") are expressed by granting ACL on a parent collection node and letting ACL inheritance propagate. We do not add a separate tenant-to-tenant relationship concept.
 
-**`PUBLIC` storage writes gated by `PLATFORM_ADMIN` role.** Nodes with `storage_mode=PUBLIC` live in `public.db` and are readable by any authenticated user in any tenant. Writing requires the `PLATFORM_ADMIN` platform role, which is granted per deployment — not per tenant. This prevents arbitrary tenants from polluting the shared public namespace.
+**`PUBLIC` storage writes gated by `PLATFORM_ADMIN` role.** Nodes with `storage_mode=PUBLIC` are readable by any authenticated user in any tenant. Writing requires the `PLATFORM_ADMIN` platform role, which is granted per deployment — not per tenant. This prevents arbitrary tenants from polluting the shared public namespace. ADR-014 defers the physical `public.db` implementation until ownership, delete authority, moderation, billing, region replication, and WAL keying are specified together.
 
 **Billing rule.** The tenant that creates a node owns it and pays for its storage. Cross-tenant reads are free (or metered against the reader as network/egress, at the platform's discretion). Public data is paid for by whichever tenant's user authored it; platform-authored public data is on the platform.
 
@@ -218,7 +218,7 @@ Both concerns touch ACL semantics and deserved a single coherent decision.
 
 - The authorization helper (`get_authoritative_actor`, `_require_admin_or_owner`) resolves a grantee list including `tenant:<caller_tenant>` on every cross-tenant read, not just per-user grants.
 - Cross-tenant grants appear in the standard `node_visibility` table; no separate schema.
-- `PUBLIC` write path goes through a dedicated handler that verifies the `PLATFORM_ADMIN` role before routing to `public.db`.
+- `PUBLIC` write path goes through a dedicated handler that verifies the `PLATFORM_ADMIN` role. ADR-014 owns the eventual physical routing decision.
 - ACL inheritance extends to cross-tenant grants: granting `tenant:B` on a collection node grants access to all its descendants.
 - The unidirectional edge invariant (from the storage decision) already forbids any node from pointing into a more-private storage mode — this means `PUBLIC` nodes cannot reference tenant or user mailbox data, so public data can never accidentally leak private data through edge traversal.
 
