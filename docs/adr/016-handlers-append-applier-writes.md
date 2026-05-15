@@ -3,7 +3,7 @@
 **Status:** Accepted
 **Decided:** 2026-05-14
 **Tags:** event-sourcing, wal, write-path, durability
-**Implementation:** _this commit_ (design); #510 (admin-op carve-out — closed by d8d0afd); #513 (residual shared_index cleanup, open)
+**Implementation:** _this commit_ (design); #510 (admin-op carve-out — closed by d8d0afd); #513 (residual shared_index cleanup — closed by eda6ba9)
 
 ## Decision
 
@@ -78,12 +78,12 @@ The rule holds across all 44 RPCs in `entdb.v1.EntDBService`:
   routed every admin handler through `wal.Append`, made the applier
   the sole writer of `globalstore`.
 
-One known residual write path remains, tracked in **issue #513**:
-`RemoveGroupMember` does a best-effort `shared_index` cascade
-directly via `s.global.RemoveShared` after the main WAL append.
-This is a side-effect cleanup (not the primary mutation, which is
-WAL-driven) but it still violates the rule strictly. The fix is the
-same recipe #510 used — add a cascade op, route through the applier.
+The previously-tracked residual write path (`RemoveGroupMember`
+shared_index cascade) was closed by #513 / commit `eda6ba9`. A new
+op type (`ops_shared_index_cleanup.go`) routes the cleanup through
+the applier in the same shape as #510. As of this commit, no handler
+in `server/go/internal/api/` writes to globalstore or per-tenant
+SQLite directly.
 
 ## Alternatives considered
 
@@ -168,8 +168,7 @@ same recipe #510 used — add a cascade op, route through the applier.
   grep -nE 's\.global\.(Create|Update|Add|Remove|Change|Archive|Set|Delete|Freeze|Transfer|Revoke)' \
     server/go/internal/api/*.go | grep -v "_test.go\|Get"
   ```
-  Currently returns exactly one expected hit (the `RemoveGroupMember`
-  cascade tracked in #513). Any other hit is a regression.
+  Should return zero hits. Any match is a regression.
 
 - Applier writes from outside its consumer goroutine (breaks
   ordering). Detected by code review; the applier's `Apply`
@@ -181,9 +180,8 @@ same recipe #510 used — add a cascade op, route through the applier.
   fresh data dir and assert state matches.
 
 - The carve-out widens (new admin RPC added with direct-write
-  pattern). Detected by the audit grep above. The grep currently
-  has one known exception (#513); any additional match is a
-  regression to investigate.
+  pattern). Detected by the audit grep above — it should return
+  zero matches.
 
 ## References
 
@@ -191,14 +189,14 @@ same recipe #510 used — add a cascade op, route through the applier.
   S3 Object Lock as the audit log. ADR-016 makes ADR-015 work:
   without "all writes through WAL," the audit log is incomplete.
 - [ADR-005](005-event-sourcing-wal.md) — Event sourcing
-  architecture overview (predates ADR-019. "one home" policy;
+  architecture overview (predates ADR-019's "one home" policy;
   some content in ADR-005 is dated and will be migrated when we
   touch it).
 - EPIC [#510](https://github.com/elloloop/tenant-shard-db/issues/510)
   — Closed by commit `d8d0afd`. 13 admin RPCs now route through WAL.
 - Issue [#513](https://github.com/elloloop/tenant-shard-db/issues/513)
-  — Residual `RemoveGroupMember` shared_index cascade still writes
-  globalstore directly. Same recipe as #510; small follow-up.
+  — Closed by commit `eda6ba9`. `RemoveGroupMember` shared_index
+  cascade now routes through the applier via `ops_shared_index_cleanup.go`.
 - Source: `server/go/internal/wal/` (producer + consumer),
   `server/go/internal/apply/applier.go` (the only SQLite writer),
   `server/go/internal/wal/event.go` (op type definitions).
