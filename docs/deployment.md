@@ -156,25 +156,29 @@ resource "aws_ecs_task_definition" "entdb" {
           containerPort = 50051
           protocol      = "tcp"
         },
-        {
-          containerPort = 8080
-          protocol      = "tcp"
-        }
       ]
+      # gRPC-only server; no HTTP listener. The EntDB Console (HTTP)
+      # is a separate binary deployed as its own ECS service if you
+      # want it in production.
 
-      environment = [
-        {
-          name  = "ENTDB_KAFKA_BROKERS"
-          value = aws_msk_cluster.entdb.bootstrap_brokers_tls
-        },
-        {
-          name  = "ENTDB_S3_BUCKET"
-          value = aws_s3_bucket.archive.id
-        },
-        {
-          name  = "ENTDB_SNAPSHOT_BUCKET"
-          value = aws_s3_bucket.snapshots.id
-        }
+      # The Go server takes CLI flags only — no ENTDB_* env vars.
+      command = [
+        "-addr=:50051",
+        "-data-dir=/var/lib/entdb",
+        "-wal-backend=kafka",
+        "-wal-brokers=${aws_msk_cluster.entdb.bootstrap_brokers_tls}",
+        "-wal-topic=entdb-wal",
+        "-wal-group=entdb-applier",
+        "-require-tls=true",
+        "-tls-cert=/etc/entdb/server.crt",
+        "-tls-key=/etc/entdb/server.key",
+        "-kms-provider=aws",
+        "-kms-key-id=${aws_kms_key.entdb_master.arn}",
+        "-encryption-required=true",
+        "-archive-enabled=true",
+        "-archive-bucket=${aws_s3_bucket.archive.id}",
+        "-archive-region=${var.aws_region}",
+        "-archive-retention-days=2557",
       ]
 
       logConfiguration = {
@@ -186,13 +190,10 @@ resource "aws_ecs_task_definition" "entdb" {
         }
       }
 
-      healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
-        interval    = 30
-        timeout     = 5
-        retries     = 3
-        startPeriod = 60
-      }
+      # No container-level healthcheck: the Go server image is
+      # distroless (no shell, no curl, no grpc_health_probe). Health
+      # is asserted by the ALB target group on the gRPC port via
+      # /grpc.health.v1.Health/Check (see aws_lb_target_group.grpc).
     }
   ])
 }
@@ -215,12 +216,6 @@ resource "aws_ecs_service" "entdb" {
     target_group_arn = aws_lb_target_group.grpc.arn
     container_name   = "entdb"
     container_port   = 50051
-  }
-
-  load_balancer {
-    target_group_arn = aws_lb_target_group.http.arn
-    container_name   = "entdb"
-    container_port   = 8080
   }
 }
 
@@ -249,17 +244,10 @@ resource "aws_lb_target_group" "grpc" {
   }
 }
 
-resource "aws_lb_target_group" "http" {
-  name        = "entdb-http"
-  port        = 8080
-  protocol    = "HTTP"
-  vpc_id      = module.vpc.vpc_id
-  target_type = "ip"
-
-  health_check {
-    path = "/health"
-  }
-}
+# The Go server has no HTTP listener — no `entdb-http` target group is
+# defined. Health is asserted via the gRPC target group above
+# (path = "/grpc.health.v1.Health/Check"). If you also deploy the
+# entdb-console binary, give it its own target group on :8080.
 ```
 
 ### 2. Deploy Infrastructure
@@ -316,20 +304,7 @@ platforms: linux/amd64,linux/arm64
 
 ## Configuration
 
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `ENTDB_KAFKA_BROKERS` | Yes | Kafka bootstrap servers |
-| `ENTDB_KAFKA_ACKS` | No | Producer acks (default: all) |
-| `ENTDB_S3_BUCKET` | Yes | S3 bucket for archive |
-| `ENTDB_SNAPSHOT_BUCKET` | No | S3 bucket for snapshots |
-| `ENTDB_DATA_DIR` | No | Local data directory |
-| `ENTDB_GRPC_PORT` | No | gRPC port (default: 50051) |
-| `ENTDB_HTTP_PORT` | No | HTTP port (default: 8080) |
-
-The Go server is configured with flags rather than environment
-variables. Production launches should include the security flags below:
+The Go server takes **CLI flags only** — no `ENTDB_*` env vars. Production launches should include the security flags below:
 
 ```bash
 /entdb-server \

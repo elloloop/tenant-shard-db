@@ -1,248 +1,154 @@
-# Compliance Implementation Roadmap
+# Compliance Status & Roadmap
 
-## Phase 0: Foundations (Week 1-4)
-*Everything else depends on these*
+EntDB's compliance posture is documented in [ADR-011](adr/011-security-and-compliance.md). This page tracks what's shipped vs what's still needed for each common certification, with pointers to the code or open issues.
 
-```
-[ ] Encryption at rest — SQLCipher integration
-    - Add sqlcipher dependency
-    - Per-tenant key derivation from master key
-    - Key storage in encrypted key_registry table
-    - All existing tests pass with encryption enabled
-    
-[ ] Global store — user_registry, tenant_registry, tenant_members, shared_index
-    - Create global SQLite (or Postgres for multi-node)
-    - User CRUD operations
-    - Tenant CRUD operations
-    - Tenant membership management
-    - Shared index for cross-tenant sharing
+Legend:
 
-[ ] Tamper-evident audit log
-    - Hash-chained append-only table in each tenant
-    - Every write, ACL change, admin action logged
-    - Chain verification function
-    - Audit log export for compliance
+- ✅ **Shipped** — feature is in v1.13.0 (or earlier)
+- ⏳ **Planned** — designed, tracked in an issue
+- 🔧 **Deployment** — provided by your infrastructure, not by EntDB
+- 📋 **Process** — organizational, not a code feature
 
-[ ] Proto schema codegen with data classification
-    - entdb_options.proto: data_policy, pii, phi, retention, legal_basis
-    - entdb generate: proto → Python/Go
-    - entdb lint: enforce classification on all types
-    - entdb check: backward compatibility
-```
+## Foundations (all ✅)
 
-## Phase 1: GDPR + CCPA (Week 5-8)
-*Highest impact, covers privacy for EU + California*
+These controls are the floor for all certifications below.
 
-```
-[ ] Data policy enforcement at runtime
-    - data_policy read from schema registry
-    - pii fields tracked per node type
-    - subject_field resolution for exports
-    
-[ ] delete_user operation
-    - Export user data across all tenants
-    - 30-day grace period with recovery
-    - Per-type handling: DELETE / ANONYMIZE / RETAIN
-    - PII field scrubbing (all pii=true fields)
-    - Edge handling (on_subject_exit: FROM/TO/BOTH)
-    - Global cleanup (user_registry, shared_index, groups)
-    - Crypto-shred for personal tenant
+| Control | Status | Where |
+|---|---|---|
+| Encryption at rest (SQLCipher AES-256 + HMAC-SHA512 + PBKDF2-SHA512) | ✅ | `server/go/internal/crypto/` |
+| Per-tenant key derivation + KMS-backed master | ✅ | `crypto/key_manager.go`, `crypto/master_key.go` |
+| Encryption in transit (TLS 1.3 + optional mTLS) | ✅ | `server/go/cmd/entdb-server/tls.go`, `server/go/internal/auth/mtls.go` |
+| Cert reload-on-SIGHUP | ✅ | `tls.go` |
+| Tamper-evident audit log (WAL + S3 Object Lock COMPLIANCE) | ✅ | ADR-015; `server/go/internal/audit/` |
+| Crypto-shred for GDPR erasure | ✅ | `server/go/internal/gdpr/processor.go`, `crypto/sqlcipher.go` |
+| Schema validation with data classification | ✅ | ADR-006; `(entdb.field).data_policy`, `(entdb.field).pii` proto options |
+| Per-tenant SQLite isolation | ✅ | ADR-014 |
+| Multi-tenant ACL (typed-capability) | ✅ | ADR-003 |
+| Region pin per tenant | ✅ | `tenant_registry.region` column |
 
-[ ] export_user_data operation
-    - Scan all tenants user belongs to
-    - Respect export policy per node type
-    - Respect subject_field (data ABOUT user, not just BY user)
-    - Structured output (JSON + metadata)
+❌ **Not in EntDB** (by design, per ADR-015):
 
-[ ] freeze_user operation
-    - Block all writes by user
-    - Data remains readable
-    - Reversible by admin
+- Per-tenant `audit_log` SQLite table with hash chain — rejected. The WAL + S3 Object Lock is the audit log. Hash-chained tables in SQLite are weaker tamper evidence (any operator with file access can rewrite both the row and the chain) and redundant with the WAL.
 
-[ ] update_user operation (rectification)
-    - Update user_registry
-    - Propagate name/email changes
+## GDPR / CCPA
 
-[ ] Consent tracking
-    - Record what user consented to and when
-    - Consent withdrawal triggers appropriate action
+| Article / control | Status | Notes |
+|---|---|---|
+| Art. 17 — Right to erasure | ✅ | `Admin.DeleteUser` with configurable grace period; `gdpr/processor.go` runs the deletion-queue worker; crypto-shred wipes the tenant key, making data unreadable on disk AND on the S3 archive (which Object Lock won't let you delete). |
+| Art. 20 — Right to data portability | ✅ | `Admin.ExportUserData` returns the user's data across all tenants |
+| Art. 18 — Right to restriction of processing (freeze) | ✅ | `Admin.FreezeUser` blocks writes; reads continue |
+| Art. 16 — Right to rectification | ✅ | `Admin.UpdateUser` |
+| Art. 30 — Records of processing | ✅ | WAL events constitute the records (ADR-015) |
+| Art. 32 — Security of processing (encryption, integrity) | ✅ | SQLCipher + WAL + Object Lock |
+| Art. 33-34 — Breach notification | 📋 | Operator process — EntDB provides the data; org delivers the notice |
+| Art. 44-49 — International data transfers | ✅ + 🔧 | `tenant.region` pin per tenant; multi-region deployment topology is operator-owned |
+| Consent tracking | 📋 | Application-level concern; EntDB stores user data, not consent records (apps model consent as a node type if needed) |
+| CCPA §1798.105 — Right to delete | ✅ | Same as GDPR Art. 17 |
+| CCPA §1798.100 — Right to know | ✅ | Same as GDPR Art. 20 |
+| CCPA §1798.150 — Private right of action (breach) | ✅ + 📋 | Encryption is the safe-harbor anchor; breach response is org process |
 
-[ ] Privacy policy template
-    - Template for apps built on EntDB
-    - Pre-filled with database capabilities
-```
+## SOC 2
 
-## Phase 2: SOC 2 Type I (Week 9-16)
-*Most requested by enterprise customers*
+| Control area | Status | Notes |
+|---|---|---|
+| CC6.1 — Logical access (TLS, mTLS, encryption) | ✅ | TLS 1.3 + mTLS; SQLCipher at rest |
+| CC6.1-6.3 — Access control | ✅ | Typed-capability ACL (ADR-003) + admin gate on per-tenant ops |
+| CC6.5 — Data classification + secure deletion | ✅ | `data_policy` per type; crypto-shred for erasure |
+| CC7.1 — Vulnerability management | 📋 + 🔧 | Dependabot enabled, CodeQL recommended on forks; org-owned pen test cadence |
+| CC7.2 — Logging and monitoring | ⏳ + 🔧 | WAL is the audit log (✅); Prometheus `/metrics` HTTP endpoint not yet exposed (recording works); OpenTelemetry tracing in [#517](https://github.com/elloloop/tenant-shard-db/issues/517) |
+| CC7.3-7.5 — Incident response | 📋 | Operator process |
+| Penetration testing | 📋 | Operator process |
+| Vendor risk management | 📋 | Operator process |
 
-```
-[ ] TLS enforcement
-    - Refuse plaintext in production mode
-    - TLS 1.3 minimum
-    - Certificate validation
+A SOC 2 Type II audit is a 6–12-month observation window; the technical controls above need to be in place and observable throughout. EntDB provides the controls; the auditor reviews evidence over the window.
 
-[ ] Key management
-    - Master key in KMS (AWS KMS, GCP KMS, HashiCorp Vault)
-    - Tenant key derivation and storage
-    - Key rotation (new writes use new key, background re-encryption)
-    - Key revocation (crypto-shred)
+## ISO 27001
 
-[ ] Enhanced authentication
-    - OAuth 2.0 / OIDC token validation
-    - JWT verification at interceptor level
-    - API key scoping (per-tenant, per-permission)
-    - API key rotation without downtime
+| Annex A control | Status |
+|---|---|
+| A.8 — Information classification (`data_policy`, `pii`) | ✅ |
+| A.9 — Access control (typed-capability ACL) | ✅ |
+| A.10.1 — Cryptographic controls | ✅ |
+| A.12.3 — Backup (WAL durability + Object Lock archive) | ✅ |
+| A.12.4 — Logging and monitoring | ✅ (audit) + ⏳ (metrics endpoint) |
+| A.12.6 — Vulnerability management | 📋 + 🔧 |
+| A.13.1 — Network security (TLS in transit) | ✅ + 🔧 (network topology) |
+| A.14.2 — Secure development | 📋 |
+| A.16 — Incident management | 📋 |
+| A.17 — Business continuity (DR via WAL replay) | ✅ + 🔧 |
 
-[ ] Session management
-    - Token expiry enforcement
-    - Concurrent session limits
-    - Immediate revocation list
+## HIPAA
 
-[ ] Vulnerability scanning in CI
-    - Dependabot (already exists)
-    - CodeQL or Semgrep SAST
-    - Trivy container scanning
-    - Secret scanning (truffleHog)
+For PHI / healthcare workloads:
 
-[ ] Backup integrity
-    - Checksums on every snapshot
-    - Automated monthly restore test
-    - Restore time verification (< 1 hour SLA)
+| §164 control | Status |
+|---|---|
+| §164.308(a) — Security management | 📋 |
+| §164.310(d) — Disposal (crypto-shred) | ✅ |
+| §164.312(a) — Access control + encryption at rest | ✅ |
+| §164.312(b) — Audit controls (WAL + Object Lock) | ✅ |
+| §164.312(c) — Integrity (parameterized queries, schema validation) | ✅ |
+| §164.312(e) — Transmission security (TLS) | ✅ |
+| Business Associate Agreement (BAA) | 📋 — vendor-specific; see `docs/compliance/baa-template.md` |
+| Risk assessment + workforce training | 📋 |
 
-[ ] Monitoring completeness
-    - Alert on auth failure spikes
-    - Alert on applier lag > 60s
-    - Alert on disk usage > 80%
-    - Alert on audit chain break
-    - Alert on error rate > 1%
+The `(entdb.field).data_policy = HIPAA` proto option marks PHI fields; the GDPR delete path includes them in the right-to-erasure cascade.
 
-[ ] SOC 2 evidence collection
-    - Automated evidence gathering script
-    - Screenshots/exports of configurations
-    - Access review documentation
-    - Change management records (git history)
+## Open implementation work
 
-[ ] SOC 2 Type I audit engagement
-    - Select auditor (Drata, Vanta, or traditional firm)
-    - Readiness assessment
-    - Gap remediation
-    - Type I report
-```
+These EntDB features are designed but not yet shipped — they bear on compliance:
 
-## Phase 3: ISO 27001 + SOC 2 Type II (Week 17-30)
-*Type II requires 6+ months of evidence*
+| Item | Status | Tracking |
+|---|---|---|
+| `/metrics` HTTP endpoint for Prometheus scrape | ⏳ | See ADR-011 monitoring status |
+| OpenTelemetry instrumentation (server + SDK) | ⏳ | [#517](https://github.com/elloloop/tenant-shard-db/issues/517) |
+| Rate limiting (the Python QuotaInterceptor wasn't ported) | ⏳ | Open work |
+| Additional WAL backends (Kinesis, Pub/Sub, SQS, Service Bus, Event Hubs) | ⏳ | [#518](https://github.com/elloloop/tenant-shard-db/issues/518) |
+| Per-tenant SQLite snapshots (faster recovery than WAL replay from offset 0) | ⏳ | Operator-owned for now; WAL replay is the durability mechanism |
 
-```
-[ ] ISMS documentation
-    - Information security policy
-    - Risk assessment methodology
-    - Risk treatment plan
-    - Statement of applicability
-    - Asset inventory
+## Process gaps that are NOT EntDB's job
 
-[ ] Access control policy
-    - Role definitions documented
-    - Access review procedures (quarterly)
-    - Privileged access management
-    - Segregation of duties
+EntDB provides technical controls. Compliance certifications also require organizational process:
 
-[ ] Incident response
-    - Incident classification (P1-P4)
-    - Response procedures per severity
-    - Communication templates
-    - Post-incident review process
-    - Breach notification procedures (72 hours for GDPR)
+- Policies and procedures (security policy, incident response, BCP, vendor management)
+- Training records (annual security training, role-based)
+- Risk assessments (annual or semi-annual)
+- Vendor due diligence
+- Auditor engagement and evidence packages
+- Workforce access reviews
+- Physical security of the deployment infrastructure
 
-[ ] Business continuity
-    - Recovery time objectives (RTO) per tier
-    - Recovery point objectives (RPO) per tier
-    - Disaster recovery procedures
-    - Annual DR test
+`docs/compliance/` carries templates for some of these — they're starting points for the auditing engagement, not turnkey deliverables.
 
-[ ] Change management
-    - All changes via PR (already enforced)
-    - Schema changes via entdb check (already designed)
-    - Deployment procedures documented
-    - Rollback procedures documented
+## Quick-start: deploying EntDB for compliance-bound workloads
 
-[ ] Supplier management
-    - Kafka provider security assessment
-    - S3 provider security assessment
-    - KMS provider security assessment
-    - Subprocessor list for GDPR
+The production checklist in [operations.md § Production checklist](operations.md#production-checklist) covers the technical controls. In summary:
 
-[ ] Legal hold implementation
-    - Per-tenant legal_hold flag
-    - Block all deletes when enabled
-    - Audit log of hold activation/deactivation
-    - Hold applies to backups too
-
-[ ] Data residency enforcement
-    - Region pinning per tenant
-    - Cross-region routing
-    - Validation: data never leaves configured region
-    - Audit: region compliance checks
-
-[ ] SOC 2 Type II observation period (6 months)
-    - Continuous evidence collection
-    - Monthly access reviews
-    - Quarterly risk assessments
-    - Annual penetration test
-
-[ ] ISO 27001 certification audit
+```bash
+entdb-server \
+  -addr=:50051 \
+  -data-dir=/var/lib/entdb \
+  -wal-backend=kafka -wal-brokers=... \
+  -require-tls=true -require-client-cert=true \
+  -tls-cert=... -tls-key=... -tls-ca=... \
+  -kms-provider=aws -kms-key-id=... \
+  -encryption-required=true \
+  -gdpr-worker-enabled=true \
+  -archive-enabled=true \
+  -archive-bucket=... -archive-region=... \
+  -archive-retention-days=2557
 ```
 
-## Phase 4: HIPAA (Week 20-30, parallel with Phase 3)
-*Required for healthcare customers*
+For HIPAA-bound deployments, additionally:
 
-```
-[ ] PHI field-level encryption
-    - Fields marked phi=true encrypted individually
-    - Separate from file-level encryption
-    - Field-level decryption only when authorized
+- Run the EntDB cluster in a HIPAA-eligible environment (AWS, GCP, Azure all have BAA-covered services).
+- Ensure your Kafka / S3 / KMS provider is BAA-covered.
+- Treat all PHI fields with `data_policy = HIPAA` in your proto schemas so the GDPR / right-to-erasure flow handles them correctly.
 
-[ ] HEALTHCARE data policy
-    - 6-year retention minimum
-    - Enhanced access logging (fields accessed, reason, IP)
-    - De-identification per Safe Harbor (18 identifiers)
+## Related
 
-[ ] BAA template
-    - Business Associate Agreement for EntDB service
-    - Subcontractor BAA chain (Kafka, S3, KMS providers)
-
-[ ] Minimum necessary access
-    - Field-level ACL (future: access_level per field)
-    - Query returns only fields the actor needs
-
-[ ] HIPAA training documentation
-    - For EntDB operations team
-    - For application developers using EntDB
-```
-
-## Phase 5: Additional certifications (Week 30+)
-
-```
-[ ] CSA STAR self-assessment
-    - Consensus Assessments Initiative Questionnaire (CAIQ)
-    - Based on SOC 2 + ISO 27001 evidence
-
-[ ] VPAT / Section 508
-    - API accessibility documentation
-    - Admin console WCAG 2.1 AA audit
-    - Documentation site accessibility audit
-
-[ ] FedRAMP (if US government customers)
-    - FedRAMP Ready assessment
-    - 3PAO engagement
-    - Authority to Operate (ATO)
-
-[ ] FERPA (if education customers)
-    - Student data protection
-    - Parental consent mechanisms
-    - School official exception handling
-
-[ ] PCI DSS (if payment data)
-    - Cardholder data environment scoping
-    - Network segmentation
-    - Quarterly vulnerability scans (ASV)
-```
+- [ADR-011](adr/011-security-and-compliance.md) — security + compliance design
+- [ADR-015](adr/015-wal-and-s3-object-lock-as-audit-log.md) — audit log posture
+- [Operations](operations.md) — production checklist
+- [Deployment](deployment.md) — production deployment topology
+- `docs/compliance/` — process templates (BAA, BCP, SOC 2 evidence outline, etc.)
