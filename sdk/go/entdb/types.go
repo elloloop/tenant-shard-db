@@ -147,8 +147,8 @@ type TenantQuota struct {
 // StorageMode selects the physical SQLite file a node lives in.
 //
 // Storage mode is chosen at creation time and is IMMUTABLE. It cannot
-// be changed by Update. See docs/decisions/storage.md for the full
-// rationale.
+// be changed by Update. See docs/adr/020-immutable-storage-mode.md
+// for the full rationale.
 type StorageMode int
 
 const (

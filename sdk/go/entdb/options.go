@@ -132,7 +132,8 @@ func InTenant() CreateOption {
 // — the SDK handles the wire translation).
 //
 // Storage mode is IMMUTABLE: a node created in a mailbox can never be
-// moved to tenant.db or public.db. See docs/decisions/storage.md.
+// moved to tenant.db or public.db. See
+// docs/adr/020-immutable-storage-mode.md.
 func InMailbox(userID string) CreateOption {
 	return func(c *createConfig) {
 		c.storage = StorageModeUserMailbox

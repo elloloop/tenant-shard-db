@@ -341,10 +341,10 @@ All flow through the WAL and are therefore in the audit log (see
   posture; ACL operations are audited via the WAL.
 - [ADR-016](016-handlers-append-applier-writes.md) — all ACL mutations
   flow through the WAL → applier → SQLite path.
-- [`docs/decisions/storage.md`](../decisions/storage.md) — the
-  unidirectional edge invariant (`USER_MAILBOX → TENANT → PUBLIC`)
-  prevents PUBLIC nodes from referencing private data and leaking
-  it through edge traversal.
+- [ADR-020](020-immutable-storage-mode.md) — the unidirectional
+  edge invariant (`USER_MAILBOX → TENANT → PUBLIC`) prevents PUBLIC
+  nodes from referencing private data and leaking it through edge
+  traversal.
 - Implementation: `server/go/internal/acl/`, with the capability
   registry populated at server boot from the schema-registry's proto
   descriptors.
