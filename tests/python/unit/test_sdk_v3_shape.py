@@ -144,7 +144,7 @@ class TestCanonicalFlow:
         # Update — partial: only fields explicitly set on the message
         # become the patch, everything else is left untouched.
         plan2 = scope.plan()
-        plan2.update(node_id, ts.Product(price_cents=1499))
+        plan2.update(node_id, ts.Product(price_cents=1499), precondition=("price_cents", 999))
         await plan2.commit(wait_applied=True)
         last_call = db._grpc.execute_atomic.call_args
         ops = last_call.kwargs["operations"]
@@ -153,6 +153,11 @@ class TestCanonicalFlow:
         assert ops[0]["update_node"]["patch"] == {"3": 1499}
         assert ops[0]["update_node"]["type_id"] == 9001
         assert ops[0]["update_node"]["id"] == node_id
+        assert ops[0]["update_node"]["precondition"] == {
+            "field": "price_cents",
+            "field_id": 3,
+            "equals": 999,
+        }
 
         # Delete — type witness via proto class.
         plan3 = scope.plan()

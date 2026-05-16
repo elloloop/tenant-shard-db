@@ -192,6 +192,53 @@ func TestPlan_Update(t *testing.T) {
 	}
 }
 
+func TestPlan_UpdateIf_ResolvesPreconditionFieldID(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	patch := newProduct("", "", 777)
+	plan.UpdateIf("node-1", patch, "price_cents", int64(100))
+
+	ops := plan.Operations()
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(ops))
+	}
+	pre := ops[0].Precondition
+	if pre == nil {
+		t.Fatalf("Precondition is nil")
+	}
+	if pre.Field != "price_cents" {
+		t.Fatalf("Field = %q, want price_cents", pre.Field)
+	}
+	if pre.FieldID != 3 {
+		t.Fatalf("FieldID = %d, want 3", pre.FieldID)
+	}
+
+	wireOps, err := operationsToProto(ops)
+	if err != nil {
+		t.Fatalf("operationsToProto: %v", err)
+	}
+	wirePre := wireOps[0].GetUpdateNode().GetPrecondition()
+	if wirePre.GetField() != "price_cents" {
+		t.Fatalf("wire field = %q, want price_cents", wirePre.GetField())
+	}
+	if wirePre.GetFieldId() != 3 {
+		t.Fatalf("wire field_id = %d, want 3", wirePre.GetFieldId())
+	}
+}
+
+func TestPlan_UpdateIf_UnknownPreconditionFieldPanics(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for unknown precondition field")
+		}
+	}()
+	plan.UpdateIf("node-1", newProduct("", "", 777), "does_not_exist", int64(100))
+}
+
 func TestPlan_Delete(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")

@@ -859,24 +859,29 @@ func (x *UpdateNodeOp) GetPrecondition() *UpdateNodePrecondition {
 }
 
 // UpdateNodePrecondition is the single-field equality CAS predicate
-// attached to “UpdateNodeOp.precondition“. The field is named, not
-// numbered, on the wire — the server resolves it to a stable field_id
-// against the schema registry at handler ingress and stores the id-keyed
-// form in the WAL event. Unknown field names are rejected with
-// INVALID_ARGUMENT at handler time so the WAL never sees a precondition
-// that can never be evaluated.
+// attached to “UpdateNodeOp.precondition“. Official SDKs accept a
+// developer-facing field name and translate it to “field_id“ before
+// sending the request, so schema-less servers can evaluate CAS without
+// consulting a registry. The legacy “field“ name is retained for
+// diagnostics and for older clients talking to registry-backed servers.
 type UpdateNodePrecondition struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Node field name as declared in the proto schema (NOT the on-disk
-	// field_id). The handler translates this to field_id before the
-	// event is appended.
+	// Node field name as declared in the proto schema. Official SDKs
+	// still let developers specify this name, but send “field_id“ as
+	// the authoritative coordinate. When present, this name is surfaced
+	// in PreconditionFailure details.
 	Field string `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
 	// The expected current value of “field“. Encoded as a
 	// “google.protobuf.Value“ so callers can express scalar types
 	// (numbers, strings, booleans, null) without a parallel typed
 	// union. Lists and structs are accepted on the wire but the
 	// applier compares them by JSON-canonical form.
-	Equals        *structpb.Value `protobuf:"bytes,2,opt,name=equals,proto3" json:"equals,omitempty"`
+	Equals *structpb.Value `protobuf:"bytes,2,opt,name=equals,proto3" json:"equals,omitempty"`
+	// Stable numeric field id for the node field being compared.
+	// This is the preferred and schema-less-safe coordinate. Servers
+	// use it directly when it is non-zero; registry-backed servers may
+	// fall back to “field“ only for older clients.
+	FieldId       int32 `protobuf:"varint,3,opt,name=field_id,json=fieldId,proto3" json:"field_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -923,6 +928,13 @@ func (x *UpdateNodePrecondition) GetEquals() *structpb.Value {
 		return x.Equals
 	}
 	return nil
+}
+
+func (x *UpdateNodePrecondition) GetFieldId() int32 {
+	if x != nil {
+		return x.FieldId
+	}
+	return 0
 }
 
 type DeleteNodeOp struct {
@@ -7216,10 +7228,11 @@ const file_entdb_proto_rawDesc = "" +
 	"field_mask\x18\x04 \x03(\tR\tfieldMask\x12-\n" +
 	"\x05patch\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05patch\x12D\n" +
 	"\fprecondition\x18\a \x01(\v2 .entdb.v1.UpdateNodePreconditionR\fpreconditionJ\x04\b\x03\x10\x04J\x04\b\x06\x10\aR\n" +
-	"patch_jsonR\x04keys\"^\n" +
+	"patch_jsonR\x04keys\"y\n" +
 	"\x16UpdateNodePrecondition\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12.\n" +
-	"\x06equals\x18\x02 \x01(\v2\x16.google.protobuf.ValueR\x06equals\"7\n" +
+	"\x06equals\x18\x02 \x01(\v2\x16.google.protobuf.ValueR\x06equals\x12\x19\n" +
+	"\bfield_id\x18\x03 \x01(\x05R\afieldId\"7\n" +
 	"\fDeleteNodeOp\x12\x17\n" +
 	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\"\xb2\x01\n" +

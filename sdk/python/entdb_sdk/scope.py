@@ -70,6 +70,8 @@ class ScopedPlan:
         self,
         node_id: str,
         msg: Any,
+        *,
+        precondition: tuple[str, Any] | None = None,
     ) -> ScopedPlan:
         """Update a node from a proto message.
 
@@ -77,8 +79,9 @@ class ScopedPlan:
         set of fields explicitly set on ``msg`` (``ListFields()``
         semantics). ``msg`` carries its own type via
         ``(entdb.node)`` — there is no separate ``type_id`` argument.
+        Pass ``precondition=(field_name, expected_value)`` for CAS.
         """
-        self._plan.update(node_id, msg)
+        self._plan.update(node_id, msg, precondition=precondition)
         return self
 
     def delete(

@@ -904,16 +904,20 @@ class GrpcClient:
                     update_op.patch.update(patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
-                # GitHub issue #500 — optional single-field CAS
-                # precondition. The wire carries the field NAME; the
-                # server resolves it to a stable field_id at the
-                # boundary.
+                # GitHub issues #500/#525 — optional single-field CAS
+                # precondition. The SDK resolves the developer-facing
+                # field name to field_id before sending; field is kept
+                # only for diagnostics / older registry-backed servers.
                 pre = update.get("precondition")
                 if pre is not None:
                     eq = Value()
                     eq.MergeFrom(_value_from_python(pre.get("equals")))
                     update_op.precondition.CopyFrom(
-                        UpdateNodePrecondition(field=pre["field"], equals=eq)
+                        UpdateNodePrecondition(
+                            field=pre.get("field", ""),
+                            field_id=int(pre.get("field_id") or 0),
+                            equals=eq,
+                        )
                     )
                 # 2026-04-14 SDK v0.3 — see CreateNodeOp note above.
                 proto_op.update_node.CopyFrom(update_op)
