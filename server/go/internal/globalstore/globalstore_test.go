@@ -10,10 +10,13 @@ package globalstore_test
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"google.golang.org/grpc/codes"
@@ -47,6 +50,101 @@ func TestMaxOpenConns(t *testing.T) {
 	stats := gs.DB().Stats()
 	if stats.MaxOpenConnections != 1 {
 		t.Fatalf("MaxOpenConnections: got %d, want 1", stats.MaxOpenConnections)
+	}
+}
+
+func TestEncryptedGlobalStoreUnreadableWithoutKey(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	key := globalTestMaster(0x41)
+	gs, err := globalstore.New(globalstore.Options{
+		DataDir:            dir,
+		WALMode:            true,
+		EncryptionKey:      key,
+		EncryptionRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("New encrypted: %v", err)
+	}
+	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
+		t.Fatalf("CreateUser encrypted: %v", err)
+	}
+	path := gs.Path()
+	if err := gs.Close(); err != nil {
+		t.Fatalf("Close encrypted: %v", err)
+	}
+
+	encrypted, hasDB, err := entcrypto.SQLiteFileEncryptionStatus(path)
+	if err != nil {
+		t.Fatalf("SQLiteFileEncryptionStatus: %v", err)
+	}
+	if !hasDB || !encrypted {
+		t.Fatalf("global db encryption status encrypted=%v hasDB=%v, want encrypted database", encrypted, hasDB)
+	}
+
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer raw.Close()
+	var n int
+	if err := raw.QueryRowContext(ctx, `SELECT count(*) FROM user_registry`).Scan(&n); err == nil {
+		t.Fatalf("raw sqlite read succeeded with count=%d; want encrypted global db to be unreadable", n)
+	}
+
+	reopened, err := globalstore.New(globalstore.Options{
+		DataDir:            dir,
+		WALMode:            true,
+		EncryptionKey:      key,
+		EncryptionRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("New encrypted reopen: %v", err)
+	}
+	defer reopened.Close()
+	got, err := reopened.GetUser(ctx, "alice")
+	if err != nil {
+		t.Fatalf("GetUser encrypted reopen: %v", err)
+	}
+	if got == nil || got.UserID != "alice" {
+		t.Fatalf("GetUser encrypted reopen = %+v, want alice", got)
+	}
+}
+
+func TestEncryptedGlobalStoreRequiresKey(t *testing.T) {
+	_, err := globalstore.New(globalstore.Options{
+		DataDir:            t.TempDir(),
+		WALMode:            true,
+		EncryptionRequired: true,
+	})
+	if err == nil {
+		t.Fatal("New encryption required without key err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "encryption required") {
+		t.Fatalf("New error = %q, want encryption required", err)
+	}
+}
+
+func TestEncryptedGlobalStoreRefusesPlaintextFile(t *testing.T) {
+	dir := t.TempDir()
+	plain, err := globalstore.New(globalstore.Options{DataDir: dir, WALMode: true})
+	if err != nil {
+		t.Fatalf("New plaintext: %v", err)
+	}
+	if err := plain.Close(); err != nil {
+		t.Fatalf("Close plaintext: %v", err)
+	}
+	_, err = globalstore.New(globalstore.Options{
+		DataDir:            dir,
+		WALMode:            true,
+		EncryptionKey:      globalTestMaster(0x42),
+		EncryptionRequired: true,
+	})
+	if err == nil {
+		t.Fatal("New encrypted over plaintext err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "refusing to open unencrypted global.db") {
+		t.Fatalf("New error = %q, want unencrypted refusal", err)
 	}
 }
 
@@ -111,6 +209,14 @@ func TestUserCRUD(t *testing.T) {
 	if err != nil || got != nil {
 		t.Fatalf("GetUser ghost: got (%v, %v)", got, err)
 	}
+}
+
+func globalTestMaster(fill byte) []byte {
+	key := make([]byte, entcrypto.KeyLength)
+	for i := range key {
+		key[i] = fill
+	}
+	return key
 }
 
 // TestUserUniqueEmail asserts that a duplicate user_id or email raises

@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 )
 
@@ -31,6 +32,15 @@ type Options struct {
 	// May be nil; methods that need it will skip index creation when
 	// nil, which is what tests want when they exercise raw CRUD paths.
 	Registry *schema.Registry
+
+	// KeyManager enables SQLCipher encryption for tenant database files.
+	// When set, OpenTenant derives/unwraps the per-tenant DEK and opens
+	// tenant_<id>.db through SQLCipher.
+	KeyManager *entcrypto.KeyManager
+
+	// EncryptionRequired refuses to construct a store unless KeyManager
+	// is configured. It also rejects pre-existing plaintext tenant files.
+	EncryptionRequired bool
 }
 
 // CanonicalStore is the per-tenant SQLite materialized view of the WAL.
@@ -59,7 +69,13 @@ type CanonicalStore struct {
 // New constructs a CanonicalStore. Caller must Close. RootDir is created
 // (recursively) if it does not exist.
 func New(opts Options) (*CanonicalStore, error) {
-	p, err := newPool(opts.RootDir, opts.BusyTimeout, opts.WALMode)
+	p, err := newPool(poolOptions{
+		rootDir:            opts.RootDir,
+		busyTimeout:        opts.BusyTimeout,
+		walMode:            opts.WALMode,
+		keyManager:         opts.KeyManager,
+		encryptionRequired: opts.EncryptionRequired,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -146,4 +162,13 @@ func (s *CanonicalStore) Registry() *schema.Registry { return s.registry }
 // a code smell.
 func (s *CanonicalStore) AdminDB(tenantID string) (*sql.DB, error) {
 	return s.db(tenantID)
+}
+
+// TenantDBPath returns the absolute tenant SQLite file path. It is used
+// by compliance workers and tests that need to inspect on-disk state.
+func (s *CanonicalStore) TenantDBPath(tenantID string) (string, error) {
+	if err := validateTenantID(tenantID); err != nil {
+		return "", err
+	}
+	return s.pool.dbPath(tenantID), nil
 }

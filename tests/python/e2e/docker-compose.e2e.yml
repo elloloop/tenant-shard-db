@@ -1,5 +1,3 @@
-version: "3.8"
-
 # =============================================================================
 # EntDB E2E Test Environment — Go server target
 # =============================================================================
@@ -18,6 +16,35 @@ version: "3.8"
 # =============================================================================
 
 services:
+  tls-certs:
+    image: alpine:3.20
+    command:
+      - sh
+      - -c
+      - |
+        set -euo pipefail
+        apk add --no-cache openssl
+        mkdir -p /tls
+        if [ ! -s /tls/ca.pem ] || [ ! -s /tls/server.pem ] || [ ! -s /tls/server-key.pem ]; then
+          openssl ecparam -genkey -name prime256v1 -noout -out /tls/ca-key.pem
+          openssl req -x509 -new -nodes -key /tls/ca-key.pem -sha256 -days 2 \
+            -subj "/CN=entdb-e2e-ca" \
+            -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -out /tls/ca.pem
+          openssl ecparam -genkey -name prime256v1 -noout -out /tls/server-key.pem
+          openssl req -new -key /tls/server-key.pem \
+            -subj "/CN=server" \
+            -out /tls/server.csr
+          printf "subjectAltName=DNS:server,DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature\n" > /tls/server.ext
+          openssl x509 -req -in /tls/server.csr -CA /tls/ca.pem -CAkey /tls/ca-key.pem -CAcreateserial \
+            -out /tls/server.pem -days 2 -sha256 -extfile /tls/server.ext
+        fi
+        chown -R 65532:65532 /tls
+        chmod 0444 /tls/*.pem
+    volumes:
+      - tls-certs:/tls
+
   # ==========================================================================
   # Redpanda (Kafka-compatible WAL backend)
   #
@@ -78,11 +105,18 @@ services:
       - "-wal-group=entdb-applier-e2e"
       - "-seed-profile=e2e"
       - "-seed-tenant=e2e-test"
+      - "-tls-cert=/etc/entdb/tls/server.pem"
+      - "-tls-key=/etc/entdb/tls/server-key.pem"
+      - "-tls-ca=/etc/entdb/tls/ca.pem"
+      - "-require-tls=true"
     depends_on:
+      tls-certs:
+        condition: service_completed_successfully
       redpanda:
         condition: service_healthy
     volumes:
       - go-server-data:/var/lib/entdb
+      - tls-certs:/etc/entdb/tls:ro
     # No HEALTHCHECK in the distroless image (no shell, no grpc probe
     # binary baked in). The test runner retries its own connect with
     # MAX_RETRIES so a TCP-ready server is sufficient.
@@ -102,15 +136,18 @@ services:
       - ENTDB_PORT=50051
       - ENTDB_TENANT=e2e-test
       - ENTDB_SERVER_TARGET=go
+      - ENTDB_TLS_CA=/etc/entdb/tls/ca.pem
       - COMPOSE_PROJECT_NAME=e2e-go
     depends_on:
       - server
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./docker-compose.e2e.yml:/compose/docker-compose.yml:ro
+      - tls-certs:/etc/entdb/tls:ro
 
 volumes:
   go-server-data:
+  tls-certs:
 
 networks:
   default:

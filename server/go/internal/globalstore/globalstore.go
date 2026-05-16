@@ -23,8 +23,8 @@
 //
 // # Driver
 //
-// modernc.org/sqlite (pure Go, no cgo). Same driver the per-tenant
-// `store` package will use in W1.8.
+// The default driver is modernc.org/sqlite. When Options.EncryptionKey
+// is configured, global.db is opened through SQLCipher instead.
 
 package globalstore
 
@@ -36,6 +36,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
 
 	// modernc.org/sqlite registers the "sqlite" driver with database/sql
 	// in its init(); a side-effect import is the canonical way to use it.
@@ -62,6 +64,14 @@ type Options struct {
 	// can drive calendar-month rollover deterministically. nil ->
 	// time.Now().Unix().
 	NowFn func() int64
+
+	// EncryptionKey enables SQLCipher encryption for global.db. It must
+	// be exactly 32 bytes when present.
+	EncryptionKey []byte
+
+	// EncryptionRequired refuses to open global.db without EncryptionKey
+	// and rejects pre-existing plaintext global.db files.
+	EncryptionRequired bool
 }
 
 // GlobalStore is the cross-tenant SQLite handle.
@@ -83,6 +93,9 @@ func New(opts Options) (*GlobalStore, error) {
 	if opts.DataDir == "" {
 		return nil, errors.New("globalstore: Options.DataDir is required")
 	}
+	if opts.EncryptionRequired && len(opts.EncryptionKey) == 0 {
+		return nil, errors.New("globalstore: encryption required but no encryption key configured")
+	}
 	if err := os.MkdirAll(opts.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("globalstore: create data dir %q: %w", opts.DataDir, err)
 	}
@@ -96,11 +109,11 @@ func New(opts Options) (*GlobalStore, error) {
 	}
 	path := filepath.Join(opts.DataDir, "global.db")
 
-	// modernc.org/sqlite accepts a query-string DSN for PRAGMAs. We
-	// set busy_timeout via DSN so even the schema-init query honours
-	// it; the rest of the PRAGMAs are issued imperatively below.
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)", path, busy.Milliseconds())
-	db, err := sql.Open("sqlite", dsn)
+	driver, dsn, err := globalOpenParams(path, busy, opts.EncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("globalstore: open %q: %w", path, err)
 	}
@@ -140,6 +153,24 @@ func New(opts Options) (*GlobalStore, error) {
 		path:  path,
 		nowFn: nowFn,
 	}, nil
+}
+
+func globalOpenParams(path string, busy time.Duration, encryptionKey []byte) (driver, dsn string, err error) {
+	if len(encryptionKey) == 0 {
+		return "sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)", path, busy.Milliseconds()), nil
+	}
+	encrypted, hasDatabase, err := entcrypto.SQLiteFileEncryptionStatus(path)
+	if err != nil {
+		return "", "", err
+	}
+	if hasDatabase && !encrypted {
+		return "", "", fmt.Errorf("globalstore: refusing to open unencrypted global.db %q with encryption configured", path)
+	}
+	dsn, err = entcrypto.SQLCipherDSN(path, encryptionKey, busy)
+	if err != nil {
+		return "", "", err
+	}
+	return entcrypto.SQLCipherDriverName, dsn, nil
 }
 
 // Close releases the SQLite connection. Idempotent.

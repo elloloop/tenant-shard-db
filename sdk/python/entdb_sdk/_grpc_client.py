@@ -532,7 +532,7 @@ class GrpcClient:
         sub-channels managed by the redirect cache.
         """
         if self._secure:
-            if self._credentials:
+            if self._credentials is not None:
                 return grpc_aio.secure_channel(address, self._credentials)
             return grpc_aio.secure_channel(address, grpc.ssl_channel_credentials())
         return grpc_aio.insecure_channel(

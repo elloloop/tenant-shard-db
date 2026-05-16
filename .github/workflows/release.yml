@@ -30,9 +30,8 @@ jobs:
           # server image is the Go reimplementation (Phase 4D of
           # EPIC #407 — Python server retired). Image name is
           # unchanged (ghcr.io/<repo>:vX.Y.Z) so downstream consumers
-          # see a drop-in replacement. CGO is disabled in the Dockerfile
-          # (pure-Go SQLite via modernc.org/sqlite) so both arch legs
-          # build natively without QEMU.
+          # see a drop-in replacement. SQLCipher requires CGO, so each
+          # arch leg builds on a native runner instead of cross-compiling.
           - target: server
             suffix: ""
             dockerfile: Dockerfile

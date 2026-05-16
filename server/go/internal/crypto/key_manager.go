@@ -1,6 +1,7 @@
 // Package crypto contains the encryption-at-rest key hierarchy used by
-// the Go server port. It deliberately owns only key material and vault
-// persistence; SQLCipher connection wiring lands in the store package.
+// the Go server port. It owns key material, KMS bootstrap, SQLCipher
+// DSN helpers, and vault persistence; tenant connection pooling lives
+// in the store package.
 package crypto
 
 import (

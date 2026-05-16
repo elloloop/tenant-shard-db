@@ -24,6 +24,9 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/audit"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
+	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/gdpr"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
@@ -41,6 +44,12 @@ func main() {
 	tlsMinVersion := flag.String("tls-min-version", "1.3", "minimum TLS version: 1.3 | 1.2")
 	requireTLS := flag.Bool("require-tls", false, "refuse to start unless TLS is configured")
 	requireClientCert := flag.Bool("require-client-cert", false, "require and verify client certificates (mTLS; requires --tls-ca)")
+	kmsProvider := flag.String("kms-provider", "", "encryption master-key provider: file | aws | gcp | azure | vault")
+	kmsKeyID := flag.String("kms-key-id", "", "master-key provider identifier; file provider accepts path or env:NAME")
+	encryptionRequired := flag.Bool("encryption-required", false, "require encrypted global.db and tenant SQLite files")
+	gdprWorkerEnabled := flag.Bool("gdpr-worker-enabled", true, "run GDPR deletion_queue worker that performs due deletes and crypto-shred")
+	gdprWorkerInterval := flag.Duration("gdpr-worker-interval", time.Minute, "how often the GDPR worker scans for due deletions")
+	cryptoShredDeleteFiles := flag.Bool("crypto-shred-delete-files", false, "delete tenant .db/-wal/-shm files after key shred")
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
@@ -109,19 +118,66 @@ func main() {
 		srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
 	}
 
-	canonical, err := store.New(store.Options{RootDir: *dataDir, WALMode: true, Registry: registry})
-	if err != nil {
-		log.Fatalf("entdb-server: open canonical store: %v", err)
-	}
-	defer func() { _ = canonical.Close() }()
-	srvOpts = append(srvOpts, api.WithStore(canonical))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	global, err := globalstore.New(globalstore.Options{DataDir: *dataDir, WALMode: true})
+	var masterKey []byte
+	encryptionConfigured := *encryptionRequired ||
+		strings.TrimSpace(*kmsProvider) != "" ||
+		strings.TrimSpace(*kmsKeyID) != ""
+	if encryptionConfigured {
+		masterKey, err = entcrypto.LoadMasterKey(ctx, entcrypto.MasterKeyConfig{
+			Provider: *kmsProvider,
+			KeyID:    *kmsKeyID,
+			DataDir:  *dataDir,
+		})
+		if err != nil {
+			log.Fatalf("entdb-server: encryption master key: %v", err)
+		}
+	}
+
+	global, err := globalstore.New(globalstore.Options{
+		DataDir:            *dataDir,
+		WALMode:            true,
+		EncryptionKey:      masterKey,
+		EncryptionRequired: *encryptionRequired,
+	})
 	if err != nil {
 		log.Fatalf("entdb-server: open global store: %v", err)
 	}
 	defer func() { _ = global.Close() }()
 	srvOpts = append(srvOpts, api.WithGlobalStore(global))
+
+	var keyManager *entcrypto.KeyManager
+	if len(masterKey) > 0 {
+		vault, err := entcrypto.NewTenantKeyVault(ctx, entcrypto.TenantKeyVaultOptions{
+			DB:        global.DB(),
+			MasterKey: masterKey,
+		})
+		if err != nil {
+			log.Fatalf("entdb-server: tenant key vault: %v", err)
+		}
+		keyManager, err = entcrypto.NewKeyManager(masterKey, vault)
+		if err != nil {
+			log.Fatalf("entdb-server: key manager: %v", err)
+		}
+		log.Printf("entdb-server: encryption-at-rest enabled (kms-provider=%s encryption-required=%v)", effectiveKMSProvider(*kmsProvider), *encryptionRequired)
+	} else {
+		log.Printf("entdb-server: WARNING: encryption-at-rest disabled; plaintext SQLite files are for local/dev use only")
+	}
+
+	canonical, err := store.New(store.Options{
+		RootDir:            *dataDir,
+		WALMode:            true,
+		Registry:           registry,
+		KeyManager:         keyManager,
+		EncryptionRequired: *encryptionRequired,
+	})
+	if err != nil {
+		log.Fatalf("entdb-server: open canonical store: %v", err)
+	}
+	defer func() { _ = canonical.Close() }()
+	srvOpts = append(srvOpts, api.WithStore(canonical))
 
 	// WAL backend wiring. memory: in-process, lost on restart (dev /
 	// short-running tests). kafka: Kafka/Redpanda; production-grade,
@@ -143,13 +199,10 @@ func main() {
 	default:
 		log.Fatalf("entdb-server: unsupported wal backend %q (want memory|kafka)", *walBackend)
 	}
-	if err := walImpl.Connect(context.Background()); err != nil {
+	if err := walImpl.Connect(ctx); err != nil {
 		log.Fatalf("entdb-server: wal connect: %v", err)
 	}
 	srvOpts = append(srvOpts, api.WithWALProducer(walImpl), api.WithWALTopic(*walTopic))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	var archiver *audit.Archiver
 	if *archiveEnabled {
@@ -217,6 +270,22 @@ func main() {
 			archiveErr <- archiver.Run(ctx)
 		}()
 	}
+	gdprErr := make(chan error, 1)
+	if *gdprWorkerEnabled {
+		gdprProcessor, err := gdpr.New(gdpr.Options{
+			Global:                global,
+			Store:                 canonical,
+			Keys:                  keyManager,
+			RemoveCiphertextFiles: *cryptoShredDeleteFiles,
+		})
+		if err != nil {
+			log.Fatalf("entdb-server: gdpr worker: %v", err)
+		}
+		go func() {
+			gdprErr <- gdprProcessor.Run(ctx, *gdprWorkerInterval)
+		}()
+		log.Printf("entdb-server: GDPR deletion worker enabled (interval=%s crypto-shred-delete-files=%v)", *gdprWorkerInterval, *cryptoShredDeleteFiles)
+	}
 
 	// Test-only seed: the cross-impl harnesses boot the binary with
 	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
@@ -240,7 +309,7 @@ func main() {
 		}
 	}
 
-	grpcServerOpts, tlsEnabled, err := grpcServerTLSOptions(serverTLSConfig{
+	grpcServerOpts, tlsEnabled, tlsReloader, err := grpcServerTLSOptions(serverTLSConfig{
 		certFile:          *tlsCert,
 		keyFile:           *tlsKey,
 		caFile:            *tlsCA,
@@ -252,6 +321,10 @@ func main() {
 		log.Fatalf("entdb-server: TLS config: %v", err)
 	}
 	if tlsEnabled {
+		grpcServerOpts = append(grpcServerOpts,
+			grpc.ChainUnaryInterceptor(auth.MTLSPeerIdentityUnaryInterceptor()),
+			grpc.ChainStreamInterceptor(auth.MTLSPeerIdentityStreamInterceptor()),
+		)
 		log.Printf("entdb-server: TLS enabled (min-version=%s client-auth=%s)", *tlsMinVersion, clientAuthMode(*tlsCA, *requireClientCert))
 	} else {
 		log.Printf("entdb-server: WARNING: TLS disabled; plaintext gRPC listener is for local/dev use only")
@@ -267,6 +340,25 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	if tlsReloader != nil {
+		reload := make(chan os.Signal, 1)
+		signal.Notify(reload, syscall.SIGHUP)
+		go func() {
+			defer signal.Stop(reload)
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-reload:
+					if err := tlsReloader.Reload(); err != nil {
+						log.Printf("entdb-server: TLS reload failed: %v", err)
+					} else {
+						log.Printf("entdb-server: TLS cert/key/CA reloaded after SIGHUP")
+					}
+				}
+			}
+		}()
+	}
 	go func() {
 		<-stop
 		log.Printf("entdb-server: shutting down")
@@ -290,6 +382,10 @@ func main() {
 	case err := <-archiveErr:
 		if err != nil && err != context.Canceled {
 			log.Printf("entdb-server: archive sidecar exited: %v", err)
+		}
+	case err := <-gdprErr:
+		if err != nil && err != context.Canceled {
+			log.Printf("entdb-server: gdpr worker exited: %v", err)
 		}
 	}
 }
@@ -337,4 +433,11 @@ func splitBrokers(s string) []string {
 		}
 	}
 	return out
+}
+
+func effectiveKMSProvider(provider string) string {
+	if strings.TrimSpace(provider) == "" {
+		return "file"
+	}
+	return strings.TrimSpace(provider)
 }

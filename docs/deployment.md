@@ -328,6 +328,34 @@ platforms: linux/amd64,linux/arm64
 | `ENTDB_GRPC_PORT` | No | gRPC port (default: 50051) |
 | `ENTDB_HTTP_PORT` | No | HTTP port (default: 8080) |
 
+The Go server is configured with flags rather than environment
+variables. Production launches should include the security flags below:
+
+```bash
+/entdb-server \
+  -addr=:50051 \
+  -data-dir=/var/lib/entdb \
+  -wal-backend=kafka \
+  -wal-brokers="$KAFKA_BROKERS" \
+  -tls-cert=/etc/entdb/tls/server.pem \
+  -tls-key=/etc/entdb/tls/server-key.pem \
+  -tls-ca=/etc/entdb/tls/client-ca.pem \
+  -require-tls=true \
+  -require-client-cert=true \
+  -kms-provider=aws \
+  -kms-key-id="$AWS_KMS_KEY_ID" \
+  -encryption-required=true
+```
+
+`-kms-provider=file` accepts `-kms-key-id=/path/to/master.key` or
+`-kms-key-id=env:ENTDB_MASTER_KEY` for local development. The key
+material must be 32 raw bytes, 64 hex characters, or base64-encoded
+32 bytes. `-kms-provider=aws` uses AWS KMS envelope encryption: the
+server generates one 256-bit data key on first boot, persists only the
+KMS ciphertext blob under `-data-dir`, and decrypts it on later boots.
+`-kms-provider=vault` uses Vault Transit data keys with `VAULT_ADDR`,
+`VAULT_TOKEN`, and optional `VAULT_NAMESPACE`.
+
 ### Secrets
 
 Store sensitive values in AWS Secrets Manager:
@@ -490,6 +518,26 @@ resource "aws_iam_role_policy" "ecs_task" {
 
 ### Encryption
 
+- EntDB SQLite files with SQLCipher (`-encryption-required=true`)
 - S3 buckets with SSE-S3 or SSE-KMS
 - MSK with TLS and encryption at rest
 - Secrets in Secrets Manager
+
+`global.db` and every `tenant_<id>.db` file are opened with SQLCipher
+when a master key is configured. Existing plaintext files are refused
+when encryption is configured, so migrate data before enabling
+`-encryption-required=true` on an existing plaintext deployment.
+
+### gRPC TLS and mTLS
+
+Run plaintext only for local development. In production set
+`-require-tls=true`; set `-require-client-cert=true` when service
+callers authenticate with client certificates. The server verifies
+client certificates against `-tls-ca` and maps the verified URI SAN,
+DNS SAN, email SAN, or CommonName into a trusted `system:<id>` actor
+for request authorization.
+
+Certificates may be issued by ACME, a cloud-managed private CA, or an
+internal CA. Keep the certificate, key, and CA bundle on disk and send
+`SIGHUP` to the process after rotation; new TLS handshakes use the
+reloaded cert/key/CA without restarting the server.

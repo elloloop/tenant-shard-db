@@ -58,11 +58,15 @@ echo ""
 cd "$PROJECT_ROOT"
 
 # Build and run tests
-echo "[1/3] Building containers..."
+echo "[1/4] Resetting existing e2e containers..."
+docker compose -f "$COMPOSE_FILE" down -v --remove-orphans >/dev/null 2>&1 || true
+
+echo ""
+echo "[2/4] Building containers..."
 docker compose -f "$COMPOSE_FILE" build $NO_CACHE
 
 echo ""
-echo "[2/3] Starting infrastructure..."
+echo "[3/4] Starting infrastructure..."
 
 # Go server uses Kafka/Redpanda as its WAL. The distroless image carries
 # no healthcheck binary; the test runner retries its own connect, so plain
@@ -73,7 +77,7 @@ echo "Waiting briefly for Go server to bind its listener..."
 sleep 3
 
 echo ""
-echo "[3/4] Running e2e tests..."
+echo "[4/4] Running e2e tests..."
 set +e  # Don't exit on error, we want to capture the exit code
 
 docker compose -f "$COMPOSE_FILE" up --exit-code-from e2e-tests e2e-tests
@@ -91,11 +95,11 @@ fi
 # Cleanup
 if [ "$KEEP_RUNNING" = false ]; then
     echo ""
-    echo "[4/4] Cleaning up..."
+    echo "[cleanup] Cleaning up..."
     docker compose -f "$COMPOSE_FILE" down -v
 else
     echo ""
-    echo "[4/4] Keeping containers running (use 'docker compose -f $COMPOSE_FILE down -v' to clean up)"
+    echo "[cleanup] Keeping containers running (use 'docker compose -f $COMPOSE_FILE down -v' to clean up)"
 fi
 
 echo ""
