@@ -47,7 +47,7 @@ Quick orientation (one-liners, not normative — the ADR is normative):
 
 - [ADR-001](docs/adr/001-storage-architecture.md) — per-tenant SQLite as the tenant data boundary (physical layout owned by ADR-014)
 - [ADR-003](docs/adr/003-acl-model.md) — ACL model: typed capabilities (CoreCapability + per-type extensions), inheritance, cross-tenant grants
-- [ADR-005](docs/adr/005-event-sourcing-wal.md) — event sourcing via WAL
+- [ADR-005](docs/adr/005-event-sourcing-wal.md) — event sourcing via single WAL topic, swappable backends (memory + kafka shipped; #518 ports the rest)
 - [ADR-006](docs/adr/006-proto-schema-definition.md) — proto is the type system end-to-end
 - [ADR-011](docs/adr/011-security-and-compliance.md) — security + compliance posture
 - [ADR-014](docs/adr/014-physical-storage-layout.md) — physical file layout: per-tenant, global, mailbox, public; scale, mobility, public.db semantics
