@@ -48,9 +48,9 @@ Master Key  — provisioned out-of-band (KMS / Vault / file)
 
 - `file` — local key file (dev / single-node) or env-var lookup
 - `aws` — AWS KMS
-- `gcp` — Google Cloud KMS
-- `azure` — Azure Key Vault
 - `vault` — HashiCorp Vault
+- `gcp` — Google Cloud KMS *(flag-recognized but not implemented in this binary; errors at boot)*
+- `azure` — Azure Key Vault *(flag-recognized but not implemented in this binary; errors at boot)*
 
 Operator flags (`cmd/entdb-server/main.go`):
 
@@ -327,7 +327,7 @@ EntDB provides (built into the database):
 The deployment provides (infrastructure):
   🔧 Network security (VPC, firewalls, security groups)
   🔧 Physical security (data center)
-  🔧 KMS for master key (AWS KMS, GCP KMS, Azure Key Vault, Vault)
+  🔧 KMS for master key (AWS KMS or HashiCorp Vault shipped; GCP / Azure providers stubbed, not implemented)
   🔧 Certificate provisioning and rotation cadence
   🔧 DDoS protection (Cloudflare, AWS Shield, Cloud Armor)
   🔧 CI/CD pipeline security

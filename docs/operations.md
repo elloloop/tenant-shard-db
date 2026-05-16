@@ -10,7 +10,7 @@ Before running EntDB in front of real traffic:
 - Set `-wal-backend=kafka` (or another supported backend per [ADR-005](adr/005-event-sourcing-wal.md)) and configure `-wal-brokers` to your MSK / Redpanda cluster.
 - Set `-require-tls=true` with `-tls-cert`, `-tls-key` paths. Use `-tls-min-version=1.3` unless a documented legacy client still needs TLS 1.2.
 - Enable mTLS for service-to-service callers: `-require-client-cert=true` + `-tls-ca <client-ca>`.
-- Set `-kms-provider` (aws / gcp / azure / vault) and `-kms-key-id`. Set `-encryption-required=true`.
+- Set `-kms-provider` (`aws`, `vault`, or `file` — `gcp` / `azure` flags exist but error at boot; not yet implemented) and `-kms-key-id`. Set `-encryption-required=true`.
 - Enable the WAL archive: `-archive-enabled=true`, `-archive-bucket`, `-archive-region`, `-archive-retention-days` matching your retention policy. The bucket must have Object Lock COMPLIANCE pre-configured ([ADR-015](adr/015-wal-and-s3-object-lock-as-audit-log.md)).
 - Keep `-gdpr-worker-enabled=true` with `-gdpr-worker-interval` matched to your erasure SLA.
 

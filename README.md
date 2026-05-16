@@ -17,7 +17,7 @@ EntDB is a multi-tenant, event-sourced database with a graph data model. Writes 
 - **Event-sourced.** Every mutation is appended to the WAL before any state changes. SQLite is a derived view; it can be deleted and rebuilt by replay. See [ADR-016](docs/adr/016-handlers-append-applier-writes.md).
 - **WAL + S3 Object Lock audit log.** WAL archived to S3 with Object Lock COMPLIANCE mode is the single audit log — no hash-chained `audit_log` table. See [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md).
 - **Per-tenant SQLite isolation.** Each tenant gets its own SQLite file ([ADR-001](docs/adr/001-storage-architecture.md), [ADR-014](docs/adr/014-physical-storage-layout.md)). No cross-tenant transactions.
-- **Encryption-at-rest via SQLCipher.** Every per-tenant file, every per-user mailbox file, and `global.db` are AES-256 encrypted. Per-tenant keys derived from a KMS-managed master (AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, or local file). Crypto-shred deletes the key → GDPR erasure even on immutable S3 archives. See [ADR-011](docs/adr/011-security-and-compliance.md).
+- **Encryption-at-rest via SQLCipher.** Every per-tenant file, every per-user mailbox file, and `global.db` are AES-256 encrypted. Per-tenant keys derived from a KMS-managed master (AWS KMS, HashiCorp Vault, or local file shipped today; GCP KMS + Azure Key Vault flag-recognized but unimplemented — error at boot). Crypto-shred deletes the key → GDPR erasure even on immutable S3 archives. See [ADR-011](docs/adr/011-security-and-compliance.md).
 - **TLS 1.3 + mTLS.** Production-grade transport with cert reload-on-SIGHUP, optional client-cert authentication mapped to actor identity.
 - **Graph data model.** Typed nodes and unidirectional typed edges, keyed by stable numeric field IDs on disk (proto field numbers IS the field ID; renames are free). See [ADR-018](docs/adr/018-field-id-keyed-payloads.md).
 - **Typed-capability ACL.** Principal-based grants (`user:X`, `group:X`, `tenant:X`) with typed `CoreCapability` + per-type extension capabilities. See [ADR-003](docs/adr/003-acl-model.md).
@@ -185,7 +185,7 @@ The Go server is configured by **CLI flags only** (no `ENTDB_*` env vars). Highl
 | `-tls-cert`, `-tls-key`, `-tls-ca` | (unset) | TLS material |
 | `-tls-min-version` | `1.3` | Minimum TLS version |
 | `-require-tls`, `-require-client-cert` | `false` | Production-mode gates (mTLS) |
-| `-kms-provider` | (unset) | `file` / `aws` / `gcp` / `azure` / `vault` |
+| `-kms-provider` | (unset) | `file` / `aws` / `vault` shipped today; `gcp` / `azure` are flag-recognized but not implemented (error at boot) |
 | `-kms-key-id` | (unset) | Provider-specific identifier for the master key |
 | `-encryption-required` | `false` | Refuse unencrypted files (production posture) |
 | `-gdpr-worker-enabled` | `true` | Run the deletion-queue worker |

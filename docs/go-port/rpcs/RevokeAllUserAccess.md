@@ -5,7 +5,7 @@
 > commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
 > follows.
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
 `server/go/internal/api/revoke_all_user_access.go`.
 
 Use case: **emergency offboarding**. An admin (or compliance officer) yanks

@@ -8,7 +8,7 @@
 > the ADR wins.
 
 > Server is Go-only as of EPIC #407 Phase 4D; the historical Python server has
-> been deleted. See `docs/decisions/python-server-retired.md` for the
+> been deleted. See [ADR-017](docs/adr/017-python-server-retired.md) for the
 > retirement evidence ladder (contract parity, e2e parity, perf, release-image
 > swap).
 
@@ -53,8 +53,15 @@ Quick orientation (one-liners, not normative — the ADR is normative):
 - [ADR-014](docs/adr/014-physical-storage-layout.md) — physical file layout: per-tenant, global, mailbox, public; scale, mobility, public.db semantics
 - [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md) — WAL + S3 Object Lock is the audit log
 - [ADR-016](docs/adr/016-handlers-append-applier-writes.md) — handlers append to the WAL; only the applier writes SQLite
+- [ADR-017](docs/adr/017-python-server-retired.md) — Python server retired in EPIC #407 Phase 4D
 - [ADR-018](docs/adr/018-field-id-keyed-payloads.md) — payloads keyed by `field_id` on wire and disk; proto field number IS the `field_id`
 - [ADR-019](docs/adr/019-decision-records-home.md) — `docs/adr/` is the only home for design decisions; CLAUDE.md is execution-only
+- [ADR-020](docs/adr/020-immutable-storage-mode.md) — `storage_mode` (TENANT / USER_MAILBOX / PUBLIC) is immutable; no built-in publish/move primitive
+- [ADR-021](docs/adr/021-go-console-binary.md) — single `entdb-console` Go binary with embedded React SPA (replaced the FastAPI console + playground)
+- [ADR-022](docs/adr/022-fts5-full-text-search.md) — SQLite FTS5 backs `(entdb.field).searchable = true`
+- [ADR-023](docs/adr/023-declarative-query-indexes.md) — non-unique expression indexes declared via `(entdb.field).indexed = true`
+- [ADR-024](docs/adr/024-three-layer-rate-limit-model.md) — three-layer rate-limit model; Phase 1 (monthly quotas) is the implementation start
+- [ADR-025](docs/adr/025-single-shape-sdk-api.md) — single-shape SDK API (proto messages everywhere, typed unique-key tokens via codegen, expression-index uniqueness)
 
 ## Project Structure
 

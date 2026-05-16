@@ -6,7 +6,7 @@
 > follows.
 
 EPIC #407 — Python → Go server port. The central write path of EntDB and the
-single most intricate RPC in the surface. Source of truth: Python handler at
+single most intricate RPC in the surface. Source of truth: Go handler at
 `server/go/internal/api/execute_atomic.go` plus the applier at
 `server/go/internal/apply/applier.go` (single-event path) and
 `:575-895` (tenant-batch path).
