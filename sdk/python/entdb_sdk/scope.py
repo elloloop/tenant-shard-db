@@ -9,10 +9,9 @@ Provides a builder pattern that captures tenant and actor context:
     ...     hits = await alice.query(schema_pb2.Product, filter={"sku": {"$like": "WIDGET-%"}})
     ...     await alice.share("p1", "user:charlie", perm=Permission.WRITE)
 
-Per the 2026-04-14 SDK v0.3 decision the scope API is single-shape:
-proto messages everywhere, ``UniqueKey`` tokens for unique-field
-lookup, and one method per operation. See
-``docs/decisions/sdk_api.md``.
+Per ADR-025 the scope API is single-shape: proto messages
+everywhere, ``UniqueKey`` tokens for unique-field lookup, and one
+method per operation. See ``docs/adr/025-single-shape-sdk-api.md``.
 """
 
 from __future__ import annotations

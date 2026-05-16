@@ -15,10 +15,9 @@ package entdb
 //
 //	var ProductSKU = entdb.UniqueKey[string]{TypeID: 201, FieldID: 1, Name: "sku"}
 //
-// The 2026-04-14 SDK v0.3 decision
-// (docs/decisions/sdk_api.md) is the authority on why this type
-// exists and why there is deliberately no public constructor for
-// "hand-rolled" keys.
+// ADR-025 (docs/adr/025-single-shape-sdk-api.md) is the authority on
+// why this type exists and why there is deliberately no public
+// constructor for "hand-rolled" keys.
 type UniqueKey[T any] struct {
 	TypeID  int32
 	FieldID int32

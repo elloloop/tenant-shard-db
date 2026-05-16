@@ -293,7 +293,8 @@ class Plan:
     a proto message class (``delete`` / ``edge_create`` /
     ``edge_delete``) — there are no parallel ``*WithACL`` /
     ``*InMailbox`` methods, no ``keys=`` parameter, and no
-    ``NodeTypeDef + dict`` shape. See ``docs/decisions/sdk_api.md``.
+    ``NodeTypeDef + dict`` shape. See
+    ``docs/adr/025-single-shape-sdk-api.md``.
 
     Example::
 
@@ -976,11 +977,11 @@ class DbClient:
     ) -> Node | None:
         """Resolve a node via a typed unique-key token.
 
-        Per the 2026-04-14 SDK v0.3 decision the only way to look up
-        a node by a unique field is via a :class:`UniqueKey` token
-        emitted by the ``protoc-gen-entdb-keys`` codegen plugin.
-        Stringly-typed lookups (passing a field name) are gone — see
-        ``docs/decisions/sdk_api.md`` for the rationale.
+        Per ADR-025 the only way to look up a node by a unique field
+        is via a :class:`UniqueKey` token emitted by the
+        ``protoc-gen-entdb-keys`` codegen plugin. Stringly-typed
+        lookups (passing a field name) are gone — see
+        ``docs/adr/025-single-shape-sdk-api.md`` for the rationale.
 
         Args:
             key: A :class:`UniqueKey` token from the generated
