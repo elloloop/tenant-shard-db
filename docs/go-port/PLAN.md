@@ -1,3 +1,5 @@
+# Status: Archived. EPIC #407 closed with Phase 4D (commit 8d07f5f). The Go server is canonical; this file is kept for historical reference only.
+
 # EPIC #407 — Coordination Plan (Wave 0 → 2)
 
 This document synthesises the 54 Wave-0 spec files in `docs/go-port/{rpcs,shared}/`
