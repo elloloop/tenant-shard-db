@@ -679,20 +679,20 @@ export class UpdateNodeOp extends Message<UpdateNodeOp> {
 
 /**
  * UpdateNodePrecondition is the single-field equality CAS predicate
- * attached to ``UpdateNodeOp.precondition``. The field is named, not
- * numbered, on the wire — the server resolves it to a stable field_id
- * against the schema registry at handler ingress and stores the id-keyed
- * form in the WAL event. Unknown field names are rejected with
- * INVALID_ARGUMENT at handler time so the WAL never sees a precondition
- * that can never be evaluated.
+ * attached to ``UpdateNodeOp.precondition``. Official SDKs accept a
+ * developer-facing field name and translate it to ``field_id`` before
+ * sending the request, so schema-less servers can evaluate CAS without
+ * consulting a registry. The legacy ``field`` name is retained for
+ * diagnostics and for older clients talking to registry-backed servers.
  *
  * @generated from message entdb.v1.UpdateNodePrecondition
  */
 export class UpdateNodePrecondition extends Message<UpdateNodePrecondition> {
   /**
-   * Node field name as declared in the proto schema (NOT the on-disk
-   * field_id). The handler translates this to field_id before the
-   * event is appended.
+   * Node field name as declared in the proto schema. Official SDKs
+   * still let developers specify this name, but send ``field_id`` as
+   * the authoritative coordinate. When present, this name is surfaced
+   * in PreconditionFailure details.
    *
    * @generated from field: string field = 1;
    */
@@ -709,6 +709,16 @@ export class UpdateNodePrecondition extends Message<UpdateNodePrecondition> {
    */
   equals$?: Value;
 
+  /**
+   * Stable numeric field id for the node field being compared.
+   * This is the preferred and schema-less-safe coordinate. Servers
+   * use it directly when it is non-zero; registry-backed servers may
+   * fall back to ``field`` only for older clients.
+   *
+   * @generated from field: int32 field_id = 3;
+   */
+  fieldId = 0;
+
   constructor(data?: PartialMessage<UpdateNodePrecondition>) {
     super();
     proto3.util.initPartial(data, this);
@@ -719,6 +729,7 @@ export class UpdateNodePrecondition extends Message<UpdateNodePrecondition> {
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "field", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "equals", kind: "message", T: Value },
+    { no: 3, name: "field_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): UpdateNodePrecondition {

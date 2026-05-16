@@ -176,8 +176,9 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 					return nil, fmt.Errorf("entdb: precondition.Equals: %w", err)
 				}
 				upd.Precondition = &pb.UpdateNodePrecondition{
-					Field:  op.Precondition.Field,
-					Equals: eq,
+					Field:   op.Precondition.Field,
+					FieldId: int32(op.Precondition.FieldID),
+					Equals:  eq,
 				}
 			}
 			po.Op = &pb.Operation_UpdateNode{UpdateNode: upd}

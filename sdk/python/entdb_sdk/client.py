@@ -176,7 +176,13 @@ def _names_to_ids(name_to_id: dict[str, int], payload: dict[str, Any]) -> dict[s
 
 def _name_to_id_from_proto(descriptor: Any) -> dict[str, int]:
     """Build ``{field_name: field_number}`` from a proto descriptor."""
-    return {fd.name: fd.number for fd in descriptor.fields}
+    out: dict[str, int] = {}
+    for fd in descriptor.fields:
+        out[fd.name] = fd.number
+        json_name = getattr(fd, "json_name", "")
+        if json_name:
+            out[json_name] = fd.number
+    return out
 
 
 def _name_to_id_from_node_type(node_type: Any) -> dict[str, int]:
@@ -480,8 +486,9 @@ class Plan:
             )
 
         type_id = _node_type_id_from_descriptor(msg.DESCRIPTOR)
+        name_to_id = _name_to_id_from_proto(msg.DESCRIPTOR)
         patch = _proto_payload_from_set_fields(msg)
-        patch = _names_to_ids(_name_to_id_from_proto(msg.DESCRIPTOR), patch)
+        patch = _names_to_ids(name_to_id, patch)
 
         update_op: dict[str, Any] = {
             "type_id": type_id,
@@ -490,7 +497,16 @@ class Plan:
         }
         if precondition is not None:
             field, equals = precondition
-            update_op["precondition"] = {"field": field, "equals": equals}
+            field_id = name_to_id.get(field)
+            if field_id is None:
+                known = {fd.name for fd in msg.DESCRIPTOR.fields}
+                suggestions = [n for n in known if field.lower() in n.lower()][:3]
+                raise UnknownFieldError(field, msg.DESCRIPTOR.name, suggestions)
+            update_op["precondition"] = {
+                "field": field,
+                "field_id": field_id,
+                "equals": equals,
+            }
 
         op: dict[str, Any] = {"update_node": update_op}
 

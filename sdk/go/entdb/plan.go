@@ -145,12 +145,16 @@ func (p *Plan) UpdateIf(nodeID string, msg proto.Message, field string, equals a
 	if err != nil {
 		panic(fmt.Errorf("entdb: Plan.UpdateIf: %w", err))
 	}
+	fieldID, err := fieldIDFromMessage(msg, field)
+	if err != nil {
+		panic(fmt.Errorf("entdb: Plan.UpdateIf: %w", err))
+	}
 	p.operations = append(p.operations, Operation{
 		Type:         OpUpdateNode,
 		TypeID:       int(typeID),
 		NodeID:       nodeID,
 		Patch:        patch,
-		Precondition: &Precondition{Field: field, Equals: equals},
+		Precondition: &Precondition{Field: field, FieldID: int(fieldID), Equals: equals},
 	})
 }
 

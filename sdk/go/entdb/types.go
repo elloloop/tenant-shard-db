@@ -194,12 +194,12 @@ type Operation struct {
 
 	// Precondition is the optional CAS predicate for OpUpdateNode.
 	// When set, the applier compares the node's current value at
-	// Precondition.Field against Precondition.Equals BEFORE applying
+	// Precondition.FieldID against Precondition.Equals BEFORE applying
 	// the patch. A mismatch aborts the ENTIRE batch (no ops commit)
 	// and the failure is memoized in the idempotency cache so a
 	// retry with the same key replays the cached failure. Callers
 	// re-evaluate by minting a new idempotency key. See GitHub
-	// issue #500.
+	// issues #500 and #525.
 	//
 	// Only valid on OpUpdateNode. Ignored for other op types.
 	Precondition *Precondition `json:"precondition,omitempty"`
@@ -209,10 +209,15 @@ type Operation struct {
 // applier against the materialized node state before a patch is
 // applied. Equality is the only operator in v1.
 type Precondition struct {
-	// Field is the node field NAME as declared in the proto schema
-	// (NOT the on-disk field_id). The handler resolves it to a
-	// stable id at the gRPC boundary.
+	// Field is the developer-facing node field name as declared in
+	// the proto schema. The SDK resolves it to FieldID before sending
+	// the request and keeps the name for diagnostics.
 	Field string `json:"field"`
+
+	// FieldID is the stable numeric field id used by the server and
+	// on-disk payloads. Plan.UpdateIf populates this from the proto
+	// descriptor so schema-less servers do not need a registry for CAS.
+	FieldID int `json:"field_id,omitempty"`
 
 	// Equals is the expected current value of Field. Scalar Go
 	// types (string, bool, integers, floats) are encoded as the

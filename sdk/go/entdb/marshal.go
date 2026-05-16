@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -228,6 +229,29 @@ func marshalForWire(msg proto.Message) (int32, map[string]any, error) {
 // points separate so callers read as intent-documenting.
 func marshalSetFieldsForWire(msg proto.Message) (int32, map[string]any, error) {
 	return marshalForWire(msg)
+}
+
+// fieldIDFromMessage resolves a developer-facing proto field name to
+// its stable field number. ADR-006 makes the proto field number the
+// EntDB field_id, so CAS preconditions can stay name-based in SDK code
+// while the wire remains id-keyed.
+func fieldIDFromMessage(msg proto.Message, field string) (int32, error) {
+	if msg == nil {
+		return 0, fmt.Errorf("entdb: nil message")
+	}
+	field = strings.TrimSpace(field)
+	if field == "" {
+		return 0, fmt.Errorf("entdb: empty field name")
+	}
+	desc := msg.ProtoReflect().Descriptor()
+	fields := desc.Fields()
+	if fd := fields.ByName(protoreflect.Name(field)); fd != nil {
+		return int32(fd.Number()), nil
+	}
+	if fd := fields.ByJSONName(field); fd != nil {
+		return int32(fd.Number()), nil
+	}
+	return 0, fmt.Errorf("entdb: message %q has no field %q", desc.FullName(), field)
 }
 
 // payloadFromMessage walks a proto message's set fields and returns

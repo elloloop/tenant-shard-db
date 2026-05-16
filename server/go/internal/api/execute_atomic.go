@@ -452,12 +452,10 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				"id":      upd.GetId(),
 				"patch":   patch,
 			}
-			// GitHub issue #500 — optional CAS precondition. The wire
-			// payload carries the field NAME; we translate to the
-			// stable field_id at the boundary so the WAL event (and
-			// every replay) stores the rename-free identifier. Unknown
-			// names fail closed with INVALID_ARGUMENT — the WAL must
-			// never see a precondition the applier can't evaluate.
+			// GitHub issue #500 / #525 — optional CAS precondition.
+			// Modern SDKs send the stable field_id, with field kept
+			// only for diagnostics. Legacy name-only requests can
+			// still be resolved when a schema registry is configured.
 			if pre := upd.GetPrecondition(); pre != nil {
 				resolved, err := s.translatePrecondition(upd.GetTypeId(), pre)
 				if err != nil {
@@ -514,39 +512,23 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 	return out, nil
 }
 
-// translatePrecondition resolves the wire-side
-// UpdateNodePrecondition.field (a human-readable name) to the stable
-// field_id used on disk and returns the internal op-dict payload
-// consumed by the applier. The "equals" value is unboxed from the
-// *structpb.Value envelope at the boundary so the applier compares
-// raw Go scalars rather than wrapped proto values; the wire-side
-// nullability is preserved (nil → field-absence match).
+// translatePrecondition resolves the wire-side UpdateNodePrecondition
+// to the stable field_id used on disk and returns the internal op-dict
+// payload consumed by the applier. Modern SDKs send field_id directly;
+// the legacy name-only path is retained only for registry-backed direct
+// wire clients. The "equals" value is unboxed from the *structpb.Value
+// envelope at the boundary so the applier compares raw Go scalars
+// rather than wrapped proto values; the wire-side nullability is
+// preserved (nil → field-absence match).
 //
 // Error semantics:
 //
-//   - empty field name           → INVALID_ARGUMENT
-//   - unknown type_id            → INVALID_ARGUMENT (schema-registry miss)
-//   - unknown field name on type → INVALID_ARGUMENT (rename-free invariant
-//                                  means an unknown name can never resolve
-//                                  to a stable id)
+//   - invalid field_id          → INVALID_ARGUMENT
+//   - name-only without registry → INVALID_ARGUMENT
+//   - unknown type_id/name       → INVALID_ARGUMENT (registry-backed fallback)
 //
-// See GitHub issue #500.
+// See GitHub issues #500 and #525.
 func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondition) (map[string]any, error) {
-	name := pre.GetField()
-	if name == "" {
-		return nil, errs.Errorf(codes.InvalidArgument,
-			"update_node: precondition.field is required")
-	}
-	if s.registry == nil {
-		return nil, errs.Errorf(codes.InvalidArgument,
-			"update_node: precondition requires schema registry")
-	}
-	fid, ok := s.registry.FieldIDByNameForType(typeID, name)
-	if !ok {
-		return nil, errs.Errorf(codes.InvalidArgument,
-			"update_node: precondition references unknown field %q on type_id=%d",
-			name, typeID)
-	}
 	// structpb.Value.AsInterface() unboxes scalars to Go-native types
 	// (float64 for numbers, string, bool, nil for NullValue, []any /
 	// map[string]any for compounds) — exactly the shape the applier's
@@ -554,6 +536,36 @@ func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondit
 	var equals any
 	if eq := pre.GetEquals(); eq != nil {
 		equals = eq.AsInterface()
+	}
+	if fid := pre.GetFieldId(); fid != 0 {
+		if fid < 0 || fid > 65535 {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"update_node: precondition.field_id must be 1-65535, got %d", fid)
+		}
+		name := pre.GetField()
+		if name == "" {
+			name = fmt.Sprintf("%d", fid)
+		}
+		return map[string]any{
+			"field":    name, // human-readable, surfaced on failure detail
+			"field_id": fmt.Sprintf("%d", fid),
+			"equals":   equals,
+		}, nil
+	}
+	name := pre.GetField()
+	if name == "" {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"update_node: precondition.field_id is required")
+	}
+	if s.registry == nil {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"update_node: precondition.field_id is required when schema registry is not configured")
+	}
+	fid, ok := s.registry.FieldIDByNameForType(typeID, name)
+	if !ok {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"update_node: precondition references unknown field %q on type_id=%d",
+			name, typeID)
 	}
 	return map[string]any{
 		"field":    name, // human-readable, surfaced on failure detail
@@ -617,11 +629,11 @@ func convertACL(in []*pb.AclEntry) []any {
 //   - string ""          → missing ref; surfaced as INVALID_ARGUMENT.
 //   - string "id"        → returned as-is (bare-id; no $-prefix).
 //   - {"ref":"$a"}       → resolved against aliasMap; unresolved → error.
-//                          Supports "$a" and "$a.id" (Python parity, see
-//                          applier.py:_resolve_ref); only the dotted
-//                          prefix before the first "." is the alias name.
+//     Supports "$a" and "$a.id" (Python parity, see
+//     applier.py:_resolve_ref); only the dotted
+//     prefix before the first "." is the alias name.
 //   - {"type_id":N,"id"} → returned as the id string (typed lookup is a
-//                          read-time concern, not a write-time one).
+//     read-time concern, not a write-time one).
 //
 // Any other shape is treated as a missing ref. The caller wraps the
 // returned error in an InvalidArgument so the gRPC client sees a

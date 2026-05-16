@@ -110,6 +110,41 @@ func newXAFixture(t *testing.T) *xaFixture {
 	return &xaFixture{t: t, wal: w, store: cs, registry: reg, srv: srv, applier: a}
 }
 
+func newSchemalessXAFixture(t *testing.T) *xaFixture {
+	t.Helper()
+	w := wal.NewInMemory(1)
+	if err := w.Connect(context.Background()); err != nil {
+		t.Fatalf("wal.Connect: %v", err)
+	}
+
+	cs, err := store.New(store.Options{RootDir: t.TempDir(), WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New: %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+	if err := cs.OpenTenant(context.Background(), xaTenant); err != nil {
+		t.Fatalf("OpenTenant: %v", err)
+	}
+
+	srv := api.New(
+		api.WithStore(cs),
+		api.WithWALProducer(w),
+		api.WithWALTopic(xaTopic),
+	)
+
+	a, err := apply.New(apply.Options{
+		Store:       cs,
+		Consumer:    w,
+		Topic:       xaTopic,
+		GroupID:     xaGroupID,
+		PollTimeout: 25 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("apply.New: %v", err)
+	}
+	return &xaFixture{t: t, wal: w, store: cs, srv: srv, applier: a}
+}
+
 func (f *xaFixture) runApplier(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -144,6 +179,15 @@ func newStruct(t *testing.T, m map[string]any) *structpb.Struct {
 		t.Fatalf("structpb.NewStruct: %v", err)
 	}
 	return s
+}
+
+func newValue(t *testing.T, v any) *structpb.Value {
+	t.Helper()
+	out, err := structpb.NewValue(v)
+	if err != nil {
+		t.Fatalf("structpb.NewValue: %v", err)
+	}
+	return out
 }
 
 // TestExecuteAtomic_EmptyOpsRejected pins Python grpc_server.py:637:
@@ -455,6 +499,159 @@ func TestExecuteAtomic_UnknownFieldNameDropped(t *testing.T) {
 	}
 	if _, ok := data["1"]; !ok {
 		t.Fatalf("data missing id 1: %v", data)
+	}
+}
+
+func TestExecuteAtomic_PreconditionFieldIDWorksWithoutSchemaRegistry(t *testing.T) {
+	t.Parallel()
+	f := newSchemalessXAFixture(t)
+	f.runApplier(t)
+
+	ctx := context.Background()
+	if _, err := f.store.CreateNodeRaw(ctx, xaTenant, store.NodeInput{
+		NodeID:     "cas-schemaless-ok",
+		TypeID:     525,
+		OwnerActor: xaActorStr,
+		Payload:    map[string]any{"1": "old@x"},
+	}); err != nil {
+		t.Fatalf("CreateNodeRaw: %v", err)
+	}
+
+	resp, err := f.srv.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "cas-schemaless-ok-1",
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_UpdateNode{UpdateNode: &pb.UpdateNodeOp{
+				TypeId: 525,
+				Id:     "cas-schemaless-ok",
+				Patch:  newStruct(t, map[string]any{"1": "new@x"}),
+				Precondition: &pb.UpdateNodePrecondition{
+					Field:   "email",
+					FieldId: 1,
+					Equals:  newValue(t, "old@x"),
+				},
+			}},
+		}},
+		WaitApplied:   true,
+		WaitTimeoutMs: 2000,
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	}
+	if resp.GetAppliedStatus() != pb.ReceiptStatus_RECEIPT_STATUS_APPLIED {
+		t.Fatalf("applied_status=%v want APPLIED", resp.GetAppliedStatus())
+	}
+	n, err := f.store.GetNode(ctx, xaTenant, "cas-schemaless-ok")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(n.PayloadJSON), &payload); err != nil {
+		t.Fatalf("payload decode: %v", err)
+	}
+	if got := payload["1"]; got != "new@x" {
+		t.Fatalf("payload[1]=%v want new@x", got)
+	}
+}
+
+func TestExecuteAtomic_PreconditionFieldIDFailureWithoutSchemaRegistry(t *testing.T) {
+	t.Parallel()
+	f := newSchemalessXAFixture(t)
+	f.runApplier(t)
+
+	ctx := context.Background()
+	if _, err := f.store.CreateNodeRaw(ctx, xaTenant, store.NodeInput{
+		NodeID:     "cas-schemaless-miss",
+		TypeID:     525,
+		OwnerActor: xaActorStr,
+		Payload:    map[string]any{"1": "old@x"},
+	}); err != nil {
+		t.Fatalf("CreateNodeRaw: %v", err)
+	}
+
+	resp, err := f.srv.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "cas-schemaless-miss-1",
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_UpdateNode{UpdateNode: &pb.UpdateNodeOp{
+				TypeId: 525,
+				Id:     "cas-schemaless-miss",
+				Patch:  newStruct(t, map[string]any{"1": "new@x"}),
+				Precondition: &pb.UpdateNodePrecondition{
+					Field:   "email",
+					FieldId: 1,
+					Equals:  newValue(t, "wrong@x"),
+				},
+			}},
+		}},
+		WaitApplied:   true,
+		WaitTimeoutMs: 2000,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAtomic: %v", err)
+	}
+	if resp.GetSuccess() {
+		t.Fatalf("success=true want false")
+	}
+	if resp.GetAppliedStatus() != pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION {
+		t.Fatalf("applied_status=%v want FAILED_PRECONDITION", resp.GetAppliedStatus())
+	}
+	if resp.GetErrorCode() != "FAILED_PRECONDITION" {
+		t.Fatalf("error_code=%q want FAILED_PRECONDITION", resp.GetErrorCode())
+	}
+	pf := resp.GetPreconditionFailure()
+	if pf == nil {
+		t.Fatalf("precondition_failure is nil")
+	}
+	if pf.GetField() != "email" {
+		t.Fatalf("field=%q want email", pf.GetField())
+	}
+	if pf.GetExpected().GetStringValue() != "wrong@x" {
+		t.Fatalf("expected=%q want wrong@x", pf.GetExpected().GetStringValue())
+	}
+	if pf.GetObserved().GetStringValue() != "old@x" {
+		t.Fatalf("observed=%q want old@x", pf.GetObserved().GetStringValue())
+	}
+	n, err := f.store.GetNode(ctx, xaTenant, "cas-schemaless-miss")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(n.PayloadJSON), &payload); err != nil {
+		t.Fatalf("payload decode: %v", err)
+	}
+	if got := payload["1"]; got != "old@x" {
+		t.Fatalf("payload[1]=%v want old@x", got)
+	}
+}
+
+func TestExecuteAtomic_NameOnlyPreconditionRejectedWithoutSchemaRegistry(t *testing.T) {
+	t.Parallel()
+	f := newSchemalessXAFixture(t)
+
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "cas-schemaless-name-only-1",
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_UpdateNode{UpdateNode: &pb.UpdateNodeOp{
+				TypeId: 525,
+				Id:     "cas-schemaless-name-only",
+				Patch:  newStruct(t, map[string]any{"1": "new@x"}),
+				Precondition: &pb.UpdateNodePrecondition{
+					Field:  "email",
+					Equals: newValue(t, "old@x"),
+				},
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatalf("ExecuteAtomic: expected InvalidArgument, got nil")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code=%v want InvalidArgument", got)
+	}
+	if !strings.Contains(err.Error(), "precondition.field_id is required") {
+		t.Fatalf("error=%q want field_id guidance", err.Error())
 	}
 }
 

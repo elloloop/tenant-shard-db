@@ -313,16 +313,16 @@ message UpdateNodeOp {
 }
 
 // UpdateNodePrecondition is the single-field equality CAS predicate
-// attached to ``UpdateNodeOp.precondition``. The field is named, not
-// numbered, on the wire — the server resolves it to a stable field_id
-// against the schema registry at handler ingress and stores the id-keyed
-// form in the WAL event. Unknown field names are rejected with
-// INVALID_ARGUMENT at handler time so the WAL never sees a precondition
-// that can never be evaluated.
+// attached to ``UpdateNodeOp.precondition``. Official SDKs accept a
+// developer-facing field name and translate it to ``field_id`` before
+// sending the request, so schema-less servers can evaluate CAS without
+// consulting a registry. The legacy ``field`` name is retained for
+// diagnostics and for older clients talking to registry-backed servers.
 message UpdateNodePrecondition {
-    // Node field name as declared in the proto schema (NOT the on-disk
-    // field_id). The handler translates this to field_id before the
-    // event is appended.
+    // Node field name as declared in the proto schema. Official SDKs
+    // still let developers specify this name, but send ``field_id`` as
+    // the authoritative coordinate. When present, this name is surfaced
+    // in PreconditionFailure details.
     string field = 1;
 
     // The expected current value of ``field``. Encoded as a
@@ -331,6 +331,12 @@ message UpdateNodePrecondition {
     // union. Lists and structs are accepted on the wire but the
     // applier compares them by JSON-canonical form.
     google.protobuf.Value equals = 2;
+
+    // Stable numeric field id for the node field being compared.
+    // This is the preferred and schema-less-safe coordinate. Servers
+    // use it directly when it is non-zero; registry-backed servers may
+    // fall back to ``field`` only for older clients.
+    int32 field_id = 3;
 }
 
 message DeleteNodeOp {

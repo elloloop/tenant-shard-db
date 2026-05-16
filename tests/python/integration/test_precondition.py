@@ -56,6 +56,7 @@ async def _update_with_precondition(
     pre_expected: str,
     *,
     idem_key: str,
+    pre_field_id: int | None = 1,
 ) -> pb.ExecuteAtomicResponse:
     patch = struct_pb2.Struct()
     patch.update({"email": new_email})
@@ -69,7 +70,9 @@ async def _update_with_precondition(
                     id=node_id,
                     patch=patch,
                     precondition=pb.UpdateNodePrecondition(
-                        field=pre_field, equals=_string(pre_expected)
+                        field=pre_field,
+                        field_id=pre_field_id or 0,
+                        equals=_string(pre_expected),
                     ),
                 )
             )
@@ -178,6 +181,7 @@ async def test_unknown_precondition_field_is_invalid_argument(stub) -> None:
             pre_field="does_not_exist",
             pre_expected="old@x",
             idem_key=f"upd-{uuid.uuid4().hex[:8]}",
+            pre_field_id=None,
         )
     import grpc
 
@@ -209,7 +213,11 @@ async def test_sdk_plan_update_with_precondition_raises_typed_error(
                             "type_id": 1,
                             "id": nid,
                             "patch": {"1": "new@x"},
-                            "precondition": {"field": "email", "equals": "wrong@x"},
+                            "precondition": {
+                                "field": "email",
+                                "field_id": 1,
+                                "equals": "wrong@x",
+                            },
                         }
                     }
                 ],
