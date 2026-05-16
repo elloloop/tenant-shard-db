@@ -5,8 +5,6 @@ import (
 	"context"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -264,22 +262,14 @@ func (t *grpcTransport) Connect(_ context.Context) error {
 		t.redirectCache = newTenantEndpointCache(dialerFromConfig(t.config))
 	}
 
-	opts := append([]grpc.DialOption(nil), t.config.dialOptions...)
-	if !hasTransportCreds(opts) {
-		var creds credentials.TransportCredentials
-		if t.config.secure {
-			creds = credentials.NewTLS(nil)
-		} else {
-			creds = insecure.NewCredentials()
-		}
-		opts = append(opts, grpc.WithTransportCredentials(creds))
-	}
+	opts := dialOptionsFromConfig(t.config)
 	// Interceptor chain, outermost first. The retry interceptor
-	// wraps the redirect interceptor so every retry attempt still
-	// follows tenant redirects (and a redirect-follow that fails
-	// transiently is itself retried). grpc.WithChainUnaryInterceptor
-	// invokes interceptors in slice order — index 0 is outermost.
-	var chain []grpc.UnaryClientInterceptor
+	// wraps the redirect interceptor so every retry attempt still follows
+	// tenant redirects. Caller interceptors run before SDK-owned
+	// interceptors so tracing/propagation wraps the full logical SDK call.
+	// grpc.WithChainUnaryInterceptor invokes interceptors in slice order:
+	// index 0 is outermost.
+	chain := append([]grpc.UnaryClientInterceptor(nil), t.config.unaryClientInterceptors...)
 	if t.config.maxRetries > 0 {
 		chain = append(chain, retryInterceptor(t.config.maxRetries, t.config.retryBudget, t.config.retryJitter))
 	}
@@ -288,6 +278,9 @@ func (t *grpcTransport) Connect(_ context.Context) error {
 	}
 	if len(chain) > 0 {
 		opts = append(opts, grpc.WithChainUnaryInterceptor(chain...))
+	}
+	if len(t.config.streamClientInterceptors) > 0 {
+		opts = append(opts, grpc.WithChainStreamInterceptor(t.config.streamClientInterceptors...))
 	}
 
 	conn, err := grpc.NewClient(t.address, opts...)
@@ -1253,12 +1246,12 @@ func (t *grpcTransport) clearOffsets() { t.offsets.clear() }
 
 // ClearOffsets drops every tracked per-tenant write offset, so the
 // next read no longer pins to a past write. Mirrors the Python SDK's
-// ``DbClient.clear_offsets()`` — useful in tests and when a caller
+// “DbClient.clear_offsets()“ — useful in tests and when a caller
 // deliberately wants to stop enforcing read-after-write.
 //
 // Automatic offset tracking otherwise needs zero application code:
-// every Commit records ``receipt.stream_position`` for its tenant
-// and every subsequent read auto-attaches it as ``after_offset``.
+// every Commit records “receipt.stream_position“ for its tenant
+// and every subsequent read auto-attaches it as “after_offset“.
 func (c *DbClient) ClearOffsets() {
 	if oc, ok := c.transport.(offsetClearer); ok {
 		oc.clearOffsets()

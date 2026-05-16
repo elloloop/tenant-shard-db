@@ -28,6 +28,11 @@ type clientConfig struct {
 	// sub-channels. Tests use it to install a contextDialer for
 	// bufconn-backed in-process servers.
 	dialOptions []grpc.DialOption
+	// unaryClientInterceptors are caller-supplied interceptors that
+	// run before SDK-owned interceptors such as redirect handling.
+	unaryClientInterceptors []grpc.UnaryClientInterceptor
+	// streamClientInterceptors are caller-supplied stream interceptors.
+	streamClientInterceptors []grpc.StreamClientInterceptor
 }
 
 // defaultConfig returns a clientConfig with sensible defaults.
@@ -117,6 +122,39 @@ func WithNodeResolver(r NodeResolver) ClientOption {
 func WithBaseDomain(baseDomain string) ClientOption {
 	return func(c *clientConfig) {
 		c.nodeResolver = &DNSTemplateResolver{BaseDomain: baseDomain}
+	}
+}
+
+// WithUnaryClientInterceptors prepends caller-supplied unary gRPC
+// client interceptors to the SDK's internal interceptor chain.
+//
+// This is intended for cross-cutting concerns such as OpenTelemetry
+// tracing, metrics, request correlation, or custom propagation. When
+// SDK-owned interceptors are also installed, for example node redirect
+// handling, these interceptors run first and wrap the full outbound RPC.
+func WithUnaryClientInterceptors(interceptors ...grpc.UnaryClientInterceptor) ClientOption {
+	return func(c *clientConfig) {
+		for _, interceptor := range interceptors {
+			if interceptor != nil {
+				c.unaryClientInterceptors = append(c.unaryClientInterceptors, interceptor)
+			}
+		}
+	}
+}
+
+// WithStreamClientInterceptors prepends caller-supplied stream gRPC
+// client interceptors to the SDK's internal interceptor chain.
+//
+// The current EntDB wire API is unary-only, but exposing the stream hook
+// keeps the SDK option surface aligned with grpc-go and future-proofs
+// streaming RPC additions.
+func WithStreamClientInterceptors(interceptors ...grpc.StreamClientInterceptor) ClientOption {
+	return func(c *clientConfig) {
+		for _, interceptor := range interceptors {
+			if interceptor != nil {
+				c.streamClientInterceptors = append(c.streamClientInterceptors, interceptor)
+			}
+		}
 	}
 }
 
