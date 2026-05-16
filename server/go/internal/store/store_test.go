@@ -6,12 +6,15 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
@@ -64,6 +67,128 @@ func TestSchemaInitIdempotent(t *testing.T) {
 	}
 }
 
+func TestEncryptedTenantDatabaseUnreadableWithoutKey(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	manager, err := entcrypto.NewKeyManager(testMaster(0x31), nil)
+	if err != nil {
+		t.Fatalf("NewKeyManager: %v", err)
+	}
+	cs, err := store.New(store.Options{
+		RootDir:            dir,
+		WALMode:            true,
+		KeyManager:         manager,
+		EncryptionRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("store.New encrypted: %v", err)
+	}
+	if err := cs.OpenTenant(ctx, "tenant1"); err != nil {
+		t.Fatalf("OpenTenant encrypted: %v", err)
+	}
+	if _, err := cs.CreateNodeRaw(ctx, "tenant1", store.NodeInput{
+		NodeID:     "encrypted-node",
+		TypeID:     7,
+		OwnerActor: "user:alice",
+		Payload:    map[string]any{"1": "secret"},
+	}); err != nil {
+		t.Fatalf("CreateNodeRaw encrypted: %v", err)
+	}
+	path, err := cs.TenantDBPath("tenant1")
+	if err != nil {
+		t.Fatalf("TenantDBPath: %v", err)
+	}
+	if err := cs.Close(); err != nil {
+		t.Fatalf("Close encrypted store: %v", err)
+	}
+
+	encrypted, hasDB, err := entcrypto.SQLiteFileEncryptionStatus(path)
+	if err != nil {
+		t.Fatalf("SQLiteFileEncryptionStatus: %v", err)
+	}
+	if !hasDB || !encrypted {
+		t.Fatalf("tenant db encryption status encrypted=%v hasDB=%v, want encrypted database", encrypted, hasDB)
+	}
+
+	raw, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatalf("open raw sqlite: %v", err)
+	}
+	defer raw.Close()
+	var n int
+	if err := raw.QueryRowContext(ctx, `SELECT count(*) FROM nodes`).Scan(&n); err == nil {
+		t.Fatalf("raw sqlite read succeeded with count=%d; want encrypted file to be unreadable", n)
+	}
+
+	reopened, err := store.New(store.Options{
+		RootDir:            dir,
+		WALMode:            true,
+		KeyManager:         manager,
+		EncryptionRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("store.New encrypted reopen: %v", err)
+	}
+	defer reopened.Close()
+	if err := reopened.OpenTenant(ctx, "tenant1"); err != nil {
+		t.Fatalf("OpenTenant encrypted reopen: %v", err)
+	}
+	if _, err := reopened.GetNode(ctx, "tenant1", "encrypted-node"); err != nil {
+		t.Fatalf("GetNode encrypted reopen: %v", err)
+	}
+}
+
+func TestEncryptionRequiredNeedsKeyManager(t *testing.T) {
+	_, err := store.New(store.Options{
+		RootDir:            t.TempDir(),
+		WALMode:            true,
+		EncryptionRequired: true,
+	})
+	if err == nil {
+		t.Fatal("store.New encryption required without key manager err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "encryption required") {
+		t.Fatalf("store.New error = %q, want encryption required", err)
+	}
+}
+
+func TestEncryptedStoreRefusesPlaintextTenantFile(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+	plain, err := store.New(store.Options{RootDir: dir, WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New plaintext: %v", err)
+	}
+	if err := plain.OpenTenant(ctx, "tenant1"); err != nil {
+		t.Fatalf("OpenTenant plaintext: %v", err)
+	}
+	if err := plain.Close(); err != nil {
+		t.Fatalf("Close plaintext: %v", err)
+	}
+
+	manager, err := entcrypto.NewKeyManager(testMaster(0x32), nil)
+	if err != nil {
+		t.Fatalf("NewKeyManager: %v", err)
+	}
+	encrypted, err := store.New(store.Options{
+		RootDir:            dir,
+		WALMode:            true,
+		KeyManager:         manager,
+		EncryptionRequired: true,
+	})
+	if err != nil {
+		t.Fatalf("store.New encrypted: %v", err)
+	}
+	defer encrypted.Close()
+	err = encrypted.OpenTenant(ctx, "tenant1")
+	if err == nil {
+		t.Fatal("OpenTenant encrypted over plaintext err = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "refusing to open unencrypted tenant DB") {
+		t.Fatalf("OpenTenant error = %q, want unencrypted refusal", err)
+	}
+}
+
 func TestInvalidTenantID(t *testing.T) {
 	cs := newStore(t)
 	ctx := context.Background()
@@ -76,6 +201,14 @@ func TestInvalidTenantID(t *testing.T) {
 			t.Fatalf("OpenTenant(%q): got %v, want errs.ErrInvalidArgument", bad, err)
 		}
 	}
+}
+
+func testMaster(fill byte) []byte {
+	key := make([]byte, entcrypto.KeyLength)
+	for i := range key {
+		key[i] = fill
+	}
+	return key
 }
 
 func TestNodeRoundTrip(t *testing.T) {

@@ -1,9 +1,8 @@
 # EntDB Server (Go) Dockerfile
 #
 # Multi-stage build that compiles server/go/cmd/entdb-server into a
-# minimal distroless runtime image. Uses modernc.org/sqlite (pure-Go
-# SQLite) so CGO_ENABLED=0 and the binary lands in a "static" distroless
-# base — no glibc, no shell, no package manager.
+# minimal distroless runtime image. The server links SQLCipher via cgo
+# so tenant/global SQLite files can be encrypted at rest.
 #
 # Wave 5 (EPIC #407) ships this image alongside the existing Python
 # server image (see ../Dockerfile) so the E2E suite can target either
@@ -21,7 +20,7 @@
 #   docker run --rm entdb-server-go:test -help
 
 # =============================================================================
-# Builder stage — compile the binary with CGO disabled
+# Builder stage — compile the binary with CGO enabled for SQLCipher
 # =============================================================================
 FROM golang:1.25-bookworm AS builder
 
@@ -35,11 +34,11 @@ RUN cd server/go && go mod download
 # Bring in the rest of the Go server source.
 COPY server/go/ ./server/go/
 
-# CGO disabled so the resulting binary is statically linked and runs on
-# `gcr.io/distroless/static-debian12`. modernc.org/sqlite is pure Go, so
-# this works for the persistence layer too.
+# CGO is required by github.com/mutecomm/go-sqlcipher/v4. Release builds
+# run on native amd64/arm64 runners, so no cross-compiled cgo toolchain
+# is needed here.
 RUN cd server/go && \
-    CGO_ENABLED=0 GOOS=linux go build \
+    CGO_ENABLED=1 GOOS=linux go build \
         -trimpath -ldflags="-s -w" \
         -o /entdb-server \
         ./cmd/entdb-server
@@ -51,9 +50,9 @@ RUN cd server/go && \
 RUN mkdir -p /staging/var/lib/entdb && chown -R 65532:65532 /staging
 
 # =============================================================================
-# Runtime stage — distroless static, just the binary
+# Runtime stage — distroless base with glibc for the cgo-linked binary
 # =============================================================================
-FROM gcr.io/distroless/static-debian12:nonroot AS server
+FROM gcr.io/distroless/base-debian12:nonroot AS server
 
 ARG VERSION=dev
 ARG COMMIT=unknown
@@ -75,7 +74,7 @@ EXPOSE 50051
 
 USER nonroot:nonroot
 
-# distroless/static has no shell, so we must use the exec form. The
+# distroless has no shell, so we must use the exec form. The
 # default flags wire up an in-memory WAL (the only backend the Go server
 # supports today — Kafka/etc land in a later wave) and point the data
 # directory at /var/lib/entdb. Override the full command at `docker run`

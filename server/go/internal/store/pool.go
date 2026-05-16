@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
+
 	// modernc.org/sqlite registers the "sqlite" driver via init().
 	_ "modernc.org/sqlite"
 )
@@ -65,25 +67,44 @@ type pool struct {
 
 	// walMode toggles PRAGMA journal_mode=WAL. true in production.
 	walMode bool
+
+	// keyManager switches tenant DB opens to SQLCipher.
+	keyManager *entcrypto.KeyManager
+
+	// encryptionRequired rejects plaintext files and missing key config.
+	encryptionRequired bool
+}
+
+type poolOptions struct {
+	rootDir            string
+	busyTimeout        time.Duration
+	walMode            bool
+	keyManager         *entcrypto.KeyManager
+	encryptionRequired bool
 }
 
 // newPool returns a pool ready to lazy-open tenant DBs. The rootDir is
 // created with 0o755 if it does not already exist.
-func newPool(rootDir string, busyTimeout time.Duration, walMode bool) (*pool, error) {
-	if rootDir == "" {
+func newPool(opts poolOptions) (*pool, error) {
+	if opts.rootDir == "" {
 		return nil, fmt.Errorf("store: rootDir is required")
 	}
-	if err := os.MkdirAll(rootDir, 0o755); err != nil {
-		return nil, fmt.Errorf("store: mkdir %q: %w", rootDir, err)
+	if opts.encryptionRequired && opts.keyManager == nil {
+		return nil, fmt.Errorf("store: encryption required but no key manager configured")
 	}
-	if busyTimeout <= 0 {
-		busyTimeout = 5 * time.Second
+	if err := os.MkdirAll(opts.rootDir, 0o755); err != nil {
+		return nil, fmt.Errorf("store: mkdir %q: %w", opts.rootDir, err)
+	}
+	if opts.busyTimeout <= 0 {
+		opts.busyTimeout = 5 * time.Second
 	}
 	return &pool{
-		entries:     map[string]*poolEntry{},
-		rootDir:     rootDir,
-		busyTimeout: busyTimeout,
-		walMode:     walMode,
+		entries:            map[string]*poolEntry{},
+		rootDir:            opts.rootDir,
+		busyTimeout:        opts.busyTimeout,
+		walMode:            opts.walMode,
+		keyManager:         opts.keyManager,
+		encryptionRequired: opts.encryptionRequired,
 	}, nil
 }
 
@@ -123,8 +144,11 @@ func (p *pool) open(ctx context.Context, tenantID string) (*poolEntry, error) {
 	}
 
 	path := p.dbPath(tenantID)
-	dsn := fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)", path, p.busyTimeout.Milliseconds())
-	db, err := sql.Open("sqlite", dsn)
+	driver, dsn, err := p.openParams(ctx, tenantID, path)
+	if err != nil {
+		return nil, err
+	}
+	db, err := sql.Open(driver, dsn)
 	if err != nil {
 		return nil, fmt.Errorf("store: open %q: %w", path, err)
 	}
@@ -155,6 +179,28 @@ func (p *pool) open(ctx context.Context, tenantID string) (*poolEntry, error) {
 	e := &poolEntry{db: db}
 	p.entries[tenantID] = e
 	return e, nil
+}
+
+func (p *pool) openParams(ctx context.Context, tenantID, path string) (driver, dsn string, err error) {
+	if p.keyManager == nil {
+		return "sqlite", fmt.Sprintf("file:%s?_pragma=busy_timeout(%d)", path, p.busyTimeout.Milliseconds()), nil
+	}
+	encrypted, hasDatabase, err := entcrypto.SQLiteFileEncryptionStatus(path)
+	if err != nil {
+		return "", "", err
+	}
+	if hasDatabase && !encrypted {
+		return "", "", fmt.Errorf("store: refusing to open unencrypted tenant DB %q with encryption configured", path)
+	}
+	key, err := p.keyManager.TenantKey(ctx, tenantID)
+	if err != nil {
+		return "", "", fmt.Errorf("store: tenant key %q: %w", tenantID, err)
+	}
+	dsn, err = entcrypto.SQLCipherDSN(path, key, p.busyTimeout)
+	if err != nil {
+		return "", "", err
+	}
+	return entcrypto.SQLCipherDriverName, dsn, nil
 }
 
 // get returns an opened entry for tenantID without creating it. Returns

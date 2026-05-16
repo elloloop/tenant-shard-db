@@ -3,12 +3,19 @@ package crypto
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
+	_ "modernc.org/sqlite"
 )
 
 func TestKeyManagerDerivedKeysAreDeterministicAndCopied(t *testing.T) {
@@ -78,12 +85,110 @@ func TestParseMasterKeyHex(t *testing.T) {
 	}
 }
 
+func TestLoadMasterKeyFileProvider(t *testing.T) {
+	ctx := context.Background()
+	master := testMaster(0x2a)
+	dir := t.TempDir()
+
+	hexPath := filepath.Join(dir, "master.hex")
+	if err := os.WriteFile(hexPath, []byte(hex.EncodeToString(master)+"\n"), 0o600); err != nil {
+		t.Fatalf("write hex key: %v", err)
+	}
+	got, err := LoadMasterKey(ctx, MasterKeyConfig{Provider: "file", KeyID: hexPath})
+	if err != nil {
+		t.Fatalf("LoadMasterKey hex file: %v", err)
+	}
+	if !bytes.Equal(got, master) {
+		t.Fatalf("hex file key mismatch")
+	}
+
+	b64Path := filepath.Join(dir, "master.b64")
+	if err := os.WriteFile(b64Path, []byte(base64.StdEncoding.EncodeToString(master)), 0o600); err != nil {
+		t.Fatalf("write base64 key: %v", err)
+	}
+	got, err = LoadMasterKey(ctx, MasterKeyConfig{Provider: "file", KeyID: b64Path})
+	if err != nil {
+		t.Fatalf("LoadMasterKey base64 file: %v", err)
+	}
+	if !bytes.Equal(got, master) {
+		t.Fatalf("base64 file key mismatch")
+	}
+
+	t.Setenv("ENTDB_TEST_MASTER_KEY", hex.EncodeToString(master))
+	got, err = LoadMasterKey(ctx, MasterKeyConfig{Provider: "file", KeyID: "env:ENTDB_TEST_MASTER_KEY"})
+	if err != nil {
+		t.Fatalf("LoadMasterKey env: %v", err)
+	}
+	if !bytes.Equal(got, master) {
+		t.Fatalf("env key mismatch")
+	}
+}
+
+func TestLoadMasterKeyVaultProviderPersistsEnvelope(t *testing.T) {
+	ctx := context.Background()
+	master := testMaster(0x2b)
+	ciphertext := "vault:v1:test-ciphertext"
+	calls := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.URL.Path)
+		if got := r.Header.Get("X-Vault-Token"); got != "test-token" {
+			t.Fatalf("X-Vault-Token = %q, want test-token", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/transit/datakey/plaintext/entdb":
+			_, _ = fmt.Fprintf(w, `{"data":{"plaintext":%q,"ciphertext":%q}}`,
+				base64.StdEncoding.EncodeToString(master), ciphertext)
+		case "/v1/transit/decrypt/entdb":
+			_, _ = fmt.Fprintf(w, `{"data":{"plaintext":%q}}`,
+				base64.StdEncoding.EncodeToString(master))
+		default:
+			t.Fatalf("unexpected Vault path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("VAULT_ADDR", server.URL)
+	t.Setenv("VAULT_TOKEN", "test-token")
+	dir := filepath.Join(t.TempDir(), "first-boot", "data")
+
+	got, err := LoadMasterKey(ctx, MasterKeyConfig{
+		Provider:   "vault",
+		KeyID:      "entdb",
+		DataDir:    dir,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("LoadMasterKey vault first: %v", err)
+	}
+	if !bytes.Equal(got, master) {
+		t.Fatalf("vault first key mismatch")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("vault provider did not create data dir: %v", err)
+	}
+	got, err = LoadMasterKey(ctx, MasterKeyConfig{
+		Provider:   "vault",
+		KeyID:      "entdb",
+		DataDir:    dir,
+		HTTPClient: server.Client(),
+	})
+	if err != nil {
+		t.Fatalf("LoadMasterKey vault second: %v", err)
+	}
+	if !bytes.Equal(got, master) {
+		t.Fatalf("vault second key mismatch")
+	}
+	if len(calls) != 2 || calls[0] != "/v1/transit/datakey/plaintext/entdb" || calls[1] != "/v1/transit/decrypt/entdb" {
+		t.Fatalf("Vault calls = %v, want datakey then decrypt", calls)
+	}
+}
+
 func TestKeyManagerVaultSeedsAndPersistsKeysInGlobalDB(t *testing.T) {
 	ctx := context.Background()
 	master := testMaster(0x33)
-	gs := testGlobalStore(t)
+	db := testVaultDB(t)
 
-	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: master})
+	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: master})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault first: %v", err)
 	}
@@ -96,7 +201,7 @@ func TestKeyManagerVaultSeedsAndPersistsKeysInGlobalDB(t *testing.T) {
 		t.Fatalf("TenantKey seeded: %v", err)
 	}
 
-	vault2, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: master})
+	vault2, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: master})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault second: %v", err)
 	}
@@ -127,11 +232,11 @@ func TestKeyManagerVaultSeedsAndPersistsKeysInGlobalDB(t *testing.T) {
 func TestKeyManagerVaultShredIsDurable(t *testing.T) {
 	ctx := context.Background()
 	master := testMaster(0x44)
-	gs := testGlobalStore(t)
+	db := testVaultDB(t)
 	now := fixedTime(1710000000000)
 
 	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{
-		DB:        gs.DB(),
+		DB:        db,
 		MasterKey: master,
 		NowFn:     now,
 	})
@@ -152,7 +257,7 @@ func TestKeyManagerVaultShredIsDurable(t *testing.T) {
 		t.Fatalf("TenantKey after shred: got %v, want ErrTenantShredded", err)
 	}
 
-	vault2, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: master})
+	vault2, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: master})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault second: %v", err)
 	}
@@ -185,9 +290,9 @@ func TestTenantKeyVaultProvisionGetAndRewrap(t *testing.T) {
 	oldMaster := testMaster(0x55)
 	newMaster := testMaster(0x66)
 	dek := testMaster(0x77)
-	gs := testGlobalStore(t)
+	db := testVaultDB(t)
 
-	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: oldMaster})
+	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: oldMaster})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault old: %v", err)
 	}
@@ -220,7 +325,7 @@ func TestTenantKeyVaultProvisionGetAndRewrap(t *testing.T) {
 		t.Fatalf("Get after rewrap returned wrong DEK")
 	}
 
-	reopenedNew, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: newMaster})
+	reopenedNew, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: newMaster})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault new: %v", err)
 	}
@@ -232,7 +337,7 @@ func TestTenantKeyVaultProvisionGetAndRewrap(t *testing.T) {
 		t.Fatalf("Get reopened new returned wrong DEK")
 	}
 
-	reopenedOld, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: oldMaster})
+	reopenedOld, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: oldMaster})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault old reopened: %v", err)
 	}
@@ -245,16 +350,16 @@ func TestTenantKeyVaultBindsWrappedKeyToTenantID(t *testing.T) {
 	ctx := context.Background()
 	master := testMaster(0x78)
 	dek := testMaster(0x79)
-	gs := testGlobalStore(t)
+	db := testVaultDB(t)
 
-	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: master})
+	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: master})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault: %v", err)
 	}
 	if err := vault.Provision(ctx, "acme", dek); err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if _, err := gs.DB().ExecContext(ctx,
+	if _, err := db.ExecContext(ctx,
 		`UPDATE tenant_key_vault SET tenant_id = ? WHERE tenant_id = ?`,
 		"globex", "acme",
 	); err != nil {
@@ -269,9 +374,9 @@ func TestTenantKeyVaultRejectsShreddedProvision(t *testing.T) {
 	ctx := context.Background()
 	master := testMaster(0x88)
 	dek := testMaster(0x99)
-	gs := testGlobalStore(t)
+	db := testVaultDB(t)
 
-	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: master})
+	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: master})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault: %v", err)
 	}
@@ -290,9 +395,9 @@ func TestTenantKeyVaultRejectsEmptyTenantID(t *testing.T) {
 	ctx := context.Background()
 	master := testMaster(0xaa)
 	dek := testMaster(0xbb)
-	gs := testGlobalStore(t)
+	db := testVaultDB(t)
 
-	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: gs.DB(), MasterKey: master})
+	vault, err := NewTenantKeyVault(ctx, TenantKeyVaultOptions{DB: db, MasterKey: master})
 	if err != nil {
 		t.Fatalf("NewTenantKeyVault: %v", err)
 	}
@@ -318,17 +423,14 @@ func TestTenantKeyVaultRejectsEmptyTenantID(t *testing.T) {
 	}
 }
 
-func testGlobalStore(t *testing.T) *globalstore.GlobalStore {
+func testVaultDB(t *testing.T) *sql.DB {
 	t.Helper()
-	gs, err := globalstore.New(globalstore.Options{
-		DataDir: t.TempDir(),
-		WALMode: true,
-	})
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "vault.db"))
 	if err != nil {
-		t.Fatalf("globalstore.New: %v", err)
+		t.Fatalf("sql.Open vault db: %v", err)
 	}
-	t.Cleanup(func() { _ = gs.Close() })
-	return gs
+	t.Cleanup(func() { _ = db.Close() })
+	return db
 }
 
 func testMaster(fill byte) []byte {

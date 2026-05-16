@@ -79,6 +79,7 @@ from entdb_sdk import DbClient, register_proto_schema  # noqa: E402
 HOST = os.environ.get("ENTDB_HOST", "server")
 PORT = int(os.environ.get("ENTDB_PORT", "50051"))
 TENANT = os.environ.get("ENTDB_TENANT", "e2e-test")
+TLS_CA = os.environ.get("ENTDB_TLS_CA", "")
 ACTOR = "user:e2e-runner"
 ADMIN_ACTOR = "system:e2e-admin"
 
@@ -166,7 +167,17 @@ async def db_client(grpc_target: str) -> AsyncGenerator[DbClient, None]:
         _wait_for_grpc(HOST, PORT, timeout=60)
         _BOOT_WAITED = True
 
-    client = DbClient(grpc_target)
+    client_kwargs = {}
+    if TLS_CA:
+        import grpc
+
+        with open(TLS_CA, "rb") as f:
+            client_kwargs = {
+                "secure": True,
+                "credentials": grpc.ssl_channel_credentials(root_certificates=f.read()),
+            }
+
+    client = DbClient(grpc_target, **client_kwargs)
     last_exc: Exception | None = None
     for _ in range(30):
         try:
@@ -300,7 +311,14 @@ def grpc_channel(grpc_target: str) -> Generator[object, None, None]:
     except ImportError:
         pytest.skip("grpcio not installed")
 
-    channel = grpc.insecure_channel(grpc_target)
+    if TLS_CA:
+        with open(TLS_CA, "rb") as f:
+            channel = grpc.secure_channel(
+                grpc_target,
+                grpc.ssl_channel_credentials(root_certificates=f.read()),
+            )
+    else:
+        channel = grpc.insecure_channel(grpc_target)
     try:
         yield channel
     finally:

@@ -686,6 +686,7 @@ class DbClient:
         *,
         secure: bool = False,
         api_key: str | None = None,
+        credentials: Any | None = None,
         max_retries: int = 3,
         registry: SchemaRegistry | None = None,
         schema_module: Any | None = None,
@@ -699,6 +700,8 @@ class DbClient:
             address: Server address (host:port or just host)
             secure: Whether to use TLS
             api_key: Optional API key for authentication
+            credentials: Optional gRPC channel credentials. When set,
+                `secure` should also be true.
             max_retries: Maximum number of retries for transient gRPC failures
             registry: Optional schema registry
             schema_module: Optional generated schema module (e.g. the module
@@ -737,6 +740,7 @@ class DbClient:
             host=host,
             port=port,
             secure=secure,
+            credentials=credentials,
             api_key=api_key,
             max_retries=max_retries,
             registry=self.registry,

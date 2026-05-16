@@ -4,6 +4,21 @@ Guide for operating EntDB in production.
 
 ## Monitoring
 
+## Production Checklist
+
+- Start `entdb-server` with `-require-tls=true`.
+- Use `-tls-min-version=1.3` unless a documented legacy client still
+  requires `1.2`.
+- Configure `-tls-cert`, `-tls-key`, and `-tls-ca`; use
+  `-require-client-cert=true` for service-to-service mTLS.
+- Rotate cert/key/CA files by replacing them atomically and sending
+  `SIGHUP` to the server process.
+- Start with `-encryption-required=true` plus `-kms-provider` and
+  `-kms-key-id`; verify `global.db` and tenant DB files are SQLCipher
+  files before accepting production traffic.
+- Leave `-gdpr-worker-enabled=true` so due `DeleteUser` jobs complete
+  and personal tenant keys are crypto-shredded after grace expiry.
+
 ### Key Metrics
 
 #### Request Metrics

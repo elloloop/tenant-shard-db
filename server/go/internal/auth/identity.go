@@ -20,7 +20,7 @@ import "context"
 // methods. It is a generic map so handlers don't take a hard dependency on
 // any particular JWT library.
 type Identity struct {
-	// Method is "oauth" | "api_key" | "session". Constants below match
+	// Method is "oauth" | "api_key" | "session" | "mtls". Constants below match
 	// the Python AuthContext.method values verbatim.
 	Method   string
 	Subject  string
@@ -36,6 +36,7 @@ const (
 	MethodOAuth   = "oauth"
 	MethodAPIKey  = "api_key"
 	MethodSession = "session"
+	MethodMTLS    = "mtls"
 )
 
 // IsZero reports whether the Identity carries no method and no subject.
