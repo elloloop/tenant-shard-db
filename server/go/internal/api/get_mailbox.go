@@ -1,9 +1,7 @@
 // GetMailbox is a deprecated stub. The legacy cross-tenant mailbox
 // SQLite store was removed; per-tenant fanout now lives in the
 // `notifications` table. The RPC is retained for proto compatibility
-// and contract pinning (see
-// docs/go-port/rpcs/GetMailbox.md and the Python source at
-// server/python/entdb_server/api/grpc_server.py:1478-1498).
+// and contract pinning (see docs/go-port/rpcs/GetMailbox.md).
 //
 // Behavior parity with the Python stub:
 //

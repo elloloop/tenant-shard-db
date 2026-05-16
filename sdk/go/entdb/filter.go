@@ -12,11 +12,11 @@ type FilterOp string
 // matching SQL operator on the indexed payload column.
 //
 // Index usage caveat:
-//   - FilterEq/Lt/Le/Gt/Ge use the existing ``idx_query_t<type>_f<field>``
+//   - FilterEq/Lt/Le/Gt/Ge use the existing “idx_query_t<type>_f<field>“
 //     expression index for B-tree lookups.
 //   - FilterNe (not-equal) CANNOT use a B-tree index — it forces a
 //     scan over every row of the requested type. Use sparingly on
-//     large tables; prefer a positive predicate (``> v OR < v`` is
+//     large tables; prefer a positive predicate (“> v OR < v“ is
 //     not expressible in this v1 cut — re-issue the query if you
 //     need both branches).
 const (
@@ -47,7 +47,7 @@ type Filter struct {
 	Value any
 }
 
-// mongoKey returns the ``$op`` form used by the existing
+// mongoKey returns the “$op“ form used by the existing
 // transport-level filter-to-proto encoder.
 func (op FilterOp) mongoKey() string {
 	switch op {
@@ -69,7 +69,7 @@ func (op FilterOp) mongoKey() string {
 // filtersToMap converts a typed Filter slice into the MongoDB-style
 // map shape the existing transport.QueryNodes accepts. Multiple
 // filters on the same field are merged into a single nested
-// ``{"$op": v, "$op2": v2}`` dict so the existing wire encoder
+// “{"$op": v, "$op2": v2}“ dict so the existing wire encoder
 // (filterToProto) emits one FieldFilter per inlined operator.
 func filtersToMap(filters []Filter) map[string]any {
 	if len(filters) == 0 {

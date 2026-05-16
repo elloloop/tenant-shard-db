@@ -10,7 +10,7 @@ import (
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
 
-// TestServer_UnimplementedRPC_Default pins the Wave-1 contract: any RPC
+// TestServer_UnimplementedRPC_Default pins the contract: any RPC
 // that hasn't been ported yet still returns codes.Unimplemented via the
 // embedded UnimplementedEntDBServiceServer. We probe `DeleteUser`
 // because it's still Unimplemented as of this PR (ExecuteAtomic, the

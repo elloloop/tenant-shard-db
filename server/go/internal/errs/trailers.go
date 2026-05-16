@@ -3,8 +3,8 @@
 // Spec: docs/go-port/shared/error-mapping.md "Detail trailers". The Python
 // server attaches trailing metadata in two places only:
 //
-//   - entdb-redirect-node on UNAVAILABLE  (api/grpc_server.py:387-389)
-//   - retry-after        on RESOURCE_EXHAUSTED (auth/quota_interceptor.py:233)
+//   - entdb-redirect-node on UNAVAILABLE (api/grpc_server.py:387-389)
+//   - retry-after on RESOURCE_EXHAUSTED (auth/quota_interceptor.py:233)
 //
 // Order matters: trailers MUST be set BEFORE the handler returns the status
 // error, otherwise grpc-go flushes trailers along with the closing status

@@ -8,9 +8,9 @@
 // concrete type.
 //
 // Spec: docs/go-port/shared/error-mapping.md (canonical mapping of every
-// status code emitted by server/python/entdb_server, and the Go-side
-// equivalents). Per-RPC specs in docs/go-port/rpcs/*.md reference this file
-// for code semantics; do not duplicate the mapping there.
+// status code emitted by the server). Per-RPC specs in
+// docs/go-port/rpcs/*.md reference this file for code semantics; do not
+// duplicate the mapping there.
 //
 // Out-of-scope (deliberate parity with Python):
 //

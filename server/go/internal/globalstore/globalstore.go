@@ -5,7 +5,6 @@
 // cross-tenant state to be read or written.
 //
 // Spec: docs/go-port/shared/global-store.md. Source-of-truth Python:
-// server/python/entdb_server/global_store.py.
 //
 // # Carve-out from invariant #1 ("all writes go through the WAL")
 //

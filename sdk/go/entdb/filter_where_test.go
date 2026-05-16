@@ -7,7 +7,7 @@ import (
 
 // TestFiltersToMap_SingleEquality pins that a single Eq filter
 // produces the same map shape today's equality call site emits — a
-// plain field=value entry, not a nested ``{"$eq": v}`` dict.
+// plain field=value entry, not a nested “{"$eq": v}“ dict.
 func TestFiltersToMap_SingleEquality(t *testing.T) {
 	got := filtersToMap([]Filter{
 		{Field: "sku", Op: FilterEq, Value: "WIDGET-1"},
@@ -19,7 +19,7 @@ func TestFiltersToMap_SingleEquality(t *testing.T) {
 }
 
 // TestFiltersToMap_RangePair pins the half-open-range shape that
-// motivates issue #501: ``expires_at < now`` → nested ``{"$lt": now}``.
+// motivates issue #501: “expires_at < now“ → nested “{"$lt": now}“.
 func TestFiltersToMap_RangePair(t *testing.T) {
 	got := filtersToMap([]Filter{
 		{Field: "expires_at", Op: FilterGe, Value: int64(100)},

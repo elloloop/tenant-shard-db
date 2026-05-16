@@ -1,9 +1,8 @@
-// GetNode RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// GetNode RPC.
 // Spec: docs/go-port/rpcs/GetNode.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:55 (rpc), :394-407
 // (request/response), :454-472 (Node). Reference Python handler:
-// server/python/entdb_server/api/grpc_server.py:994-1064.
 //
 // Semantics (preserved from the Python handler):
 //
@@ -84,7 +83,7 @@ const getNodeMethod = "GetNode"
 
 // readRole / roleLocal / roleMember / roleCrossTenant — shared with
 // the other read RPCs (GetNodes, QueryNodes, GetConnectedNodes) and
-// declared in helpers.go (consolidated in the round-3 Wave-2 dedupe).
+// declared in helpers.go (consolidated in the round-3 dedupe).
 
 // GetNode implements entdb.v1.EntDBService/GetNode. See file header
 // for the full contract.
@@ -193,7 +192,7 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 }
 
 // checkCrossTenantRead lives in helpers.go (consolidated in the
-// round-3 Wave-2 dedupe). It now uses store.ResolveActorGroups +
+// round-3 dedupe). It now uses store.ResolveActorGroups +
 // store.HasNodeAccess for group-aware grant resolution rather than the
 // per-handler hasAnyNodeAccess shortcut — the per-node hasNodeAccess
 // below is still consulted by step 7 of GetNode for the specific

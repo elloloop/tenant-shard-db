@@ -3,19 +3,19 @@
 // Coverage targets the Python contract pins listed in
 // docs/go-port/rpcs/ExecuteAtomic.md "Contract tests pinning behavior":
 //
-//   - Empty op list      -> INVALID_ARGUMENT (grpc_server.py:637).
-//   - Required fields    -> INVALID_ARGUMENT (tenant_id, actor, type_id, id).
-//   - Missing actor      -> INVALID_ARGUMENT (grpc_server.py:635).
+//   - Empty op list -> INVALID_ARGUMENT (grpc_server.py:637).
+//   - Required fields -> INVALID_ARGUMENT (tenant_id, actor, type_id, id).
+//   - Missing actor -> INVALID_ARGUMENT (grpc_server.py:635).
 //   - Single create_node -> receipt PENDING returns immediately, applier
 //                           catches up and CheckIdempotency reports true.
-//   - Multiple ops       -> all created node IDs surface, in op order.
-//   - Idempotent retry   -> same idempotency_key returns the same receipt.
-//   - Schema mismatch    -> in-band success=false, error_code=SCHEMA_MISMATCH
+//   - Multiple ops -> all created node IDs surface, in op order.
+//   - Idempotent retry -> same idempotency_key returns the same receipt.
+//   - Schema mismatch -> in-band success=false, error_code=SCHEMA_MISMATCH
 //                           (test_grpc_schema_mismatch_metric.py).
-//   - Field-id encoding  -> wire payload arrives as id-keyed JSON in the
+//   - Field-id encoding -> wire payload arrives as id-keyed JSON in the
 //                           WAL event (CLAUDE.md invariant #6, pinned by
 //                           test_grpc_wire_format.py:172,202).
-//   - Permission denied  -> non-member actor cannot write
+//   - Permission denied -> non-member actor cannot write
 //                           (test_tenant_roles.py:524-651).
 
 package api_test

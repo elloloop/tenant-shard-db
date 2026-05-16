@@ -1,7 +1,6 @@
-// tenant_members CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:558 (add_member) through
-// :644 (change_role). Composite PK is (tenant_id, user_id); there's a
-// secondary index on user_id to make GetUserTenants cheap.
+// tenant_members CRUD: add_member through change_role. Composite PK is
+// (tenant_id, user_id); a secondary index on user_id makes
+// GetUserTenants cheap.
 
 package globalstore
 

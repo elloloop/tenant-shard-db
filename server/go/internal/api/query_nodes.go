@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// QueryNodes RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// QueryNodes RPC.
 // Spec: docs/go-port/rpcs/QueryNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:61 (rpc), :424-452
 // (request/response), :675-690 (FieldFilter / FilterOp). Reference
-// Python handler: server/python/entdb_server/api/grpc_server.py:1293-1382.
+// Python handler.
 //
 // Behavior parity with the Python handler, with one DELIBERATE behavior
 // fix flagged by the spec:
 //
 //  1. Tenant gate runs first via s.checkTenant (sharding + region +
-//     globalstore existence). Same call shape as every other Wave-2
+//     globalstore existence). Same call shape as every other
 //     handler.
 //  2. Trusted-actor: the wire-claimed actor is UNTRUSTED. We rebind via
 //     auth.Authoritative(ctx, claimed) — mirrors commit fece3fb.
@@ -78,7 +78,7 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 
 	// Trusted-actor: wire field is UNTRUSTED. Rebind via
 	// auth.Authoritative so the cross-tenant gate has the right
-	// identity. Even though the Wave-2 cut does not yet enforce
+	// identity. Even though the cut does not yet enforce
 	// cross-tenant role distinctions (no global membership reader is
 	// wired up here), we still honour the privilege-escalation guard
 	// so the chokepoint exists.
@@ -181,10 +181,10 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 // them. Both surface as INVALID_ARGUMENT.
 //
 // Inlined operator shape: the Python SDK historically smuggled non-EQ
-// operators through ``Op=EQ, Value=Struct{"$gt": v}``. We honour that
+// operators through “Op=EQ, Value=Struct{"$gt": v}“. We honour that
 // shape so the existing SDK call site keeps working — the inlined
-// operator overrides the wire ``op`` field. Unknown inlined keys (e.g.
-// ``$nin``, ``$between``) still surface as INVALID_ARGUMENT.
+// operator overrides the wire “op“ field. Unknown inlined keys (e.g.
+// “$nin“, “$between“) still surface as INVALID_ARGUMENT.
 func (s *Server) fieldFiltersToStoreFilters(typeName string, filters []*pb.FieldFilter) ([]store.QueryFilter, error) {
 	if len(filters) == 0 {
 		return nil, nil
@@ -275,7 +275,7 @@ func storeFilterOpFromWire(field string, op pb.FilterOp) (store.QueryFilterOp, e
 	}
 }
 
-// storeFilterOpFromInlineKey maps the MongoDB-style ``$gt`` keys used
+// storeFilterOpFromInlineKey maps the MongoDB-style “$gt“ keys used
 // by the Python SDK when smuggling non-EQ operators through Op=EQ.
 func storeFilterOpFromInlineKey(key string) (store.QueryFilterOp, bool) {
 	switch key {
@@ -297,9 +297,9 @@ func storeFilterOpFromInlineKey(key string) (store.QueryFilterOp, bool) {
 
 // inlinedFilterOps reports whether the FieldFilter value carries the
 // inlined operator shape (a JSON object whose first key starts with
-// ``$``) and, if so, returns the (op-key, value) pairs in iteration
-// order. The shape historically lets callers express ``{"price":
-// {"$gt": 10, "$lt": 100}}``.
+// “$“) and, if so, returns the (op-key, value) pairs in iteration
+// order. The shape historically lets callers express “{"price":
+// {"$gt": 10, "$lt": 100}}“.
 type inlinedFilterOp struct {
 	key   string
 	value any
@@ -330,7 +330,7 @@ func inlinedFilterOps(v any) ([]inlinedFilterOp, bool) {
 // The filter is a no-op when the actor is the system bypass, when the
 // actor is empty (no auth), or when no canonical store is wired up.
 // Same-tenant owner access is honoured by VisibleNodeIDs — there is no
-// dedicated short-circuit for "tenant member" because in the Wave-2 cut
+// dedicated short-circuit for "tenant member" because in the cut
 // we don't yet have a global tenant-membership reader at this layer.
 func (s *Server) applyQueryACLFilter(ctx context.Context, tenantID string, a auth.Actor, nodes []*store.Node) ([]*store.Node, error) {
 	if len(nodes) == 0 {
@@ -375,7 +375,7 @@ func (s *Server) applyQueryACLFilter(ctx context.Context, tenantID string, a aut
 
 // authActorToACLActor / (*Server).storeNodeToProto /
 // storeVisibilityAdapter / parsePayloadFieldID — consolidated in
-// helpers.go (round-3 Wave-2 dedupe). The shared authActorToACLActor
+// helpers.go (round-3 dedupe). The shared authActorToACLActor
 // maps admin -> system (defensive: picks up the read-path bypass in
 // acl.Filter.FilterReadable). The shared storeNodeToProto preserves
 // the typeName-aware payload.PayloadToStruct path used here.

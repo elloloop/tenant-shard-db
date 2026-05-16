@@ -1,16 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// GetConnectedNodes RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// GetConnectedNodes RPC.
 // Spec: docs/go-port/rpcs/GetConnectedNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:91 (rpc), :707-718 (messages).
-// Reference Python handler:
-// server/python/entdb_server/api/grpc_server.py:1712-1744. Reference
-// storage layer: server/python/entdb_server/apply/canonical_store.py:3267-3422.
 //
-// Behaviour preserved from the Python handler PLUS the Wave-2 enhancements
-// requested by the task brief (BFS with bounded depth, cycle protection,
-// per-step ACL filter via acl.Filter):
+// Behaviour: BFS with bounded depth, cycle protection, per-step ACL
+// filter via acl.Filter. Notable behaviours:
 //
 //   - Tenant gate runs first (s.checkTenant). PERMISSION_DENIED /
 //     UNAVAILABLE / NOT_FOUND from the gate propagate unchanged.
@@ -317,6 +313,6 @@ func sortNodesByCreatedAtDesc(nodes []*store.Node) {
 
 // authActorToACLActor / storeVisibilityAdapter /
 // (*Server).storeNodeToProto / decodeIDKeyedPayload / decodeACLEntries
-// /parsePayloadFieldID — consolidated in helpers.go (round-3 Wave-2
+// /parsePayloadFieldID — consolidated in helpers.go (round-3
 // dedupe). The shared method form takes typeName (passed "" here
 // because GetConnectedNodes operates on heterogeneous node sets).

@@ -6,7 +6,7 @@ package apply
 // Used by the post-commit fan-out hook (shared_index maintenance) to
 // decide whether to update globalstore alongside the per-tenant write.
 //
-// In Wave 1 every per-tenant write also goes through the canonical
+// In every per-tenant write also goes through the canonical
 // store; the only meaningful split is whether the op also produces a
 // shared_index hint or a globalstore membership change.
 type storageMode uint8

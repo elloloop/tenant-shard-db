@@ -44,7 +44,7 @@ func (s Status) String() string {
 }
 
 // Result is the outcome of applying one event. Mirrors the Python
-// ApplyResult struct at server/python/entdb_server/apply/applier.py:272.
+// ApplyResult struct.
 //
 // Position is the WAL position the event came from; on a successful
 // apply this is the receipt the SDK returns to clients.

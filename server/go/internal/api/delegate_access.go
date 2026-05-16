@@ -2,13 +2,13 @@
 
 // DelegateAccess implements entdb.v1.EntDBService/DelegateAccess.
 //
-// EPIC #407 / Wave 2 / W2 — DelegateAccess RPC.
+// DelegateAccess RPC.
 //
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2747-2806;
-// WAL helper: server/python/entdb_server/api/admin_handlers.py:70-115.
+// Source-of-truth Python;
+// WAL helper.
 // Port spec: docs/go-port/rpcs/DelegateAccess.md.
 //
-// # Closes the silent-drop bug (Wave 0 finding)
+// # Closes the silent-drop bug ( finding)
 //
 // The Python handler appends an `admin_delegate_access` event to the WAL
 // but the Python applier (apply/applier.py:1231-1248) has NO dispatch

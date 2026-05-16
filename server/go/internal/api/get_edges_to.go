@@ -1,9 +1,8 @@
-// GetEdgesTo RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// GetEdgesTo RPC.
 // Spec: docs/go-port/rpcs/GetEdgesTo.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:67 (rpc), :476-491 (request /
 // response), :493-507 (Edge). Reference Python handler:
-// server/python/entdb_server/api/grpc_server.py:1428-1456.
 //
 // Symmetric inverse of GetEdgesFrom: returns edges whose `to_node_id`
 // matches the requested node, scoped to a single tenant. Cross-tenant
@@ -126,6 +125,6 @@ func (s *Server) GetEdgesTo(
 }
 
 // edgeToProto and edgePropsToStruct live in helpers.go (consolidated
-// in the round-3 Wave-2 dedupe). The defensive empty-Struct semantics
+// in the round-3 dedupe). The defensive empty-Struct semantics
 // — never nil for `props` even on malformed legacy rows — are
 // preserved there.

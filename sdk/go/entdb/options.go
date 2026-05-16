@@ -65,7 +65,7 @@ func WithTimeout(d time.Duration) ClientOption {
 }
 
 // WithNodeResolver installs a custom [NodeResolver] used to map
-// server-issued ``node_id`` redirect hints to dial-able endpoints.
+// server-issued “node_id“ redirect hints to dial-able endpoints.
 //
 // Use this with [StaticMapResolver] for deployments without DNS,
 // or with a custom implementation backed by service discovery.
@@ -77,12 +77,12 @@ func WithNodeResolver(r NodeResolver) ClientOption {
 }
 
 // WithBaseDomain wires a [DNSTemplateResolver] for the given base
-// domain. Sub-channels are dialed at ``<node_id>.<baseDomain>:50051``
+// domain. Sub-channels are dialed at “<node_id>.<baseDomain>:50051“
 // when the server returns a redirect hint via the
-// ``entdb-redirect-node`` trailing metadata header.
+// “entdb-redirect-node“ trailing metadata header.
 //
 // This is the recommended way to configure node redirection on
-// Kubernetes — point ``baseDomain`` at the headless service and
+// Kubernetes — point “baseDomain“ at the headless service and
 // the Pod-per-shard StatefulSet will be reachable via the
 // per-pod DNS record.
 //
@@ -159,7 +159,7 @@ func As(alias string) CreateOption {
 // WithID requests the server use the supplied id when creating the
 // node, rather than generating a fresh UUID. Useful for idempotent
 // upserts where the caller derives the id from external content
-// (e.g. ``uuid.NewSHA1(ns, []byte(slug))``).
+// (e.g. “uuid.NewSHA1(ns, []byte(slug))“).
 //
 // The id must be a valid UUID string; validation happens server-side
 // — malformed ids surface as INVALID_ARGUMENT and duplicate ids in
@@ -205,7 +205,7 @@ type createTenantConfig struct {
 type CreateTenantOption func(*createTenantConfig)
 
 // WithRegion pins the new tenant to a specific geographic region
-// (e.g. ``"us-east-1"``, ``"eu-west-1"``). Once set, every request
+// (e.g. “"us-east-1"“, “"eu-west-1"“). Once set, every request
 // that touches the tenant must hit a server that serves the same
 // region; cross-region calls are rejected with FAILED_PRECONDITION.
 //

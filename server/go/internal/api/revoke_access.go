@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// RevokeAccess RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// RevokeAccess RPC.
 // Spec: docs/go-port/rpcs/RevokeAccess.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:97 (rpc), :746-755 (messages).
-// Reference Python: server/python/entdb_server/api/grpc_server.py:1828-1875.
 //
 // # WAL-first restoration (PLAN.md §6.1, fixed on port)
 //
@@ -38,7 +37,7 @@
 //
 // Calls s.checkTenant before authorization to surface NOT_FOUND /
 // FAILED_PRECONDITION / UNAVAILABLE-with-redirect on missing or
-// mis-routed tenants — same gate every Wave-2 handler uses.
+// mis-routed tenants — same gate every handler uses.
 //
 // # Error contract
 //
@@ -46,9 +45,9 @@
 // RevokeAccessResponse{Found:false, Error:<string>} on the response,
 // NOT as a gRPC status error. Three observable paths:
 //
-//	PermissionDenied    Found=false, Error="permission denied: ..."
-//	WAL/append failure  Found=false, Error=<err>
-//	Happy path          Found=true,  Error=""
+//	PermissionDenied Found=false, Error="permission denied: ..."
+//	WAL/append failure Found=false, Error=<err>
+//	Happy path Found=true, Error=""
 //
 // On the happy path, Found=true means "the revoke intent has been
 // durably recorded in the WAL". The applier will perform the DELETE

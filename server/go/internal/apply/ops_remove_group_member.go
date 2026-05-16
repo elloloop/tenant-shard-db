@@ -13,8 +13,8 @@ import (
 // op shape:
 //
 //	{
-//	  "op":              "remove_group_member",
-//	  "group_id":        "<id>",
+//	  "op": "remove_group_member",
+//	  "group_id": "<id>",
 //	  "member_actor_id": "<kind:id>",
 //	}
 func (a *Applier) applyRemoveGroupMember(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any) error {

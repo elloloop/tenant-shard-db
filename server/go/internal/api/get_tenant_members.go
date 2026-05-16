@@ -1,9 +1,8 @@
-// GetTenantMembers RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// GetTenantMembers RPC.
 // Spec: docs/go-port/rpcs/GetTenantMembers.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:125 (rpc), :921-928
 // (request/response), :902-907 (TenantMemberInfo). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:2543-2570.
 //
 // Semantics (preserved byte-for-byte from the Python handler):
 //
@@ -78,7 +77,7 @@ func (s *Server) GetTenantMembers(
 	}
 
 	// Trusted-actor rebinding. No-op on the response today (no
-	// membership gate), but consistent with the rest of the Wave-2
+	// membership gate), but consistent with the rest of the
 	// surface and the privilege-escalation fix in #168. The rebound
 	// actor is intentionally unused; we keep the call as documentation
 	// and to match the canonical handler shape.

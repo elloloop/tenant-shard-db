@@ -2,7 +2,6 @@
 // SQLite store has been removed; this handler is retained for proto
 // compatibility and unconditionally returns an empty user_ids list.
 //
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:1605-1617.
 // Port spec: docs/go-port/rpcs/ListMailboxUsers.md.
 //
 // Contract pins (must not regress):

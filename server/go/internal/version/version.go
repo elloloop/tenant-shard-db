@@ -5,9 +5,6 @@
 // e.g.:
 //
 //	go build -ldflags "-X github.com/elloloop/tenant-shard-db/server/go/internal/version.Version=v1.2.3" ./cmd/entdb-server
-//
-// Mirrors server/python/entdb_server/_version.py (which hard-codes the
-// Python server's version at module level).
 package version
 
 // Version is the server semver. Defaults to "dev" and is overridden at link

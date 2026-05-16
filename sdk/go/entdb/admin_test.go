@@ -369,10 +369,10 @@ func TestAdmin_TransferUserContent_ReturnsCount(t *testing.T) {
 func TestAdmin_RevokeAllUserAccess_TalliesAllThreeBuckets(t *testing.T) {
 	svc := &fakeServer{
 		revokeAllResp: &pb.RevokeAllUserAccessResponse{
-			Success:        true,
-			RevokedGrants:  17,
-			RevokedGroups:  3,
-			RevokedShared:  8,
+			Success:       true,
+			RevokedGrants: 17,
+			RevokedGroups: 3,
+			RevokedShared: 8,
 		},
 	}
 	tr := startFakeServer(t, svc)

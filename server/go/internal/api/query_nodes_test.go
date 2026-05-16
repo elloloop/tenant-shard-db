@@ -12,7 +12,7 @@
 //  4. Unsupported FilterOp (GTE) -> codes.InvalidArgument. This is the
 //     deliberate behaviour FIX over Python's silent exception swallow
 //     called out in the spec "Open questions" §5.
-//  5. Inlined-operator value (Op=EQ, Value={"$gte": ...}) -> codes.
+//  5. Inlined-operator value (Op=EQ, Value={"$gte":, ...}) -> codes.
 //     InvalidArgument. Same parity-fix rationale as (4).
 //  6. Sort by node_id ascending returns rows in lexical order.
 //
@@ -179,7 +179,7 @@ func TestQueryNodes_RangeOperators(t *testing.T) {
 		value   any
 		wantIDs []string
 	}{
-		{"lt", pb.FilterOp_LT, 30, []string{"n2"}},   // age < 30 → n2 (25)
+		{"lt", pb.FilterOp_LT, 30, []string{"n2"}}, // age < 30 → n2 (25)
 		{"lte", pb.FilterOp_LTE, 30, []string{"n1", "n2"}},
 		{"gt", pb.FilterOp_GT, 30, []string{"n3"}}, // age > 30 → n3 (40)
 		{"gte", pb.FilterOp_GTE, 30, []string{"n1", "n3"}},
@@ -224,7 +224,7 @@ func TestQueryNodes_RangeOperators(t *testing.T) {
 }
 
 // TestQueryNodes_RangeOperatorsANDed pins the "all filters AND-ed"
-// contract: ``age >= 25 AND age < 40`` is expressed as two filters
+// contract: “age >= 25 AND age < 40“ is expressed as two filters
 // on the same field and returns only the rows that satisfy both.
 func TestQueryNodes_RangeOperatorsANDed(t *testing.T) {
 	t.Parallel()
@@ -405,7 +405,7 @@ func TestQueryNodes_ACLPostFilter(t *testing.T) {
 }
 
 // TestQueryNodes_InlinedOperator pins the inlined-operator shape: a
-// Struct value carrying ``$gte`` / ``$lt`` / ... keys fans into one
+// Struct value carrying “$gte“ / “$lt“ / ...keys fans into one
 // store filter per inlined entry. This is the wire shape the Python
 // SDK has historically emitted; issue #501 wires the server to accept
 // it natively.
@@ -450,7 +450,7 @@ func TestQueryNodes_InlinedOperator(t *testing.T) {
 
 // TestQueryNodes_InlinedOperatorUnknownRejected pins that the inlined
 // shape still rejects operators outside the Eq/Ne/Lt/Le/Gt/Ge set —
-// the same INVALID_ARGUMENT path as ``$nin`` / ``$between``.
+// the same INVALID_ARGUMENT path as “$nin“ / “$between“.
 func TestQueryNodes_InlinedOperatorUnknownRejected(t *testing.T) {
 	t.Parallel()
 	f := newQueryNodesFixture(t)

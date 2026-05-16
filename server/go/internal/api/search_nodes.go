@@ -1,9 +1,8 @@
-// SearchNodes RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// SearchNodes RPC.
 // Spec: docs/go-port/rpcs/SearchNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:148 (rpc), :1124-1136
 // (messages). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:1130-1213.
 //
 // Semantics:
 //
@@ -28,17 +27,17 @@
 // Error contract (mirrors grpc_server.py:1149-1158 and the swallow at
 // :1210-1213):
 //
-//   - tenant gate fails           -> propagated (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND).
-//   - empty query (after Trim)    -> codes.InvalidArgument "query must not be empty".
-//   - len(query) > 1000           -> codes.InvalidArgument "query must be under 1000 characters".
-//   - type with no searchable    -> codes.OK with nodes: [] (no SQL).
-//   - FTS5 / SQLite errors        -> codes.OK with nodes: [] (Python "blanket
+//   - tenant gate fails -> propagated (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND).
+//   - empty query (after Trim) -> codes.InvalidArgument "query must not be empty".
+//   - len(query) > 1000 -> codes.InvalidArgument "query must be under 1000 characters".
+//   - type with no searchable -> codes.OK with nodes: [] (no SQL).
+//   - FTS5 / SQLite errors -> codes.OK with nodes: [] (Python "blanket
 //     except Exception" parity, see spec lines 63-66). The Go port
 //     preserves this swallow-to-empty for v1; flipping to INTERNAL is a
 //     future contract-test update, not this PR.
 //
 // Payload egress: Node.payload is emitted as a *structpb.Struct whose
-// keys are the field-id strings ("1","2",...). Translation to field
+// keys are the field-id strings ("1","2"...). Translation to field
 // names is the SDK's job (CLAUDE.md invariant 6 + spec line 30 +
 // tests/python/unit/test_payload_wire_format.py:14).
 

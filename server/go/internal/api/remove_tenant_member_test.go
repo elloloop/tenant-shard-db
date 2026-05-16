@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for RemoveTenantMember (EPIC #407, Wave 2). The Go port closes
+// Tests for RemoveTenantMember. The Go port closes
 // the auth-parity gap against Python — see RemoveTenantMember.md
 // "Auth (admin only; trusted-actor)".
 

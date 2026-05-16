@@ -1,17 +1,17 @@
-// Tests for GetEdgesFrom RPC (Wave 2 — EPIC #407).
+// Tests for GetEdgesFrom RPC (EPIC #407).
 //
 // Contract pins (mirrored from docs/go-port/rpcs/GetEdgesFrom.md and
 // the Python contract suite):
 //
-//   - Empty seed:     test_grpc_contract.py:241-247 — call succeeds,
+//   - Empty seed: test_grpc_contract.py:241-247 — call succeeds,
 //                     edges == [].
-//   - Single edge:    happy round-trip; props are preserved on the wire.
+//   - Single edge: happy round-trip; props are preserved on the wire.
 //   - Multiple edges: every stored outgoing edge is returned (no
 //                     ACL filter on destinations — preserved parity gap;
 //                     see GetEdgesFrom.md §"Auth").
 //   - Missing source: unknown from_node_id returns empty edges, no
 //                     error (no special-case path in Python).
-//   - Type filter:    edge_type_id != 0 narrows the result set;
+//   - Type filter: edge_type_id != 0 narrows the result set;
 //                     edge_type_id == 0 returns every type.
 //   - Internal error: store fault (tenant DB never opened) collapses
 //                     to an empty response with codes.OK — mirrors

@@ -20,7 +20,7 @@ import (
 //
 // W1.9 (acl) deferred this adapter to W1.10 (apply) on the theory that
 // the applier owns the read-after-write consistency story — the same
-// adapter is used by the gRPC read RPCs in Wave 2.
+// adapter is used by the gRPC read RPCs.
 //
 // All methods are safe for concurrent goroutine use to the extent the
 // underlying stores are.
@@ -30,7 +30,7 @@ type StoreReaders struct {
 }
 
 // Compile-time assertions that StoreReaders satisfies every acl reader
-// contract. Missing methods would break Wave-2 wire-up, so we want the
+// contract. Missing methods would break wire-up, so we want the
 // build to fail here, not later.
 var (
 	_ acl.NodeMetaReader         = (*StoreReaders)(nil)
@@ -143,7 +143,7 @@ func (r *StoreReaders) GrantsForNode(ctx context.Context, tenantID, nodeID strin
 
 // CrossTenantGrant implements acl.CrossTenantGrantReader. Looks up the
 // shared_index hint for (sourceTenant, nodeID, foreignActor) and
-// returns the typed permission; Wave 1 maps any hit to PermRead per
+// returns the typed permission; maps any hit to PermRead per
 // the acl package spec.
 func (r *StoreReaders) CrossTenantGrant(ctx context.Context, sourceTenant, nodeID, foreignActor string) (acl.Permission, bool, error) {
 	if r.Global == nil {

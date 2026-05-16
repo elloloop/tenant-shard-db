@@ -6,7 +6,6 @@ import "context"
 
 // Identity is the verified caller's claims as established by the
 // interceptor. It mirrors AuthContext in
-// server/python/entdb_server/auth/auth_interceptor.py:118-137.
 //
 // Subject is the raw verified identifier (JWT sub, API-key name, or
 // session user_id). It is NOT prefix-normalised here; normalisation to a
@@ -71,10 +70,8 @@ func WithIdentity(ctx context.Context, id Identity) context.Context {
 // no interceptor ran for this request -- a no-auth deployment, a unit test
 // that called the handler directly, or a Health RPC on the bypass list.
 //
-// Mirrors get_current_identity in
-// server/python/entdb_server/auth/auth_interceptor.py:66-74, except that
-// the absent case returns (Identity{}, false) instead of None so callers
-// can use the standard ", ok" idiom.
+// The absent case returns (Identity{}, false) so callers can use the
+// standard ", ok" idiom.
 func IdentityFromContext(ctx context.Context) (Identity, bool) {
 	v, ok := ctx.Value(identityKey).(Identity)
 	if !ok {

@@ -11,10 +11,8 @@ import (
 // Registry holds the proto-derived capability mappings and implication
 // closures. Built once at server startup; immutable thereafter.
 //
-// Mirrors server/python/entdb_server/auth/capability_registry.py
-// CapabilityRegistry. Wave 1 accepts JSON input mirroring
-// SchemaRegistry.to_json (the Python side already serialises this);
-// Wave 2 will wire it directly off proto descriptors.
+// Accepts JSON input mirroring SchemaRegistry.to_json; a future
+// follow-up will wire it directly off proto descriptors.
 type Registry struct {
 	types       map[int32]*TypeCapabilities
 	defaultType *TypeCapabilities

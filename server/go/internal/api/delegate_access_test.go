@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// DelegateAccess RPC tests — Wave 2 of EPIC #407.
+// DelegateAccess RPC tests.
 //
 // These three tests pin the contract called out in
 // docs/go-port/rpcs/DelegateAccess.md "Implementation outline":
 //
 //  1. Admin delegates -> grant materialises after the applier picks up
-//     the WAL event. THIS is the test that proves the Wave-0
+//     the WAL event. THIS is the test that proves the
 //     silent-drop bug is fixed: the Python applier had no
 //     admin_delegate_access dispatch branch, so the WAL event was
 //     appended-and-ignored. With the Go applier (W1.10) + this handler
@@ -211,7 +211,7 @@ func (f *delegateFixture) waitForGrant(t *testing.T, tenantID, nodeID, actorID s
 }
 
 // TestDelegateAccess_AdminDelegatesGrantMaterialisesAfterApply is THE
-// regression test that proves the Wave-0 silent-drop bug is closed.
+// regression test that proves the silent-drop bug is closed.
 //
 // Setup: alice (owner) owns two nodes in acme. carol (admin) calls
 // DelegateAccess(from=alice, to=bob, permission=read). The handler

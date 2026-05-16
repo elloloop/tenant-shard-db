@@ -5,7 +5,8 @@
 //
 // Spec: docs/go-port/shared/applier.md.
 //
-// Wave-0 architectural-drift fixes implemented here (per
+//	architectural-drift fixes implemented here (per
+//
 // docs/go-port/PLAN.md §6):
 //
 //   - DelegateAccess applier dispatch (was silently dropped in Python).
@@ -32,7 +33,9 @@ type Event = wal.Event
 
 // OpType enumerates the op-type strings carried inside Event.Ops[i]["op"].
 // Mirrors the Python applier's `op_type` if/elif ladder
-// (server/python/entdb_server/apply/applier.py:929-1248) plus the new
+//
+//	plus the new
+//
 // op types added by the Go port to close the WAL-first drift gap
 // (docs/go-port/PLAN.md §6).
 type OpType string

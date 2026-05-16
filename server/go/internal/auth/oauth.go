@@ -27,8 +27,8 @@ import (
 //   - Verify signature, expiry, issuer, and audience.
 //   - Return an error wrapping codes.Unauthenticated on any failure.
 //
-// Wave 1 ships only the in-memory implementation below. Real JWKS
-// rotation, network discovery, and ES256 land in Phase 2 -- see
+// Today only the in-memory implementation below is shipped. Real JWKS
+// rotation, network discovery, and ES256 are tracked separately -- see
 // docs/go-port/shared/auth-interceptor.md "Open questions / risks"
 // items "JWKS rotation thundering herd" and "sub collisions across
 // providers".
@@ -45,9 +45,8 @@ type OAuthValidator interface {
 // and dev-mode servers. Production OAuth (real JWKS fetched over the
 // network) is Phase 2.
 type JWKKey struct {
-	// Alg is "HS256" or "RS256". Mirrors the SUPPORTED_ALGORITHMS list
-	// in server/python/entdb_server/auth/oauth_validator.py:41 minus
-	// ES256 (deferred to Phase 2).
+	// Alg is "HS256" or "RS256". ES256 is tracked separately for a
+	// follow-up.
 	Alg string
 	// HS256Secret is the shared secret for HS256 verification.
 	// Populated iff Alg == "HS256".
@@ -109,7 +108,6 @@ func (v *MemoryOAuthValidator) now() time.Time {
 // codes.Unauthenticated.
 //
 // Mirrors OAuthValidator.validate_token in
-// server/python/entdb_server/auth/oauth_validator.py:91-169.
 func (v *MemoryOAuthValidator) Validate(_ context.Context, token string) (map[string]any, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {

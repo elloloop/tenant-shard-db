@@ -9,11 +9,11 @@ import "strings"
 // Mirrors the prefix scheme documented in
 // docs/go-port/shared/auth-interceptor.md "Trusted-actor contract":
 //
-//   - user:<id>     -- a real authenticated user.
-//   - system:<svc>  -- internal service identity; bypasses tenant-membership
-//     checks (server/python/entdb_server/api/grpc_server.py:498-499).
-//   - admin:<id>    -- operator/admin identity; same bypass as system:.
-//   - group:<id>    -- only valid in ACL grant subjects, never as a caller.
+//   - user:<id> -- a real authenticated user.
+//   - system:<svc> -- internal service identity; bypasses tenant-membership
+//     checks.
+//   - admin:<id> -- operator/admin identity; same bypass as system:.
+//   - group:<id> -- only valid in ACL grant subjects, never as a caller.
 //
 // The literal "__system__" actor used by the Applier as a bootstrap/replay
 // identity never appears on the wire and is not modelled here; if a future
@@ -37,7 +37,6 @@ const (
 
 // String returns the canonical prefix for the kind without the trailing
 // colon. Mirrors the Python prefix strings used in
-// server/python/entdb_server/auth/auth_interceptor.py:108-115.
 func (k Kind) String() string {
 	switch k {
 	case KindUser:

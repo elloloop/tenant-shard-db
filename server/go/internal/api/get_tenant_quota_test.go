@@ -1,4 +1,4 @@
-// Tests for GetTenantQuota (Wave 2 / EPIC #407). Behavioural pins:
+// Tests for GetTenantQuota. Behavioural pins:
 //
 //  1. Owner happy path — a user with role=owner sees configured quota +
 //     usage. Matches Python `_require_admin_or_owner` at
@@ -263,7 +263,8 @@ func TestGetTenantQuota_PlainMember_PermissionDenied(t *testing.T) {
 // no-auth deployments), the handler falls through to the claimed actor
 // per auth.Authoritative's documented contract. A system: actor on the
 // wire then bypasses the membership gate. This is the divergence the
-// Wave-4 parity fix closes — previously the handler hard-rejected.
+//
+//	parity fix closes — previously the handler hard-rejected.
 func TestGetTenantQuota_NoTrustedIdentity_FallsBackToClaimed(t *testing.T) {
 	t.Parallel()
 

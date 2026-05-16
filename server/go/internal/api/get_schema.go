@@ -1,9 +1,8 @@
-// GetSchema RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// GetSchema RPC.
 // Spec: docs/go-port/rpcs/GetSchema.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:79 (rpc), :590-596 (request),
 // :598-607 (response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:1619-1689.
 //
 // Semantics (preserved byte-for-byte from the Python handler):
 //
@@ -17,12 +16,12 @@
 //     empty-but-OK response is the documented degraded path.
 //   - Optional req.TenantId drives a data-driven fallback when the
 //     registry is empty: we synthesise placeholder type entries from
-//     distinct type_ids observed in that tenant's SQLite. Wave-2 stub:
+//     distinct type_ids observed in that tenant's SQLite. stub:
 //     the canonicalstore Go port doesn't expose GetDistinctTypeIDs
 //     yet, so the fallback is a no-op here and surfaces as the same
 //     empty-Struct response Python returns when its SQLite query
 //     errors (`:1665-1666`). This matches the contract pin and is
-//     flagged in the EPIC for the canonicalstore Wave-2 follow-up.
+//     flagged in the EPIC for the canonicalstore follow-up.
 //
 // Known latent bug (preserved for parity, NOT fixed here): the Python
 // handler reads req.TenantId without cross-checking the caller's
@@ -95,7 +94,7 @@ func (s *Server) GetSchema(_ context.Context, req *pb.GetSchemaRequest) (resp *p
 	// SQLite query errors at `:1665-1666` — well within the contract
 	// pin (fingerprint or schema field present; an empty Struct still
 	// counts as "schema field present"). Flagged in the EPIC for the
-	// canonicalstore Wave-2 follow-up.
+	// canonicalstore follow-up.
 	_ = mapHasTypes(schemaMap)
 	_ = req.GetTenantId()
 

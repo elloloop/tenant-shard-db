@@ -1,8 +1,7 @@
-// ListTenants RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// ListTenants RPC.
 // Spec: docs/go-port/rpcs/ListTenants.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:82 (rpc), :611-619 (messages).
-// Reference Python: server/python/entdb_server/api/grpc_server.py:1537-1603.
 //
 // Identity-driven, request-empty handler:
 //
@@ -171,7 +170,7 @@ func (s *Server) ListTenants(
 
 // listLocalTenantIDs returns the node-local tenant inventory as a flat
 // slice of tenant_ids. Source: globalstore.ListTenants("active"). When
-// no globalstore is wired (Wave-1 bring-up / embedded harness), the
+// no globalstore is wired ( bring-up / embedded harness), the
 // inventory is empty — admins see [], regular users see [] via the
 // nil-globalstore branch in the caller.
 func (s *Server) listLocalTenantIDs(ctx context.Context) ([]string, error) {

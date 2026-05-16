@@ -1,6 +1,5 @@
 // AddTenantMember implements entdb.v1.EntDBService/AddTenantMember.
 //
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2442-2490.
 // Port spec: docs/go-port/rpcs/AddTenantMember.md.
 //
 // # WAL-first global mutation
@@ -36,14 +35,14 @@
 //
 // # Error contract
 //
-//	UNIMPLEMENTED       globalstore not configured.
-//	INVALID_ARGUMENT    actor / tenant_id / user_id empty.
-//	PERMISSION_DENIED   trusted actor is neither admin/system nor an
+//	UNIMPLEMENTED globalstore not configured.
+//	INVALID_ARGUMENT actor / tenant_id / user_id empty.
+//	PERMISSION_DENIED trusted actor is neither admin/system nor an
 //	                    owner/admin member of tenant_id.
-//	OK + success=false  duplicate (tenant_id, user_id) row — soft
+//	OK + success=false duplicate (tenant_id, user_id) row — soft
 //	                    failure, NOT a gRPC error.
-//	OK + success=false  any other AddTenantMember error.
-//	OK + success=true   insert succeeded.
+//	OK + success=false any other AddTenantMember error.
+//	OK + success=true insert succeeded.
 //
 // Metrics: emits entdb_grpc_requests_total{method="AddTenantMember",
 // status="ok"|"error"} via the shared chokepoint.

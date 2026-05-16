@@ -25,10 +25,9 @@ const (
 	GlobalTenantID = "__global__"
 )
 
-// Event mirrors server/python/entdb_server/apply/applier.py:204
-// (TransactionEvent). It is the wire-level payload appended to the WAL
-// for every mutation. Required fields: TenantID, Actor, IdempotencyKey,
-// Ops. SchemaFingerprint may be empty when the schema registry has not
+// Event is the wire-level payload appended to the WAL for every
+// mutation. Required fields: TenantID, Actor, IdempotencyKey, Ops.
+// SchemaFingerprint may be empty when the schema registry has not
 // stamped a fingerprint yet. TsMs defaults to the current wall clock
 // when zero (see NewEvent / Encode).
 //
@@ -96,10 +95,9 @@ func DecodeEvent(value []byte) (Event, error) {
 	return e, nil
 }
 
-// StreamPos is a position in the WAL stream. Mirrors
-// server/python/entdb_server/wal/base.py:65 (StreamPos). The String()
-// form is "topic:partition:offset"; TimestampMs is record metadata,
-// not part of the position identity.
+// StreamPos is a position in the WAL stream. The String() form is
+// "topic:partition:offset"; TimestampMs is record metadata, not part
+// of the position identity.
 type StreamPos struct {
 	Topic       string
 	Partition   int32
@@ -114,10 +112,9 @@ func (p StreamPos) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.Topic, p.Partition, p.Offset)
 }
 
-// Record is a record consumed from the WAL stream. Mirrors
-// server/python/entdb_server/wal/base.py:111 (StreamRecord). Headers
-// is map[string][]byte to match the Python dict[str, bytes] type and
-// the Go interface spec in docs/go-port/shared/wal-producer.md.
+// Record is a record consumed from the WAL stream. Headers is
+// map[string][]byte (matches the Go interface spec in
+// docs/go-port/shared/wal-producer.md).
 type Record struct {
 	Key      string
 	Value    []byte

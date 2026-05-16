@@ -18,9 +18,9 @@ import (
 // poison-event.
 //
 // GitHub issue #500 (CAS): when the op carries a "precondition" map
-// (handler ingress translates ``UpdateNodeOp.precondition.field`` to a
-// stringified ``field_id`` and carries the value through under
-// ``equals``), the applier compares observed-vs-expected BEFORE the
+// (handler ingress translates “UpdateNodeOp.precondition.field“ to a
+// stringified “field_id“ and carries the value through under
+// “equals“), the applier compares observed-vs-expected BEFORE the
 // patch merge. A mismatch returns a *PreconditionFailure that unwraps
 // to ErrPreconditionFailed; the applier's per-event loop catches that
 // sentinel, rolls back the batch, and memoizes the failure in the

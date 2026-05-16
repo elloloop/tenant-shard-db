@@ -96,7 +96,7 @@ func TestArchiveTenant_SystemHappyPath(t *testing.T) {
 }
 
 // TestArchiveTenant_NonAdminPermissionDenied: a user: actor with no
-// member-role bypass MUST be rejected. Wave-2 is admin-only — the
+// member-role bypass MUST be rejected. is admin-only — the
 // owner-can-archive branch is deferred to the WAL-first restoration PR.
 func TestArchiveTenant_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()

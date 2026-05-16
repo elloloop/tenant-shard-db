@@ -1,12 +1,8 @@
-// ExportUserData RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// ExportUserData RPC.
 //
 // Spec: docs/go-port/rpcs/ExportUserData.md (GDPR Article 20 portability).
-// Source-of-truth Python:
-//   - server/python/entdb_server/api/grpc_server.py:3014-3070 (handler)
-//   - server/python/entdb_server/apply/canonical_store.py:5174-5249
-//     (per-tenant collector)
 //
-// Behavioral contract preserved byte-for-byte from the Python handler:
+// Behavioral contract:
 //
 //   - global_store == nil → codes.Unimplemented "User registry not configured"
 //     (grpc_server.py:3022-3023).

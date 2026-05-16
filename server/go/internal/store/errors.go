@@ -2,7 +2,6 @@
 // (materialized view of the WAL) for the Go server reimplementation.
 //
 // Spec: docs/go-port/shared/canonical-store.md.
-// Source-of-truth Python: server/python/entdb_server/apply/canonical_store.py.
 //
 // CLAUDE.md invariants honoured here:
 //

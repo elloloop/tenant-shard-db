@@ -1,9 +1,8 @@
-// ListSharedWithMe RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// ListSharedWithMe RPC.
 // Spec: docs/go-port/rpcs/ListSharedWithMe.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:100 (rpc), :757-766
 // (request/response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:1877-1944.
 //
 // Semantics (preserved from the Python handler):
 //
@@ -194,7 +193,7 @@ func (s *Server) ListSharedWithMe(
 	// Convert store.Node -> pb.Node. Payload translation lives in the
 	// payload package and is gated on a schema.Registry; in its absence
 	// we surface the field-id-keyed shape verbatim by leaving Payload
-	// nil — Wave-2 callers that need a typed payload pull it via
+	// nil — callers that need a typed payload pull it via
 	// GetNode anyway. ACL is similarly lifted into pb.AclEntry only
 	// when consumers need it; this RPC's contract test
 	// (test_grpc_contract.py:339-350) is permissive, asserting only

@@ -22,10 +22,10 @@ import (
 // op shape:
 //
 //	{
-//	  "op":      "set_legal_hold",
+//	  "op": "set_legal_hold",
 //	  "held_by": "user:...",
-//	  "reason":  "...",
-//	  "clear":   bool, // true => ClearLegalHold
+//	  "reason": "...",
+//	  "clear": bool, // true => ClearLegalHold
 //	}
 func (a *Applier) applySetLegalHold(ctx context.Context, ev *Event, op map[string]any) error {
 	if a.global == nil {

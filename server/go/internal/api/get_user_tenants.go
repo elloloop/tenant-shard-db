@@ -1,7 +1,6 @@
 // W2 — GetUserTenants RPC (Python -> Go server port, EPIC #407).
 //
 // Spec: docs/go-port/rpcs/GetUserTenants.md.
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2572-2599.
 //
 // Contract pins (must not regress):
 //

@@ -2,8 +2,7 @@
 
 // TransferUserContent implements entdb.v1.EntDBService/TransferUserContent.
 //
-// EPIC #407 Wave 2. Spec: docs/go-port/rpcs/TransferUserContent.md.
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2692-2745.
+// Spec: docs/go-port/rpcs/TransferUserContent.md.
 //
 // # Behaviour pins
 //
@@ -109,7 +108,7 @@ func (s *Server) TransferUserContent(
 		metrics.RecordGRPCRequest(transferUserContentMethod, statusLabel, time.Since(start))
 	}()
 
-	// Wave-2 dependency guard. A node booted without a globalstore can
+	//  dependency guard. A node booted without a globalstore can
 	// not honour admin RPCs.
 	if s.global == nil {
 		statusLabel = "error"
@@ -172,7 +171,7 @@ func (s *Server) TransferUserContent(
 	// multiple events of size <= transferUserContentChunkSize. The
 	// Applier handler rewrites by `(tenant_id, owner_actor)` so each
 	// chunk converges to the same end state idempotently. When the
-	// canonical store is absent (Wave-1 deployments without store
+	// canonical store is absent ( deployments without store
 	// wiring) we fall through to the un-chunked single-event shape.
 	if s.producer == nil {
 		statusLabel = "error"

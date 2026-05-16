@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for RemoveGroupMember (EPIC #407, Wave 2 — WAL-first restoration).
+// Tests for RemoveGroupMember (EPIC #407, — WAL-first restoration).
 //
 // Behaviour pinned here:
 //

@@ -1,13 +1,10 @@
-// CancelUserDeletion RPC — Wave 2 of the Python → Go server port (EPIC
-// #407). Spec: docs/go-port/rpcs/CancelUserDeletion.md.
+// CancelUserDeletion RPC.
+// Spec: docs/go-port/rpcs/CancelUserDeletion.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:139 (rpc), :1052-1060
-// (request/response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:2983-3012 (handler) and
-// server/python/entdb_server/global_store.py:842-848 (cancel_deletion)
-// + :434-450 (set_user_status).
+// (request/response).
 //
-// Semantics (preserved byte-for-byte from the Python handler):
+// Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
 //     codes.Unimplemented "User registry not configured" — mirrors

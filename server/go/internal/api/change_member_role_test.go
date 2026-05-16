@@ -23,7 +23,7 @@ import (
 // used across these tests:
 //
 //	alice -> owner
-//	bob   -> admin
+//	bob -> admin
 //	carol -> member
 //
 // Returns the wired Server and the underlying GlobalStore so individual

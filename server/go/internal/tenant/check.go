@@ -2,18 +2,17 @@
 // handler calls CheckTenant before doing real work. The gate enforces
 // three independent contracts:
 //
-//  1. Tenant existence  — missing tenant -> codes.NotFound.
+//  1. Tenant existence — missing tenant -> codes.NotFound.
 //  2. Sharding ownership — a different node owns this tenant ->
 //     codes.Unavailable plus an `entdb-redirect-node` trailer carrying
 //     the owning node id (so SDK redirect caches can retry there).
-//  3. Region pinning    — tenant_registry.region != this node's region
+//  3. Region pinning — tenant_registry.region != this node's region
 //     -> codes.FailedPrecondition (permanent for this node;
 //     UNAVAILABLE would invite retries, see Python comment at
 //     api/grpc_server.py:399).
 //
 // Spec: docs/go-port/shared/error-mapping.md, plus the per-RPC specs
 // in docs/go-port/rpcs/* (Health.md, GetMailbox.md). Source-of-truth
-// Python: server/python/entdb_server/api/grpc_server.py:362
 // (`_check_tenant`) and sharding.py.
 //
 // Single-node default: an unset Sharding ({}) is treated as

@@ -1,9 +1,8 @@
-// GetTenantQuota RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// GetTenantQuota RPC.
 // Spec: docs/go-port/rpcs/GetTenantQuota.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:142 (rpc), :1063-1068 (request),
 // :1070-1085 (response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:3106-3163.
 //
 // Semantics:
 //
@@ -16,7 +15,6 @@
 //     When no Identity is present (unit tests, no-auth deployments) we
 //     fall through to the claimed actor — the documented Authoritative
 //     contract. Mirrors get_authoritative_actor in
-//     server/python/entdb_server/auth/auth_interceptor.py:92-115.
 //   - Authorization gate: matches Python `_require_admin_or_owner`
 //     (grpc_server.py:2656-2690). The trusted actor passes if it is
 //     system:/admin:, or if it is a user: whose tenant role is "owner"

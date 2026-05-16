@@ -14,10 +14,10 @@ import (
 // op shape:
 //
 //	{
-//	  "op":        "shared_index_cleanup",
+//	  "op": "shared_index_cleanup",
 //	  "tenant_id": "tenant_a",
-//	  "user_id":   "user:bob",
-//	  "node_ids":  ["n1", "n2"]
+//	  "user_id": "user:bob",
+//	  "node_ids": ["n1", "n2"]
 //	}
 func (a *Applier) applySharedIndexCleanup(ev *Event, op map[string]any, res *Result) error {
 	tenantID := stringField(op, "tenant_id")

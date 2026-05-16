@@ -127,7 +127,7 @@ func (p *Plan) Update(nodeID string, msg proto.Message) {
 
 // UpdateIf accumulates a conditional update-node operation with a
 // single-field equality precondition (CAS). The applier compares the
-// node's current ``field`` against ``equals`` before applying the
+// node's current “field“ against “equals“ before applying the
 // patch; on mismatch the whole batch aborts and Commit returns a
 // [*PreconditionFailure] error matching [ErrPreconditionFailed].
 //

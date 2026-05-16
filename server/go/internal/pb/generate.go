@@ -19,7 +19,7 @@
 // repo-root-relative paths in their `inputs:` and plugin `out:` fields,
 // matching the convention documented in server/go/README.md.
 
-//go:generate sh -c "cd ../../../.. && buf generate --template server/go/buf.gen.yaml"
-//go:generate sh -c "cd ../../../.. && buf generate --template server/go/buf.gen.console.yaml"
+//go:generate sh -c "cd ../../../ ...&& buf generate --template server/go/buf.gen.yaml"
+//go:generate sh -c "cd ../../../ ...&& buf generate --template server/go/buf.gen.console.yaml"
 
 package pb

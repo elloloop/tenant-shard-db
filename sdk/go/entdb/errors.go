@@ -16,7 +16,7 @@ import (
 
 // ErrPreconditionFailed is the sentinel error returned when a
 // conditional UpdateNode op's precondition is not met. Match with
-// ``errors.Is(err, entdb.ErrPreconditionFailed)``. See
+// “errors.Is(err, entdb.ErrPreconditionFailed)“. See
 // [PreconditionFailure] for the typed wrapper that carries the
 // failure coordinates (op index, field, expected, observed). GitHub
 // issue #500.
@@ -50,7 +50,7 @@ func (e *PreconditionFailure) Error() string {
 }
 
 // Unwrap reports [ErrPreconditionFailed] so callers can use
-// ``errors.Is`` for the common "did any precondition fail?" branch.
+// “errors.Is“ for the common "did any precondition fail?" branch.
 func (e *PreconditionFailure) Unwrap() error { return ErrPreconditionFailed }
 
 // EntDBError is the base error type for all EntDB SDK errors.
@@ -374,7 +374,7 @@ func parseUniqueConstraintFromStatus(err error, tenantID string) *UniqueConstrai
 //	constraint='<name>' fields=[<int>, ...] values=[<repr>, ...]
 //	already exists
 //
-// Single-field violations use a different format (``field_id=<int>``)
+// Single-field violations use a different format (“field_id=<int>“)
 // and are intentionally left for future structured-error work.
 var compositeUniqueDetailRE = regexp.MustCompile(
 	`type_id=(\d+)\s+constraint=([^\s]+)\s+fields=\[([^\]]*)\]\s+values=\[(.*)\]\s+already exists`,

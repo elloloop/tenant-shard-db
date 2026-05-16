@@ -9,17 +9,16 @@ import (
 )
 
 // applyCreateNode dispatches a "create_node" op. Mirrors
-// server/python/entdb_server/apply/applier.py:929-1017.
 //
 // The op shape (field-id-keyed payload, per CLAUDE.md invariant #6):
 //
 //	{
-//	  "op":           "create_node",
-//	  "id":           "<node_id>",
-//	  "as":           "alias",            // optional
-//	  "type_id":      <int>,
-//	  "data":         {"<fid>": value...}, // field-id keyed
-//	  "acl":          [{principal, permission}, ...] // optional
+//	  "op": "create_node",
+//	  "id": "<node_id>",
+//	  "as": "alias", // optional
+//	  "type_id": <int>,
+//	  "data": {"<fid>": value...}, // field-id keyed
+//	  "acl": [{principal, permission}, ...] // optional
 //	}
 //
 // owner_actor comes from the surrounding event.actor. Per the spec, the

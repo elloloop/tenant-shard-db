@@ -13,7 +13,7 @@ import (
 )
 
 // seedRangeNodes opens a fresh tenant, registers a query index on
-// field_id 2 (the ``age`` field used by the tests below), and inserts
+// field_id 2 (the “age“ field used by the tests below), and inserts
 // the supplied (id, age) pairs as type_id=1 nodes.
 func seedRangeNodes(t *testing.T, cs *store.CanonicalStore, rows map[string]int64) {
 	t.Helper()
@@ -46,7 +46,7 @@ func ids(nodes []*store.Node) []string {
 }
 
 // TestQueryNodes_ComparisonOperators exercises each operator on the
-// indexed ``age`` field. Subtests run sequentially because they share
+// indexed “age“ field. Subtests run sequentially because they share
 // one tenant.
 func TestQueryNodes_ComparisonOperators(t *testing.T) {
 	cs := newStore(t)
@@ -93,7 +93,7 @@ func TestQueryNodes_ComparisonOperators(t *testing.T) {
 }
 
 // TestQueryNodes_TwoFiltersANDed pins the "all filters AND-ed"
-// contract: ``age >= 15 AND age < 30`` returns the in-range subset.
+// contract: “age >= 15 AND age < 30“ returns the in-range subset.
 func TestQueryNodes_TwoFiltersANDed(t *testing.T) {
 	cs := newStore(t)
 	seedRangeNodes(t, cs, map[string]int64{"a": 10, "b": 20, "c": 30})
@@ -141,7 +141,7 @@ func TestQueryNodes_FilterPlusEqualityFilters(t *testing.T) {
 // TestQueryNodes_UnindexedFieldStillWorks pins that range queries on
 // an unindexed payload field still return the correct rows — the SQL
 // just falls back to a scan rather than the expression index. This
-// matches the documented contract: ``indexed: true`` is an optimisation,
+// matches the documented contract: “indexed: true“ is an optimisation,
 // not a correctness requirement.
 func TestQueryNodes_UnindexedFieldStillWorks(t *testing.T) {
 	cs := newStore(t)

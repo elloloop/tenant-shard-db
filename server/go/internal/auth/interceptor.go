@@ -22,11 +22,9 @@ const (
 )
 
 // unauthenticatedMethods is the allow-list of gRPC methods that bypass
-// authentication. It MUST mirror the Python set verbatim
-// (server/python/entdb_server/auth/auth_interceptor.py:157-162) --
-// orchestrators (k8s, ECS) probe the standard health service without
-// credentials, and the EntDB-namespaced Health RPC is documented in
-// docs/go-port/rpcs/Health.md as unauthenticated.
+// authentication. Orchestrators (k8s, ECS) probe the standard health
+// service without credentials, and the EntDB-namespaced Health RPC is
+// documented in docs/go-port/rpcs/Health.md as unauthenticated.
 var unauthenticatedMethods = map[string]struct{}{
 	"/entdb.v1.EntDBService/Health": {},
 	"/grpc.health.v1.Health/Check":  {},
@@ -38,11 +36,9 @@ var unauthenticatedMethods = map[string]struct{}{
 // via WithIdentity, where every handler retrieves it through
 // Authoritative.
 //
-// Mirrors AuthInterceptor in
-// server/python/entdb_server/auth/auth_interceptor.py:140-220. Each of
-// OAuth, APIKeys, Sessions is optional; a nil validator simply means
-// that credential type is not accepted (the request continues to the
-// next type in the chain).
+// Each of OAuth, APIKeys, Sessions is optional; a nil validator simply
+// means that credential type is not accepted (the request continues to
+// the next type in the chain).
 //
 // This struct is safe for concurrent use as long as the configured
 // validators are -- the in-memory implementations in this package are.

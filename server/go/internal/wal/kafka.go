@@ -2,26 +2,24 @@
 
 package wal
 
-// Kafka/Redpanda WAL backend for the Go server.
+// Kafka/Redpanda WAL backend for the Go server. The durability-critical
+// knobs are:
 //
-// Ported from server/python/entdb_server/wal/kafka.py with 1:1 parity on
-// the durability-critical knobs:
-//
-//   - Producer:  acks=all, enable.idempotence=true,
+//   - Producer: acks=all, enable.idempotence=true,
 //                max.in.flight.requests.per.connection=1 (sarama requires
 //                this when idempotent=true; see sarama.NewConfig docs),
 //                linger.ms=5, request.timeout.ms=30000.
-//   - Consumer:  auto.offset.reset=earliest, enable.auto.commit=false
+//   - Consumer: auto.offset.reset=earliest, enable.auto.commit=false
 //                (manual commit via session.MarkMessage + session.Commit
 //                per applied record), session.timeout.ms=30000,
 //                heartbeat.interval.ms=10000.
-//   - Topic:     single, name comes from --wal-topic (default "entdb-wal").
+//   - Topic: single, name comes from --wal-topic (default "entdb-wal").
 //   - Partition: keyed by tenant_id (the Append `key` arg). sarama's
 //                NewHashPartitioner hashes the key, giving per-tenant
 //                total order while spreading load across partitions —
 //                same semantic as the franz-go default and aiokafka's
 //                DefaultPartitioner.
-//   - Headers:   pass-through, including HeaderIdempotencyKey.
+//   - Headers: pass-through, including HeaderIdempotencyKey.
 //
 // Halt-on-poison: a malformed record surfaces as a Subscribe error /
 // PollBatch error and the applier supervisor decides whether to halt.
@@ -51,10 +49,9 @@ import (
 	"github.com/IBM/sarama"
 )
 
-// KafkaConfig mirrors server/python/entdb_server/config.py KafkaConfig.
-// Only the fields the Go server actually consumes today are present;
-// adding SASL/SSL is a follow-up that should match Python's env-var
-// names (KAFKA_SASL_MECHANISM etc.) when wired up.
+// KafkaConfig captures the durability-critical knobs for the Kafka /
+// Redpanda WAL backend. Only the fields the Go server actually
+// consumes today are present; adding SASL/SSL is a follow-up.
 type KafkaConfig struct {
 	// Brokers is the comma-separated bootstrap list, e.g. "redpanda:9092".
 	Brokers []string

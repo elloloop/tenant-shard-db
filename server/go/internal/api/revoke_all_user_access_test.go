@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for RevokeAllUserAccess (EPIC #407, Wave 2). Pin the WAL-first
+// Tests for RevokeAllUserAccess. Pin the WAL-first
 // restoration: the handler MUST emit an admin_revoke_access event so
 // the applier can drain node_access + group_users + node_visibility on
 // replay. See docs/go-port/rpcs/RevokeAllUserAccess.md "WAL invariant

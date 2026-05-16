@@ -1,9 +1,8 @@
-// GetNodes RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// GetNodes RPC.
 // Spec: docs/go-port/rpcs/GetNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:58 (rpc), :409-422 (request/
 // response). Reference Python handler:
-// server/python/entdb_server/api/grpc_server.py:1215-1291.
 //
 // Semantics (preserved from the Python handler):
 //
@@ -247,6 +246,6 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 
 // crossTenantRole / checkCrossTenantRead / storeNodeToProto — shared
 // with the other read RPCs and declared in helpers.go (consolidated in
-// the round-3 Wave-2 dedupe). The shared type is named `readRole`
+// the round-3 dedupe). The shared type is named `readRole`
 // there; the constants (roleLocal / roleMember / roleCrossTenant) are
 // untouched, so existing callers in this file still compile.

@@ -2,15 +2,15 @@
 //
 // The behaviours pinned here mirror the contract in
 // docs/go-port/rpcs/ListSharedWithMe.md and the Python reference
-// handler at server/python/entdb_server/api/grpc_server.py:1877-1944.
+// handler.
 // The Python contract tests are at:
-//   - tests/python/unit/test_acl_v2.py:455-481  (per-tenant index)
-//   - tests/python/unit/test_cross_tenant_read.py:309-356  (cross-tenant)
-//   - tests/python/unit/test_cross_tenant_read.py:362-400  (group share)
+//   - tests/python/unit/test_acl_v2.py:455-481 (per-tenant index)
+//   - tests/python/unit/test_cross_tenant_read.py:309-356 (cross-tenant)
+//   - tests/python/unit/test_cross_tenant_read.py:362-400 (group share)
 //   - tests/python/integration/test_grpc_contract.py:339-350 (smoke)
 //
 // We deliberately seed via the typed store / globalstore helpers
-// rather than the gRPC ShareNode handler — Wave-2 ShareNode hasn't
+// rather than the gRPC ShareNode handler — ShareNode hasn't
 // landed yet, and the RPC under test is read-only.
 
 package api_test

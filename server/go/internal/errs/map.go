@@ -141,8 +141,8 @@ func FromPythonException(name string) codes.Code {
 // touching every handler.
 //
 // Behavior:
-//   - nil          -> codes.OK
-//   - *codeError   -> the embedded code
+//   - nil -> codes.OK
+//   - *codeError -> the embedded code
 //   - status.Status-bearing error -> the embedded code
 //   - anything else -> codes.Unknown
 func FromGoError(err error) codes.Code {
