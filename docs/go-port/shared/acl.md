@@ -2,7 +2,7 @@
 
 EPIC: #407 (Python -> Go server port).
 Frozen decision: `docs/decisions/acl.md` — 2026-04-13 typed capability-based permissions (CoreCapability + per-type ExtensionCapability) and 2026-04-13 cross-tenant ACL via `tenant:<id>` grantee.
-Source of truth (Python): `server/python/entdb_server/apply/acl.py`, `server/python/entdb_server/auth/capability_registry.py`, `server/python/entdb_server/apply/canonical_store.py`.
+Source of truth (Python): `server/go/internal/acl/`, `server/go/internal/acl/`, `server/go/internal/store/`.
 
 ## Model
 
@@ -10,7 +10,7 @@ Source of truth (Python): `server/python/entdb_server/apply/acl.py`, `server/pyt
 
 `Permission` is the legacy coarse enum. New writes carry typed capabilities; the legacy string is retained for backwards compatibility and is mechanically derived for old grants.
 
-Defined at `server/python/entdb_server/apply/acl.py:32-42`:
+Defined at `server/go/internal/acl/`:
 
 | Value     | Notes                                                       |
 |-----------|-------------------------------------------------------------|
@@ -22,7 +22,7 @@ Defined at `server/python/entdb_server/apply/acl.py:32-42`:
 | `ADMIN`   | implies all positive permissions                            |
 | `DENY`    | grants nothing — explicit negative override                 |
 
-Hierarchy table at `server/python/entdb_server/apply/acl.py:190-210`.
+Hierarchy table at `server/go/internal/acl/`.
 
 ### CoreCapability + ExtensionCapability (typed, current model)
 
@@ -36,7 +36,7 @@ ExtensionCapability is a per-type proto enum declared by the user via `option (e
 Two parallel representations (today):
 
 - `Actor` — SDK-facing typed identifier in `sdk/python/entdb_sdk/typed.py:22-75`. Factories: `Actor.user(id)`, `Actor.group(id)`, `Actor.service(id)`. Internal storage is the canonical `kind:id` string.
-- `Principal` — server-internal parsed form in `server/python/entdb_server/apply/acl.py:61-137`. Valid kinds: `user`, `role`, `group`, `tenant`, `system`. Cross-tenant decision adds `tenant:<id>` (`docs/decisions/acl.md:177-185`).
+- `Principal` — server-internal parsed form in `server/go/internal/acl/`. Valid kinds: `user`, `role`, `group`, `tenant`, `system`. Cross-tenant decision adds `tenant:<id>` (`docs/decisions/acl.md:177-185`).
 
 Wildcards:
 - `tenant:*` — every authenticated user in the current tenant (`acl.py:127-129`, `canonical_store.py:2887`).
@@ -44,7 +44,7 @@ Wildcards:
 
 ### Storage schema (per-tenant SQLite)
 
-All in `server/python/entdb_server/apply/canonical_store.py`:
+All in `server/go/internal/store/`:
 
 - `nodes.acl_blob` (`canonical_store.py:1055`) — JSON list of `{principal, permission}` snapshot kept on the row for round-trip.
 - `node_access` (`canonical_store.py:1103-1115`) — direct grants. Columns: `node_id`, `actor_id`, `actor_type`, `permission`, `granted_by`, `granted_at`, `expires_at` (nullable). Extended at `canonical_store.py:1211-1222` with `type_id INTEGER`, `core_caps_json TEXT`, `ext_cap_ids_json TEXT`. PK `(node_id, actor_id)`.
@@ -78,7 +78,7 @@ Resolved at **check time**, not at grant time. Grants reference the group princi
 
 ### Extension implications
 
-User-declared per type, computed once at startup as the transitive closure of the implication DAG (`docs/decisions/acl.md:141`). Held in the `CapabilityRegistry` in `server/python/entdb_server/auth/capability_registry.py`; `_check_capability` consults `required_for_op(type_id, op_name, field, field_value, child_type)` (`grpc_server.py:325-331`) and `check_grant(core_cap_ids, ext_cap_ids, required_core, required_ext, type_id)` (`grpc_server.py:348-355`).
+User-declared per type, computed once at startup as the transitive closure of the implication DAG (`docs/decisions/acl.md:141`). Held in the `CapabilityRegistry` in `server/go/internal/acl/`; `_check_capability` consults `required_for_op(type_id, op_name, field, field_value, child_type)` (`grpc_server.py:325-331`) and `check_grant(core_cap_ids, ext_cap_ids, required_core, required_ext, type_id)` (`grpc_server.py:348-355`).
 
 ### Legacy migration
 
@@ -230,12 +230,12 @@ A single `Enforcer` struct owns `Registry`, `Resolver`, and the `store.ACLReader
 
 Port these Python suites to Go (`server/go/internal/acl/*_test.go`):
 
-- `tests/python/unit/test_acl.py` — `Permission` hierarchy, `Principal.parse`, `AclManager.check_permission`, DENY override, `tenant:*` wildcard.
-- `tests/python/unit/test_acl_v2.py`, `tests/python/unit/test_acl_v2_extended.py` — typed capability columns, legacy string co-existence, migration back-fill.
-- `tests/python/unit/test_acl_capabilities.py` — implication closure, field-level gating, `CreateChild` mapping.
-- `tests/python/unit/test_capability_registry.py` — registry build from schema, `required_for_op`, `check_grant`.
-- `tests/python/unit/test_cross_tenant_read.py` — `tenant:<id>` grantee, cross-tenant capability check.
-- `tests/python/unit/test_shared_index.py` — group fan-out semantics on `ShareNode`, `AddGroupMember`, `RemoveGroupMember`, `RevokeAccess`.
+- `(legacy Python unit test, removed in Phase 4D)` — `Permission` hierarchy, `Principal.parse`, `AclManager.check_permission`, DENY override, `tenant:*` wildcard.
+- `(legacy Python unit test, removed in Phase 4D)`, `(legacy Python unit test, removed in Phase 4D)` — typed capability columns, legacy string co-existence, migration back-fill.
+- `(legacy Python unit test, removed in Phase 4D)` — implication closure, field-level gating, `CreateChild` mapping.
+- `(legacy Python unit test, removed in Phase 4D)` — registry build from schema, `required_for_op`, `check_grant`.
+- `(legacy Python unit test, removed in Phase 4D)` — `tenant:<id>` grantee, cross-tenant capability check.
+- `(legacy Python unit test, removed in Phase 4D)` — group fan-out semantics on `ShareNode`, `AddGroupMember`, `RemoveGroupMember`, `RevokeAccess`.
 - `tests/python/integration/test_privilege_escalation.py` — actor-from-context vs trusted actor; must mirror in Go.
 
 Fixture pattern: a per-test in-memory SQLite store seeded with a tiny schema, a stub `Registry` built from a fixed proto descriptor set, and an `Actor` factory matching the Python `Actor.user("bob")` ergonomics. No Kafka/Kinesis dependency — the ACL package is below the WAL layer in the dependency graph.
@@ -244,7 +244,7 @@ Contract tests: place cross-language equivalence cases in `tests/contract/acl/` 
 
 ## RPCs that depend on it
 
-All in `server/python/entdb_server/api/grpc_server.py` (line refs are check sites in the Python today; the Go port keeps the same shape).
+All in `server/go/internal/api/` (line refs are check sites in the Python today; the Go port keeps the same shape).
 
 | RPC                  | Required cap         | How ACL is consulted                                   |
 |----------------------|----------------------|--------------------------------------------------------|

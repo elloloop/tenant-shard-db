@@ -4,7 +4,7 @@ EPIC #407. Per-tenant SQLite materialized view of the WAL. Source of
 truth for every read RPC. Rebuildable from the WAL — no data must
 exist here that is not also in an event.
 
-Python source: `server/python/entdb_server/apply/canonical_store.py`
+Python source: `server/go/internal/store/`
 (5345 LOC, single class `CanonicalStore`). This spec captures the
 contract a Go port must preserve, not a line-for-line translation.
 
@@ -256,9 +256,9 @@ fixtures.
 
 Behaviours to pin (Go ports of existing Python tests):
 
-- `tests/python/unit/test_canonical_store.py` — schema creation, basic CRUD, idempotency dedup.
-- `tests/python/unit/test_canonical_store_concurrency.py` — per-tenant lock correctness, no FD leaks under racing opens.
-- `tests/python/unit/test_canonical_store_perf.py` — sanity perf budgets (Go SHOULD beat Python on every line).
+- `(legacy Python unit test, removed in Phase 4D)` — schema creation, basic CRUD, idempotency dedup.
+- `(legacy Python unit test, removed in Phase 4D)` — per-tenant lock correctness, no FD leaks under racing opens.
+- `(legacy Python unit test, removed in Phase 4D)` — sanity perf budgets (Go SHOULD beat Python on every line).
 - `tests/python/integration/test_concurrent_applier_reads.py` — readers + applier contract: no half-applied transaction observable, no deadlocks, every committed write visible post-test.
 
 Cross-implementation contract tests live in `tests/contract/` (per

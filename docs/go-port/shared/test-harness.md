@@ -1,5 +1,11 @@
 # Shared Port Spec — Cross-Implementation Test Harness
 
+> Historical: the cross-implementation harness landed and tests/python/
+> integration/ now drives directly against the Go server (Phase 4A, see
+> ADR-016). Wave-N references below are historical; the dual-server
+> matrix is gone with the Python server retirement (Phase 4D, commit
+> `8d07f5f`).
+
 EPIC #407 — Python -> Go server port. The Go server MUST pass the **same**
 Python contract tests that gate the Python server today. This spec
 defines how the existing pytest suite is reused against a Go binary
@@ -13,12 +19,12 @@ without forking the test code.
   idempotency, halt-on-poison (3 P0 properties).
 - `tests/python/integration/test_concurrent_applier_reads.py` — reader
   vs applier safety (`:60-`).
-- `tests/python/unit/test_grpc_wire_format.py` — id-keyed payload,
+- `(legacy Python unit test, removed in Phase 4D)` — id-keyed payload,
   4 MiB cap, op-order independence (`:73-` `server_with_default_limits`).
 - `tests/python/integration/test_privilege_escalation.py` — 34 cases,
   asserts handlers consult `get_authoritative_actor`, not request body.
-- Python entrypoint: `server/python/entdb_server/main.py:1`.
-- Python config (env vars): `server/python/entdb_server/config.py:125`
+- Python entrypoint: `server/go/cmd/entdb-server/main.go`.
+- Python config (env vars): `server/go/cmd/entdb-server/main.go (flag defaults)`
   (gRPC), `:454` (storage), `:708` (WAL backend selection).
 
 ## Current Python harness — how the test server is started

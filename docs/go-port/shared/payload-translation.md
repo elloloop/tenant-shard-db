@@ -6,14 +6,14 @@ gRPC boundary**. Storage, WAL events, and the applier deal exclusively with
 id-keyed maps.
 
 Reference (Python):
-- `server/python/entdb_server/schema/field_id_translation.py:75` — `name_to_id_keys`
-- `server/python/entdb_server/schema/field_id_translation.py:133` — `id_to_name_keys`
-- `server/python/entdb_server/schema/field_id_translation.py:184` — `translate_payload_json_to_names`
-- `server/python/entdb_server/schema/field_id_translation.py:215` — `translate_filter_name_to_id`
-- `server/python/entdb_server/api/grpc_server.py:149` — `_struct_to_dict` / `_dict_to_struct`
-- `server/python/entdb_server/api/grpc_server.py:846` — ingress translation in `_convert_operations`
-- `server/python/entdb_server/api/grpc_server.py:1693` — `_node_to_proto` (egress, no translation)
-- `tests/python/unit/test_grpc_wire_format.py` — pinned wire contract
+- `server/go/internal/payload/translate.go` — `name_to_id_keys`
+- `server/go/internal/payload/translate.go` — `id_to_name_keys`
+- `server/go/internal/payload/translate.go` — `translate_payload_json_to_names`
+- `server/go/internal/payload/translate.go` — `translate_filter_name_to_id`
+- `server/go/internal/api/` — `_struct_to_dict` / `_dict_to_struct`
+- `server/go/internal/api/` — ingress translation in `_convert_operations`
+- `server/go/internal/api/` — `_node_to_proto` (egress, no translation)
+- `(legacy Python unit test, removed in Phase 4D)` — pinned wire contract
 
 ---
 
@@ -21,12 +21,12 @@ Reference (Python):
 
 Payloads on the wire are `google.protobuf.Struct`. On disk and in WAL events
 they are `map[uint32]any` — the key is the field's stable numeric `field_id`
-(positive `int`, ≤ 65535; see `server/python/entdb_server/schema/types.py:194`).
+(positive `int`, ≤ 65535; see `server/go/internal/schema/types.go`).
 
 - **Key shape on the wire**: `Struct.fields` keyed by **numeric strings**
   (`"1"`, `"2"`). Per `_node_to_proto` the server returns the on-disk dict
   verbatim through `_dict_to_struct`; the keys are stringified `field_id`s.
-  See `tests/python/unit/test_grpc_wire_format.py:172` (`assert keys == {"1", "2"}`).
+  See `(legacy Python unit test, removed in Phase 4D)` (`assert keys == {"1", "2"}`).
 - **Key shape on disk / in events**: prefer `map[uint32]any` in Go (no
   string round-trip). Stringify only at the protobuf boundary because
   `structpb.Struct` requires `map[string]*Value`.
@@ -39,7 +39,7 @@ they are `map[uint32]any` — the key is the field's stable numeric `field_id`
   explicit JSON `null` is stored as `nil`; the schema validator treats it as
   "not provided" (see `FieldDef.validate_value`, `schema/types.py:212`).
 - **Empty payload**: `Struct{}` round-trips to an empty `map[uint32]any{}`
-  (and back). `tests/python/unit/test_grpc_wire_format.py:320` pins this.
+  (and back). `(legacy Python unit test, removed in Phase 4D)` pins this.
 - **Unknown field names**: dropped silently on ingress. `field_id_translation.py:122`.
 - **Unknown field ids**: kept verbatim on egress so future-schema rows are
   not lossy. `field_id_translation.py:175`.
@@ -76,7 +76,7 @@ break invariant #1 (WAL is source of truth).
 
 ## Test contract
 
-`tests/python/unit/test_grpc_wire_format.py` is the cross-implementation
+`(legacy Python unit test, removed in Phase 4D)` is the cross-implementation
 contract. The Go server MUST satisfy every test (transcribed to Go test
 infrastructure, same protocol-level assertions).
 
@@ -195,7 +195,7 @@ Notes:
 - **Type fidelity**: cover string, int (note float64 round-trip), float,
   bool, list, nested map, null, base64 bytes, timestamp ms.
 - **Wire-format mirror**: replay every assertion from
-  `tests/python/unit/test_grpc_wire_format.py` against the Go server in
+  `(legacy Python unit test, removed in Phase 4D)` against the Go server in
   the contract harness.
 
 ---

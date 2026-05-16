@@ -4,7 +4,7 @@ EPIC: #407 (Python -> Go server port). The Go server MUST emit byte-for-byte
 identical `(grpc.StatusCode, message-prefix, trailers)` triples for every
 error path observable from `tests/python/integration/test_grpc_contract.py`,
 `tests/python/integration/test_privilege_escalation.py`, and
-`tests/python/unit/test_grpc_wire_format.py`.
+`(legacy Python unit test, removed in Phase 4D)`.
 
 This is the canonical source for the mapping. Per-RPC specs in
 `docs/go-port/rpcs/*.md` reference this file for code semantics and only
@@ -215,7 +215,7 @@ Go-side mirror of Python contract assertions. Each becomes a row in
 | `:731` -- `PERMISSION_DENIED` when caller is not admin/owner | `codes.PermissionDenied` |
 | `:737` -- `UNIMPLEMENTED` when registry / global_store is `nil` | `codes.Unimplemented` |
 | `tests/python/integration/test_privilege_escalation.py:209,228,247,284,341,363,378` -- claimed-actor mismatch -> `PERMISSION_DENIED` on `GetNode`, `ExecuteAtomic`, admin RPCs | `codes.PermissionDenied` for every per-handler privilege guard |
-| `tests/python/unit/test_grpc_wire_format.py:315` -- 5 MiB request on default-cap server -> `RESOURCE_EXHAUSTED` | `codes.ResourceExhausted` (transport-layer) |
+| `(legacy Python unit test, removed in Phase 4D)` -- 5 MiB request on default-cap server -> `RESOURCE_EXHAUSTED` | `codes.ResourceExhausted` (transport-layer) |
 | Sharding redirect (when `_sharding.is_mine == false`) | `codes.Unavailable` AND trailer `entdb-redirect-node` matches owner |
 | Region pin mismatch | `codes.FailedPrecondition`, no retry trailer |
 | Quota exceeded | `codes.ResourceExhausted` AND trailer `retry-after` is a positive integer string |

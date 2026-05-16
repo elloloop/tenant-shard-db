@@ -6,7 +6,7 @@ it as the most intricate piece to port. This spec captures the contract
 the Go implementation must satisfy.
 
 Reference Python implementation:
-[`server/python/entdb_server/apply/applier.py`](../../../server/python/entdb_server/apply/applier.py).
+[`server/go/internal/apply/applier.go`](../../../server/go/internal/apply/applier.go).
 
 Target Go package: `server/go/internal/apply/` (new). Sibling packages
 referenced below: `server/go/internal/wal/`, `server/go/internal/store/`,
@@ -164,7 +164,7 @@ contract (`:104-136`, `:139-`):
 
 Recovery is **not** part of the steady-state Applier. It runs at boot
 or on tenant rebuild via
-`server/python/entdb_server/tools/recovery_strategy.py` (`RecoveryTier`,
+`server/go/internal/tools/recovery_strategy.go` (`RecoveryTier`,
 `:38-43`):
 
 1. **Tier 1 — SNAPSHOT**: Find the latest `s3://…/snapshots/tenant=…/
