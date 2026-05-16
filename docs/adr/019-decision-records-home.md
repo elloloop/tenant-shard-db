@@ -8,9 +8,9 @@
 ## Decision
 
 All EntDB design decisions live in **`docs/adr/`** as numbered ADRs.
-There is exactly one home; the parallel `docs/decisions/` folder is
-deprecated and its entries migrate into `docs/adr/` opportunistically
-(when a discussion touches them).
+There is exactly one home; the previous `docs/decisions/` folder has
+been deleted and its entries migrated into numbered ADRs (see the
+per-topic mapping in "What this locks in" below).
 
 `CLAUDE.md` contains **agent execution rules only**: the local CI
 workflow, release process, directory map, testing commands, code-style
@@ -181,10 +181,29 @@ that doesn't need design-decision provenance.
   `References` section names the file(s) it touched and the commit
   doing the removal is the authoritative record (no `Superseded by:`
   banner; the old content is just gone).
-- The 10 entries in `docs/decisions/` are valid until migrated. The
-  migration happens lazily — when a discussion or fix touches a
-  given decision, it moves into `docs/adr/` with a new number, and
-  the old `decisions/` file is deleted in the same commit.
+- The `docs/decisions/` folder is gone. **Migration complete**:
+  every entry that lived there has been moved into `docs/adr/` as a
+  numbered ADR (see the per-topic mapping below), and the folder
+  itself was deleted along with `INDEX.md`. New design decisions go
+  directly into `docs/adr/` under the next free number.
+
+Final mapping from the retired `docs/decisions/` corpus to ADRs:
+
+- `acl.md` → [ADR-003](003-acl-model.md)
+- `storage.md` → [ADR-020](020-immutable-storage-mode.md) (with
+  ADR-014 owning the physical file layout)
+- `quotas.md` → [ADR-024](024-three-layer-rate-limit-model.md)
+- `unique_keys.md` → merged into
+  [ADR-025](025-single-shape-sdk-api.md) (the original
+  `node_keys` design is recorded as a rejected alternative
+  there)
+- `sdk_api.md` → [ADR-025](025-single-shape-sdk-api.md)
+- `query_indexes.md` →
+  [ADR-023](023-declarative-query-indexes.md)
+- `fts.md` → [ADR-022](022-fts5-full-text-search.md)
+- `console.md` → [ADR-021](021-go-console-binary.md)
+- `python-server-retired.md` →
+  [ADR-017](017-python-server-retired.md)
 
 **What this makes easy:**
 
@@ -215,12 +234,11 @@ that doesn't need design-decision provenance.
   earlier ADRs. Detected by: cross-ADR contradiction audit (grep
   for the rejected design term across `docs/adr/`). The deletion
   must land in the same commit as the new ADR.
-- The migration from `docs/decisions/` to `docs/adr/` stalls
-  partway, leaving the corpus split again. Mitigation: lift each of
-  the 6 CLAUDE.md invariants into its own ADR within the same
-  multi-PR effort that opened this ADR. Existing `decisions/`
-  entries can migrate as discussions touch them, but the CLAUDE.md
-  invariants must clear out fast.
+- A future contributor re-creates `docs/decisions/` (or a new
+  parallel folder) to avoid the ADR ceremony. Detected by: presence
+  of design decisions outside `docs/adr/`. The migration that
+  retired the folder is the precedent — any new decision-doc
+  location needs to delete or merge ADR-019 first.
 
 ## References
 
@@ -230,5 +248,6 @@ that doesn't need design-decision provenance.
   on per-user mailbox files).
 - Existing ADRs: `docs/adr/001-storage-architecture.md` through
   `docs/adr/013-accessibility-compliance.md`.
-- Existing decisions: `docs/decisions/INDEX.md`.
+- Retired decisions folder: `docs/decisions/` (deleted; entries
+  migrated into numbered ADRs per the mapping above).
 - CLAUDE.md "Architecture Invariants" section (pre-migration).
