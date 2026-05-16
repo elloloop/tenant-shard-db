@@ -173,7 +173,7 @@ func NewTransactionError(message, idempotencyKey string) *TransactionError {
 // quota layers (monthly write quota, per-tenant RPS, per-user RPS). It
 // mirrors the Python SDK's RateLimitError so callers can write a single
 // handler that covers all three phases of the rate-limit model frozen in
-// docs/decisions/quotas.md.
+// docs/adr/024-three-layer-rate-limit-model.md.
 //
 // The server sends:
 //   - gRPC status code RESOURCE_EXHAUSTED

@@ -120,8 +120,8 @@ const (
 // TenantQuota is the decoded snapshot returned by the GetTenantQuota RPC.
 // It mirrors the three-layer rate-limit model (monthly quota, per-tenant
 // token bucket, per-user token bucket) defined in
-// docs/decisions/quotas.md so callers can render a full quota dashboard
-// from a single round-trip.
+// docs/adr/024-three-layer-rate-limit-model.md so callers can render a
+// full quota dashboard from a single round-trip.
 //
 // Numeric fields use int64 to match the proto (and to give dashboards
 // headroom for high-volume tiers). A zero value for any *Limit field
