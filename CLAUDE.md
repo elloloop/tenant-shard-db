@@ -49,7 +49,7 @@ Quick orientation (one-liners, not normative — the ADR is normative):
 - [ADR-003](docs/adr/003-acl-model.md) — ACL model: typed capabilities (CoreCapability + per-type extensions), inheritance, cross-tenant grants
 - [ADR-005](docs/adr/005-event-sourcing-wal.md) — event sourcing via single WAL topic, swappable backends (memory + kafka shipped; #518 ports the rest)
 - [ADR-006](docs/adr/006-proto-schema-definition.md) — proto is the type system end-to-end
-- [ADR-011](docs/adr/011-security-and-compliance.md) — security + compliance posture
+- [ADR-011](docs/adr/011-security-and-compliance.md) — security + compliance: SQLCipher encryption-at-rest, KMS-backed key vault, crypto-shred GDPR erasure, TLS 1.3 + mTLS (all shipped in v1.13.0)
 - [ADR-014](docs/adr/014-physical-storage-layout.md) — physical file layout: per-tenant, global, mailbox, public; scale, mobility, public.db semantics
 - [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md) — WAL + S3 Object Lock is the audit log
 - [ADR-016](docs/adr/016-handlers-append-applier-writes.md) — handlers append to the WAL; only the applier writes SQLite

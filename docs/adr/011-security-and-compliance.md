@@ -1,247 +1,379 @@
 # ADR-011: Security and Compliance from Day One
 
-## Status: Accepted
+**Status:** Accepted
+**Decided:** original ADR date predates current convention; revised
+2026-05-16 to match shipped reality (v1.13.0 closed the major
+encryption + TLS gaps)
+**Tags:** security, compliance, encryption, gdpr, hipaa, soc2
+**Implementation:** `server/go/internal/{crypto,gdpr,auth}/` + the
+CLI flags on `cmd/entdb-server/`
 
 ## Context
 
-EntDB powers products equivalent to Google Workspace and Microsoft 365. The database must have technical controls built in from day one to support SOC 2, ISO 27001, GDPR, CCPA, HIPAA, and future certifications without retrofit.
+EntDB targets workloads at the bar of Google Workspace or
+Microsoft 365 — multi-tenant SaaS that must pass SOC 2, ISO 27001,
+GDPR, CCPA, HIPAA. The technical controls below are designed in
+from day one rather than bolted on per audit. Sections marked
+**Shipped** are in v1.13.0 today; sections marked **Planned** are
+design-locked but tracked in open issues.
 
 ## Decision
 
-### Encryption at rest
+### Encryption at rest — **Shipped (v1.13.0)**
 
-Every tenant SQLite file is encrypted using SQLCipher (AES-256-CBC) or an equivalent. The database never writes unencrypted data to disk.
-
-```
-tenant_acme.db     → encrypted with tenant-specific key
-tenant_alice.db    → encrypted with different tenant-specific key
-global.db          → encrypted with master key
-```
-
-Per-tenant encryption keys enable **crypto-shredding**: deleting a tenant's encryption key makes all data irrecoverable without touching the file. This satisfies GDPR erasure even on backup media.
-
-Key hierarchy:
-```
-Master Key (HSM or KMS)
-  └── Tenant Key (derived per tenant, stored encrypted in key_registry)
-        └── SQLite file encrypted with tenant key
-```
-
-Key rotation: new writes use new key, background process re-encrypts existing data.
-
-### Encryption in transit
-
-TLS is mandatory, not optional. The server refuses plaintext gRPC connections in production.
+Every per-tenant SQLite file, every per-user mailbox file, and
+`global.db` itself are encrypted using **SQLCipher v4** (AES-256,
+HMAC-SHA512, PBKDF2-SHA512) via the
+`github.com/mutecomm/go-sqlcipher/v4` driver. The driver is wired
+into `server/go/internal/crypto/sqlcipher.go` and used by
+`server/go/internal/store/pool.go` on every connection open.
 
 ```
-gRPC:   TLS 1.3 minimum
-Kafka:  TLS + SASL authentication
-S3:     HTTPS only
-Global: TLS between nodes
+tenant_acme.db        → encrypted with the acme-tenant key
+tenant_smith.db       → encrypted with the smith-tenant key
+{tenant}/user_X.db    → encrypted with the same tenant key
+global.db             → encrypted with the master key
 ```
 
-Certificate management: support for ACME (Let's Encrypt), custom certs, and mutual TLS (mTLS) for service-to-service.
-
-### Audit logging
-
-Audit posture is owned by **ADR-015** (WAL + S3 Object Lock is the
-audit log). Every operation flows through the WAL; the WAL is archived
-to S3 with Object Lock COMPLIANCE mode for tamper evidence. This ADR
-does not duplicate that decision.
-
-### Authentication
+Key hierarchy (`server/go/internal/crypto/{key_manager,master_key,tenant_key_vault}.go`):
 
 ```
-API Keys:
-  - Per-tenant API keys with scoped permissions
-  - Key rotation without downtime (multiple active keys)
-  - Key revocation with immediate effect
-  - Keys stored as bcrypt/argon2 hashes (never plaintext)
-
-OAuth 2.0 / OIDC:
-  - Support for external identity providers (Google, Microsoft, Okta)
-  - JWT validation at the gRPC interceptor level
-  - Token expiry enforced server-side
-
-mTLS:
-  - Mutual TLS for service-to-service communication
-  - Certificate-based identity for automated systems
+Master Key  — provisioned out-of-band (KMS / Vault / file)
+  └── Tenant Key (derived per tenant, wrapped under master,
+                  persisted in the tenant_key_vault table in global.db)
+        └── SQLite file encrypted at PRAGMA-key open time
 ```
 
-### Data residency
+**KMS providers supported** (via `-kms-provider` flag):
 
-Tenants can be pinned to specific geographic regions.
+- `file` — local key file (dev / single-node) or env-var lookup
+- `aws` — AWS KMS
+- `gcp` — Google Cloud KMS
+- `azure` — Azure Key Vault
+- `vault` — HashiCorp Vault
 
-```sql
--- Global store
-CREATE TABLE tenant_registry (
-    tenant_id   TEXT PRIMARY KEY,
-    ...
-    region      TEXT NOT NULL DEFAULT 'us-east-1',  -- where this tenant's data lives
-    data_residency_policy TEXT,                       -- 'eu-only', 'us-only', 'any'
-);
-```
-
-Multi-region deployment:
-```
-Region EU (Frankfurt):   owns tenants with region=eu-west-1
-Region US (Virginia):    owns tenants with region=us-east-1
-Region APAC (Singapore): owns tenants with region=ap-southeast-1
-```
-
-Data never leaves the configured region. Cross-region reads are routed to the owning region.
-
-### Network security
+Operator flags (`cmd/entdb-server/main.go`):
 
 ```
-IP allowlisting:    per-tenant IP restrictions
-Rate limiting:      per-tenant, per-user, per-API-key (already exists)
-DDoS protection:    connection limits, request size limits
-Private networking: VPC peering, private endpoints (cloud deployments)
+-kms-provider {file|aws|gcp|azure|vault}
+-kms-key-id <provider-specific identifier>
+-encryption-required          # refuse to open unencrypted files
 ```
 
-### Secure deletion
+`-encryption-required=true` is the production posture: the server
+refuses to start (or to open a tenant file) that isn't encrypted.
 
-Three levels:
-```
-Soft delete:      status=deleted, data retained for grace period
-Hard delete:      SQLite file removed from disk
-Crypto-shred:     encryption key deleted, data on disk/backup is unrecoverable
-```
+### Crypto-shred for GDPR erasure — **Shipped (v1.13.0)**
 
-GDPR deletion uses crypto-shred for personal tenants (key deleted after grace period).
-
-### Input validation
-
-```
-Schema validation:  proto schema enforces field types at the SDK level
-SQL injection:      parameterized queries only (no string interpolation)
-Payload size:       configurable max per node (default 1MB)
-Field validation:   type checking, enum validation, required field checks
-FTS5 injection:     sanitized query input (already fixed)
-Path traversal:     tenant_id sanitized for filesystem paths (already implemented)
-```
-
-### Vulnerability management
+GDPR Article 17 erasure is implemented via crypto-shred, not file
+deletion: deleting a tenant's key from `tenant_key_vault` makes
+every on-disk and on-S3-archive byte for that tenant unrecoverable.
+This is the **only viable erasure path** when the audit log
+([ADR-015](015-wal-and-s3-object-lock-as-audit-log.md)) sits in
+S3 Object Lock COMPLIANCE — Object Lock refuses content deletion
+within the retention window, so the data must be cryptographically
+inaccessible rather than physically removed.
 
 ```
-Dependencies:      Dependabot / Renovate for automated updates
-SAST:              CodeQL or Semgrep in CI
-Container scanning: Trivy or Grype on Docker images
-Secret scanning:   git-secrets / truffleHog in CI
-Penetration testing: annual third-party pentest
-CVE monitoring:    automated alerts for SQLite, gRPC, protobuf, Kafka CVEs
+Soft delete:      status=deletion_pending, data retained for grace period
+Crypto-shred:     key wiped from tenant_key_vault → all files unreadable
+File cleanup:     -crypto-shred-delete-files=true also rm's the .db/-wal/-shm
+                  files after the shred (cosmetic; the bytes are already
+                  garbage without the key)
 ```
 
-### Monitoring and alerting
+Worker that processes the deletion queue at the configured cadence
+(`server/go/internal/gdpr/processor.go`):
 
 ```
-Metrics (Prometheus):
-  - Request rate, error rate, latency (per RPC, per tenant)
-  - SQLite connection pool utilization
-  - Kafka consumer lag (applier falling behind)
-  - Disk usage per tenant
-  - Authentication failures
-  - Rate limit hits
-  - GDPR operation status
-
-Tracing (OpenTelemetry):
-  - Distributed traces across gRPC → WAL → Applier → SQLite
-  - Per-tenant trace context
-
-Health checks:
-  - /health endpoint with component status
-  - WAL connectivity, SQLite accessibility, disk space
-
-Alerting:
-  - Applier lag > 60 seconds
-  - Authentication failure spike
-  - Disk usage > 80%
-  - Error rate > 1%
-  - S3 Object Lock archive lag > N events (see ADR-015)
+-gdpr-worker-enabled=true     # default
+-gdpr-worker-interval=1m
+-crypto-shred-delete-files=false
 ```
 
-### Session and token management
+### Encryption in transit — **Shipped (v1.13.0)**
+
+TLS support is implemented in `server/go/cmd/entdb-server/tls.go`
+with mTLS in `server/go/internal/auth/mtls.go`.
+
+Operator flags:
 
 ```
-API keys:       rotatable, scopeable, revocable, expirable
-JWT tokens:     short-lived (15 min), refresh tokens (7 days)
-Session timeout: configurable per tenant
-Concurrent sessions: configurable limit per user
-Token revocation: immediate via revocation list (checked on every request)
+-tls-cert <path>              # server certificate
+-tls-key <path>               # server private key
+-tls-ca <path>                # client CA for mTLS verification
+-tls-min-version {1.2|1.3}    # default 1.3
+-require-tls=true             # refuse to start without TLS configured
+-require-client-cert=true     # full mTLS — refuse clients without valid certs
 ```
 
-### Backup integrity
+**Production posture:** `-require-tls=true` + `-require-client-cert=true`
+when service-to-service authentication is via certificates. The
+cert/key files are reloaded on SIGHUP so rotation needs no restart.
+
+The mTLS client cert subject DN / SAN is extracted into the request
+context and flows through the trusted-actor interceptor (see
+`server/go/internal/auth/`) — a future enhancement can map client
+cert identity onto an EntDB actor (`service:<cn>`), bridging
+PKI identity to EntDB capability checks.
+
+Default (no `-tls-*` flags) is plaintext gRPC, **intended for local
+dev only**. Production deployments MUST set `-require-tls=true`.
 
 ```
-Backups:
-  - Daily SQLite snapshots to S3 (encrypted)
-  - Hourly WAL archive to S3 (encrypted)
-  - Backup checksums verified on creation
+gRPC:   TLS 1.3 default, 1.2 minimum, mTLS available
+Kafka:  TLS + SASL configured at the broker connection (operator-owned)
+S3:     HTTPS only (Go SDK default)
+```
 
-Restore testing:
-  - Automated monthly restore test (pick random tenant, restore, verify)
-  - Restore time SLA: < 1 hour for any single tenant
+### Audit logging — **Shipped (see ADR-015)**
 
-Backup encryption:
-  - Same tenant key used for backup encryption
-  - Crypto-shred: deleting tenant key makes backups unrecoverable too
+Audit posture is owned by [ADR-015](015-wal-and-s3-object-lock-as-audit-log.md):
+WAL + S3 Object Lock is the single audit log. Every operation
+flows through the WAL ([ADR-016](016-handlers-append-applier-writes.md)),
+the WAL is archived to S3 with Object Lock COMPLIANCE mode for
+tamper evidence. This ADR does not duplicate that decision.
+
+### Authentication — **Shipped**
+
+Three credential carriers, implemented at
+`server/go/internal/auth/`:
+
+```
+API keys  (apikey.go)
+  - Stored hashed (bcrypt/argon2; never plaintext)
+  - Per-tenant scoped, rotatable, revocable
+  - Identity becomes the key's name field
+
+OAuth / OIDC bearer (oauth.go)
+  - JWKS-backed JWT validation (RS256/ES256)
+  - Identity = sub claim, falling back to email
+
+Session tokens (session.go)
+  - SessionManager + per-user expiry
+
+mTLS client cert (mtls.go, v1.13.0)
+  - Subject DN / SAN extractable from the request context
+  - Mapped to actor in a future enhancement
+```
+
+Order is fixed in `server/go/internal/auth/interceptor.go`: bearer →
+api-key → session. First match wins; subsequent are not tried.
+
+`Health` and `grpc.health.v1.Health/Check` bypass auth (orchestrator probes).
+
+### Data residency — **Shipped (region pin), Planned (multi-region routing)**
+
+Tenants carry a `region` column in `tenant_registry` (`global.db`),
+defaulting to `us-east-1`. Set at `CreateTenant` time. The serving
+region is configured on the server via `-region`. A request for a
+tenant pinned to a different region returns an
+`UNAVAILABLE` with the `entdb-redirect-node` trailer (handled by
+the SDK; see `server/go/internal/tenant/check.go`).
+
+Multi-region deployment (running multiple EntDB clusters with
+region-specific tenants) is a deployment topology, not a single-
+binary concern. Cross-region replication of the WAL is out of
+scope.
+
+### Secure deletion — **Shipped**
+
+```
+Soft delete:      status flag on the tenant_registry row; reads keep working
+Hard delete:      SQLite file removed from disk (-crypto-shred-delete-files)
+Crypto-shred:     key wiped from tenant_key_vault → unrecoverable on disk
+                  and on the S3 archive (per ADR-015)
+```
+
+GDPR Article 17 uses crypto-shred for tenant data with the grace
+period configured via `Admin.DeleteUser`'s `graceDays` argument.
+
+### Input validation — **Shipped**
+
+```
+Schema validation  proto + entdb-schema check at CI; SDK rejects invalid
+                   payloads before sending
+SQL injection      parameterized queries only (`database/sql.QueryContext`
+                   throughout server/go/internal/store/)
+Payload size       configurable max per node (default 1 MB)
+Field validation   type checking, enum validation, required fields
+FTS5 injection     sanitized query input (existing fix carried over from Python)
+Path traversal     tenant_id sanitized for filesystem paths in store/pool.go
+```
+
+### Network security — **Partial; deployment-owned**
+
+```
+TLS / mTLS              shipped (see "Encryption in transit")
+Rate limiting           planned (no Go implementation yet; Python had a
+                        QuotaInterceptor, port pending)
+IP allowlisting         deployment-owned (cloud LB / WAF / SG rules)
+DDoS protection         deployment-owned (Cloudflare, AWS Shield, GCP Cloud Armor)
+Private networking      deployment-owned (VPC peering, private endpoints)
+```
+
+### Vulnerability management — **Process; not a code feature**
+
+```
+Dependencies         Dependabot enabled on the repo
+SAST                 CodeQL via GitHub default
+Container scanning   Trivy / Grype recommended on the published images
+Secret scanning      GitHub default + manual sweeps
+Penetration testing  recommended annually for production deployments
+CVE monitoring       Dependabot + go.sum / go.mod alerts
+```
+
+### Monitoring and alerting — **Partial**
+
+```
+Prometheus metrics
+  collection         ✅ shipped — server/go/internal/metrics/ records:
+                        - grpc_requests_total{method,status}
+                        - grpc_request_duration_seconds{method}
+                        - wal_append_duration_seconds, wal_consumer_lag
+                        - archive_lag_events, archive_writes_total,
+                          archive_errors_total (when -archive-enabled)
+  exposure           ⏳ NOT shipped — the server doesn't expose
+                        a /metrics HTTP endpoint. Internal recording is in
+                        place; surfacing it via promhttp.Handler() in
+                        cmd/entdb-server/main.go is open work.
+
+Tracing (OpenTelemetry)
+  SDK transitive dep ✅ go.opentelemetry.io/otel pulled via dependencies
+  actual spans       ⏳ NOT instrumented yet. Issue #517 tracks adding
+                        OpenTelemetry hooks to the Go SDK; server-side
+                        instrumentation follows.
+
+Health checks
+  gRPC                ✅ /grpc.health.v1.Health/Check + entdb.v1.EntDBService/Health
+                        both bypass auth (orchestrator-friendly).
+  HTTP /health        ✗ The Go server is gRPC-only. No HTTP listener.
+                        Use grpc-health-probe or the standard gRPC health protocol.
+
+Alerting (operator-owned)
+  Applier lag, error rate, archive lag, encryption-required failures,
+  authentication failure spikes — all observable via metrics once
+  the /metrics endpoint ships.
+```
+
+### Backup integrity — **Partial**
+
+```
+WAL archive to S3                ✅ shipped (-archive-enabled, see ADR-015 / EPIC #511)
+                                 Object Lock COMPLIANCE; tamper-evident.
+Per-tenant SQLite snapshots      ⏳ NOT shipped. WAL replay is the default DR
+                                 mechanism. Snapshots are an optimization (skip the
+                                 "replay from beginning" cost on a fresh node).
+Restore testing                  Operator-owned process; no automated test today.
+Backup encryption                Automatic — SQLite files are SQLCipher-encrypted;
+                                 deleting the tenant key (crypto-shred) makes
+                                 backups irrecoverable too.
+```
+
+### Session and token management — **Shipped**
+
+```
+API keys              rotatable (multiple active keys), scopeable,
+                      revocable. Hash-stored.
+OAuth/OIDC            JWT validation; expiry enforced via token claims.
+Session tokens        per-session TTL; revocable via session deletion.
+Token revocation      immediate at the gateway via revocation checks
+                      in `auth/session.go`.
 ```
 
 ### Compliance mapping
+
+The controls above map to common compliance frameworks as follows.
+This table is informational; specific certification audits will
+require their own evidence packages.
 
 | Control | SOC 2 | ISO 27001 | GDPR | HIPAA | CCPA |
 |---|---|---|---|---|---|
 | Encryption at rest | CC6.1 | A.10.1 | Art.32 | §164.312(a) | §1798.150 |
 | Encryption in transit | CC6.1 | A.13.1 | Art.32 | §164.312(e) | — |
-| Audit logging | CC7.2 | A.12.4 | Art.30 | §164.312(b) | — |
-| Access control | CC6.1-6.3 | A.9 | Art.25 | §164.312(a) | — |
-| Data classification | CC6.5 | A.8.2 | Art.30 | §164.312(a) | §1798.100 |
+| Audit logging (ADR-015) | CC7.2 | A.12.4 | Art.30 | §164.312(b) | — |
+| Access control (ADR-003) | CC6.1-6.3 | A.9 | Art.25 | §164.312(a) | — |
+| Data classification (proto) | CC6.5 | A.8.2 | Art.30 | §164.312(a) | §1798.100 |
 | Data residency | CC6.6 | A.11 | Art.44-49 | — | — |
 | Encryption key mgmt | CC6.1 | A.10.1 | Art.32 | §164.312(a) | — |
-| Secure deletion | CC6.5 | A.8.3 | Art.17 | §164.310(d) | §1798.105 |
-| Backup integrity | CC7.5 | A.12.3 | Art.32 | §164.308(a) | — |
+| Secure deletion (crypto-shred) | CC6.5 | A.8.3 | Art.17 | §164.310(d) | §1798.105 |
+| Backup integrity (WAL archive) | CC7.5 | A.12.3 | Art.32 | §164.308(a) | — |
 | Vulnerability mgmt | CC7.1 | A.12.6 | Art.32 | §164.308(a) | — |
 | Monitoring | CC7.2 | A.12.4 | Art.33 | §164.308(a) | — |
 | Incident response | CC7.3-7.5 | A.16 | Art.33-34 | §164.308(a) | §1798.150 |
 | Input validation | CC6.1 | A.14.2 | Art.32 | §164.312(c) | — |
-| Rate limiting | CC6.1 | A.13.1 | — | — | — |
 
 ### What EntDB provides vs what the deployment provides
 
 ```
 EntDB provides (built into the database):
-  ✅ Encryption at rest (SQLCipher)
-  ✅ Encryption in transit (TLS required)
-  ✅ Audit logging (WAL + S3 Object Lock; see ADR-015)
-  ✅ Access control (ACL v2, role-based)
-  ✅ Data classification (proto schema)
-  ✅ GDPR operations (delete, export, anonymize, freeze)
-  ✅ Secure deletion (crypto-shred)
-  ✅ Input validation (schema, parameterized queries)
-  ✅ Rate limiting
-  ✅ Monitoring (Prometheus metrics, OpenTelemetry tracing)
-  ✅ Backup with checksums
-  ✅ Legal hold
+  ✅ Encryption at rest (SQLCipher v4; AES-256 + HMAC-SHA512)
+  ✅ Encryption in transit (TLS 1.3 + mTLS, cert reload on SIGHUP)
+  ✅ Audit log (WAL + S3 Object Lock; ADR-015)
+  ✅ Access control (typed-capability ACL; ADR-003)
+  ✅ Data classification (proto data_policy)
+  ✅ GDPR operations (DeleteUser, ExportUserData, FreezeUser,
+                      TransferUserContent, CancelUserDeletion)
+  ✅ Crypto-shred secure deletion
+  ✅ Input validation (proto + parameterized queries)
+  ✅ Session/token management
+  ✅ Legal hold (per-tenant flag in global.db; archive escalates to
+                  Object Lock LegalHold=ON per ADR-015)
+  ⏳ Rate limiting (Python had QuotaInterceptor; Go port pending)
+  ⏳ Prometheus metrics endpoint (recording works; HTTP exposure pending)
+  ⏳ OpenTelemetry tracing (#517 tracks SDK + server instrumentation)
+  ⏳ Per-tenant SQLite snapshots (WAL replay is the durability mechanism)
 
 The deployment provides (infrastructure):
-  🔧 Network security (VPC, firewalls)
+  🔧 Network security (VPC, firewalls, security groups)
   🔧 Physical security (data center)
-  🔧 KMS for master key (AWS KMS, GCP KMS, Vault)
-  🔧 Certificate management
-  🔧 DDoS protection (Cloudflare, AWS Shield)
+  🔧 KMS for master key (AWS KMS, GCP KMS, Azure Key Vault, Vault)
+  🔧 Certificate provisioning and rotation cadence
+  🔧 DDoS protection (Cloudflare, AWS Shield, Cloud Armor)
   🔧 CI/CD pipeline security
-  🔧 Employee access controls
+  🔧 Employee access controls / SSO
   🔧 Incident response procedures
   🔧 Business continuity planning
   🔧 Third-party audit engagement
+  🔧 IP allowlisting at the LB / WAF
 ```
 
 ## Consequences
 
-- SQLCipher adds ~5-10% overhead on SQLite operations
-- Per-tenant encryption keys require key management infrastructure
-- TLS-only means no plaintext development mode (use self-signed certs for dev)
-- Data residency requires multi-region deployment for global customers
-- Compliance documentation is an ongoing effort beyond technical controls
-- Annual SOC 2 audit requires third-party auditor engagement
+- SQLCipher adds ~5–10% overhead on SQLite operations. Acceptable
+  for the privacy guarantees it enables; profile your workload if
+  it's an issue.
+- Per-tenant encryption keys require KMS infrastructure. Single-
+  binary deployments can use `-kms-provider=file` for dev / lab;
+  production MUST use a real KMS.
+- `-require-tls=true` means no plaintext dev mode. Local dev uses
+  self-signed certs (`openssl req` + `-tls-cert/-tls-key`).
+- Data residency requires running multiple EntDB clusters, one per
+  region, each owning the tenants pinned to that region. Cross-
+  region replication is a future concern.
+- Compliance documentation is an ongoing effort beyond technical
+  controls — audits require evidence packages, control narratives,
+  process attestations, and risk assessments that aren't in scope
+  for this ADR.
+
+## References
+
+- [ADR-003](003-acl-model.md) — typed-capability ACL (the access
+  control control).
+- [ADR-014](014-physical-storage-layout.md) — physical file layout
+  is what gets encrypted.
+- [ADR-015](015-wal-and-s3-object-lock-as-audit-log.md) — audit log
+  posture (this ADR's "Audit logging" line refers there).
+- [ADR-016](016-handlers-append-applier-writes.md) — every state
+  change flows through WAL; required for ADR-015 to hold.
+- EPIC [#511](https://github.com/elloloop/tenant-shard-db/issues/511)
+  — S3 Object Lock archive completion (mostly shipped via the
+  `eda6ba9` / `a68d8e1` work; the issue tracks remaining tuning).
+- Issue [#517](https://github.com/elloloop/tenant-shard-db/issues/517)
+  — OpenTelemetry / interceptor hooks (Go SDK + server tracing).
+- v1.13.0 release: SQLCipher + KMS + crypto-shred + TLS/mTLS shipped
+  in commit `a68d8e1`; PRs #522 (TLS flags), #523 (key vault),
+  bundled in #524-equivalent.
+- Source: `server/go/internal/crypto/`,
+  `server/go/internal/gdpr/`, `server/go/internal/auth/`,
+  `server/go/cmd/entdb-server/{tls.go,main.go}`.
