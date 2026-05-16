@@ -1,14 +1,19 @@
 # RPC Port Spec — `entdb.v1.EntDBService/TransferUserContent`
 
+> Implementation: `server/go/internal/api/transfer_user_content.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python -> Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2692-2745`.
+`server/go/internal/api/transfer_user_content.go`.
 
 > Offboarding flow. Reassigns ownership of every node a user owns inside a
 > single tenant to a new owner, and ensures the new owner is a tenant member.
 > WAL-first: the per-tenant ownership change MUST be appended as an
 > `admin_transfer_content` event so it survives WAL rebuild
 > (CLAUDE.md invariant 1). Direct canonical-store writes from this handler
-> are forbidden and pinned against by `tests/python/unit/test_admin_ops.py:373-407`.
+> are forbidden and pinned against by (legacy Python unit test, removed in Phase 4D).
 
 ## Wire contract
 
@@ -21,7 +26,7 @@ Proto: `proto/entdb/v1/entdb.proto:130` (rpc), `:953-958` (request),
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
 | `actor` | 1 | `string` | Wire-untrusted. MUST be replaced by `_trusted_actor()` (gRPC peer identity) before any auth check. See "Auth". |
-| `tenant_id` | 2 | `string` | Required. Validated by `_check_tenant` (`grpc_server.py:362`). |
+| `tenant_id` | 2 | `string` | Required. Validated by `_check_tenant` (`server/go/internal/api/transfer_user_content.go`). |
 | `from_user` | 3 | `string` | Required. Owner being offboarded. Bare id form (e.g. `"alice"`) — translation rules per CLAUDE.md. |
 | `to_user` | 4 | `string` | Required. New owner. May or may not already be a tenant member (idempotent membership upsert). |
 
@@ -36,7 +41,7 @@ Proto: `proto/entdb/v1/entdb.proto:130` (rpc), `:953-958` (request),
 ## Auth (admin; trusted-actor)
 
 1. `_check_tenant(request.tenant_id)` — rejects unknown/archived tenants and
-   wrong-region requests (`grpc_server.py:362`).
+   wrong-region requests (`server/go/internal/api/transfer_user_content.go`).
 2. INVALID_ARGUMENT validation: `tenant_id`, `from_user`, `to_user`
    non-empty (`:2701-2706`).
 3. `_require_admin_or_owner(tenant_id, request.actor, ctx, "TransferUserContent")`
@@ -59,7 +64,7 @@ keeping the side effect.
 
 ## Side effects (potentially many WAL events; bulk ACL changes; mailbox cascades)
 
-Order in the Python handler (`grpc_server.py:2715-2725` ->
+Order in the Python handler (`server/go/internal/api/transfer_user_content.go` ->
 `api/admin_handlers.py:27-67`):
 
 1. **WAL append.** Single tenant-scope event carrying both the tenant
@@ -76,19 +81,19 @@ Order in the Python handler (`grpc_server.py:2715-2725` ->
    ```
    Topic: `self.topic` (default `"entdb-wal"`), key: `tenant_id`.
 
-2. **Applier materialization** (`apply/applier.py:1231-1238`): single
+2. **Applier materialization** (`apply/server/go/internal/apply/applier.go`): single
    `UPDATE nodes SET owner_actor=?, updated_at=? WHERE tenant_id=? AND
    owner_actor=?`. Bulk-rewrites ownership in one SQL statement — O(rows) but
    one round-trip per event.
 
    The Python Applier currently does NOT refresh `node_visibility` on this
    op (the eager `transfer_user_content` path does, via
-   `_update_visibility`, `canonical_store.py:3707-3715`). The Go port must
+   `_update_visibility`, `server/go/internal/store/`). The Go port must
    match the Applier path: add visibility-index refresh inside the applier
    handler so behavior survives rebuild. See "Open questions".
 
 3. **Audit log.** Eager `canonical_store.transfer_user_content` writes
-   `action="transfer_content"` (`canonical_store.py:3753-3766`). Under the
+   `action="transfer_content"` (`server/go/internal/store/`). Under the
    WAL-first handler this path is NOT called (handler does not invoke
    `canonical_store`). Audit trail comes from the WAL itself + S3 Object
    Lock per CLAUDE.md invariant 2 — do NOT add a parallel audit table.
@@ -105,7 +110,7 @@ Order in the Python handler (`grpc_server.py:2715-2725` ->
 
 | Condition | Status | Where |
 |-----------|--------|-------|
-| Empty `tenant_id` / `from_user` / `to_user` | `INVALID_ARGUMENT` | `grpc_server.py:2701-2706` |
+| Empty `tenant_id` / `from_user` / `to_user` | `INVALID_ARGUMENT` | `server/go/internal/api/transfer_user_content.go` |
 | Unknown / archived tenant, wrong region | per `_check_tenant` | `:2700` |
 | Caller not admin/owner (and not `system:*`) | `PERMISSION_DENIED` | `:2685-2689` |
 | Claimed-admin actor with non-admin trusted identity | `PERMISSION_DENIED`, no WAL append | `test_privilege_escalation.py:344-365` |
@@ -129,7 +134,7 @@ the response with `success=false`.
 - `internal/store/canonical` — read-only `CountOwnedNodes(ctx, tenantID, owner) (int32, error)` for the post-append count. **Must NOT expose a writer call from the handler path.**
 - `internal/event` — `BuildAdminTransferContentEvent(tenantID, actor, from, to) []byte` (JSON encoder; idempotency key generator).
 - `internal/metrics` — `RecordGRPCRequest("TransferUserContent", outcome, dur)`.
-- `internal/applier` — handler for `admin_transfer_content` op (parity with `applier.py:1231-1238`).
+- `internal/applier` — handler for `admin_transfer_content` op (parity with `server/go/internal/apply/applier.go`).
 
 ## Other-RPC deps (TransferOwnership, RevokeAllUserAccess)
 
@@ -140,7 +145,7 @@ the response with `success=false`.
 - **`RevokeAllUserAccess`** (`proto:133`, `:994-1006`): the natural follow-up
   call after `TransferUserContent` in the offboarding flow. Emits an
   `admin_revoke_access` WAL event (`admin_handlers.py:143-180`,
-  `applier.py:1240-1245`). Together they form the offboarding pair: transfer
+  `server/go/internal/apply/applier.go`). Together they form the offboarding pair: transfer
   first (so the user owns nothing), then revoke (so the user has no ACL or
   group access). Operators may script this; no server-side coupling.
 - **`DelegateAccess`** (`proto:131`): adjacent admin op, same WAL-first
@@ -148,18 +153,18 @@ the response with `success=false`.
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_admin_operations.py:153-213` — canonical-store
+- (legacy Python unit test, removed in Phase 4D) — canonical-store
   level: count returned, untouched-owners preserved, audit row, visibility
   index refreshed.
-- `tests/python/unit/test_admin_operations.py:426-505` — gRPC handler:
+- (legacy Python unit test, removed in Phase 4D) — gRPC handler:
   owner allowed, member denied, viewer denied, `system:*` allowed.
-- `tests/python/unit/test_admin_operations.py:806-839` — INVALID_ARGUMENT
+- (legacy Python unit test, removed in Phase 4D) — INVALID_ARGUMENT
   on missing `actor` / `from_user`.
-- `tests/python/unit/test_admin_ops.py:88-119` — global-store: membership
+- (legacy Python unit test, removed in Phase 4D) — global-store: membership
   upsert idempotency, returned fields.
-- `tests/python/unit/test_admin_ops.py:127-144` — canonical-store ownership
+- (legacy Python unit test, removed in Phase 4D) — canonical-store ownership
   rewrite + zero-when-empty.
-- `tests/python/unit/test_admin_ops.py:373-407` — **WAL-first contract**:
+- (legacy Python unit test, removed in Phase 4D) — **WAL-first contract**:
   exactly one append with `op="admin_transfer_content"`, NO direct
   `canonical_store.transfer_user_content` call, response carries pre-apply
   count.
@@ -224,9 +229,9 @@ out: visibility-index refresh must also be idempotent.
 
 3. **Visibility-index drift after rebuild.** The eager
    `canonical_store.transfer_user_content` path refreshes
-   `node_visibility` per node (`canonical_store.py:3707-3715`). The
+   `node_visibility` per node (`server/go/internal/store/`). The
    Applier path (the only one used by the handler) does NOT
-   (`applier.py:1231-1238`). On full WAL rebuild, the visibility index for
+   (`server/go/internal/apply/applier.go`). On full WAL rebuild, the visibility index for
    transferred nodes will be stale until the next ACL touch. **The Go
    Applier port MUST refresh visibility for affected nodes inside the
    same op handler** to close this gap, and a contract test should pin

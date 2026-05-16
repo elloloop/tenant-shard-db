@@ -1,7 +1,12 @@
 # ListSharedWithMe — Go Port Spec
 
+> Implementation: `server/go/internal/api/list_shared_with_me.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Reference Python handler:
-`server/python/entdb_server/api/grpc_server.py:1877-1944`. Proto:
+`server/go/internal/api/list_shared_with_me.go`. Proto:
 `proto/entdb/v1/entdb.proto:100, 757-766`.
 
 The RPC answers "what has been shared TO me?" — the inverse of `ShareNode`'s
@@ -15,7 +20,7 @@ direction. It aggregates two indexes:
 Request `entdb.v1.ListSharedWithMeRequest` (proto:757):
 - `RequestContext context` (tenant_id, actor — actor is UNTRUSTED on wire).
 - `int32 limit` — page size; `0` means "use server default 100"
-  (grpc_server.py:1896).
+  (server/go/internal/api/list_shared_with_me.go).
 - `int32 offset` — pagination offset; `0` means start.
 
 Response `ListSharedWithMeResponse` (proto:763):
@@ -23,8 +28,8 @@ Response `ListSharedWithMeResponse` (proto:763):
   any of caller's resolved groups) has a non-`deny` grant on, plus (b)
   nodes from OTHER tenants where `shared_index.user_id == trusted_actor`.
   Cross-tenant entries are de-duplicated against per-tenant results by
-  `(tenant_id, node_id)` (grpc_server.py:1916, 1919-1928).
-- `bool has_more` — `len(nodes) >= limit` (grpc_server.py:1939). NB: this
+  `(tenant_id, node_id)` (server/go/internal/api/list_shared_with_me.go, 1919-1928).
+- `bool has_more` — `len(nodes) >= limit` (server/go/internal/api/list_shared_with_me.go). NB: this
   is a Python bug-compatible signal — it does NOT account for the
   cross-tenant append step which can push `len(nodes)` past `limit`. Go
   port must preserve.
@@ -34,34 +39,34 @@ Pagination semantics:
   merged. So at offset=100 you may see up to `2*limit` nodes, and pages
   can overlap. Documented as a known limitation.
 - Order: per-tenant rows ordered by `na.granted_at DESC`
-  (canonical_store.py:3462), cross-tenant entries ordered by
-  `shared_at DESC` (global_store.py:731), and the merge is
+  (server/go/internal/store/), cross-tenant entries ordered by
+  `shared_at DESC` (server/go/internal/globalstore/), and the merge is
   per-tenant-first then cross-tenant — NOT a global sort.
 
 ## Auth (caller is implicit recipient; trusted-actor)
 
-- Tenant existence: `_check_tenant` (grpc_server.py:1889, 362).
+- Tenant existence: `_check_tenant` (server/go/internal/api/list_shared_with_me.go, 362).
 - Trusted actor: `actor = self._trusted_actor(request.context.actor)`
-  (grpc_server.py:1891, 418-437). The recipient identity is **never**
+  (server/go/internal/api/list_shared_with_me.go, 418-437). The recipient identity is **never**
   taken from the request payload; it is read from the
   `AuthInterceptor`'s `ContextVar` via `get_authoritative_actor`. This
   is the key invariant — the caller is the implicit recipient, and
   letting the request claim a different recipient would let `user:eve`
   enumerate `user:alice`'s shares.
 - No capability check (read-of-own-shares is implicitly authorised by
-  identity). Verify against `tests/python/unit/test_capability_registry.py`
+  identity). Verify against (legacy Python unit test, removed in Phase 4D)
   during port — likely no row, parity is "any authenticated tenant
   member may call".
 - Group expansion: `canonical_store.resolve_actor_groups(tenant_id,
   actor)` returns `[actor, group:a, group:b, ...]` — the per-tenant
-  query then matches any of those (grpc_server.py:1892-1895,
-  canonical_store.py:2855).
+  query then matches any of those (server/go/internal/api/list_shared_with_me.go,
+  server/go/internal/store/).
 - Cross-tenant lookup uses **only the bare actor string** (no group
   expansion) — `global_store.get_shared_with_me(user_id=actor, ...)`
-  (grpc_server.py:1910-1914). Cross-tenant group-share fan-out happens
+  (server/go/internal/api/list_shared_with_me.go). Cross-tenant group-share fan-out happens
   at write time (`ShareNode` expands group → members and writes one
   `shared_index` row per member). See
-  `tests/python/unit/test_cross_tenant_read.py:378-400`.
+  (legacy Python unit test, removed in Phase 4D).
 
 ## Side effects (read; cross-tenant — items shared from other tenants)
 
@@ -69,7 +74,7 @@ Pagination semantics:
 - **Reads cross-tenant SQLite databases.** For each `shared_index`
   entry from a foreign `source_tenant`, the handler calls
   `canonical_store.get_node(source_tenant, node_id)`
-  (grpc_server.py:1923-1925). This is the ONE allowed cross-tenant
+  (server/go/internal/api/list_shared_with_me.go). This is the ONE allowed cross-tenant
   read in EntDB and only legal because the `shared_index` row IS the
   authorisation token — its existence means `ShareNode` already wrote
   a `node_access` row in the source tenant. Per CLAUDE.md invariant 4,
@@ -77,12 +82,12 @@ Pagination semantics:
   per-tenant connection.
 - Stale `shared_index` entries (source tenant unloaded, node deleted,
   permission revoked but global index lagging) are silently skipped via
-  bare `except` (grpc_server.py:1929-1931). Go port must match — these
+  bare `except` (server/go/internal/api/list_shared_with_me.go). Go port must match — these
   are eventual-consistency artefacts, not errors.
 - `global_store` failure logs a warning and falls through to per-tenant
-  results only (grpc_server.py:1932-1933) — degrades gracefully.
+  results only (server/go/internal/api/list_shared_with_me.go) — degrades gracefully.
 - Metric: `record_grpc_request("ListSharedWithMe", "ok"|"error", elapsed)`
-  (grpc_server.py:1936, 1942).
+  (server/go/internal/api/list_shared_with_me.go, 1942).
 
 ## Error contract
 
@@ -93,7 +98,7 @@ Pagination semantics:
 | Caller has no shares | OK, `nodes=[]`, `has_more=false` | match |
 | `global_store` unavailable | logged warning; return per-tenant results only | match |
 | Stale `shared_index` row (source tenant unloaded, node deleted) | silently skipped | match |
-| Per-tenant SQLite error | bare `except`: log + return `nodes=[]` with status OK (grpc_server.py:1941-1944) — error mode swallowed | preserve for v1 parity; flag for review |
+| Per-tenant SQLite error | bare `except`: log + return `nodes=[]` with status OK (server/go/internal/api/list_shared_with_me.go) — error mode swallowed | preserve for v1 parity; flag for review |
 | `limit < 0` / `offset < 0` | passed straight to SQLite (negative LIMIT = unlimited in SQLite) — undefined behaviour | Go port: clamp to `[0, maxLimit]`, `maxLimit=1000` |
 
 There is no per-RPC `PERMISSION_DENIED`: identity authorises the read,
@@ -112,7 +117,7 @@ and "no shares" is a valid empty success.
 - `internal/globalstore` — `GetSharedWithMe(ctx, userID, limit, offset)
   []SharedEntry` where `SharedEntry{UserID, SourceTenant, NodeID,
   Permission, SharedAt}`. Backed by the global SQLite (`shared_index`
-  table, schema in `global_store.py:670-734`).
+  table, schema in `server/go/internal/globalstore/`).
 - `internal/wire` — `NodeToProto` (id-keyed payload per CLAUDE.md
   invariant 6).
 - `internal/metrics` — `RecordGRPCRequest`.
@@ -127,7 +132,7 @@ and "no shares" is a valid empty success.
   are fanned out: one `shared_index` row per (member, source_tenant,
   node).
 - **`RevokeAccess` removes both**: deletes `node_access` AND
-  `global_store.remove_shared` (grpc_server.py:1862-1867). If the
+  `global_store.remove_shared` (server/go/internal/api/list_shared_with_me.go). If the
   global delete fails, this RPC will keep returning the revoked node
   until the next ShareNode → applier loop. Same eventual-consistency
   caveat applies.
@@ -146,18 +151,18 @@ and "no shares" is a valid empty success.
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_acl_v2.py:455-481` — same-tenant index:
+- (legacy Python unit test, removed in Phase 4D) — same-tenant index:
   shared-nodes union, deny exclusion, group-share inclusion via
   `resolve_actor_groups`.
-- `tests/python/unit/test_cross_tenant_read.py:309-356` — cross-tenant
+- (legacy Python unit test, removed in Phase 4D) — cross-tenant
   aggregation: `global_store.get_shared_with_me` returns rows from
   multiple `source_tenant`s; per-tenant + cross-tenant union must
   surface all of them.
-- `tests/python/unit/test_cross_tenant_read.py:362-400` — group share
+- (legacy Python unit test, removed in Phase 4D) — group share
   cross-tenant: a `ShareNode` to `group:eng` writes one
   `shared_index` row per group member, so each member sees the node
   on their own `ListSharedWithMe`.
-- `tests/python/unit/test_payload_wire_format.py:15` (file header
+- (legacy Python unit test, removed in Phase 4D) (file header
   reference) and the id-keyed payload assertions — `nodes[*].payload`
   on the wire is field-id-keyed, NOT name-keyed.
 - `tests/python/integration/test_grpc_contract.py:339-350` — happy-path
@@ -240,7 +245,7 @@ Notes:
    cross-tenant append over-reports `true`. Match Python bug for v1.
 3. **Expired/revoked filter**: per-tenant query already filters
    `expires_at` and `permission != 'deny'`
-   (canonical_store.py:3460-3461). Cross-tenant `shared_index` has NO
+   (server/go/internal/store/). Cross-tenant `shared_index` has NO
    `expires_at` column — an expired share lingers in the global index
    until `RevokeAccess` runs. Go port should match (parity), but file
    issue: add `expires_at` to `shared_index` and filter at

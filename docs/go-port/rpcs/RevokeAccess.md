@@ -1,8 +1,13 @@
 # RevokeAccess — Go Port Spec
 
+> Implementation: `server/go/internal/api/revoke_access.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Counterpart to `ShareNode`. Removes a single direct grant
 on a node for one actor (user/group/tenant principal). Reference Python
-handler: `server/python/entdb_server/api/grpc_server.py:1828-1875`.
+handler: `server/go/internal/api/revoke_access.go`.
 Proto: `proto/entdb/v1/entdb.proto:97, 746-755`.
 
 ## Wire contract
@@ -13,7 +18,7 @@ Request `entdb.v1.RevokeAccessRequest` (proto:746):
 - `string actor_id` — fully-qualified principal whose grant to drop.
   Convention: `"user:<id>"`, `"group:<id>"`, or `"tenant:<id>"`. The
   handler does not parse/validate the prefix; it is matched verbatim
-  against `node_access.actor_id` (canonical_store.py:3247-3250).
+  against `node_access.actor_id` (server/go/internal/store/).
 
 Response `RevokeAccessResponse` (proto:752):
 - `bool found` — `true` iff a row was deleted from `node_access`. False
@@ -25,24 +30,24 @@ Response `RevokeAccessResponse` (proto:752):
 Idempotency: revoking a non-existent grant returns `found=false,
 error=""` and is **not** an error. See pinned test
 `test_revoke_nonexistent_returns_false`
-(`tests/python/unit/test_acl_v2.py:450-452`).
+((legacy Python unit test, removed in Phase 4D)).
 
 ## Auth (caller must own/share-grant the node; trusted-actor)
 
 - Tenant existence: `_check_tenant(request.context.tenant_id, ctx)`
-  (grpc_server.py:1836, 362).
+  (server/go/internal/api/revoke_access.go, 362).
 - Trusted actor: `_trusted_actor(request.context.actor)` — the payload
   actor is OVERWRITTEN by `AuthInterceptor.get_authoritative_actor`
-  (grpc_server.py:1837, 418). The Go port MUST read identity from the
+  (server/go/internal/api/revoke_access.go, 418). The Go port MUST read identity from the
   gRPC metadata via the AuthInterceptor equivalent and ignore the
   request-payload actor for all auth decisions. Privilege-escalation
   guard pinned by `tests/python/integration/test_privilege_escalation.py`
   (RevokeAccess included in the matrix).
 - Capability check: `_check_capability(tenant_id, trusted_actor,
-  node_id, type_id=0, "RevokeAccess", ctx)` (grpc_server.py:1841-1848).
+  node_id, type_id=0, "RevokeAccess", ctx)` (server/go/internal/api/revoke_access.go).
   Required capability is `CoreCapability.ADMIN`
-  (`server/python/entdb_server/auth/capability_registry.py:74`,
-  pinned by `tests/python/unit/test_capability_registry.py:67`).
+  (`server/go/internal/auth/capability_registry.go`,
+  pinned by (legacy Python unit test, removed in Phase 4D)).
 - ADMIN is satisfied by node ownership OR by an explicit ADMIN grant
   on the node (the share path that ShareNode itself can install with
   `core_caps=[ADMIN]`). Tenant-admin role also passes via the
@@ -50,21 +55,21 @@ error=""` and is **not** an error. See pinned test
 - On `PermissionError`: emit `record_grpc_request("RevokeAccess",
   "denied", ...)` and return `RevokeAccessResponse{found:false,
   error:str(perm_err)}` — NOT a gRPC status error
-  (grpc_server.py:1849-1851). Preserve this for client compatibility.
+  (server/go/internal/api/revoke_access.go). Preserve this for client compatibility.
 
 ## Side effects (WAL append: revocation; mailbox cleanup)
 
 **INVARIANT VIOLATION IN PYTHON (carry-forward risk).** The current
 Python handler writes directly to per-tenant SQLite via
 `canonical_store.revoke_access` → `_sync_revoke_access` (DELETE on
-`node_access`, canonical_store.py:3240-3265). It does **not** append
+`node_access`, server/go/internal/store/). It does **not** append
 a `TransactionEvent` to the WAL. This means revocations are silently
 **lost on rebuild from the WAL** — a documented violation of the
 "all writes go through the WAL" invariant in `CLAUDE.md`.
 
 Go-port decision (recommended for EPIC #407): **fix this on port.**
 Append a WAL event with op type `revoke_access` (mirroring
-`admin_revoke_access` at applier.py:1240-1245, but scoped to a single
+`admin_revoke_access` at server/go/internal/apply/applier.go, but scoped to a single
 node + actor rather than a user-wide sweep). Schema:
 
 ```
@@ -81,24 +86,24 @@ for the receipt to be APPLIED before returning so `found` reflects
 post-apply state — same fence pattern other writes already use.
 
 Cross-tenant `shared_index` cleanup (currently inline in handler at
-grpc_server.py:1857-1869) MUST move into the applier’s post-apply
+server/go/internal/api/revoke_access.go) MUST move into the applier’s post-apply
 hook, mirroring `_update_shared_index_on_revoke`
-(applier.py:1728-1760). Behavior to preserve:
+(server/go/internal/apply/applier.go). Behavior to preserve:
 - If `actor_id` starts with `"group:"`: enumerate group members via
   `get_group_members(tenant_id, actor_id)` and remove each member’s
   `shared_index` row for `(tenant_id, node_id)`.
 - Otherwise: a single `global_store.remove_shared(actor_id,
-  tenant_id, node_id)` call (global_store.py:697-712).
+  tenant_id, node_id)` call (server/go/internal/globalstore/).
 - Errors from shared_index cleanup are **logged and swallowed**
   (warning level, not fatal). Handler still returns `found=true`.
   This is intentional: `shared_index` is a hint cache, not
-  authoritative (global_store.py:752-770).
+  authoritative (server/go/internal/globalstore/).
 
 ACL inheritance: revoking a parent automatically blocks children
 through `acl_inherit` chains — no extra work needed; the cascade is
 implicit in the access-check path. Pinned by
 `test_revoke_parent_blocks_children`
-(`tests/python/unit/test_acl_v2.py:366-375`).
+((legacy Python unit test, removed in Phase 4D)).
 
 Mailbox cleanup: there is no per-node mailbox row tied to ACL grants,
 so no direct mailbox DELETE is required. The brief mentions "mailbox
@@ -109,7 +114,7 @@ ListSharedWithMe semantics.
 ## Error contract
 
 All errors are returned as `RevokeAccessResponse{found:false,
-error:<string>}` — never as a gRPC status error (grpc_server.py:1872-
+error:<string>}` — never as a gRPC status error (server/go/internal/api/revoke_access.go-
 1875). Three observable paths:
 1. `PermissionError` → `error=str(perm_err)`, metric label `denied`.
 2. Any other exception → `error=str(e)`, metric label `error`,
@@ -143,7 +148,7 @@ Exception` and surfaces as `error=...`. Match this; do not convert to
 
 ## Other-RPC deps (ShareNode counterpart)
 
-- **ShareNode** (`grpc_server.py:1746-1826`, proto:96) is the inverse.
+- **ShareNode** (`server/go/internal/api/revoke_access.go`, proto:96) is the inverse.
   Both write to the same `node_access` row keyed by
   `(node_id, actor_id)`. ShareNode upserts; RevokeAccess deletes by
   exact `actor_id`. They MUST round-trip cleanly: any
@@ -166,16 +171,16 @@ Exception` and surfaces as `error=...`. Match this; do not convert to
 
 - `tests/python/integration/test_grpc_contract.py:351-361` — happy
   path: idempotent on seed node (`found` may be true or false).
-- `tests/python/unit/test_acl_v2.py:443-448`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_revoke_removes_access`) — share then revoke removes access.
-- `tests/python/unit/test_acl_v2.py:450-452`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_revoke_nonexistent_returns_false`) — revoke without prior
   grant returns false, no error.
-- `tests/python/unit/test_acl_v2.py:366-375`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_revoke_parent_blocks_children`) — ACL inheritance cascade.
-- `tests/python/unit/test_capability_registry.py:67` — RevokeAccess
+- (legacy Python unit test, removed in Phase 4D) — RevokeAccess
   requires `CoreCapability.ADMIN`.
-- `tests/python/unit/test_sdk_hierarchical.py:249-255` — SDK
+- (legacy Python unit test, removed in Phase 4D) — SDK
   `scope.revoke()` routes through gRPC with the expected kwargs.
 - Go SDK tests already pin transport behavior:
   `sdk/go/entdb/transport_extras_test.go:239-275` (RemovesGrant +

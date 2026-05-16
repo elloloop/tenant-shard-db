@@ -1,8 +1,13 @@
 # SearchMailbox — Go port spec
 
+> Implementation: `server/go/internal/api/search_mailbox.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC: #407 (Python -> Go server port)
 RPC: `entdb.v1.EntDBService/SearchMailbox`
-Python handler: `server/python/entdb_server/api/grpc_server.py:1456-1476`
+Python handler: `server/go/internal/api/search_mailbox.go`
 Proto: `proto/entdb/v1/entdb.proto:70` (service entry), `:511-537` (messages)
 
 ## Wire contract
@@ -29,21 +34,21 @@ Response `SearchMailboxResponse`:
 
 Status today: handler is a deprecated stub. It validates tenant ownership and returns
 `SearchMailboxResponse{results=[], has_more=false}` regardless of input
-(`grpc_server.py:1461-1476`). The legacy per-user mailbox SQLite store was removed; fanout now
-writes to a per-tenant `notifications` table (`canonical_store.py:1140-1150`,
-`canonical_store.py:4531`). The Go port MUST preserve this stub semantics for v1 parity, then
+(`server/go/internal/api/search_mailbox.go`). The legacy per-user mailbox SQLite store was removed; fanout now
+writes to a per-tenant `notifications` table (`server/go/internal/store/`,
+`server/go/internal/store/`). The Go port MUST preserve this stub semantics for v1 parity, then
 the FTS5-backed implementation lands behind the same RPC in a follow-up.
 
 ## Auth (whose mailbox? trusted-actor)
 
 - Wire `request.context.actor` is UNTRUSTED. Always rebind via `_trusted_actor` equivalent,
   which prefers the `AuthInterceptor` `ContextVar` and only falls back to the wire field for
-  no-auth deployments and unit tests (`grpc_server.py:418-437`).
+  no-auth deployments and unit tests (`server/go/internal/api/search_mailbox.go`).
 - `request.user_id` selects WHICH mailbox to read; it is NOT identity. Authorization rule
   (when implementation lands): `trusted_actor` MUST be either (a) the same user as
   `user_id`, or (b) hold tenant-admin / system role on `context.tenant_id`. Anything else =>
   `PERMISSION_DENIED`.
-- Tenant gate runs first via `_check_tenant` (`grpc_server.py:362-410`): rejects with
+- Tenant gate runs first via `_check_tenant` (`server/go/internal/api/search_mailbox.go`): rejects with
   `UNAVAILABLE` + `entdb-redirect-node` trailer if this node is not the shard owner;
   rejects with `FAILED_PRECONDITION` if the tenant is region-pinned elsewhere.
 - "Mailbox is cross-tenant for a user" applies at the data layer (notifications can come
@@ -58,7 +63,7 @@ None today (stub returns empty). Future FTS5-backed impl is read-only:
 - Reads from per-tenant SQLite only — no cross-tenant SQLite transaction
   (per CLAUDE.md invariant 4). Cross-user-tenant aggregation is the caller's job.
 - Uses FTS5 virtual tables `fts_t{type_id}`, lazily created on first read/write
-  (`canonical_store.py:1993-2037`, `docs/decisions/fts.md:37-70`).
+  (`server/go/internal/store/`, `docs/decisions/fts.md:37-70`).
 - Joins FTS rows against `notifications` (per-tenant) keyed by `node_id`.
 - NOT a write path — never appends to the WAL. (Mailbox writes happen via the fanout
   applier, which IS WAL-driven; see invariant 1.)
@@ -68,10 +73,10 @@ None today (stub returns empty). Future FTS5-backed impl is read-only:
 Today (stub):
 
 - Tenant not owned by this node => `UNAVAILABLE` + trailer `entdb-redirect-node=<owner>`
-  (`grpc_server.py:392-395`).
-- Tenant region-pinned elsewhere => `FAILED_PRECONDITION` (`grpc_server.py:405-410`).
+  (`server/go/internal/api/search_mailbox.go`).
+- Tenant region-pinned elsewhere => `FAILED_PRECONDITION` (`server/go/internal/api/search_mailbox.go`).
 - Any other exception inside the handler is swallowed: returns `SearchMailboxResponse{results=[]}`
-  with `has_more` defaulted to false, logged at ERROR (`grpc_server.py:1473-1476`).
+  with `has_more` defaulted to false, logged at ERROR (`server/go/internal/api/search_mailbox.go`).
   The Go port MUST replicate the swallow-and-return-empty behavior — a contract test pins it.
 
 For the future FTS5-backed impl:
@@ -93,15 +98,15 @@ For the future FTS5-backed impl:
   - `Search(conn, tenantID, typeID int32, query string, limit, offset int) ([]Hit, error)`
   - Hit: `{NodeID string, Rank float32, Highlights string}`
   - Lazy DDL with process-local cache (mirrors `_fts_table_cache`,
-    `canonical_store.py:451`, `:2025-2037`).
+    `server/go/internal/store/`, `:2025-2037`).
 - `internal/proto/structpb` — for response payload Struct conversion (when impl lands).
 - `internal/metrics` — `RecordGRPCRequest("SearchMailbox", outcome, latency)`.
 
 ## Other-RPC deps (overlap)
 
-- **GetMailbox** (`grpc_server.py:1478-1498`) — same stub pattern, same auth gate, same
+- **GetMailbox** (`server/go/internal/api/search_mailbox.go`) — same stub pattern, same auth gate, same
   swallow-and-return-empty error policy. Implement together; share the auth helper.
-- **SearchNodes** (`canonical_store.py:2101-2168`, proto `:SearchNodesRequest`) — the
+- **SearchNodes** (`server/go/internal/store/`, proto `:SearchNodesRequest`) — the
   "real" FTS5 RPC. Future SearchMailbox is structurally `SearchNodes` with a fixed
   type-set (notification source types) and an extra `user_id` predicate. Reuse the
   `internal/fts` package; do NOT fork.

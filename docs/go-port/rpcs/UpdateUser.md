@@ -1,9 +1,14 @@
 # UpdateUser — Go Port Spec
 
+> Implementation: `server/go/internal/api/update_user.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Mutates a row in the global user registry. Reference Python
-handler: `server/python/entdb_server/api/grpc_server.py:2184-2229`.
+handler: `server/go/internal/api/update_user.go`.
 Proto: `proto/entdb/v1/entdb.proto:114, 826-838`. Backing store:
-`server/python/entdb_server/global_store.py:386-409`.
+`server/go/internal/globalstore/`.
 
 ## Wire contract
 
@@ -13,24 +18,24 @@ Request `entdb.v1.UpdateUserRequest` (proto:826):
   `global_store.user_registry`. Not a `tenant_principal` (no `user:`
   prefix).
 - `string email`, `string name`, `string status` — partial-update
-  fields. **Truthiness gates each one** (grpc_server.py:2209-2214):
+  fields. **Truthiness gates each one** (server/go/internal/api/update_user.go):
   empty string == "do not update". There is **no `FieldMask`** and no
   way to clear a field to empty. Go port MUST replicate truthy-only
   semantics; do not switch to proto3 presence/`optional` without a
   proto change. Status is a free-form string (`active`, `suspended`,
   …) — no enum is enforced server-side, but only `email`/`name`/
   `status` are whitelisted in `_sync_update_user`
-  (global_store.py:397). Unknown fields silently no-op (filtered by
+  (server/go/internal/globalstore/). Unknown fields silently no-op (filtered by
   the whitelist).
 
 Partial vs full: **partial only**. Any subset of the three mutable
 fields may be sent. If all three are empty, the handler short-circuits
 and returns `success=false, error="No fields to update"`
-(grpc_server.py:2216-2218) — this is **not an INVALID_ARGUMENT abort**;
+(server/go/internal/api/update_user.go) — this is **not an INVALID_ARGUMENT abort**;
 it is an in-band `UpdateUserResponse`.
 
 Immutable on this RPC: `user_id`, `created_at`. `updated_at` is set
-server-side by `_sync_update_user` (global_store.py:401).
+server-side by `_sync_update_user` (server/go/internal/globalstore/).
 
 Response `UpdateUserResponse` (proto:835):
 - `bool success` — true iff one row was updated.
@@ -41,16 +46,16 @@ Response `UpdateUserResponse` (proto:835):
 ## Auth
 
 - `request.actor` REQUIRED (`INVALID_ARGUMENT` if empty,
-  grpc_server.py:2198-2199). `request.user_id` REQUIRED
-  (`INVALID_ARGUMENT`, grpc_server.py:2200-2201).
+  server/go/internal/api/update_user.go). `request.user_id` REQUIRED
+  (`INVALID_ARGUMENT`, server/go/internal/api/update_user.go).
 - Trusted-actor pattern: `_is_self_or_admin` calls
-  `get_authoritative_actor(actor)` (grpc_server.py:2071-2086,
+  `get_authoritative_actor(actor)` (server/go/internal/api/update_user.go,
   auth/auth_interceptor.py:92) and ignores the request payload for
   the privilege decision. This is the post-#168 invariant — Go port
   MUST resolve the trusted identity via the AuthInterceptor
   equivalent (gRPC metadata / context value) and NEVER trust the
   payload `actor` for the auth check.
-- Authorization rule (grpc_server.py:2202-2206):
+- Authorization rule (server/go/internal/api/update_user.go):
   - admin / system → allowed (`trusted` starts with `system:`,
     `admin:`, or equals `__system__`).
   - self → allowed when `trusted == "user:" + user_id` or
@@ -61,7 +66,7 @@ Response `UpdateUserResponse` (proto:835):
   not a per-tenant SQLite. No `_check_tenant` is called.
 - Configuration gate: if `self.global_store` is unset, abort
   `UNIMPLEMENTED "User registry not configured"`
-  (grpc_server.py:2192-2196).
+  (server/go/internal/api/update_user.go).
 
 ## Side effects
 
@@ -70,7 +75,7 @@ Response `UpdateUserResponse` (proto:835):
 - The applier materializes the row via `globalstore.ApplyUserUpdated`.
   The handler does not write globalstore directly.
 - Metrics: `record_grpc_request("UpdateUser", "ok"|"error", elapsed)`
-  (grpc_server.py:2217, 2222, 2227). Note "ok" is recorded even for
+  (server/go/internal/api/update_user.go, 2222, 2227). Note "ok" is recorded even for
   in-band failures (no-fields, not-found) because no abort fires.
 - The WAL is the audit/replay source for the global-registry mutation.
 
@@ -108,28 +113,28 @@ not on status codes for these arms.
 
 ## Other-RPC deps
 
-- `CreateUser` (grpc_server.py near line 2100) — must run first to
+- `CreateUser` (server/go/internal/api/update_user.go near line 2100) — must run first to
   populate the row that `UpdateUser` mutates. Contract test fixture
   preseeds `alice` and `bob`.
-- `GetUser` (grpc_server.py:2120-ish) — used by tests to verify the
+- `GetUser` (server/go/internal/api/update_user.go-ish) — used by tests to verify the
   post-update state. Not called by the handler.
 - `_is_self_or_admin` shared with TransferUser / RevokeUser /
-  DeleteUser style RPCs (grpc_server.py:2944, 2997, 3028, 3086) — Go
+  DeleteUser style RPCs (server/go/internal/api/update_user.go, 2997, 3028, 3086) — Go
   port should expose `auth.IsSelfOrAdmin(ctx, userID)` once and reuse.
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_user_registry.py:255-271` — happy self update
+- (legacy Python unit test, removed in Phase 4D) — happy self update
   passes only `name=` kwarg (proves truthy-only gating: empty `email`
   and `status` are not forwarded to `update_user`).
-- `tests/python/unit/test_user_registry.py:273-290` — admin actor
+- (legacy Python unit test, removed in Phase 4D) — admin actor
   (`admin:root`) can update another user; only `status=` is forwarded.
-- `tests/python/unit/test_user_registry.py:292-309` — non-admin
+- (legacy Python unit test, removed in Phase 4D) — non-admin
   updating another user → `context.abort` with the
   "user themselves or admin" message; store NOT called.
-- `tests/python/unit/test_user_registry.py:311-328` — store returns
+- (legacy Python unit test, removed in Phase 4D) — store returns
   False → response `success=false, error contains "not found"`.
-- `tests/python/unit/test_user_registry.py:330-345` — no mutable fields
+- (legacy Python unit test, removed in Phase 4D) — no mutable fields
   → `success=false, error contains "no fields"`. **No abort.**
 - `tests/python/integration/test_grpc_contract.py:448-453` — happy:
   Alice updating her own row returns `success=true`.
@@ -181,7 +186,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb
 
 `globalstore.UpdateUser` builds the `UPDATE … SET …` dynamically from
 the non-nil `*string` fields, sets `updated_at = now()`, and returns
-`rowsAffected > 0` (mirror global_store.py:396-409). Use a single
+`rowsAffected > 0` (mirror server/go/internal/globalstore/). Use a single
 transaction; the table is in the global DB so no per-tenant routing.
 
 ## Open questions / risks
@@ -199,7 +204,7 @@ transaction; the table is in the global DB so no per-tenant routing.
   `optional` presence.
 - **`status` is unconstrained.** Free-form string; clients can write
   anything. `ListUsers` filters by `status="active"` by default
-  (global_store.py:411-424), so a typo silently hides the user from
+  (server/go/internal/globalstore/), so a typo silently hides the user from
   default listings. Consider a server-side enum check (proto change,
   separate epic).
 - **No audit trail.** Global-registry mutations are not WAL-sourced

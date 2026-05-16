@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/ChangeMemberRole`
 
+> Implementation: `server/go/internal/api/change_member_role.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2601-2652`.
+`server/go/internal/api/change_member_role.go`.
 
 ## Wire contract
 
@@ -10,7 +15,7 @@ Proto: `proto/entdb/v1/entdb.proto:127` (rpc), `:939-949` (messages).
 `ChangeMemberRoleRequest`:
 | Field       | Tag | Type   | Notes                                                                 |
 |-------------|-----|--------|-----------------------------------------------------------------------|
-| `actor`     | 1   | string | Caller principal, e.g. `user:alice` or `system:admin`. UNTRUSTED on the wire — see Auth. Required (`grpc_server.py:2615-2616`). |
+| `actor`     | 1   | string | Caller principal, e.g. `user:alice` or `system:admin`. UNTRUSTED on the wire — see Auth. Required (`server/go/internal/api/change_member_role.go`). |
 | `tenant_id` | 2   | string | Tenant whose membership is being modified. Required (`:2617-2618`).   |
 | `user_id`   | 3   | string | Bare user id (no `user:` prefix) of the member being changed. Required (`:2619-2620`). |
 | `new_role`  | 4   | string | Target role. Free-form string in current Python (`owner`, `admin`, `member` are observed in tests); no enum validation server-side. Required (`:2621-2622`). |
@@ -27,7 +32,7 @@ Note: there is no `RequestContext`/`idempotency_key` on this message; rebuild se
 
 - **Trusted-actor rebind (mandatory).** Handler MUST replace `request.actor`
   with `_trusted_actor(request.actor)` before any privilege check
-  (`grpc_server.py:2627`). The implementation lives at `:418-437` and
+  (`server/go/internal/api/change_member_role.go`). The implementation lives at `:418-437` and
   delegates to `auth/auth_interceptor.py::get_authoritative_actor`. In Go
   this is a `ContextVar` equivalent: read the authoritative actor from
   `context.Context` (set by an auth interceptor); fall back to `request.actor`
@@ -64,7 +69,7 @@ In-order narration of the Python handler:
    `role == "owner"`.
 6. `global_store.change_role(tenant_id, user_id, new_role)` — single
    `UPDATE tenant_members SET role=? WHERE tenant_id=? AND user_id=?`
-   (`global_store.py:638-644`). Returns `rowcount > 0`.
+   (`server/go/internal/globalstore/`). Returns `rowcount > 0`.
 7. Map result to `ChangeMemberRoleResponse{success, error}` and emit
    `record_grpc_request("ChangeMemberRole", "ok"|"error", elapsed)`.
 
@@ -126,7 +131,7 @@ No WAL package needed (see Side effects).
 ## Contract tests pinning behavior (file:line)
 
 Unit (handler-level, in-memory `GlobalStore`):
-- `tests/python/unit/test_tenant_registry.py:585-686` —
+- (legacy Python unit test, removed in Phase 4D) —
   `TestChangeMemberRoleHandler` class.
   - `:595-614` `test_change_role_by_owner` — happy path; verifies row
     actually updated via `get_members`.

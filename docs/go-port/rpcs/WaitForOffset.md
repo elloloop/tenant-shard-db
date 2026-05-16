@@ -1,5 +1,10 @@
 # WaitForOffset — Go Port Spec (EPIC #407)
 
+> Implementation: `server/go/internal/api/wait_for_offset.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 `entdb.v1.EntDBService/WaitForOffset` provides read-after-write consistency: a
 client passes a WAL stream position from a prior `Receipt` and blocks until the
 applier on this node has materialized at least that position into per-tenant
@@ -15,7 +20,7 @@ rpc WaitForOffset(WaitForOffsetRequest) returns (WaitForOffsetResponse);
 message WaitForOffsetRequest {
     RequestContext context = 1;     // tenant_id, actor (untrusted), trace_id
     string stream_position = 2;     // "topic:partition:offset", e.g. "entdb-wal:0:42"
-    int32 timeout_ms = 3;           // 0 ⇒ server default 30s (Python: grpc_server.py:982)
+    int32 timeout_ms = 3;           // 0 ⇒ server default 30s (Python: server/go/internal/api/wait_for_offset.go)
 }
 message WaitForOffsetResponse {
     bool reached = 1;               // true iff applied_offset >= stream_position
@@ -24,7 +29,7 @@ message WaitForOffsetResponse {
 ```
 
 Unary, idempotent, no side effects. Stream position format is opaque to the
-wire but parsed by `_parse_stream_offset` (`canonical_store.py:90`): split on
+wire but parsed by `_parse_stream_offset` (`server/go/internal/store/`): split on
 last `:` and parse trailing int; non-numeric ⇒ 0. Therefore an empty
 `stream_position` parses to 0 and is "already reached" once anything has been
 applied — but if nothing has been applied for the tenant yet,
@@ -34,7 +39,7 @@ contract test note at `tests/python/integration/test_grpc_contract.py:296`).
 ## Auth
 
 - `request.context.tenant_id` is checked via `_check_tenant`
-  (`grpc_server.py:362-407`): sharding ownership (UNAVAILABLE +
+  (`server/go/internal/api/wait_for_offset.go`): sharding ownership (UNAVAILABLE +
   `entdb-redirect-node` trailer) and region pinning (FAILED_PRECONDITION).
 - `request.context.actor` is **UNTRUSTED on the wire** (per CLAUDE.md
   invariant). Note: the current Python handler does not consult the actor at
@@ -48,25 +53,25 @@ contract test note at `tests/python/integration/test_grpc_contract.py:296`).
 
 None on storage. Read-only with respect to WAL and SQLite. **Blocks the
 calling RPC** on `CanonicalStore.wait_for_offset`
-(`canonical_store.py:478-512`), which is event-driven (no polling):
+(`server/go/internal/store/`), which is event-driven (no polling):
 
 1. Per-tenant `asyncio.Condition` lazily created in `_offset_conditions`
    (`:455-461`).
 2. Predicate reads `_applied_offsets[tenant_id]` and returns
    `_compare_stream_pos(current, target) >= 0` (`:499-503`).
-3. The applier (`apply/applier.py:447`, `:599`) calls
+3. The applier (`apply/server/go/internal/apply/applier.go`, `:599`) calls
    `update_applied_offset` after each committed batch, which `notify_all()`s
-   the Condition (`canonical_store.py:463-476`).
+   the Condition (`server/go/internal/store/`).
 4. Waiter sleeps inside `cond.wait_for(...)` wrapped in `asyncio.wait_for`.
 
 `current_position` is read AFTER the wait via `get_applied_offset`
-(`grpc_server.py:986`); `""` if applier has never updated this tenant.
+(`server/go/internal/api/wait_for_offset.go`); `""` if applier has never updated this tenant.
 
 ## Error contract
 
 Python handler swallows all exceptions and returns
 `WaitForOffsetResponse(reached=False, current_position="")` with `OK` status
-(`grpc_server.py:989-992`). Go MUST mirror this swallow-and-return-false
+(`server/go/internal/api/wait_for_offset.go`). Go MUST mirror this swallow-and-return-false
 behavior **except** for aborts raised by `_check_tenant`, which emit gRPC
 status codes via `context.abort()` and bypass the try/except:
 
@@ -91,17 +96,17 @@ Suggested layout under `server/go/`:
 
 - `internal/applystate` — owns `AppliedOffsets`: per-tenant
   `map[tenantID]string` + per-tenant condition variable. Mirror Python's
-  `_applied_offsets` + `_offset_conditions` (`canonical_store.py:429-461`).
+  `_applied_offsets` + `_offset_conditions` (`server/go/internal/store/`).
 - `internal/streampos` — `Parse(s string) int64` and `Compare(a, b string)
   int` mirroring `_parse_stream_offset` / `_compare_stream_pos`
-  (`canonical_store.py:90-109`). Pin to identical edge cases (split on last
+  (`server/go/internal/store/`). Pin to identical edge cases (split on last
   `:`, non-numeric → 0).
 - `internal/sharding` — `IsMine(tenantID)` / `GetOwner(tenantID)` for the
   redirect logic in `_check_tenant`.
 - `internal/region` — region pinning lookup against `global_store`.
 - `internal/metrics` — `recordGRPCRequest("WaitForOffset", "ok"|"error",
   duration)` mirroring `record_grpc_request` calls at
-  `grpc_server.py:987,990`.
+  `server/go/internal/api/wait_for_offset.go,990`.
 
 ## Other-RPC deps
 
@@ -111,11 +116,11 @@ Suggested layout under `server/go/`:
   `topic:partition:offset` format produced by the WAL backend.
 - The Go `Applier` (port of `apply/applier.py`) MUST call
   `applystate.UpdateAppliedOffset(tenantID, pos)` after every committed batch
-  (mirror `applier.py:447,599`). Without this, all `WaitForOffset` calls
+  (mirror `server/go/internal/apply/applier.go,599`). Without this, all `WaitForOffset` calls
   time out.
 - Read RPCs that accept `after_offset` (`GetNode`, `GetNodes`, `QueryNodes`,
   `GetNodeByKey`) call the same `wait_for_offset` helper internally
-  (`grpc_server.py:806,1018,1238,1316`). Share the implementation.
+  (`server/go/internal/api/wait_for_offset.go,1018,1238,1316`). Share the implementation.
 
 ## Contract tests pinning behavior
 
@@ -123,21 +128,21 @@ Behavior pinned by tests (Go port MUST keep these green via cross-language
 contract harness once it exists, and the Go SDK transport tests already
 exist):
 
-- `tests/python/unit/test_wait_for_offset.py:25-52` — `_parse_stream_offset`
+- (legacy Python unit test, removed in Phase 4D) — `_parse_stream_offset`
   and `_compare_stream_pos` semantics (full format, plain int,
   `partition:offset`, non-numeric → 0).
-- `tests/python/unit/test_wait_for_offset.py:65-84` — per-tenant offset
+- (legacy Python unit test, removed in Phase 4D) — per-tenant offset
   isolation; `get_applied_offset` returns `None` initially.
-- `tests/python/unit/test_wait_for_offset.py:97-114` — already-reached and
+- (legacy Python unit test, removed in Phase 4D) — already-reached and
   exactly-reached return immediately True; never-set returns False on
   timeout.
-- `tests/python/unit/test_wait_for_offset.py:117-127` — waiter wakes on
+- (legacy Python unit test, removed in Phase 4D) — waiter wakes on
   applier `update_applied_offset` (event-driven, no polling).
-- `tests/python/unit/test_wait_for_offset.py:130-146` — multiple concurrent
+- (legacy Python unit test, removed in Phase 4D) — multiple concurrent
   waiters at different positions all resolve from a single applier update.
-- `tests/python/unit/test_wait_for_offset.py:149-163` — incremental progress
+- (legacy Python unit test, removed in Phase 4D) — incremental progress
   wakes waiter exactly when target is crossed.
-- `tests/python/unit/test_wait_for_offset.py:166-176` — applier sets a
+- (legacy Python unit test, removed in Phase 4D) — applier sets a
   position below target → False on timeout, response carries the
   below-target current position.
 - `tests/python/integration/test_grpc_contract.py:296-311` — gRPC-level
@@ -217,7 +222,7 @@ Notes:
   semantics to Python's `cond.notify_all()`.
 - No `time.Sleep` polling. No worker pools.
 - `current_position` is read after timeout, matching Python at
-  `grpc_server.py:986`.
+  `server/go/internal/api/wait_for_offset.go`.
 - Client cancel: Python swallows and returns OK+reached=false. Go should
   return `ctx.Err()` (Canceled/DeadlineExceeded) — see open question 4.
 
@@ -229,7 +234,7 @@ Notes:
 2. **Topic/partition ignored**: `_compare_stream_pos` only compares the
    trailing int. `"other-topic:9:5"` ≡ `"entdb-wal:0:5"`. Preserve quirk
    for parity; flag as follow-up.
-3. **Unbounded per-tenant condition map** (`canonical_store.py:457-461`).
+3. **Unbounded per-tenant condition map** (`server/go/internal/store/`).
    Same trade-off in Go; consider LRU eviction later.
 4. **Client cancel semantics**: Python returns OK+reached=false on cancel
    (broad `except`). Go idiom is `ctx.Err()`. Pick and document — SDK

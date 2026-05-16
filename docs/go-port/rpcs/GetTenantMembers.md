@@ -1,9 +1,14 @@
 # GetTenantMembers — Go Port Spec
 
+> Implementation: `server/go/internal/api/get_tenant_members.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Read-only listing of every membership row for a tenant. Backed by
 the `global_store` SQLite (`tenant_members` table), not the per-tenant
 canonical store. Python source of truth:
-`server/python/entdb_server/api/grpc_server.py:2543-2570`.
+`server/go/internal/api/get_tenant_members.go`.
 
 ## Wire contract (pagination)
 
@@ -22,7 +27,7 @@ TenantMemberInfo         { string tenant_id = 1; string user_id = 2;
 **No pagination on the wire.** The proto carries no `limit`, `offset`,
 `page_token`, or `has_more` field — the response is the full member list
 in a single message. SQL ordering is `ORDER BY joined_at`
-(`global_store.py:609`). The Go port MUST preserve "single shot, no
+(`server/go/internal/globalstore/`). The Go port MUST preserve "single shot, no
 pagination" — adding a page token here is a wire-incompatible change
 gated by a separate proto issue.
 
@@ -43,7 +48,7 @@ validation — it does **not** call `_trusted_actor`, `_check_tenant`, or
 who reaches the gRPC handler with a non-empty `actor` and `tenant_id`
 gets the full member list. Pinned by:
 
-- `tests/python/unit/test_tenant_registry.py:548-554` — `actor="user:alice"`
+- (legacy Python unit test, removed in Phase 4D) — `actor="user:alice"`
   succeeds and returns all members; the test does NOT pre-grant alice
   any capability.
 - `tests/python/integration/test_grpc_contract.py:489-494` — `ALICE`
@@ -72,7 +77,7 @@ For the Go port this means:
 **None.** Strictly read-only.
 
 - One call to `global_store.get_members(tenant_id)`
-  (`global_store.py:598-612`) which executes
+  (`server/go/internal/globalstore/`) which executes
   `SELECT * FROM tenant_members WHERE tenant_id = ? ORDER BY joined_at`
   against the **global** SQLite (cross-tenant registry), invariant #4 —
   this is the legitimate cross-tenant path; it does NOT touch any
@@ -80,17 +85,17 @@ For the Go port this means:
 - No `wal.append`, no SQLite writes, no Applier interaction (read-only,
   so invariant #1 is not in play).
 - Metrics: `record_grpc_request("GetTenantMembers", "ok"|"error", dt)`
-  at `grpc_server.py:2565` and `:2568`.
+  at `server/go/internal/api/get_tenant_members.go` and `:2568`.
 
 ## Error contract
 
 | Condition                               | Code              | Source line                       |
 |-----------------------------------------|-------------------|-----------------------------------|
-| `global_store is None`                  | `UNIMPLEMENTED`   | `grpc_server.py:2551-2555`        |
-| `actor == ""`                           | `INVALID_ARGUMENT`| `grpc_server.py:2557-2558`        |
-| `tenant_id == ""`                       | `INVALID_ARGUMENT`| `grpc_server.py:2559-2560`        |
+| `global_store is None`                  | `UNIMPLEMENTED`   | `server/go/internal/api/get_tenant_members.go`        |
+| `actor == ""`                           | `INVALID_ARGUMENT`| `server/go/internal/api/get_tenant_members.go`        |
+| `tenant_id == ""`                       | `INVALID_ARGUMENT`| `server/go/internal/api/get_tenant_members.go`        |
 | Unknown tenant (no rows)                | `OK` + empty list | implicit (SELECT returns 0 rows)  |
-| Any unhandled exception in `get_members`| `OK` + empty list | `grpc_server.py:2567-2570`        |
+| Any unhandled exception in `get_members`| `OK` + empty list | `server/go/internal/api/get_tenant_members.go`        |
 
 The bare-`except` swallow at `:2567-2570` returning an empty `members`
 list with `record_grpc_request(..., "error", ...)` is **load-bearing
@@ -116,13 +121,13 @@ Reuse only — do not duplicate:
 
 - `internal/auth` — interceptor's authoritative-actor `context.Context`
   helper (the Go equivalent of Python's `get_authoritative_actor`).
-- `internal/globalstore` — Go port of `global_store.py`. Must expose
+- `internal/globalstore` — Go port of `server/go/internal/globalstore/`. Must expose
   `GetMembers(ctx, tenantID) ([]MemberRow, error)` returning rows
   ordered by `joined_at ASC`. The `MemberRow` struct mirrors the four
   columns (`tenant_id`, `user_id`, `role`, `joined_at int64 ms`).
 - `internal/protoconv` — a `MemberRowToProto(MemberRow) *pb.TenantMemberInfo`
   helper, factored from the existing Python `_member_dict_to_proto`
-  (`grpc_server.py:2280-2288`). It is reused by `AddTenantMember`,
+  (`server/go/internal/api/get_tenant_members.go`). It is reused by `AddTenantMember`,
   `RemoveTenantMember`, `GetUserTenants`, `ChangeMemberRole`, so it
   belongs in `protoconv`, not in this RPC's file.
 - `internal/metrics` — `RecordGRPCRequest(method, status, dur)` matching
@@ -138,9 +143,9 @@ this RPC.
 None at runtime. The four-column `TenantMemberInfo` proto and the
 `global_store.tenant_members` schema are shared with:
 
-- `AddTenantMember` / `RemoveTenantMember` (`grpc_server.py:2455-2541`)
-- `GetUserTenants` (`grpc_server.py:2572-2604`)
-- `ChangeMemberRole` (`grpc_server.py:2606+`)
+- `AddTenantMember` / `RemoveTenantMember` (`server/go/internal/api/get_tenant_members.go`)
+- `GetUserTenants` (`server/go/internal/api/get_tenant_members.go`)
+- `ChangeMemberRole` (`server/go/internal/api/get_tenant_members.go+`)
 
 If the Go port lands `GetTenantMembers` first, the proto-conversion
 helper and the `globalstore.GetMembers` accessor should be merged in
@@ -148,7 +153,7 @@ the same PR so the four siblings can land incrementally without churn.
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_tenant_registry.py:529-554` — happy path
+- (legacy Python unit test, removed in Phase 4D) — happy path
   returns 2 members, both `user_id` values exposed, no auth gate
   required for `user:alice`.
 - `tests/python/integration/test_grpc_contract.py:489-494` — happy path
@@ -214,7 +219,7 @@ Notes:
 
 ## Open questions / risks
 
-1. **Silent-empty on internal error.** `grpc_server.py:2567-2570`
+1. **Silent-empty on internal error.** `server/go/internal/api/get_tenant_members.go`
    swallows every exception and returns an empty list with status `OK`.
    This is hostile to debugging (the SDK cannot distinguish "no
    members" from "DB blew up"). Recommendation: in the Go port, return

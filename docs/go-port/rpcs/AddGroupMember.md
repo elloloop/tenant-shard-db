@@ -1,7 +1,12 @@
 # AddGroupMember — Go Port Spec
 
+> Implementation: `server/go/internal/api/add_group_member.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Inverse of `RemoveGroupMember`. Reference Python handler:
-`server/python/entdb_server/api/grpc_server.py:1946-1984`. Proto:
+`server/go/internal/api/add_group_member.go`. Proto:
 `proto/entdb/v1/entdb.proto:103, 768-778`.
 
 ## Wire contract
@@ -10,30 +15,30 @@ Request `entdb.v1.GroupMemberRequest` (proto:768):
 - `RequestContext context` — `tenant_id`, `actor` (UNTRUSTED — actor on
   the wire is replaced by the trusted identity at the boundary).
 - `string group_id` — opaque group identifier. Convention is
-  `"group:<name>"` (see `tests/python/unit/test_acl_v2.py:264, 271`).
+  `"group:<name>"` (see `(legacy Python unit test, removed), 271`).
   No server-side validation today; an empty `group_id` will INSERT a
   literal empty-string key. Go port: same parity, but flag.
 - `string member_actor_id` — the principal being added. May itself be a
   group id (nested groups: `test_acl_v2.py:271, 421`). Convention is
   `"user:<id>"` or `"group:<id>"`.
 - `string role` — free-form. Empty defaults to `"member"` at the
-  handler (grpc_server.py:1962). No enum validation; anything goes.
+  handler (server/go/internal/api/add_group_member.go). No enum validation; anything goes.
 
 Response `GroupMemberResponse` (proto:775):
 - `bool success` — `true` on apply, `false` on any caught exception.
-- `string error` — `str(e)` on failure (grpc_server.py:1984). gRPC
+- `string error` — `str(e)` on failure (server/go/internal/api/add_group_member.go). gRPC
   status remains `OK` even on failure — failure is signalled
   in-band, not via status code (parity quirk; see Open Questions).
 
 Idempotency: backed by `INSERT OR REPLACE INTO group_users`
-(canonical_store.py:3505-3513). Same `(group_id, member_actor_id)`
+(server/go/internal/store/). Same `(group_id, member_actor_id)`
 re-added overwrites `role` and `joined_at`. Duplicate adds DO NOT
 error — Go port must match.
 
 ## Auth
 
 - Tenant existence: `_check_tenant(tenant_id, context)`
-  (grpc_server.py:1954, 362).
+  (server/go/internal/api/add_group_member.go, 362).
 - Trusted actor: **NOT extracted today.** The Python handler does
   *not* call `_trusted_actor` — it never reads `request.context.actor`
   at all. This is a privilege-escalation gap: any caller can mutate
@@ -49,21 +54,21 @@ error — Go port must match.
 - Capability: not registered in `RPC_TO_CAPABILITY` (no entry found in
   `server/python/entdb_server/auth/`). Add `CoreCapability.MANAGE_ACL`
   (or new `MANAGE_GROUPS`) and pin via a unit test mirroring
-  `tests/python/unit/test_capability_registry.py:62`.
+  (legacy Python unit test, removed in Phase 4D).
 
 ## Side effects
 
 **Current Python (NON-CONFORMANT to CLAUDE.md §1):**
 1. `canonical_store.add_group_member` writes directly to SQLite
-   (grpc_server.py:1958, canonical_store.py:3497-3531). **Bypasses the
+   (server/go/internal/api/add_group_member.go, server/go/internal/store/). **Bypasses the
    WAL.** A rebuild-from-WAL drops the membership row silently.
 2. Cascade: enumerate `list_node_access_for_group(tenant, group_id)`
    and call `global_store.add_shared(member, tenant, node_id, perm)`
-   for each entry (grpc_server.py:1965-1976,
-   canonical_store.py:3592-3627). Failures here are logged at WARN and
-   swallowed (grpc_server.py:1977-1978).
+   for each entry (server/go/internal/api/add_group_member.go,
+   server/go/internal/store/). Failures here are logged at WARN and
+   swallowed (server/go/internal/api/add_group_member.go).
 3. Metric `record_grpc_request("AddGroupMember", "ok"|"error", elapsed)`
-   (grpc_server.py:1979, 1982).
+   (server/go/internal/api/add_group_member.go, 1982).
 
 **Required Go behaviour (must fix the WAL bypass):**
 1. Build a `TransactionEvent` with op
@@ -72,7 +77,7 @@ error — Go port must match.
 2. The applier (`apply/applier.go`) handles the new op-type by
    invoking `canonicalStore.AddGroupMember` and the existing
    `_update_shared_index_on_group_member_add` cascade
-   (applier.py:1782-1813). Move the cascade out of the handler and
+   (server/go/internal/apply/applier.go). Move the cascade out of the handler and
    into the applier so a WAL replay reconstructs `shared_index`.
 3. Return `GroupMemberResponse{success: true}` after the WAL append
    succeeds (do NOT block on apply — the read-after-write fence is
@@ -117,17 +122,17 @@ mainline error path stays in-band.
   `ListNodeAccessForGroup(tenantID, groupID)`,
   `ResolveActorGroups(tenantID, actor)`.
 - `internal/global` — `AddShared(userID, sourceTenant, nodeID, perm)`
-  for the cascade (global_store.py:670-690).
+  for the cascade (server/go/internal/globalstore/).
 - `internal/metrics` — `RecordGRPCRequest`.
 - `internal/acl/groups` — pure helpers for nested-group resolution
   (cycle-safe BFS).
 
 ## Other-RPC deps
 
-- `RemoveGroupMember` (proto:106, grpc_server.py:1986-…) is the exact
+- `RemoveGroupMember` (proto:106, server/go/internal/api/add_group_member.go-…) is the exact
   inverse: same wire shape, `DELETE` on `group_users`, cascade-removes
   shared_index entries that were granted *only* via this group
-  (applier.py:1815-…). Spec the WAL op as `remove_group_member`.
+  (server/go/internal/apply/applier.go-…). Spec the WAL op as `remove_group_member`.
 - `ShareNode` / `RevokeAccess` populate `node_access` rows that
   `list_node_access_for_group` reads — adding a member after a share
   must back-fill `shared_index`; adding before means the next
@@ -140,19 +145,19 @@ mainline error path stays in-band.
 
 - `tests/python/integration/test_grpc_contract.py:362-373` — happy
   path, `success == true`, payload shape pinned.
-- `tests/python/unit/test_acl_v2.py:578-591` — add → resolve includes
+- (legacy Python unit test, removed in Phase 4D) — add → resolve includes
   group; remove → resolve excludes; remove-nonexistent returns false.
-- `tests/python/unit/test_acl_v2.py:264-279` — group resolution and
+- (legacy Python unit test, removed in Phase 4D) — group resolution and
   nested-group expansion.
-- `tests/python/unit/test_acl_v2.py:412-431` — adding member to a
+- (legacy Python unit test, removed in Phase 4D) — adding member to a
   group transitively grants the group's existing node access.
-- `tests/python/unit/test_acl_v2.py:476` — group ACL participates in
+- (legacy Python unit test, removed in Phase 4D) — group ACL participates in
   `can_access`.
-- `tests/python/unit/test_shared_index.py:241-259` — group share
+- (legacy Python unit test, removed in Phase 4D) — group share
   expands to per-member `shared_index` entries.
-- `tests/python/unit/test_cross_tenant_read.py:366-404` — group
+- (legacy Python unit test, removed in Phase 4D) — group
   membership across tenant boundary for cross-tenant reads.
-- `tests/python/unit/test_admin_operations.py:369-371, 719` — admin
+- `(legacy Python unit test, removed), 719` — admin
   ops invoke `add_group_member` directly.
 
 Go port adds (`tests/contract/`): WAL-append observed before SQLite
@@ -239,7 +244,7 @@ Notes:
 6. **In-band error vs gRPC status.** Returning `OK / success=false`
    conflicts with idiomatic Go gRPC. Match for v1, file deprecation
    issue for v2 to switch to `codes.Internal`.
-7. **No capability registry entry.** `tests/python/unit/test_capability_registry.py`
+7. **No capability registry entry.** (legacy Python unit test, removed in Phase 4D)
    has no row for `AddGroupMember`. Add one (`CoreCapability.MANAGE_ACL`
    or new `MANAGE_GROUPS`) before merging the Go port.
 8. **`group_id` / `member_actor_id` validation.** Empty strings,

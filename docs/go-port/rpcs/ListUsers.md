@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/ListUsers`
 
+> Implementation: `server/go/internal/api/list_users.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python -> Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2231-2265`.
+`server/go/internal/api/list_users.go`.
 
 ## Wire contract (filter, pagination)
 
@@ -11,14 +16,14 @@ Proto: `proto/entdb/v1/entdb.proto:115` (rpc), `:840-849` (messages).
 | Field | Tag | Type | Default | Notes |
 |------|-----|------|---------|------|
 | `actor` | 1 | `string` | — | UNTRUSTED wire claim. Required; empty -> `INVALID_ARGUMENT`. NOT used to filter results — only gates the call. See "Auth". |
-| `status` | 2 | `string` | `"active"` | Free-form filter; SQL `WHERE status = ?` exact match against `user_registry.status`. Empty string coerces to `"active"` (`grpc_server.py:2248`). No allow-list — values like `"suspended"`, `"deleted"`, `"frozen"` flow through verbatim. |
-| `limit` | 3 | `int32` | `100` | `0` (unset) coerces to `100` (`grpc_server.py:2249`). NO upper cap is enforced today; Go port should mirror exactly (file follow-up to cap at e.g. 1000). Negative values flow into SQLite `LIMIT ?` and behave as "no limit" — preserve, do not "fix". |
-| `offset` | 4 | `int32` | `0` | `0`-coerce only on falsy. Pagination is offset-based, not cursor-based; no stable ordering guarantee beyond `ORDER BY created_at` (`global_store.py:429`). |
+| `status` | 2 | `string` | `"active"` | Free-form filter; SQL `WHERE status = ?` exact match against `user_registry.status`. Empty string coerces to `"active"` (`server/go/internal/api/list_users.go`). No allow-list — values like `"suspended"`, `"deleted"`, `"frozen"` flow through verbatim. |
+| `limit` | 3 | `int32` | `100` | `0` (unset) coerces to `100` (`server/go/internal/api/list_users.go`). NO upper cap is enforced today; Go port should mirror exactly (file follow-up to cap at e.g. 1000). Negative values flow into SQLite `LIMIT ?` and behave as "no limit" — preserve, do not "fix". |
+| `offset` | 4 | `int32` | `0` | `0`-coerce only on falsy. Pagination is offset-based, not cursor-based; no stable ordering guarantee beyond `ORDER BY created_at` (`server/go/internal/globalstore/`). |
 
 `ListUsersResponse`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `users` | 1 | `repeated UserInfo` | Each row mapped via `_user_dict_to_proto` (`grpc_server.py:2088-2097`): `{user_id, email, name, status, created_at, updated_at}` — missing keys -> empty string / `0`. |
+| `users` | 1 | `repeated UserInfo` | Each row mapped via `_user_dict_to_proto` (`server/go/internal/api/list_users.go`): `{user_id, email, name, status, created_at, updated_at}` — missing keys -> empty string / `0`. |
 
 No `has_more`, no `total_count`, no `next_page_token`. Caller infers end-of-list
 when `len(users) < limit`. Go port MUST NOT add a `has_more` field — that is
@@ -34,7 +39,7 @@ a wire change.
   caller (including `user:alice`) can list users. The contract test at
   `test_user_registry.py:395` exercises this with `actor="user:u1"` and expects
   success. The handler docstring says "Available to any authenticated actor"
-  (`grpc_server.py:2236`).
+  (`server/go/internal/api/list_users.go`).
 - **Trusted-actor invariant: ENFORCE BUT BENIGN.** Per CLAUDE.md and the
   privilege-escalation fix in commit `fece3fb`, every handler MUST rebind
   `actor` to `_trusted_actor(request.actor)` before any privilege-bearing use.
@@ -56,7 +61,7 @@ a wire change.
 **Pure read.** No WAL append, no SQLite write, no `canonical_store` touch
 (per-tenant SQLite untouched — this is a global-plane RPC).
 
-In-order narration of the handler (`grpc_server.py:2237-2265`):
+In-order narration of the handler (`server/go/internal/api/list_users.go`):
 
 1. `start = time.perf_counter()` for metrics.
 2. Guard: `self.global_store is None` -> abort `UNIMPLEMENTED`
@@ -68,7 +73,7 @@ In-order narration of the handler (`grpc_server.py:2237-2265`):
    (`:2248-2250`).
 5. `await self.global_store.list_users(status=, limit=, offset=)` —
    reads global-plane SQLite via `_run_sync` thread pool
-   (`global_store.py:411-432`). SQL: `SELECT * FROM user_registry WHERE
+   (`server/go/internal/globalstore/`). SQL: `SELECT * FROM user_registry WHERE
    status = ? ORDER BY created_at LIMIT ? OFFSET ?`.
 6. Map each row through `_user_dict_to_proto` (`:2088-2097`).
 7. `record_grpc_request("ListUsers", "ok", elapsed)` (`:2260`).
@@ -98,7 +103,7 @@ Each package under `server/go/internal/...` unless noted.
 - `pb` (`server/go/internal/pb/entdbv1`) — generated `ListUsersRequest`,
   `ListUsersResponse`, `UserInfo`, servicer interface. Required.
 - `globalstore` — `ListUsers(ctx, status string, limit, offset int) ([]User, error)`
-  mirroring `global_store.list_users` (`global_store.py:411`). Required.
+  mirroring `global_store.list_users` (`server/go/internal/globalstore/`). Required.
   Must use the global-plane SQLite handle, NOT a tenant handle.
 - `metrics` — `RecordGRPCRequest(method, status string, dur time.Duration)`
   (mirrors `metrics.py`). Required.
@@ -123,11 +128,11 @@ Importing any of them is a smell.
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_user_registry.py:354-386` —
+- (legacy Python unit test, removed in Phase 4D) —
   `test_list_users_default`: `actor="system:admin"`, no other fields ->
   `global_store.list_users` called with `status="active", limit=100, offset=0`;
   proto users preserve `user_id` order from store.
-- `tests/python/unit/test_user_registry.py:388-406` —
+- (legacy Python unit test, removed in Phase 4D) —
   `test_list_users_with_pagination`: `actor="user:u1"`, `status="suspended"`,
   `limit=10`, `offset=5` -> store called with those exact kwargs; non-admin
   actor is allowed.

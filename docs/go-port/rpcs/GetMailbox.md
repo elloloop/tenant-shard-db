@@ -1,12 +1,17 @@
 # RPC Port Spec — `entdb.v1.EntDBService/GetMailbox`
 
+> Implementation: `server/go/internal/api/get_mailbox.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python -> Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:1478-1498`.
+`server/go/internal/api/get_mailbox.go`.
 
 > Status: **deprecated stub.** The legacy per-user, cross-tenant mailbox
 > SQLite store has been removed. Fanout now writes to the per-tenant
 > `notifications` table in the canonical store
-> (`apply/canonical_store.py:1140-1150`, `:4531`). `GetMailbox` is retained
+> (`apply/server/go/internal/store/`, `:4531`). `GetMailbox` is retained
 > for proto compatibility and contract pinning, and MUST return an empty,
 > well-formed response. Do NOT reintroduce a cross-tenant SQLite read here
 > in the Go port — see "Side effects" and "Open questions" below.
@@ -49,12 +54,12 @@ fields) — Go generated code MUST keep the reservation.
   the stub does not call `_trusted_actor` at all.
 - **Owner verification: NOT performed by the current stub.** A live
   implementation would resolve `_trusted_actor(ctx.actor)`
-  (`grpc_server.py:418-437`) and reject when it does not match
+  (`server/go/internal/api/get_mailbox.go`) and reject when it does not match
   `_actor_user_id(...) == request.user_id` (`:412-416`). The Go port MUST
   keep parity with the stub: do NOT add owner checks that diverge from
   Python observable behavior.
 - **Tenant guard runs.** `_check_tenant(request.context.tenant_id, context)`
-  (`grpc_server.py:362-410`) is the only auth-shaped check. It enforces:
+  (`server/go/internal/api/get_mailbox.go`) is the only auth-shaped check. It enforces:
   - sharding ownership (UNAVAILABLE + `entdb-redirect-node` trailer when
     another node owns the tenant — `:387-394`),
   - region pinning (FAILED_PRECONDITION when `tenant.region != served_region`
@@ -91,9 +96,9 @@ per-tenant DBs.
 
 | Condition | Status | Where pinned |
 |----------|--------|--------------|
-| Tenant not owned by this node | `UNAVAILABLE` + `entdb-redirect-node` trailer | `grpc_server.py:387-394`; mirrored by `_check_tenant` for every tenant-scoped RPC. |
-| Tenant region mismatch | `FAILED_PRECONDITION` | `grpc_server.py:400-410`. |
-| Any other exception inside the `try` | **Swallowed.** Returns `GetMailboxResponse(items=[], unread_count=0)` with `has_more` defaulting to `false`. Error is logged with `exc_info=True` and `record_grpc_request("GetMailbox", "error", ...)` is incremented. | `grpc_server.py:1495-1498`. |
+| Tenant not owned by this node | `UNAVAILABLE` + `entdb-redirect-node` trailer | `server/go/internal/api/get_mailbox.go`; mirrored by `_check_tenant` for every tenant-scoped RPC. |
+| Tenant region mismatch | `FAILED_PRECONDITION` | `server/go/internal/api/get_mailbox.go`. |
+| Any other exception inside the `try` | **Swallowed.** Returns `GetMailboxResponse(items=[], unread_count=0)` with `has_more` defaulting to `false`. Error is logged with `exc_info=True` and `record_grpc_request("GetMailbox", "error", ...)` is incremented. | `server/go/internal/api/get_mailbox.go`. |
 
 The swallow-and-return-empty pattern is intentional and pinned by the
 contract test (which only asserts `items == [] and unread_count == 0`).
@@ -105,12 +110,12 @@ metric increment.
 
 - `internal/shard` — `Sharding.IsMine`, `Sharding.GetOwner` for
   `_check_tenant` parity (Python: `dbaas/sharding/...`,
-  `grpc_server.py:375-394`).
+  `server/go/internal/api/get_mailbox.go`).
 - `internal/globalstore` — `GetTenant(ctx, tenantID)` for the region
-  guard (`grpc_server.py:400-410`).
+  guard (`server/go/internal/api/get_mailbox.go`).
 - `internal/metrics` — `RecordGRPCRequest(method, status, latency)`
   matching Python `record_grpc_request` cardinality
-  (`grpc_server.py:1493,1496`). Status labels: `"ok"`, `"error"`.
+  (`server/go/internal/api/get_mailbox.go,1496`). Status labels: `"ok"`, `"error"`.
 - `internal/auth/trusted` — `GetAuthoritativeActor(wireActor)` ContextVar
   equivalent (Python: `auth/auth_interceptor.py`, used via
   `_trusted_actor` `:418-437`). Imported but NOT called by the stub;
@@ -120,13 +125,13 @@ metric increment.
 
 ## Other-RPC deps (SearchMailbox, ShareNode, ListMailboxUsers)
 
-- **SearchMailbox** (`grpc_server.py:1456-1476`, proto `:70`) — same
+- **SearchMailbox** (`server/go/internal/api/get_mailbox.go`, proto `:70`) — same
   deprecated stub shape: `_check_tenant` + empty `SearchMailboxResponse`.
   Port together; share the empty-response helper.
-- **ListMailboxUsers** (`grpc_server.py:1605-1617`, proto `:85`) — also
+- **ListMailboxUsers** (`server/go/internal/api/get_mailbox.go`, proto `:85`) — also
   a stub. Note: takes `tenant_id` as a top-level field, not
   `RequestContext`. Returns `ListMailboxUsersResponse(user_ids=[])`.
-- **ShareNode** (`grpc_server.py:1746-1826`, proto `:94`) — the *live*
+- **ShareNode** (`server/go/internal/api/get_mailbox.go`, proto `:94`) — the *live*
   cross-tenant operation. Goes through `_trusted_actor`,
   `_check_tenant_access`, and writes to `global_store.shared_index`
   (`:1815-1820`). When/if a real mailbox returns, `ShareNode`'s side
@@ -179,7 +184,7 @@ Notes:
 - `Items` is a non-nil empty slice — protobuf-go marshals nil and `[]`
   identically on the wire, but the Python contract test calls
   `list(r.items)` which works for both; still, prefer explicit `[]` for
-  symmetry with `grpc_server.py:1494`.
+  symmetry with `server/go/internal/api/get_mailbox.go`.
 - `UNAVAILABLE` from `checkTenant` MUST attach the `entdb-redirect-node`
   trailer via `grpc.SetTrailer` BEFORE returning the status — the SDK
   redirect cache (`sdk/go/entdb/redirect_cache.go`) depends on it.

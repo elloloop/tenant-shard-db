@@ -1,13 +1,18 @@
 # GetTenant — Go Port Spec
 
-EPIC #407. Reference Python: `server/python/entdb_server/api/grpc_server.py:2362-2395`.
+> Implementation: `server/go/internal/api/get_tenant.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407. Reference Python: `server/go/internal/api/get_tenant.go`.
 
 ## Wire contract
 
 Proto: `proto/entdb/v1/entdb.proto:119` (rpc), `:880-883` (request), `:885-888` (response), `:853-863` (`TenantDetail`).
 
 Request `GetTenantRequest`:
-- `string actor = 1` — REQUIRED. Non-empty string check at handler boundary (`grpc_server.py:2376-2377`). Per project security policy (commit `fece3fb`), the handler MUST NOT trust the client-supplied actor for authorization; the trusted principal comes from the auth interceptor. The field is still validated for non-emptiness so the wire contract matches every other registry RPC.
+- `string actor = 1` — REQUIRED. Non-empty string check at handler boundary (`server/go/internal/api/get_tenant.go`). Per project security policy (commit `fece3fb`), the handler MUST NOT trust the client-supplied actor for authorization; the trusted principal comes from the auth interceptor. The field is still validated for non-emptiness so the wire contract matches every other registry RPC.
 - `string tenant_id = 2` — REQUIRED. Non-empty (`:2378-2379`).
 
 Response `GetTenantResponse`:
@@ -19,11 +24,11 @@ The RPC is read-only and idempotent. There is no `RequestContext` field. Lookups
 ## Auth (member-only? admin? trusted-actor)
 
 Effectively public-within-authenticated-callers. The Python handler performs NO permission check:
-- It does NOT call `_check_tenant` (contrast `GetTenantQuota` at `grpc_server.py:3130`).
+- It does NOT call `_check_tenant` (contrast `GetTenantQuota` at `server/go/internal/api/get_tenant.go`).
 - It does NOT consult `_get_member_role` (`:2290-2296`).
 - It does NOT distinguish member vs non-member; any caller who passes the empty-string gates gets the row.
 
-This is intentional and pinned by tests: `tests/python/unit/test_tenant_registry.py:307-321` calls `GetTenant` with an arbitrary `user:alice` actor and expects the response without setting up any membership. The region-pinning test at `tests/python/integration/test_region_pinning.py:99-106` further pins that an actor (`user:bob`) reading another tenant's row (`t-us`) succeeds — i.e., cross-tenant metadata reads are allowed.
+This is intentional and pinned by tests: (legacy Python unit test, removed in Phase 4D) calls `GetTenant` with an arbitrary `user:alice` actor and expects the response without setting up any membership. The region-pinning test at `tests/python/integration/test_region_pinning.py:99-106` further pins that an actor (`user:bob`) reading another tenant's row (`t-us`) succeeds — i.e., cross-tenant metadata reads are allowed.
 
 Trusted-actor handling for the Go port:
 - Auth interceptor extracts the trusted principal from session/JWT/API-key metadata (CLAUDE.md invariant #3).
@@ -37,14 +42,14 @@ Open: see "Open questions" below — exposing `created_at`/`region` to non-membe
 None — read-only.
 
 - WAL: not appended (CLAUDE.md invariant #1 satisfied trivially; reads bypass the WAL).
-- `global_store.get_tenant(tenant_id)` (`server/python/entdb_server/global_store.py:489-502`): single `SELECT * FROM tenant_registry WHERE tenant_id = ?` against the global SQLite, wrapped via `_run_sync` to keep the gRPC `aio` thread non-blocking (CLAUDE.md invariant #3).
+- `global_store.get_tenant(tenant_id)` (`server/go/internal/globalstore/`): single `SELECT * FROM tenant_registry WHERE tenant_id = ?` against the global SQLite, wrapped via `_run_sync` to keep the gRPC `aio` thread non-blocking (CLAUDE.md invariant #3).
 - per-tenant `canonical_store`: untouched. Cross-tenant boundary (CLAUDE.md invariant #4) is not crossed because the registry lives in `global_store`'s own SQLite.
 - quotas / rate limits: not enforced in the handler; rely on interceptor.
 - metrics: emits `record_grpc_request("GetTenant", "ok"|"error", elapsed)` (`:2384`, `:2387`, `:2393`).
 
 ## Error contract
 
-The Python handler swallows all unexpected exceptions and returns `GetTenantResponse(found=False)` with `OK` status (`:2392-2395`). Go MUST preserve this — the contract test at `tests/python/integration/test_grpc_contract.py:466-471` only requires `r.found is False` for the not-found case, and the unit test at `tests/python/unit/test_tenant_registry.py:323-334` does likewise. There is no negative test asserting `Internal`.
+The Python handler swallows all unexpected exceptions and returns `GetTenantResponse(found=False)` with `OK` status (`:2392-2395`). Go MUST preserve this — the contract test at `tests/python/integration/test_grpc_contract.py:466-471` only requires `r.found is False` for the not-found case, and the unit test at (legacy Python unit test, removed in Phase 4D) does likewise. There is no negative test asserting `Internal`.
 
 | grpc.Code | Trigger |
 |---|---|
@@ -61,25 +66,25 @@ The argument-validation paths use `context.abort(...)` which raises and yields t
 
 ## Shared Go package deps
 
-- `internal/globalstore` — Go port of `global_store.GlobalStore`: needs `GetTenant(ctx, tenantID string) (*Tenant, error)` returning `nil, nil` for not-found, mirroring `_sync_get_tenant` (`global_store.py:497-502`). Backed by the global SQLite file (CLAUDE.md "Per-tenant SQLite isolation" — `global_store` is the cross-tenant exception).
+- `internal/globalstore` — Go port of `global_store.GlobalStore`: needs `GetTenant(ctx, tenantID string) (*Tenant, error)` returning `nil, nil` for not-found, mirroring `_sync_get_tenant` (`server/go/internal/globalstore/`). Backed by the global SQLite file (CLAUDE.md "Per-tenant SQLite isolation" — `global_store` is the cross-tenant exception).
 - `internal/pb` — generated proto types `pb.GetTenantRequest`, `pb.GetTenantResponse`, `pb.TenantDetail` from `proto/entdb/v1/entdb.proto`.
-- `internal/conv` (or inline) — `tenantDictToProto` analogue of `_tenant_dict_to_proto` (`grpc_server.py:2270-2278`): plain field copy, default-empty/zero on missing keys.
+- `internal/conv` (or inline) — `tenantDictToProto` analogue of `_tenant_dict_to_proto` (`server/go/internal/api/get_tenant.go`): plain field copy, default-empty/zero on missing keys.
 - `internal/metrics` — `RecordGRPCRequest("GetTenant", "ok"|"error", duration)` mirroring `record_grpc_request`.
 - `internal/logging` — error-level structured logger for the catch-all path (`:2394`).
 - `google.golang.org/grpc/codes` + `status` — for `INVALID_ARGUMENT` and `UNIMPLEMENTED` returns.
 
 ## Other-RPC deps
 
-None at runtime. `GetTenant` reads state populated by `CreateTenant` (`grpc_server.py:2310-2360`) and may be invalidated by `ArchiveTenant` (`:2397+`). The Go port can implement `GetTenant` standalone provided `internal/globalstore.GetTenant` is wired up. SDK callers consume the response shape (`sdk/python/entdb_sdk/_grpc_client.py` via `GetTenantResponse` / `TenantDetail`, see `tests/python/unit/test_tenant_registry.py:804-823`).
+None at runtime. `GetTenant` reads state populated by `CreateTenant` (`server/go/internal/api/get_tenant.go`) and may be invalidated by `ArchiveTenant` (`:2397+`). The Go port can implement `GetTenant` standalone provided `internal/globalstore.GetTenant` is wired up. SDK callers consume the response shape (`sdk/python/entdb_sdk/_grpc_client.py` via `GetTenantResponse` / `TenantDetail`, see (legacy Python unit test, removed in Phase 4D)).
 
 ## Contract tests pinning behavior (file:line)
 
 - `tests/python/integration/test_grpc_contract.py:460-465` — happy path: `actor=ALICE, tenant_id=TENANT`, mode `"happy"`, check `r.found is True and r.tenant.tenant_id == TENANT`.
 - `tests/python/integration/test_grpc_contract.py:466-471` — not-found: `tenant_id="ghost"`, mode `"not_found"`, check `r.found is False`.
 - `tests/python/integration/test_grpc_contract.py:472-476` — empty actor: mode `"invalid_argument"`. (Note wart re. exception swallowing under `:2392-2395`; see "Error contract".)
-- `tests/python/unit/test_tenant_registry.py:307-321` — happy unit-level path; pins `name` and `tenant_id` round-trip.
-- `tests/python/unit/test_tenant_registry.py:323-334` — `found=False` for missing tenant; no exception raised.
-- `tests/python/unit/test_tenant_registry.py:804-823` — SDK-side: pins `region` field surfaces through `GetTenantResponse.tenant.region`.
+- (legacy Python unit test, removed in Phase 4D) — happy unit-level path; pins `name` and `tenant_id` round-trip.
+- (legacy Python unit test, removed in Phase 4D) — `found=False` for missing tenant; no exception raised.
+- (legacy Python unit test, removed in Phase 4D) — SDK-side: pins `region` field surfaces through `GetTenantResponse.tenant.region`.
 - `tests/python/integration/test_region_pinning.py:97-106` — pins that the registry is region-global: any server can read any tenant's row.
 
 No test pins the "missing global_store => UNIMPLEMENTED" path; preserve it as defensive code.
@@ -105,7 +110,7 @@ func (s *Server) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (*pb.G
        }
    }()
    ```
-5. Call `tenant, lookupErr := s.globalStore.GetTenant(ctx, req.GetTenantId())` (`global_store.py:489-495`).
+5. Call `tenant, lookupErr := s.globalStore.GetTenant(ctx, req.GetTenantId())` (`server/go/internal/globalstore/`).
 6. On `lookupErr != nil`: log at error level, return `&pb.GetTenantResponse{Found: false}, nil`, emit metric `"error"`. Do NOT propagate as `Internal` — Python parity (`:2392-2395`).
 7. On `tenant == nil`: emit metric `"ok"`, return `&pb.GetTenantResponse{Found: false}, nil` (`:2383-2385`).
 8. Otherwise build `TenantDetail`:

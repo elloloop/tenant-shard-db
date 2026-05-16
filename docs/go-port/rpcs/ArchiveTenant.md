@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/ArchiveTenant`
 
+> Implementation: `server/go/internal/api/archive_tenant.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2397-2440`.
+`server/go/internal/api/archive_tenant.go`.
 
 ## Wire contract
 
@@ -26,7 +31,7 @@ field. The Go port must NOT introduce one (wire compat).
 
 CLAUDE.md mandates: handlers replace `request.actor` with the interceptor-bound
 trusted identity before any policy check. Python sequence
-(`grpc_server.py:2419-2427`):
+(`server/go/internal/api/archive_tenant.go`):
 
 1. `trusted_actor = self._trusted_actor(request.actor)` —
    delegates to `auth.auth_interceptor.get_authoritative_actor` which returns
@@ -34,7 +39,7 @@ trusted identity before any policy check. Python sequence
    to the wire string (no-auth deployments / unit tests only).
 2. `actor_uid = self._actor_user_id(trusted_actor)` strips `user:` prefix.
 3. `if not self._is_admin_or_system(trusted_actor):` — i.e. trusted prefix is
-   `system:`, `admin:`, or equals `__system__` (`grpc_server.py:2053-2069`).
+   `system:`, `admin:`, or equals `__system__` (`server/go/internal/api/archive_tenant.go`).
 4. Otherwise look up `_get_member_role(tenant_id, actor_uid)`; only `"owner"`
    may archive. Anything else → `PERMISSION_DENIED`.
 
@@ -50,10 +55,10 @@ wire `actor` field is rebound and never reused for authz.
 
 **Current Python behaviour (gap, see Open questions):** the handler performs
 ONE side effect — `self.global_store.set_tenant_status(tenant_id, "archived")`
-(`grpc_server.py:2429`, impl at `global_store.py:520-554`). That is a direct
+(`server/go/internal/api/archive_tenant.go`, impl at `server/go/internal/globalstore/`). That is a direct
 SQLite UPDATE on `tenant_registry.status` in the global store DB. Subsequent
 behavioural impact is enforced lazily by `_check_tenant_access`
-(`grpc_server.py:518-522`): writes against an archived tenant return
+(`server/go/internal/api/archive_tenant.go`): writes against an archived tenant return
 `FAILED_PRECONDITION`; reads still succeed. No legal-hold side effects.
 
 **What the handler does NOT do today** (intentional flags for the Go port):
@@ -62,7 +67,7 @@ behavioural impact is enforced lazily by `_check_tenant_access`
   `tenant_archived` WAL event materialized by the applier, but the handler
   still does not invoke cold-storage/archive workflows.
 - **No archiver handoff.** The `Archiver` subsystem
-  (`server/python/entdb_server/archive/archiver.py`) is a *WAL-stream* archiver
+  (`server/go/internal/archive/archiver.go`) is a *WAL-stream* archiver
   (Kafka/Kinesis → S3 segments); it is NOT triggered by `ArchiveTenant`. Name
   collision only.
 - **No cold-storage export.** No S3 `StorageClass` transition, no per-tenant
@@ -88,7 +93,7 @@ behavioural impact is enforced lazily by `_check_tenant_access`
 
 | Condition | gRPC code | Path |
 |-----------|-----------|------|
-| `global_store` not configured | `UNIMPLEMENTED` | `grpc_server.py:2406-2409` |
+| `global_store` not configured | `UNIMPLEMENTED` | `server/go/internal/api/archive_tenant.go` |
 | Empty `actor` | `INVALID_ARGUMENT` | `:2411-2412` |
 | Empty `tenant_id` | `INVALID_ARGUMENT` | `:2413-2414` |
 | Non-owner, non-admin/system caller | `PERMISSION_DENIED` | `:2421-2427` |
@@ -103,7 +108,7 @@ case returns `INVALID_ARGUMENT`
 (`tests/python/integration/test_grpc_contract.py:683-693`).
 
 `record_grpc_request("ArchiveTenant", "ok"|"error", elapsed)` is emitted on
-every exit (`grpc_server.py:2432, 2435, 2438`); Go port must wire equivalent
+every exit (`server/go/internal/api/archive_tenant.go, 2435, 2438`); Go port must wire equivalent
 metrics.
 
 ## Shared Go package deps (`archive/` subsystem, wal, store)
@@ -112,7 +117,7 @@ metrics.
 |---------------|-----------------------|-----|
 | `entdb_server/global_store.py` | `internal/globalstore` | `SetTenantStatus(ctx, tenantID, status) (bool, error)`; `GetMemberRole(ctx, tenantID, userID) (string, error)` |
 | `entdb_server/auth/auth_interceptor.py` | `internal/auth` | `GetAuthoritativeActor(ctx)` resolves the trusted actor from the gRPC context (replaces Python `ContextVar`). |
-| `entdb_server/api/grpc_server.py` (helpers) | `internal/grpcsvc/actor` | `TrustedActor`, `ActorUserID`, `IsAdminOrSystem` helpers — shared across all admin handlers. |
+| `entdb_server/api/server/go/internal/api/archive_tenant.go` (helpers) | `internal/grpcsvc/actor` | `TrustedActor`, `ActorUserID`, `IsAdminOrSystem` helpers — shared across all admin handlers. |
 | `entdb_server/archive/archiver.py` | `internal/archive` (existing for WAL→S3) | **Not used by this RPC today.** Spec'd here only to document the name collision. |
 | `entdb_server/wal/*` | `internal/wal` | Future: append `TenantStatusChanged` event when invariant #1 is properly extended to global_store. |
 | `entdb_server/api/generated` (proto stubs) | `gen/go/entdb/v1` | `ArchiveTenantRequest`, `ArchiveTenantResponse`. |
@@ -125,18 +130,18 @@ or any per-tenant SQLite. This RPC operates entirely on the global store.
 
 `ArchiveTenant` shares helpers and side-effect surface with:
 
-- `CreateTenant` (`grpc_server.py:~2300`) — registers the tenant; archive is
+- `CreateTenant` (`server/go/internal/api/archive_tenant.go:~2300`) — registers the tenant; archive is
   the inverse of "active".
-- `GetTenant` (`grpc_server.py:2360-2395`) — read path; consumers poll
+- `GetTenant` (`server/go/internal/api/archive_tenant.go`) — read path; consumers poll
   status here to observe archive completion.
-- `SetLegalHold` (`grpc_server.py:~2820-2845`) — also flips
+- `SetLegalHold` (`server/go/internal/api/archive_tenant.go:~2820-2845`) — also flips
   `tenant_registry.status` via `set_legal_hold` → reuses
   `_sync_set_tenant_status`. The two states (`archived`, `legal_hold`) are
   mutually exclusive in the schema (single `status` column) — see Open
   questions.
 - `AddTenantMember` / `RemoveTenantMember` — share `_get_member_role`.
 - All write RPCs (`PutNode`, `PutEdge`, `Commit`, `DeleteNode`, …) gated by
-  `_check_tenant_access` (`grpc_server.py:518-522`) which is the consumer of
+  `_check_tenant_access` (`server/go/internal/api/archive_tenant.go`) which is the consumer of
   the `archived` flag.
 
 ## Contract tests pinning behaviour (file:line)
@@ -145,15 +150,15 @@ or any per-tenant SQLite. This RPC operates entirely on the global store.
   admin actor, seed tenant id → `success=True`.
 - `tests/python/integration/test_grpc_contract.py:690-693` — empty actor →
   `INVALID_ARGUMENT`.
-- `tests/python/unit/test_tenant_registry.py:347-362` — owner can archive;
+- (legacy Python unit test, removed in Phase 4D) — owner can archive;
   post-call `tenant.status == "archived"` verified via `get_tenant`.
-- `tests/python/unit/test_tenant_registry.py:364-377` — non-owner member
+- (legacy Python unit test, removed in Phase 4D) — non-owner member
   receives `PERMISSION_DENIED`.
-- `tests/python/unit/test_tenant_registry.py:379-391` — `system:admin`
+- (legacy Python unit test, removed in Phase 4D) — `system:admin`
   actor succeeds without membership.
-- `tests/python/unit/test_tenant_roles.py:324-339` — archived tenant still
+- (legacy Python unit test, removed in Phase 4D) — archived tenant still
   serves reads.
-- `tests/python/unit/test_tenant_roles.py:342-360` — archived tenant rejects
+- (legacy Python unit test, removed in Phase 4D) — archived tenant rejects
   writes with `FAILED_PRECONDITION` (downstream invariant).
 
 The Go port suite must add a contract test that reproduces each of the
@@ -213,7 +218,7 @@ deferred — see Open questions.
    is "archive ⇒ frozen and inaccessible", the Go port must additionally
    revoke active sessions and API keys for the tenant.
 5. **Error leak via `str(e)`.** The catch-all path leaks Python exception
-   strings to the wire (`grpc_server.py:2440`). Go port should map to a
+   strings to the wire (`server/go/internal/api/archive_tenant.go`). Go port should map to a
    generic `"internal error"` and rely on server-side logs + trace IDs.
 6. **No idempotency.** Re-archiving an already-archived tenant returns
    `success=true` (UPDATE matches a row). That is fine, but pin it

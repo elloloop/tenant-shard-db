@@ -1,11 +1,16 @@
 # ExportUserData — Go Port Spec
 
+> Implementation: `server/go/internal/api/export_user_data.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. GDPR Article 20 portability: emit every node a user owns or
 is the subject of, **across every tenant they're a member of**, as a
 JSON bundle. Cross-tenant by construction.
 
-Python source of truth: `server/python/entdb_server/api/grpc_server.py:3014-3070`.
-Per-tenant collector: `server/python/entdb_server/apply/canonical_store.py:5174-5249`.
+Python source of truth: `server/go/internal/api/export_user_data.go`.
+Per-tenant collector: `server/go/internal/store/`.
 
 ## Wire contract
 
@@ -29,27 +34,27 @@ no resumable download. Format:
     "owner_actor", "data_policy" }, ... ] }, ... ] }
 ```
 
-Pinned by `tests/python/unit/test_gdpr_engine.py:678-692`.
+Pinned by (legacy Python unit test, removed in Phase 4D).
 
 `payload` is **id-keyed** per invariant #6 — `_sync_export_user_data`
-(`canonical_store.py:5211`) returns `json.loads(payload_json)` raw. This
+(`server/go/internal/store/`) returns `json.loads(payload_json)` raw. This
 bypasses `Struct` serialization (the field is `string`, not
 `google.protobuf.Struct`); the Go port uses `encoding/json` to marshal
 a `map[string]any`.
 
 ## Auth
 
-1. **`actor` and `user_id` required** (`grpc_server.py:3024-3027`):
+1. **`actor` and `user_id` required** (`server/go/internal/api/export_user_data.go`):
    empty → `INVALID_ARGUMENT`.
 2. **Trusted-actor only.** `_is_self_or_admin`
-   (`grpc_server.py:2071-2086`) calls
+   (`server/go/internal/api/export_user_data.go`) calls
    `auth.auth_interceptor.get_authoritative_actor(actor)` and **ignores
    the wire-supplied actor for the decision**. Allowed:
    - `trusted == f"user:{user_id}"` or `trusted == user_id` — **self**.
    - `system:*` / `admin:*` / `__system__` — **admin / compliance**.
    - else → `PERMISSION_DENIED` `"ExportUserData requires the user
-     themselves or an admin actor"` (`grpc_server.py:3028-3032`).
-   Pinned by `tests/python/unit/test_gdpr_engine.py:696-704` and
+     themselves or an admin actor"` (`server/go/internal/api/export_user_data.go`).
+   Pinned by (legacy Python unit test, removed in Phase 4D) and
    `tests/python/integration/test_grpc_contract.py:649-653`
    (actor=ALICE, user_id="bob" → permission_denied).
 3. **No per-tenant capability check.** Self/admin alone authorizes the
@@ -58,7 +63,7 @@ a `map[string]any`.
 4. **No `RequestContext`.** Flat `actor` + `user_id` — no `tenant_id`,
    no sharding redirect, no region pin.
 5. `global_store is None` → `UNIMPLEMENTED "User registry not configured"`
-   (`grpc_server.py:3022-3023`).
+   (`server/go/internal/api/export_user_data.go`).
 
 ## Side effects
 
@@ -66,13 +71,13 @@ a `map[string]any`.
 writes, no artifact persistence.
 
 - `global_store.get_user_tenants(user_id)` — global SQLite read for
-  membership list (`grpc_server.py:3034`).
+  membership list (`server/go/internal/api/export_user_data.go`).
 - For each tenant: `canonical_store.export_user_data_for_tenant`
   → `_run_sync(_sync_export_user_data)` → per-tenant SQLite read of
-  `nodes WHERE tenant_id = ?` (`canonical_store.py:5193-5198`).
+  `nodes WHERE tenant_id = ?` (`server/go/internal/store/`).
   Per-tenant connections, never a cross-tenant transaction.
 - Per-tenant exceptions are **caught and logged**, not propagated
-  (`grpc_server.py:3048-3053`) — one bad tenant does not fail the bundle.
+  (`server/go/internal/api/export_user_data.go`) — one bad tenant does not fail the bundle.
 - `record_grpc_request("ExportUserData", …)` metric.
 
 **No artifact written** — bundle returned inline; no encryption-at-rest
@@ -95,7 +100,7 @@ First failure wins:
 5. Per-tenant collector failure → **swallowed** (logged, tenant omitted
    from `tenants[]`). Bundle still returns `success=true`.
 6. Unexpected exception elsewhere → `success=false, error=str(e)`,
-   gRPC status `OK`, metric `error` (`grpc_server.py:3065-3070`).
+   gRPC status `OK`, metric `error` (`server/go/internal/api/export_user_data.go`).
 
 **Go port:** real aborts via `status.Errorf`. The Python try/except
 swallow is unreachable in `grpc.aio` production paths; preserve the
@@ -108,29 +113,29 @@ swallow is unreachable in `grpc.aio` production paths; preserve the
 - `auth.AuthoritativeActor(ctx) string` — same as `GetNode` spec.
 - `auth.IsSelfOrAdmin(trusted, userID) bool` — encodes the
   `user:{id}` / `system:` / `admin:` / `__system__` rules
-  (`grpc_server.py:2071-2086`). **Shared with** `DeleteUser`,
+  (`server/go/internal/api/export_user_data.go`). **Shared with** `DeleteUser`,
   `FreezeUser`, `CancelUserDeletion`.
 - `globalstore.Store.GetUserTenants(ctx, userID) ([]Membership, error)`.
 - `canonical.Store.ExportUserData(ctx, tenantID, principal, registry) (TenantExport, error)`
   — port of `_sync_export_user_data`. Filter: `owner_actor == principal`
   OR `payload[subject_field] == user_id`. Drop nodes whose
-  `DataPolicy == AUDIT` (`canonical_store.py:5215-5221`). Preserve
+  `DataPolicy == AUDIT` (`server/go/internal/store/`). Preserve
   id-keyed payload.
 - `schema.Registry.GetDataPolicy(typeID)`,
   `schema.Registry.GetSubjectField(typeID)` — missing type → fall back
   to `DataPolicy.PERSONAL`, no subject field
-  (`canonical_store.py:5204-5208`).
+  (`server/go/internal/store/`).
 - `metrics.RecordGRPCRequest`.
 - `encoding/json` for the bundle (no `Struct`).
 
 ## Other-RPC deps (DeleteUser pipeline)
 
-- **`DeleteUser`** (`grpc_server.py:2925-2981`) — paired GDPR pipeline:
+- **`DeleteUser`** (`server/go/internal/api/export_user_data.go`) — paired GDPR pipeline:
   (1) `ExportUserData` returns portability bundle; (2)
   `DeleteUser(grace_days=N)` schedules deletion; (3)
   `CancelUserDeletion` undoes (2) within grace. Go port keeps
   `IsSelfOrAdmin` shared across `Delete/Export/Freeze/CancelUserDeletion`
-  — same call sites: `grpc_server.py:2944, 2997, 3028, 3086`.
+  — same call sites: `server/go/internal/api/export_user_data.go, 2997, 3028, 3086`.
 - `canonical_store.export_user_data_for_tenant` is also exercised
   indirectly by `RevokeAllUserAccess` and `TransferUserContent`. Keep
   the per-tenant collector pure — no WAL appends inside it.
@@ -140,11 +145,11 @@ swallow is unreachable in `grpc.aio` production paths; preserve the
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_gdpr_engine.py:678-692` — happy: bundle has
+- (legacy Python unit test, removed in Phase 4D) — happy: bundle has
   `user_id`, `tenants[0].nodes` length 1, owner-match.
-- `tests/python/unit/test_gdpr_engine.py:696-704` — auth: foreign actor
+- (legacy Python unit test, removed in Phase 4D) — auth: foreign actor
   → `PERMISSION_DENIED`.
-- `tests/python/unit/test_gdpr_engine.py:418-448` —
+- (legacy Python unit test, removed in Phase 4D) —
   `_sync_export_user_data` unit cases: owner-match, subject-field
   match, AUDIT-policy exclusion, multi-tenant scoping.
 - `tests/python/integration/test_grpc_contract.py:643-648` — happy:
@@ -221,16 +226,16 @@ func (s *EntDBServer) ExportUserData(
    appending an `EXPORT_USER_DATA` event to the WAL (audit-policy node
    type) on success — makes the export itself tamper-evidently
    auditable via S3 Object Lock without violating read-only response.
-4. **Per-tenant exception swallow** (`grpc_server.py:3048-3053`): a
+4. **Per-tenant exception swallow** (`server/go/internal/api/export_user_data.go`): a
    corrupted tenant DB silently yields an *incomplete* portability
    bundle — user thinks they have everything. Add `partial: true` /
    `failed_tenants: []`? Behaviour-preserving port keeps silent
    swallow until follow-up issue filed.
-5. **`DataPolicy.AUDIT` exclusion** (`canonical_store.py:5219-5221`):
+5. **`DataPolicy.AUDIT` exclusion** (`server/go/internal/store/`):
    audit records are **not** subject-access-requestable. Document
    explicitly.
 6. **Subject-field match by name vs id.** Python compares
-   `payload.get(subject_field)` (`canonical_store.py:5216`);
+   `payload.get(subject_field)` (`server/go/internal/store/`);
    `subject_field` is a registry name, but `payload` is id-keyed
    (invariant #6). Latent bug — works only if the registry returns the
    field id as a string. Port faithfully, file follow-up.

@@ -1,6 +1,11 @@
 # GetSchema — Go Port Spec
 
-EPIC #407. Reference Python: `server/python/entdb_server/api/grpc_server.py:1619-1689`.
+> Implementation: `server/go/internal/api/get_schema.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407. Reference Python: `server/go/internal/api/get_schema.go`.
 
 ## Wire contract
 
@@ -30,14 +35,14 @@ The Python handler does NOT call `_check_tenant`, has no Permission check, and n
 
 None. Specifically:
 - WAL: not appended. Read-only RPC.
-- canonical_store: read-only — `get_distinct_type_ids` (`apply/canonical_store.py:4076`) and `get_distinct_edge_type_ids` (`:4103`). Both are `SELECT … GROUP BY` against the per-tenant SQLite (`:4063-4074`, `:4087-4101`) wrapped via `_run_sync` (CLAUDE.md invariant #4).
+- canonical_store: read-only — `get_distinct_type_ids` (`apply/server/go/internal/store/`) and `get_distinct_edge_type_ids` (`:4103`). Both are `SELECT … GROUP BY` against the per-tenant SQLite (`:4063-4074`, `:4087-4101`) wrapped via `_run_sync` (CLAUDE.md invariant #4).
 - global_store: untouched.
 - quotas / rate limits: not enforced in the handler; rely on interceptor.
 - schema registry: read-only (`schema_registry.to_dict()` `schema/registry.py:463-477`; `.fingerprint` property `:103-106`).
 
 ## Error contract (exhaustive grpc-code → trigger pairs)
 
-The Python handler is unusual: it swallows ALL errors and returns `GetSchemaResponse(fingerprint="")` with `OK` status (`grpc_server.py:1686-1689`). The Go port MUST preserve this contract — the contract test (`tests/python/integration/test_grpc_contract.py:208`) only requires `r.fingerprint != "" or r.HasField("schema")`, so an empty-but-OK response is the documented degraded path.
+The Python handler is unusual: it swallows ALL errors and returns `GetSchemaResponse(fingerprint="")` with `OK` status (`server/go/internal/api/get_schema.go`). The Go port MUST preserve this contract — the contract test (`tests/python/integration/test_grpc_contract.py:208`) only requires `r.fingerprint != "" or r.HasField("schema")`, so an empty-but-OK response is the documented degraded path.
 
 | grpc.Code | Trigger |
 |---|---|
@@ -52,8 +57,8 @@ Implication for Go: catch panics + every error from `canonical_store` / registry
 ## Shared Go package deps (one-line rationale each)
 
 - `internal/schema` — port of `SchemaRegistry`: holds `NodeTypeDef`/`EdgeTypeDef`, exposes `ToMap() map[string]any`, `Fingerprint() string`, freeze semantics (`schema/registry.py:88-106`, `:420-461`).
-- `internal/canonicalstore` — Go port of `canonical_store`: needs `GetDistinctTypeIDs(ctx, tenantID)` and `GetDistinctEdgeTypeIDs(ctx, tenantID)` returning `[]struct{TypeID int32; Count int64}` (`apply/canonical_store.py:4076`, `:4103`).
-- `internal/structpb` (or stdlib `structpb` from `google.golang.org/protobuf/types/known/structpb`) — for converting `map[string]any` → `*structpb.Struct`, mirroring `_dict_to_struct` (`grpc_server.py:154-159`).
+- `internal/canonicalstore` — Go port of `canonical_store`: needs `GetDistinctTypeIDs(ctx, tenantID)` and `GetDistinctEdgeTypeIDs(ctx, tenantID)` returning `[]struct{TypeID int32; Count int64}` (`apply/server/go/internal/store/`, `:4103`).
+- `internal/structpb` (or stdlib `structpb` from `google.golang.org/protobuf/types/known/structpb`) — for converting `map[string]any` → `*structpb.Struct`, mirroring `_dict_to_struct` (`server/go/internal/api/get_schema.go`).
 - `internal/metrics` — `RecordGRPCRequest("GetSchema", "ok"|"error", duration)` mirroring `record_grpc_request` (`:1681`, `:1687`).
 - `internal/logging` — structured logger; debug-level for fallback failure (`:1666`), error-level for outer catch (`:1688`).
 

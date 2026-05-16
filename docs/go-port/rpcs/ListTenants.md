@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/ListTenants`
 
+> Implementation: `server/go/internal/api/list_tenants.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:1537-1603`.
+`server/go/internal/api/list_tenants.go`.
 
 ## Wire contract
 
@@ -34,14 +39,14 @@ Method **is NOT** in `AuthInterceptor.UNAUTHENTICATED_METHODS`
 (`auth/auth_interceptor.py:157-184`). The interceptor MUST run first and
 populate the trusted-identity ContextVar via `set_current_identity()`.
 
-Handler reads the identity via `get_current_identity()` (`grpc_server.py:1557,
+Handler reads the identity via `get_current_identity()` (`server/go/internal/api/list_tenants.go,
 1561`). Visibility classes:
 
 | Trusted identity | Visibility |
 |---|---|
-| `None` (interceptor missing or auth disabled) | **`PERMISSION_DENIED`**, message `"ListTenants requires an authenticated caller"` (`grpc_server.py:1563-1566`). Do NOT fall open. |
-| `"__system__"`, `"system:*"`, `"admin:*"` | All tenants on this node (sharding still applied). `grpc_server.py:1568-1572`. |
-| `"user:<id>"` | Intersection of node-local tenants ∩ `global_store.get_user_tenants(<id>)`. Strip `"user:"` prefix before membership lookup (`grpc_server.py:1584`). |
+| `None` (interceptor missing or auth disabled) | **`PERMISSION_DENIED`**, message `"ListTenants requires an authenticated caller"` (`server/go/internal/api/list_tenants.go`). Do NOT fall open. |
+| `"__system__"`, `"system:*"`, `"admin:*"` | All tenants on this node (sharding still applied). `server/go/internal/api/list_tenants.go`. |
+| `"user:<id>"` | Intersection of node-local tenants ∩ `global_store.get_user_tenants(<id>)`. Strip `"user:"` prefix before membership lookup (`server/go/internal/api/list_tenants.go`). |
 | Any other string (no recognised prefix) | Treated as the bare user_id (no strip). Same membership-filter path. |
 
 **Trusted-actor invariant (CLAUDE.md §"Proto is the type system"):** the
@@ -62,8 +67,8 @@ In-order narration:
 1. `start := time.Now()` for metrics timing.
 2. `trusted := getCurrentIdentity(ctx)`. If nil → abort `PERMISSION_DENIED`.
 3. `isAdmin := trusted=="__system__" || strings.HasPrefix(trusted,"system:") || strings.HasPrefix(trusted,"admin:")`.
-4. `allIDs := canonicalStore.ListTenants()` — directory scan of `data_dir/tenant_*.db` (`canonical_store.py:4047-4061`). Synchronous; cheap; do **not** wrap in goroutine.
-5. If `sharding != nil && sharding.IsMultiNode()` → keep only `sharding.IsMine(tid)` (`grpc_server.py:1575-1576`). Pinned by `test_listtenants_auth.py:200-230`.
+4. `allIDs := canonicalStore.ListTenants()` — directory scan of `data_dir/tenant_*.db` (`server/go/internal/store/`). Synchronous; cheap; do **not** wrap in goroutine.
+5. If `sharding != nil && sharding.IsMultiNode()` → keep only `sharding.IsMine(tid)` (`server/go/internal/api/list_tenants.go`). Pinned by `test_listtenants_auth.py:200-230`.
 6. If `isAdmin` → `visible = allIDs`.
 7. Else if `globalStore != nil` → strip `"user:"` prefix; `memberships, _ := globalStore.GetUserTenants(userID)`; `memberSet := {m.TenantID}`; `visible = filter(allIDs, in memberSet)`.
 8. Else (`globalStore == nil`, embedded harness) → `visible = []`. Pinned by `test_listtenants_auth.py:238-258`.
@@ -79,7 +84,7 @@ between calls; correctness > 1µs of latency).
 |---|---|---|
 | `OK` | Happy path (incl. zero results). | Always returns a response, never an error, on success. |
 | `PERMISSION_DENIED` | Trusted identity is `nil` (interceptor missing/misconfigured). | `context.abort(...)` re-raised as `grpc.aio.AbortError`. Go: `return nil, status.Errorf(codes.PermissionDenied, ...)`. Pinned by `test_listtenants_auth.py:179-192`, `test_grpc_contract.py:288-295`. |
-| `OK` + empty `tenants=[]` | Any **other** unhandled exception inside the handler. | Python `except Exception` swallows and returns empty list (`grpc_server.py:1600-1603`). The Go port MUST replicate this — convert internal errors into `&pb.ListTenantsResponse{}` with `record_grpc_request(...,"error",...)` and `logger.Error(...)`. Returning `codes.Internal` is a **contract break**. |
+| `OK` + empty `tenants=[]` | Any **other** unhandled exception inside the handler. | Python `except Exception` swallows and returns empty list (`server/go/internal/api/list_tenants.go`). The Go port MUST replicate this — convert internal errors into `&pb.ListTenantsResponse{}` with `record_grpc_request(...,"error",...)` and `logger.Error(...)`. Returning `codes.Internal` is a **contract break**. |
 | `UNAUTHENTICATED` | Surfaced by the auth interceptor BEFORE the handler when metadata is missing/bad. Not raised by the handler itself. | N/A inside this RPC. |
 
 `INVALID_ARGUMENT` is impossible — request is empty. `NOT_FOUND` is not
@@ -91,8 +96,8 @@ Each is a package under `server/go/internal/...` unless noted.
 
 - `pb` (`server/go/internal/pb/entdbv1`) — generated `ListTenantsRequest`, `ListTenantsResponse`, `TenantInfo`, servicer interface. **Required.**
 - `auth` — must export `GetCurrentIdentity(ctx) (string, bool)` populated by the auth interceptor (mirror of `auth_interceptor.py:66-75`). **Required.**
-- `canonicalstore` — `ListTenants() []string` (mirror of `canonical_store.py:4047`). Directory scan, no SQLite open. **Required.**
-- `globalstore` — `GetUserTenants(ctx, userID string) ([]Membership, error)` returning rows with at least `TenantID` (mirror of `global_store.py:614-628`). **Required**, but nil-safe call site (step 8).
+- `canonicalstore` — `ListTenants() []string` (mirror of `server/go/internal/store/`). Directory scan, no SQLite open. **Required.**
+- `globalstore` — `GetUserTenants(ctx, userID string) ([]Membership, error)` returning rows with at least `TenantID` (mirror of `server/go/internal/globalstore/`). **Required**, but nil-safe call site (step 8).
 - `sharding` — `Config{ IsMultiNode() bool; IsMine(tenantID string) bool }` (mirror of `sharding.py`). Optional; nil-safe.
 - `metrics` — `RecordGRPCRequest(method, status string, dur time.Duration)`. **Required.**
 
@@ -102,7 +107,7 @@ NOT used and MUST NOT be imported here: `acl`, `wal`, `apply`, `schema`,
 
 ## Other-RPC deps
 
-- **`GetUserTenants` overlap** (`grpc_server.py:2572-2599`, proto `:126`/`:930-940`):
+- **`GetUserTenants` overlap** (`server/go/internal/api/list_tenants.go`, proto `:126`/`:930-940`):
   same `global_store.get_user_tenants(user_id)` call. The Go port should
   share the underlying `globalstore.GetUserTenants` method — do not duplicate
   the SQL. The two RPCs differ in:
@@ -120,13 +125,13 @@ and `metrics` packages exist.
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_listtenants_auth.py:99-111` — admin identities (`__system__`, `system:admin`, `system:gdpr-worker`, `admin:root`) see all tenants on the node.
-- `tests/python/unit/test_listtenants_auth.py:119-137` — `user:alice` sees only her membership tenants; non-member tenants invisible.
-- `tests/python/unit/test_listtenants_auth.py:140-154` — user with zero memberships → empty list (no enumeration leak).
-- `tests/python/unit/test_listtenants_auth.py:157-171` — `"user:"` prefix MUST be stripped before `get_user_tenants` lookup.
-- `tests/python/unit/test_listtenants_auth.py:179-192` — no trusted identity → `PERMISSION_DENIED`, never falls open.
-- `tests/python/unit/test_listtenants_auth.py:200-230` — sharding filter still applied to admin (`is_mine` excludes non-local tenants).
-- `tests/python/unit/test_listtenants_auth.py:238-258` — `global_store == nil` → empty list for regular user (embedded-harness safety).
+- (legacy Python unit test, removed in Phase 4D) — admin identities (`__system__`, `system:admin`, `system:gdpr-worker`, `admin:root`) see all tenants on the node.
+- (legacy Python unit test, removed in Phase 4D) — `user:alice` sees only her membership tenants; non-member tenants invisible.
+- (legacy Python unit test, removed in Phase 4D) — user with zero memberships → empty list (no enumeration leak).
+- (legacy Python unit test, removed in Phase 4D) — `"user:"` prefix MUST be stripped before `get_user_tenants` lookup.
+- (legacy Python unit test, removed in Phase 4D) — no trusted identity → `PERMISSION_DENIED`, never falls open.
+- (legacy Python unit test, removed in Phase 4D) — sharding filter still applied to admin (`is_mine` excludes non-local tenants).
+- (legacy Python unit test, removed in Phase 4D) — `global_store == nil` → empty list for regular user (embedded-harness safety).
 - `tests/python/integration/test_privilege_escalation.py:386-417` — claimed admin actor in metadata MUST NOT bypass membership filtering for `user:eve`.
 - `tests/python/integration/test_grpc_contract.py:288-295` — over-the-wire: empty request without auth interceptor → `PERMISSION_DENIED`. **The Go server must pass this test verbatim once stubs swap to the Go binary.**
 
@@ -192,7 +197,7 @@ recover (it's the *intended* error path, returned via the explicit
   corruption, `global_store` raises) as "you have no tenants". The Go port
   MUST replicate to keep the contract test green, but file a follow-up to
   surface internal errors as `codes.Internal` behind a feature flag once
-  callers can handle it. Today's behavior is pinned at `grpc_server.py:1600-1603`.
+  callers can handle it. Today's behavior is pinned at `server/go/internal/api/list_tenants.go`.
 - **Identity prefix matching is string-based and fragile.** A future
   identity provider that issues `"sa:..."` (service account) tokens will
   silently fall through to the user-membership branch. Recommend adding

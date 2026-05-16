@@ -1,5 +1,10 @@
 # GetReceiptStatus — Go port spec
 
+> Implementation: `server/go/internal/api/get_receipt_status.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC: #407 (Python -> Go server reimplementation).
 
 `entdb.v1.EntDBService.GetReceiptStatus` is the read-side companion to
@@ -23,11 +28,11 @@ touches the WAL, and never mutates state.
 
 ## Auth (Permission, trusted-actor)
 
-Per server/python/entdb_server/api/grpc_server.py:946-971 there is **no**
+Per server/go/internal/api/get_receipt_status.go there is **no**
 permission check, no `Permission` enum lookup, no node-level ACL evaluation,
 and no use of `_resolve_trusted_actor`. The handler:
 
-1. Calls `_check_tenant(tenant_id, ctx)` (grpc_server.py:362-410) — sharding
+1. Calls `_check_tenant(tenant_id, ctx)` (server/go/internal/api/get_receipt_status.go) — sharding
    ownership + region pinning. This is the only ingress gate.
 2. Reads `applied_events` for `(tenant_id, idempotency_key)`.
 
@@ -42,11 +47,11 @@ into the WAL by this RPC (it doesn't write).
 ## Side effects
 
 None. Pure read of `applied_events` via
-`canonical_store.check_idempotency` (server/python/entdb_server/apply/canonical_store.py:1377-1405).
+`canonical_store.check_idempotency` (server/go/internal/store/).
 No WAL append, no SQLite write, no global_store write, no fanout.
 
 Cross-cutting: `record_grpc_request("GetReceiptStatus", "ok"|"error", elapsed)`
-metric (grpc_server.py:964,967). Go must emit the equivalent label.
+metric (server/go/internal/api/get_receipt_status.go,967). Go must emit the equivalent label.
 
 ## Error contract (exhaustive)
 
@@ -60,7 +65,7 @@ metric (grpc_server.py:964,967). Go must emit the equivalent label.
 | Idempotency key in `applied_events` | `OK` | `status=APPLIED`, `error=""` |
 
 Notes:
-- The Python handler's bare `except Exception` (grpc_server.py:966) means
+- The Python handler's bare `except Exception` (server/go/internal/api/get_receipt_status.go) means
   even programmer errors collapse to `UNKNOWN`. Go should match this for
   parity (recover panics in handler, return `status=UNKNOWN`,
   `error=err.Error()`); resist the urge to return `Internal`.
@@ -76,29 +81,29 @@ Notes:
 
 - `internal/shard` — sharding registry, exposes `IsMine(tenantID) bool` and `Owner(tenantID) (string, bool)`. Mirror of `self._sharding`.
 - `internal/region` — served-region check; mirrors `self.served_region` + `global_store.get_tenant`.
-- `internal/store/canonical` — `CheckIdempotency(ctx, tenantID, idemKey) (bool, error)` against per-tenant SQLite. Maps to canonical_store.py:1391.
+- `internal/store/canonical` — `CheckIdempotency(ctx, tenantID, idemKey) (bool, error)` against per-tenant SQLite. Maps to server/go/internal/store/.
 - `internal/metrics` — `RecordGRPC(method, outcome, duration)` (Prometheus histogram, same labels as Python).
-- `internal/grpcutil` — `AbortWithRedirect(ctx, code, msg, ownerNode)` helper that sets the `entdb-redirect-node` trailer **before** returning the status (grpc_server.py:387-395 ordering matters; SDKs depend on it).
+- `internal/grpcutil` — `AbortWithRedirect(ctx, code, msg, ownerNode)` helper that sets the `entdb-redirect-node` trailer **before** returning the status (server/go/internal/api/get_receipt_status.go ordering matters; SDKs depend on it).
 - Generated proto pkg: `sdk/go/entdb/internal/pb` already exists; the server should use a sibling generated package (e.g. `server/go/internal/pb`).
 
 No crypto, no auth, no schema_registry deps — this RPC is intentionally minimal.
 
 ## Other-RPC deps (especially ExecuteAtomic interplay)
 
-- **ExecuteAtomic** (grpc_server.py:~600-828) is the only producer of
+- **ExecuteAtomic** (server/go/internal/api/get_receipt_status.go:~600-828) is the only producer of
   rows in `applied_events`. The applier's `apply_with_idempotency`
-  (canonical_store.py:1454-1505) inserts the row atomically with the SQLite
+  (server/go/internal/store/) inserts the row atomically with the SQLite
   mutations under `BEGIN IMMEDIATE`. Therefore: a row visible to
   `GetReceiptStatus` ⇒ all materialized writes for that event are also
   visible. Go must preserve this **single-transaction** insert-or-skip — do
   not split idempotency recording from the data write.
-- **WaitForOffset** (grpc_server.py:973) is the lower-level synchronization
+- **WaitForOffset** (server/go/internal/api/get_receipt_status.go) is the lower-level synchronization
   primitive used by `ExecuteAtomic`'s `wait_applied=true` path. Clients that
   set `wait_applied` get `applied_status` in the response and typically don't
   need to call `GetReceiptStatus`. `GetReceiptStatus` is the fallback for
   fire-and-forget writers and for retries after a network error where the
   writer never saw the receipt.
-- **Applier** (server/python/entdb_server/apply/applier.py) consumes the WAL
+- **Applier** (server/go/internal/apply/applier.go) consumes the WAL
   and calls `apply_with_idempotency`. The receipt becomes visible only after
   the applier processes the event — so a `PENDING` here means "WAL accepted,
   applier hasn't caught up" (or "key was never issued"; the two are
@@ -132,7 +137,7 @@ thread pool):
 6. Ignore `req.GetContext().GetActor()` entirely.
 
 Connection-pool concurrency: `CheckIdempotency` is a `SELECT 1` on a UNIQUE
-`(tenant_id, idempotency_key)` index (canonical_store.py:1100). Use a
+`(tenant_id, idempotency_key)` index (server/go/internal/store/). Use a
 read-only connection from the per-tenant pool; do not open a write
 transaction.
 

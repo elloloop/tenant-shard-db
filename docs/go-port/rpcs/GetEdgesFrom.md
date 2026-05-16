@@ -1,7 +1,12 @@
 # GetEdgesFrom — Go port spec
 
+> Implementation: `server/go/internal/api/get_edges_from.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Mirror of Python `EntDBServicer.GetEdgesFrom`
-(`server/python/entdb_server/api/grpc_server.py:1384-1418`). Reads the
+(`server/go/internal/api/get_edges_from.go`). Reads the
 outgoing edges of a node from per-tenant SQLite. Pure read; no WAL
 writes.
 
@@ -19,9 +24,9 @@ writes.
     `edges.from_node_id`. Empty string returns zero rows (no special
     error in Python today).
   - `int32 edge_type_id = 3` — optional filter; treat any falsy value
-    (0) as "no filter" to match Python (`grpc_server.py:1393`).
+    (0) as "no filter" to match Python (`server/go/internal/api/get_edges_from.go`).
   - `int32 limit = 4` — defaults to 100 when 0/unset
-    (`grpc_server.py:1400`).
+    (`server/go/internal/api/get_edges_from.go`).
   - `int32 offset = 5` — declared in proto but **not honoured by the
     Python handler today**; see Open questions.
 - `GetEdgesResponse` (`proto/entdb/v1/entdb.proto:488-491`):
@@ -30,21 +35,21 @@ writes.
     `created_at`, `props` (`google.protobuf.Struct`). Field 5
     (`props_json`) is reserved.
   - `bool has_more` — Python sets it iff `len(edges) > limit` *before*
-    truncation (`grpc_server.py:1410-1414`). Note: store returns the
+    truncation (`server/go/internal/api/get_edges_from.go`). Note: store returns the
     full result set (no SQL `LIMIT`), the handler slices in Python.
 
 ## Auth
 
 - **Tenant ownership / region pinning.** First action is
   `await self._check_tenant(request.context.tenant_id, context)`
-  (`grpc_server.py:1392`, helper at `:362-410`). On a miss the handler
+  (`server/go/internal/api/get_edges_from.go`, helper at `:362-410`). On a miss the handler
   aborts `UNAVAILABLE` with `entdb-redirect-node` trailer (sharding) or
   `FAILED_PRECONDITION` (region pin). The Go port must reproduce both
   paths and the trailer key exactly — Go SDK redirect cache reads it
   (`sdk/go/entdb/redirect_cache.go`).
 - **Capability.** `capability_registry.DEFAULT_OP_REQUIREMENTS` maps
   `"GetEdgesFrom" → CoreCapability.READ`
-  (`server/python/entdb_server/auth/capability_registry.py:66`). The
+  (`server/go/internal/auth/capability_registry.go`). The
   Python handler does NOT currently invoke a per-node ACL check before
   fan-out — it returns every edge stored for the tenant + node. The Go
   port should match this for parity in v1; do not add an ACL filter
@@ -56,7 +61,7 @@ writes.
   decisions: keep parity; track ACL filtering as a follow-up.
 - **Trusted actor.** `request.context.actor` is advisory only. The
   handler does not currently rebind to `_trusted_actor()`
-  (`grpc_server.py:418-437`); the privilege-escalation test pins that
+  (`server/go/internal/api/get_edges_from.go`); the privilege-escalation test pins that
   the claimed actor must not be used for any authz decision the
   handler reaches (it currently reaches none). Go port: read trusted
   identity from the auth interceptor metadata, ignore
@@ -70,13 +75,13 @@ mutation.** Confirms architecture invariant 1 in `CLAUDE.md` — this
 RPC is on the egress path; never call `wal.append` here. Permitted
 side effects: prometheus counter
 `record_grpc_request("GetEdgesFrom", "ok"|"error", elapsed)`
-(`grpc_server.py:1413,1416`) and structured logs.
+(`server/go/internal/api/get_edges_from.go,1416`) and structured logs.
 
 ## Error contract
 
 The Python handler swallows everything: any exception below
 `_check_tenant` is logged and returns `GetEdgesResponse(edges=[])`
-with no status code (`grpc_server.py:1415-1418`). `_check_tenant`
+with no status code (`server/go/internal/api/get_edges_from.go`). `_check_tenant`
 itself can `context.abort` with `UNAVAILABLE` or
 `FAILED_PRECONDITION` and those propagate.
 
@@ -103,11 +108,11 @@ Go port mapping:
   `docs/go-port/shared/canonicalstore.md`) — needs `GetEdgesFrom(ctx,
   tenantID, nodeID, edgeTypeID *int32) ([]Edge, error)`. Python
   reference: `_sync_get_edges_from`
-  (`server/python/entdb_server/apply/canonical_store.py:2609-2640`).
+  (`server/go/internal/store/`).
   SQL: `SELECT * FROM edges WHERE tenant_id=? AND from_node_id=?`
   with optional `AND edge_type_id=?`. Index used:
   `idx_edges_from(tenant_id, from_node_id)`
-  (`canonical_store.py:1075`).
+  (`server/go/internal/store/`).
 - `shared/auth` — `CheckTenant(ctx, tenantID)` returning ownership +
   region verdict and `TrustedActorFromCtx(ctx)`. Mirrors
   `_check_tenant` and `auth_interceptor.get_authoritative_actor`.
@@ -126,12 +131,12 @@ contract. Differences are exactly:
 
 - DB column matched: `from_node_id` vs `to_node_id`.
 - canonical_store call: `get_edges_from` vs `get_edges_to`
-  (`canonical_store.py:2642`, `:2695`).
+  (`server/go/internal/store/`, `:2695`).
 - Metric label and log prefix.
 
 Implement both as one private helper parameterised on direction; see
-`grpc_server.py:1420-1454` for the symmetric Python implementation.
-`GetConnectedNodes` (`grpc_server.py:1700-…`) reuses the same fan-out
+`server/go/internal/api/get_edges_from.go` for the symmetric Python implementation.
+`GetConnectedNodes` (`server/go/internal/api/get_edges_from.go-…`) reuses the same fan-out
 under the hood and should share the helper.
 
 ## Contract tests pinning behaviour

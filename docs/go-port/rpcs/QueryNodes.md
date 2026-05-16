@@ -1,8 +1,13 @@
 # QueryNodes — Go-port spec
 
+> Implementation: `server/go/internal/api/query_nodes.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. RPC `entdb.v1.EntDBService/QueryNodes` (re-exported via
 `console.v1.ConsoleService/QueryNodes`). Python ref:
-`server/python/entdb_server/api/grpc_server.py:1293`.
+`server/go/internal/api/query_nodes.go`.
 
 Read-only: list nodes of `type_id` for a tenant, with typed payload
 filters, sort, offset-pagination, read-after-write WAL-offset gate.
@@ -21,7 +26,7 @@ value}`. `FilterOp`: `EQ, NEQ, GT, GTE, LT, LTE, CONTAINS, IN`
 
 Python servicer translates `repeated FieldFilter` into a MongoDB-
 style operator dict via `_field_filters_to_filter_dict`
-(`grpc_server.py:190`). Two wire shapes MUST round-trip identically:
+(`server/go/internal/api/query_nodes.go`). Two wire shapes MUST round-trip identically:
 
 1. Typed (Go SDK): `Op=GTE, Value=100` → `{"$gte": 100}`.
 2. Inlined (Python SDK legacy): `Op=EQ, Value=Struct{"$gte":100}` →
@@ -29,32 +34,32 @@ style operator dict via `_field_filters_to_filter_dict`
 
 Multiple filters on one field merge into one operator dict (range
 splits `GTE`+`LTE`); equality collapses to `$eq` on merge
-(`grpc_server.py:218-227`). Op map: `grpc_server.py:178-187`.
+(`server/go/internal/api/query_nodes.go`). Op map: `server/go/internal/api/query_nodes.go`.
 
 `order_by` allow-list `{created_at, updated_at, node_id, type_id}`;
-unknown silently falls back to `created_at` (`canonical_store.py:2415`).
+unknown silently falls back to `created_at` (`server/go/internal/store/`).
 
 `QueryNodesResponse` (`proto/entdb/v1/entdb.proto:448`): `nodes,
 total_count, has_more`. `total_count` is unset (0 on wire); `has_more
 = len(nodes) == requested_limit` — cheap heuristic, NOT a strict
-cursor (`grpc_server.py:1377`). No opaque cursor; pagination is
+cursor (`server/go/internal/api/query_nodes.go`). No opaque cursor; pagination is
 `(limit, offset)` only.
 
 ## Auth (ACL filter on rows; trusted-actor)
 
-1. `_check_tenant(tenant_id)` — confirms tenant exists (`grpc_server.py:1305`).
+1. `_check_tenant(tenant_id)` — confirms tenant exists (`server/go/internal/api/query_nodes.go`).
 2. `_trusted_actor(request.context.actor)` — derives the actor from
    the gRPC AuthContext / interceptor metadata, NOT from the
    client-claimed `actor` field. The claimed value is ignored — see
    the privilege-escalation fix in commit `fece3fb`
-   (`grpc_server.py:418`, also applied to `GetConnectedNodes`).
+   (`server/go/internal/api/query_nodes.go`, also applied to `GetConnectedNodes`).
 3. `_check_cross_tenant_read(tenant_id, trusted_actor)` returns one
    of `"member" | "cross_tenant" | "denied"`
-   (`grpc_server.py:561`). `denied` raises `PERMISSION_DENIED`.
+   (`server/go/internal/api/query_nodes.go`). `denied` raises `PERMISSION_DENIED`.
 4. When role is `cross_tenant`, the result set is post-filtered: each
    node is checked via `canonical_store.can_access(tenant, node_id,
    actor_groups)` and excluded if not accessible
-   (`grpc_server.py:1344-1358`). Group membership is resolved via
+   (`server/go/internal/api/query_nodes.go`). Group membership is resolved via
    `resolve_actor_groups`.
 
 The ACL filter is applied AFTER the SQL query — this means
@@ -67,7 +72,7 @@ without an ADR (changes pagination semantics).
 
 Read-only. No WAL append, no state change, applier not invoked.
 Opens a per-tenant SQLite read connection
-(`canonical_store.py:2413`). Lazy expression indexes
+(`server/go/internal/store/`). Lazy expression indexes
 (`idx_query_t<type>_f<field>`) declared via
 `(entdb.field).indexed = true` are created by the WRITE path
 (`_ensure_query_indexes` on `CreateNode`/`UpdateNode`); QueryNodes
@@ -76,7 +81,7 @@ benefits when the compiled WHERE
 indexed expression byte-for-byte
 (`docs/decisions/query_indexes.md:25-47`).
 
-`after_offset` triggers `_wait_for_offset` (`grpc_server.py:937`) —
+`after_offset` triggers `_wait_for_offset` (`server/go/internal/api/query_nodes.go`) —
 blocks up to `wait_timeout_ms` (default 30s). Go: context-aware wait
 on the applier's offset condvar; do NOT busy-poll.
 
@@ -89,11 +94,11 @@ on the applier's offset condvar; do NOT busy-poll.
 | `wait_timeout_ms` elapsed before offset    | `DEADLINE_EXCEEDED`  | `_wait_for_offset` |
 | Unknown field name in filter               | `INVALID_ARGUMENT`   | `QueryFilterError` (`query_filter.py:120`) |
 | Unknown operator / wrong arg shape         | `INVALID_ARGUMENT`   | `query_filter.py:181-202` |
-| Unsupported `FilterOp` enum value          | `INVALID_ARGUMENT`   | `grpc_server.py:216` |
+| Unsupported `FilterOp` enum value          | `INVALID_ARGUMENT`   | `server/go/internal/api/query_nodes.go` |
 | Unknown `type_id`                          | `INVALID_ARGUMENT`   | `query_filter.py:113` |
 
 NOTE the Python handler currently swallows ALL exceptions and returns
-an empty `QueryNodesResponse{nodes: []}` (`grpc_server.py:1379-1382`).
+an empty `QueryNodesResponse{nodes: []}` (`server/go/internal/api/query_nodes.go`).
 This is a bug — the Go port MUST surface the gRPC status above. Pin
 this as a behaviour CHANGE in EPIC #407 and update the contract test
 listed below.
@@ -101,12 +106,12 @@ listed below.
 ## Shared Go package deps
 
 - `internal/auth` — `TrustedActor(ctx)`, `CheckTenant`,
-  `CheckCrossTenantRead` (port of `grpc_server.py:362-628`).
+  `CheckCrossTenantRead` (port of `server/go/internal/api/query_nodes.go`).
 - `internal/canonical` — `QueryNodes(tenantID, typeID, filter,
   limit, offset, orderBy, desc) ([]Node, error)`; `CanAccess`,
   `ResolveActorGroups` for the cross-tenant post-filter.
 - `internal/queryfilter` — port of
-  `server/python/entdb_server/apply/query_filter.py`. Pure SQL
+  `server/go/internal/apply/query_filter.go`. Pure SQL
   builder: `Compile(filterDict, typeID, registry) (sqlFrag string,
   params []any, err error)`. Allow-listed operators only; field
   names resolved to `field_id` via the schema registry; values
@@ -136,23 +141,23 @@ listed below.
   list-everything wire shape.
 - `tests/python/integration/test_privilege_escalation.py:232` —
   client-claimed admin actor MUST be rejected (commit fece3fb).
-- `tests/python/unit/test_payload_wire_format.py:219` — response
+- (legacy Python unit test, removed in Phase 4D) — response
   payload MUST be id-keyed (`field_id` strings), not name-keyed.
-- `tests/python/unit/test_cross_tenant_read.py:255` — cross-tenant
+- (legacy Python unit test, removed in Phase 4D) — cross-tenant
   reader sees only ACL-permitted nodes.
-- `tests/python/unit/test_cross_tenant_read.py:288` — no access ⇒
+- (legacy Python unit test, removed in Phase 4D) — no access ⇒
   empty result.
-- `tests/python/unit/test_query_operators.py:361` — full
+- (legacy Python unit test, removed in Phase 4D) — full
   `TestQueryNodesE2E` battery (`$eq, $ne, $gte, $between, $in,
   $like, $or, $and, $contains, unknown-field`).
-- `tests/python/unit/test_query_operators.py:474` — unknown field
+- (legacy Python unit test, removed in Phase 4D) — unknown field
   raises (must surface as `INVALID_ARGUMENT` in Go).
-- `tests/python/unit/test_canonical_store_perf.py:75` —
+- (legacy Python unit test, removed in Phase 4D) —
   `TestQueryNodesSQLPushdown` confirms filter is pushed to SQL, not
   applied in Python.
-- `tests/python/unit/test_cron_fixes.py:153` —
+- (legacy Python unit test, removed in Phase 4D) —
   `TestQueryNodesFilterPagination` (filter + pagination interaction).
-- `tests/python/unit/test_capability_registry.py:63` — RPC mapped to
+- (legacy Python unit test, removed in Phase 4D) — RPC mapped to
   `CoreCapability.READ`.
 
 A new contract test in `tests/contract/` MUST exercise BOTH wire
@@ -179,7 +184,7 @@ QueryNodes(ctx, req):
     }
   }
 
-  filterDict, err := fieldFiltersToDict(req.Filters) // mirror grpc_server.py:190
+  filterDict, err := fieldFiltersToDict(req.Filters) // mirror server/go/internal/api/query_nodes.go
   if err != nil { return nil, status.Error(codes.InvalidArgument, err.Error()) }
 
   nodes, err := canonical.QueryNodes(ctx, canonical.QueryArgs{
@@ -243,7 +248,7 @@ ACL post-filter:
 4. `has_more = (len == limit)` lies on exact-multiple boundaries
    (next page can be empty). ACL post-filter makes it leakier.
 5. Python swallows all exceptions to an empty response
-   (`grpc_server.py:1379-1382`). Go MUST surface gRPC errors —
+   (`server/go/internal/api/query_nodes.go`). Go MUST surface gRPC errors —
    behaviour change; flag in EPIC #407 release notes.
 6. `total_count` is unused. Decide: populate via `COUNT(*)` (extra
    query) or remove proto field. Defer; Go leaves it 0 for parity.

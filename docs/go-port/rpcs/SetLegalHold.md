@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/SetLegalHold`
 
+> Implementation: `server/go/internal/api/set_legal_hold.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2808-2862`.
+`server/go/internal/api/set_legal_hold.go`.
 
 ## Wire contract (set vs clear; scope)
 
@@ -11,19 +16,19 @@ Proto: `proto/entdb/v1/entdb.proto:132` (rpc), `:982-992` (messages).
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
 | `actor` | 1 | `string` | Caller actor string. **Untrusted** — overwritten by `AuthInterceptor` trusted identity (see Auth). |
-| `tenant_id` | 2 | `string` | Required. Empty → `INVALID_ARGUMENT` (`grpc_server.py:2821-2822`). |
+| `tenant_id` | 2 | `string` | Required. Empty → `INVALID_ARGUMENT` (`server/go/internal/api/set_legal_hold.go`). |
 | `enabled` | 3 | `bool` | `true` = set hold, `false` = clear hold. There is no separate "Clear" RPC — the same RPC toggles. |
 
 `LegalHoldResponse`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
 | `success` | 1 | `bool` | True iff the tenant row was updated. False if tenant not found. |
-| `status` | 2 | `string` | New `tenant_registry.status` literal: `"legal_hold"` or `"active"` (`grpc_server.py:2834`, pinned by `tests/python/unit/test_admin_operations.py:607,624`). |
+| `status` | 2 | `string` | New `tenant_registry.status` literal: `"legal_hold"` or `"active"` (`server/go/internal/api/set_legal_hold.go`, pinned by `(legacy Python unit test, removed),624`). |
 | `error` | 3 | `string` | Human-readable error on `success=false` (e.g. `"Tenant not found"`). |
 
 **Scope.** The RPC mutates exactly one column: `tenant_registry.status` for one
 `tenant_id`. Toggling between `"active"` ⇄ `"legal_hold"` only. It does NOT
-touch the parallel `legal_holds` table (that table — `global_store.py:247-253`
+touch the parallel `legal_holds` table (that table — `server/go/internal/globalstore/`
 with `(tenant_id, held_by, reason, created_at)` — is currently a separate
 ledger consumed by `audit/compliance.py` and is **not** populated by this
 handler today). The Go port MUST preserve this minimal scope (issue #408
@@ -35,12 +40,12 @@ Method **is not** in `AuthInterceptor.UNAUTHENTICATED_METHODS`. The interceptor
 populates the trusted identity ContextVar before the handler runs.
 
 Authorization is delegated to `_require_admin_or_owner(tenant_id, actor, ctx,
-"SetLegalHold")` (`grpc_server.py:2823-2825`, helper at `:2656-2690`). It:
+"SetLegalHold")` (`server/go/internal/api/set_legal_hold.go`, helper at `:2656-2690`). It:
 
 1. Calls `get_authoritative_actor(actor)` — payload `actor` is *replaced* by
    the interceptor's trusted identity. A client claiming
    `actor: "system:admin"` while authenticated as `user:eve` is downgraded to
-   `user:eve` (`grpc_server.py:2671-2673`). Pinned by
+   `user:eve` (`server/go/internal/api/set_legal_hold.go`). Pinned by
    `tests/python/integration/test_privilege_escalation.py` (whole file pattern).
 2. Empty trusted actor → `INVALID_ARGUMENT "actor is required"` (`:2674-2675`).
 3. `_is_admin_or_system(trusted_actor)` (system:* / __system__ / admin:*) → ok.
@@ -53,16 +58,16 @@ Authorization is delegated to `_require_admin_or_owner(tenant_id, actor, ctx,
 There is no dedicated "compliance officer" role today. If/when one lands
 (EPIC #407 punt-list), it must be allowed alongside `admin`/`owner` here.
 `global_store == None` short-circuits to `UNIMPLEMENTED "Tenant registry not
-configured"` (`grpc_server.py:2816-2820`) **before** the auth check — Go port
+configured"` (`server/go/internal/api/set_legal_hold.go`) **before** the auth check — Go port
 should preserve that ordering.
 
 ## Side effects (WAL; flag in canonical_store/global_store; downstream RPCs check hold)
 
-Sequence (`grpc_server.py:2815-2856`):
+Sequence (`server/go/internal/api/set_legal_hold.go`):
 
 1. `global_store.set_legal_hold(tenant_id, enabled, trusted_actor)` →
    `_sync_set_tenant_status` UPDATEs `tenant_registry.status` to
-   `"legal_hold"` or `"active"` (`global_store.py:528-554`). Returns False if
+   `"legal_hold"` or `"active"` (`server/go/internal/globalstore/`). Returns False if
    tenant row missing — handler returns `success=false, error="Tenant not
    found"` (`:2830-2832`). Note: no separate `legal_holds`-table insert here.
 2. `canonical_store.append_audit(...)` (`:2839-2851`) writes one tenant-scoped
@@ -86,10 +91,10 @@ WAL gap above is closed, S3 Object Lock provides the immutable record of
 the hold being set/cleared — do NOT add a parallel hash-chain audit table.
 
 **Downstream enforcement.** The flag is consulted by
-`_check_tenant_access(..., op_kind="delete")` at `grpc_server.py:524-528`,
+`_check_tenant_access(..., op_kind="delete")` at `server/go/internal/api/set_legal_hold.go`,
 which aborts with `FAILED_PRECONDITION "Tenant '<id>' is on legal hold;
 deletes are not allowed"`. `ExecuteAtomic` calls this with op-kind derived
-per-operation (`grpc_server.py:755-758`); a `delete_node` / `delete_edge`
+per-operation (`server/go/internal/api/set_legal_hold.go`); a `delete_node` / `delete_edge`
 under hold raises FAILED_PRECONDITION while `create_node` / read RPCs
 succeed. Pinned by `test_admin_operations.py:664-703` and
 `test_tenant_roles.py:380-432, 610-635`.
@@ -119,10 +124,10 @@ every exit (`:2831, 2855, 2858`). Go port must wire equivalent metric.
 | (future) `wal.Append` for `admin_set_legal_hold` op | `internal/wal` | close CLAUDE.md §1 gap |
 | (future) `audit/compliance.export_audit_trail` | `internal/audit/compliance` | only on export, not in-handler |
 
-`legal_holds` table (`global_store.py:247-253`) and the
+`legal_holds` table (`server/go/internal/globalstore/`) and the
 `set_legal_hold_record` / `is_under_legal_hold` / `get_legal_holds` /
-`remove_legal_hold` family (`global_store.py:967-1050`,
-`tests/python/unit/test_admin_ops.py:152-218`) are NOT touched by this
+`remove_legal_hold` family (`server/go/internal/globalstore/`,
+(legacy Python unit test, removed in Phase 4D)) are NOT touched by this
 handler today. They live in the same package but the Go port should keep
 them as a separate concern (court-order ledger) until #408 unifies them.
 
@@ -132,16 +137,16 @@ Status is checked **only** inside `_check_tenant_access`. RPCs that route
 through it pick up legal-hold semantics for free:
 
 - `ExecuteAtomic` — per-op `op_kind` is "delete" for `delete_node`/`delete_edge`
-  (`grpc_server.py:755-758`). Hold blocks. Pinned by
+  (`server/go/internal/api/set_legal_hold.go`). Hold blocks. Pinned by
   `test_admin_operations.py:664-703`.
 - `DeleteNode` / `DeleteEdge` standalone RPCs — same path.
-- `ArchiveTenant` (`grpc_server.py:2397-2440`) — does NOT call
+- `ArchiveTenant` (`server/go/internal/api/set_legal_hold.go`) — does NOT call
   `_check_tenant_access`; it calls `set_tenant_status("archived")` directly.
   **Gap:** archiving over a legal_hold silently overwrites the status to
   `"archived"` and removes hold protection. Go port MUST add an explicit
   `if status == "legal_hold": FAILED_PRECONDITION` guard in `ArchiveTenant`
   before the status flip. (Issue: open.)
-- `DeleteUser` (`grpc_server.py:2925-2981`) — does NOT call
+- `DeleteUser` (`server/go/internal/api/set_legal_hold.go`) — does NOT call
   `_check_tenant_access` (no tenant_id on the request — it's user-global,
   GDPR scope). The user can be queued for erasure even if every tenant
   they belong to is on legal_hold. **Gap.** Go port should iterate
@@ -155,17 +160,17 @@ through it pick up legal-hold semantics for free:
 
 | Test | File:line | Pins |
 |---|---|---|
-| owner enables hold, status=`legal_hold` | `tests/python/unit/test_admin_operations.py:594-609` | happy-path response shape and side effect |
+| owner enables hold, status=`legal_hold` | (legacy Python unit test, removed in Phase 4D) | happy-path response shape and side effect |
 | disable returns to `active` | `:611-624` | toggle semantics |
 | member → `PERMISSION_DENIED` | `:626-638` | auth |
 | audit row written with `action="set_legal_hold"` | `:640-656` | side-effect (audit) |
 | empty `tenant_id` → `INVALID_ARGUMENT` | `:860-868` | validation |
 | `legal_hold` blocks `delete_node` via `ExecuteAtomic` | `:664-684` | downstream enforcement |
 | `legal_hold` allows `create_node` | `:686-703` | downstream non-blocking |
-| reads + creates allowed, deletes rejected | `tests/python/unit/test_tenant_roles.py:380-432, 610-635` | role-matrix interaction |
-| GlobalStore.set_legal_hold idempotency, status flip | `tests/python/unit/test_admin_operations.py:322-340` | store-level |
+| reads + creates allowed, deletes rejected | `(legacy Python unit test, removed), 610-635` | role-matrix interaction |
+| GlobalStore.set_legal_hold idempotency, status flip | (legacy Python unit test, removed in Phase 4D) | store-level |
 | gRPC contract sweep happy + invalid_argument | `tests/python/integration/test_grpc_contract.py:573-583` | wire-level |
-| `legal_holds` ledger family (separate from this RPC) | `tests/python/unit/test_admin_ops.py:152-218` | NOT this RPC, but proves the ledger exists |
+| `legal_holds` ledger family (separate from this RPC) | (legacy Python unit test, removed in Phase 4D) | NOT this RPC, but proves the ledger exists |
 
 ## Implementation outline
 
@@ -224,7 +229,7 @@ identical.
    write in a follow-up RPC (`AddLegalHoldRecord`). Recommend: punt to
    a new RPC; keep this one wire-stable.
 3. **GDPR DeleteUser interaction (HIGH).** `DeleteUser`
-   (`grpc_server.py:2925-2981`) queues an erasure with no tenant-status
+   (`server/go/internal/api/set_legal_hold.go`) queues an erasure with no tenant-status
    check. If `user:alice` belongs to a tenant on legal_hold and Alice
    invokes `DeleteUser`, the grace timer starts and (after grace)
    `ProcessDeletions` will run — destroying data the hold is supposed
