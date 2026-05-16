@@ -35,6 +35,12 @@ import (
 func main() {
 	addr := flag.String("addr", ":50051", "gRPC bind address (host:port)")
 	dataDir := flag.String("data-dir", "", "directory for per-tenant SQLite + global.db")
+	tlsCert := flag.String("tls-cert", "", "server TLS certificate PEM file")
+	tlsKey := flag.String("tls-key", "", "server TLS private key PEM file")
+	tlsCA := flag.String("tls-ca", "", "client CA PEM file for mTLS verification")
+	tlsMinVersion := flag.String("tls-min-version", "1.3", "minimum TLS version: 1.3 | 1.2")
+	requireTLS := flag.Bool("require-tls", false, "refuse to start unless TLS is configured")
+	requireClientCert := flag.Bool("require-client-cert", false, "require and verify client certificates (mTLS; requires --tls-ca)")
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
@@ -234,7 +240,24 @@ func main() {
 		}
 	}
 
-	srv := grpc.NewServer()
+	grpcServerOpts, tlsEnabled, err := grpcServerTLSOptions(serverTLSConfig{
+		certFile:          *tlsCert,
+		keyFile:           *tlsKey,
+		caFile:            *tlsCA,
+		minVersion:        *tlsMinVersion,
+		requireTLS:        *requireTLS,
+		requireClientCert: *requireClientCert,
+	})
+	if err != nil {
+		log.Fatalf("entdb-server: TLS config: %v", err)
+	}
+	if tlsEnabled {
+		log.Printf("entdb-server: TLS enabled (min-version=%s client-auth=%s)", *tlsMinVersion, clientAuthMode(*tlsCA, *requireClientCert))
+	} else {
+		log.Printf("entdb-server: WARNING: TLS disabled; plaintext gRPC listener is for local/dev use only")
+	}
+
+	srv := grpc.NewServer(grpcServerOpts...)
 	pb.RegisterEntDBServiceServer(srv, api.New(srvOpts...))
 
 	lis, err := net.Listen("tcp", *addr)
