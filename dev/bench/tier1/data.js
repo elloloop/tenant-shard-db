@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015199252,
+  "lastUpdate": 1779015250826,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -648,6 +648,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001691386496436843",
             "extra": "mean: 7.233358837039659 msec\nrounds: 135"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cf4b24a5e196f0c5e606c0eee19dae3f7e4135b2",
+          "message": "fix(testseed): seed contract fixture through the real producer→applier path (#532)\n\nThe contract seed (SeedTenantContract) used to write the seed node with\nthe WAL-bypassing CreateNodeRaw, hand-record the seed-1 receipt, and\npre-bump the in-memory applied-offset tracker to 1. That pre-bump made\nWaitForOffset(target<=1) return before the applier had actually\nprocessed anything, leaving the seed and runtime write paths in two\ndifferent universes (issue #505).\n\nReroute the seed through the same path every real mutation takes:\nbuild a wal.Event (create_node, idempotency key \"seed-1\", actor\nuser:alice), append it via the shared producer, and block until the\nalready-running applier materialises it (poll CheckIdempotencyStatus\nfor the seed-1 receipt the applier writes itself). The applier now\nwrites the applied_events and applied_offsets rows, so there is no\nparallel-universe state and no offset pre-bump.\n\nIdempotency across repeated harness boots is preserved for free: the\nsame idempotency key dedupes at the producer (same StreamPos) and at\nthe applier's in-txn idempotency probe.\n\nSeedTenantContract / SeedTenant now take a wal.Producer + topic;\ncmd/entdb-server passes the shared producer (the applier goroutine is\nalready started before the seed runs). Dead helpers\n(isUniqueOrAlreadyExists, isIdempotencyViolation) removed. seed_test\nwires an in-memory WAL + running applier to mirror the server.\n\nThe #503 waitForIdempotencyRecord poll in execute_atomic.go is\ndeliberately KEPT: WaitForOffset's in-memory tracker is broadcast from\nUpdateAppliedOffsetTx before the applier batch txn commits, so the\nwait returning still does not guarantee the applied_events row is\nvisible on a fresh read connection. That pre-commit broadcast is an\nindependent source of the same race the seed pre-bump used to trigger\nand is not fixed here, so removing the poll would reintroduce the CAS\nflake. Its comment is updated to attribute the cause correctly.\n\nLocal CI green: go vet + go test (server, SDK), Python contract suite\n(95 passed), e2e docker stack (22 passed), ruff check/format.\n\nCloses #505",
+          "timestamp": "2026-05-17T11:48:43+01:00",
+          "tree_id": "1f3d076b8a16a2e1879e92f7ec24011d297f77bf",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/cf4b24a5e196f0c5e606c0eee19dae3f7e4135b2"
+        },
+        "date": 1779015250230,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3266.035180804496,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029333209691032294",
+            "extra": "mean: 306.1816375638912 usec\nrounds: 1363"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2124.6432364708735,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000047630568602274825",
+            "extra": "mean: 470.6672550169149 usec\nrounds: 1196"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1112.9321438191357,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007912135295737903",
+            "extra": "mean: 898.5273770316328 usec\nrounds: 923"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 825.9633186154747,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009437695369688784",
+            "extra": "mean: 1.210707518678015 msec\nrounds: 696"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1910.8697128317551,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000880491195019692",
+            "extra": "mean: 523.3219163425226 usec\nrounds: 1542"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1952.5273030514702,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007930889745281574",
+            "extra": "mean: 512.1567306317146 usec\nrounds: 1678"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1987.3135252738894,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007045740777693079",
+            "extra": "mean: 503.191865441655 usec\nrounds: 1687"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2072.910462153857,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003868593004021656",
+            "extra": "mean: 482.4135042287114 usec\nrounds: 1537"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1799.0677142697443,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000048504728396511254",
+            "extra": "mean: 555.8434471744761 usec\nrounds: 407"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1534.090250132533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005877911312461742",
+            "extra": "mean: 651.8521318505271 usec\nrounds: 1259"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2678.0208515116637,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029813701685499615",
+            "extra": "mean: 373.41008731710565 usec\nrounds: 2050"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 163.27167953798207,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011655352628716778",
+            "extra": "mean: 6.124760906666419 msec\nrounds: 150"
           }
         ]
       }
