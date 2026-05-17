@@ -218,12 +218,19 @@ type grpcTransport struct {
 	// [WithBaseDomain]). It caches per-tenant sub-channels for
 	// nodes the SDK has been redirected to.
 	redirectCache *tenantEndpointCache
+	// offsets records the last WAL stream position written per
+	// tenant so reads auto-attach it as ``after_offset`` for
+	// read-after-write consistency (mirrors the Python SDK's
+	// ``DbClient._last_offsets``). Lives on the transport — the
+	// single boundary both Plan commits and Scope reads cross.
+	offsets *offsetTracker
 }
 
 func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
 	return &grpcTransport{
 		address: address,
 		config:  cfg,
+		offsets: newOffsetTracker(),
 	}
 }
 
@@ -310,11 +317,14 @@ func (t *grpcTransport) GetNode(ctx context.Context, tenantID, actor string, typ
 	if err != nil {
 		return nil, err
 	}
+	offset := t.offsets.resolve(ctx, tenantID)
 	var trailer metadata.MD
 	resp, err := client.GetNode(t.callContext(ctx, tenantID), &pb.GetNodeRequest{
-		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		TypeId:  int32(typeID),
-		NodeId:  nodeID,
+		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		TypeId:        int32(typeID),
+		NodeId:        nodeID,
+		AfterOffset:   offset,
+		WaitTimeoutMs: waitTimeoutForOffset(offset),
 	}, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
@@ -330,13 +340,15 @@ func (t *grpcTransport) GetNodeByKey(ctx context.Context, tenantID, actor string
 	if err != nil {
 		return nil, err
 	}
+	offset := t.offsets.resolve(ctx, tenantID)
 	var trailer metadata.MD
 	resp, err := client.GetNodeByKey(t.callContext(ctx, tenantID), &pb.GetNodeByKeyRequest{
-		TenantId: tenantID,
-		Actor:    actor,
-		TypeId:   typeID,
-		FieldId:  fieldID,
-		Value:    value,
+		TenantId:    tenantID,
+		Actor:       actor,
+		TypeId:      typeID,
+		FieldId:     fieldID,
+		Value:       value,
+		AfterOffset: offsetAsInt64(offset),
 	}, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
@@ -356,11 +368,14 @@ func (t *grpcTransport) QueryNodes(ctx context.Context, tenantID, actor string, 
 	if err != nil {
 		return nil, err
 	}
+	offset := t.offsets.resolve(ctx, tenantID)
 	var trailer metadata.MD
 	resp, err := client.QueryNodes(t.callContext(ctx, tenantID), &pb.QueryNodesRequest{
-		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		TypeId:  int32(typeID),
-		Filters: filters,
+		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		TypeId:        int32(typeID),
+		Filters:       filters,
+		AfterOffset:   offset,
+		WaitTimeoutMs: waitTimeoutForOffset(offset),
 	}, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
@@ -423,6 +438,10 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 			IdempotencyKey: r.GetIdempotencyKey(),
 			StreamPosition: r.GetStreamPosition(),
 		}
+		// Track last write offset per tenant for read-after-write
+		// consistency — subsequent reads auto-attach it as
+		// after_offset (mirrors the Python SDK).
+		t.offsets.record(tenantID, r.GetStreamPosition())
 	}
 	return &CommitResult{
 		Success:        resp.GetSuccess(),
@@ -570,11 +589,14 @@ func (t *grpcTransport) GetNodes(ctx context.Context, tenantID, actor string, ty
 	if err != nil {
 		return nil, nil, err
 	}
+	offset := t.offsets.resolve(ctx, tenantID)
 	var trailer metadata.MD
 	resp, err := client.GetNodes(t.callContext(ctx, tenantID), &pb.GetNodesRequest{
-		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		TypeId:  int32(typeID),
-		NodeIds: nodeIDs,
+		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		TypeId:        int32(typeID),
+		NodeIds:       nodeIDs,
+		AfterOffset:   offset,
+		WaitTimeoutMs: waitTimeoutForOffset(offset),
 	}, grpc.Trailer(&trailer))
 	if err != nil {
 		return nil, nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
@@ -1204,6 +1226,31 @@ func (c *DbClient) GetTenantQuota(ctx context.Context, actor, tenantID string) (
 // commit chain.
 func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error) {
 	return c.transport.WaitForOffset(ctx, tenantID, actor, streamPosition, timeoutMs)
+}
+
+// offsetClearer is the optional capability a Transport exposes when
+// it tracks per-tenant write offsets for read-after-write
+// consistency. The production grpcTransport implements it; bare test
+// doubles may not, in which case ClearOffsets is a safe no-op.
+type offsetClearer interface {
+	clearOffsets()
+}
+
+// clearOffsets satisfies offsetClearer on the production transport.
+func (t *grpcTransport) clearOffsets() { t.offsets.clear() }
+
+// ClearOffsets drops every tracked per-tenant write offset, so the
+// next read no longer pins to a past write. Mirrors the Python SDK's
+// ``DbClient.clear_offsets()`` — useful in tests and when a caller
+// deliberately wants to stop enforcing read-after-write.
+//
+// Automatic offset tracking otherwise needs zero application code:
+// every Commit records ``receipt.stream_position`` for its tenant
+// and every subsequent read auto-attaches it as ``after_offset``.
+func (c *DbClient) ClearOffsets() {
+	if oc, ok := c.transport.(offsetClearer); ok {
+		oc.clearOffsets()
+	}
 }
 
 // Health returns a snapshot of server health for liveness /
