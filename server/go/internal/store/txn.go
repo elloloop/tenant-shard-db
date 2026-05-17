@@ -24,6 +24,21 @@ type BatchTxn struct {
 	store    *CanonicalStore
 	entry    *poolEntry
 	done     bool
+
+	// pendingOffset, if set by UpdateAppliedOffsetTx, holds the
+	// applied-offset notification to publish AFTER the SQL COMMIT
+	// succeeds. The offset row itself is written inside this txn; only
+	// the in-memory tracker bump + WaitForOffset cond Broadcast is
+	// deferred to post-commit. See ADR-026 condition 1. A Rollback
+	// drops it unpublished — no data became visible.
+	pendingOffset *pendingOffsetNotify
+}
+
+// pendingOffsetNotify is a deferred WaitForOffset wake, queued inside a
+// BatchTxn and published only once Commit's COMMIT returns.
+type pendingOffsetNotify struct {
+	tenantID string
+	offset   int64
 }
 
 // BeginBatch starts a BEGIN IMMEDIATE transaction for tenantID. Lazy-
@@ -68,8 +83,27 @@ func (b *BatchTxn) Commit() error {
 	}
 	b.done = true
 	defer b.cleanup()
+	// Test-only seam (nil in production): widen the pre-commit window so
+	// the ADR-026 condition-2 regression test can run a WaitForOffset-
+	// fenced reader here. On the pre-fix code the offset broadcast has
+	// already fired (in UpdateAppliedOffsetTx); on the fixed code it
+	// has not (deferred below, post-COMMIT).
+	if b.store.preCommitHook != nil {
+		b.store.preCommitHook()
+	}
 	if _, err := b.conn.ExecContext(context.Background(), "COMMIT"); err != nil {
 		return fmt.Errorf("store: commit batch: %w", err)
+	}
+	// ADR-026 condition 1: the COMMIT above has made every write in
+	// this batch — including the applied_offsets row written by
+	// UpdateAppliedOffsetTx — durable and visible on ALL connections,
+	// including the per-tenant read pool (#137). Only now is it safe to
+	// wake WaitForOffset(N) waiters: a reader re-routed to the read
+	// pool will see the committed snapshot. Publishing earlier is the
+	// read-after-write regression this ADR closes.
+	if b.pendingOffset != nil {
+		b.store.notifyOffset(b.pendingOffset.tenantID, b.pendingOffset.offset)
+		b.pendingOffset = nil
 	}
 	return nil
 }

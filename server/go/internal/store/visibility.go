@@ -76,7 +76,7 @@ func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string,
 	if len(actorIDs) == 0 {
 		return map[string]struct{}{}, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -143,7 +143,7 @@ func (s *CanonicalStore) ListSharedWithMe(ctx context.Context, tenantID string, 
 	if len(actorIDs) == 0 {
 		return nil, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}

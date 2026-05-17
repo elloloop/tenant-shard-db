@@ -55,7 +55,7 @@ func (s *CanonicalStore) CheckIdempotency(ctx context.Context, tenantID, request
 // FAILED_PRECONDITION rows short-circuit to the memoized failure
 // branch) and by the handler's GetReceiptStatus path.
 func (s *CanonicalStore) CheckIdempotencyStatus(ctx context.Context, tenantID, requestID string) (IdempotencyRecord, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return IdempotencyRecord{}, err
 	}
