@@ -254,6 +254,13 @@ type QueryFilter struct {
 	Value   any
 }
 
+// storeMaxQueryLimit is the defence-in-depth ceiling QueryNodes applies
+// to args.Limit (SEC-4, issue #135). It mirrors api.MaxPageSize (1000)
+// but is duplicated here on purpose: the store package must not import
+// the api package (that would invert the dependency direction). The two
+// values are kept in lock-step by the store-layer clamp test.
+const storeMaxQueryLimit = 1000
+
 // QueryNodesArgs is the input to QueryNodes. Mirrors
 // canonical_store.py:_sync_query_nodes (2394) signature minus the
 // MongoDB filter (deferred to W1.10 query_filter port).
@@ -298,6 +305,14 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 	limit := args.Limit
 	if limit <= 0 {
 		limit = 100
+	}
+	// SEC-4 (#135) defence-in-depth: the gRPC handlers already clamp to
+	// api.MaxPageSize, but re-apply the same ceiling here so any future
+	// in-process caller that bypasses the handler still cannot ask the
+	// SQLite layer to materialise an unbounded result set. Kept as a
+	// package-local literal (the store package must not import api).
+	if limit > storeMaxQueryLimit {
+		limit = storeMaxQueryLimit
 	}
 
 	whereParts := []string{"tenant_id = ?", "type_id = ?"}

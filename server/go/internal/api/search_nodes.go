@@ -122,6 +122,9 @@ func (s *Server) SearchNodes(
 	if limit == 0 {
 		limit = 50
 	}
+	// SEC-4 (#135): cap oversized page requests before the FTS JOIN
+	// materialises rows.
+	limit = clampPageSize(limit)
 	offset := int(req.GetOffset())
 
 	rows, ferr := s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit, offset)

@@ -90,6 +90,9 @@ func (s *Server) GetEdgesTo(
 	if limit <= 0 {
 		limit = 100
 	}
+	// SEC-4 (#135): cap oversized page requests before the store
+	// fetches limit+1 rows.
+	limit = clampPageSize(limit)
 
 	var edgeType *int32
 	if t := req.GetEdgeTypeId(); t != 0 {
