@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015329101,
+  "lastUpdate": 1779015350031,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -756,6 +756,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00032880109761315783",
             "extra": "mean: 4.994981765824743 msec\nrounds: 158"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bb799b857f90eb3107f8357fa580c9a1442c0720",
+          "message": "Add automatic per-tenant offset tracking to the Go SDK (#531)\n\nThe Go SDK only exposed the manual WaitForOffset RPC wrapper: its\nGetNode/GetNodeByKey/QueryNodes/GetNodes calls never set the proto\nafter_offset field and there was no per-tenant offset map, so\nread-after-write consistency required hand-written plumbing. The\nPython SDK has shipped automatic tracking since #74.\n\nMirror the Python semantics exactly:\n\n- offsetTracker: concurrency-safe per-tenant stream_position map\n  (RWMutex; the Go client is safe for concurrent use). Lives on\n  grpcTransport, the single boundary both Plan commits and Scope\n  reads cross. Nil-safe so bare-struct transports in tests degrade\n  gracefully.\n- ExecuteAtomic records receipt.stream_position per tenant on a\n  successful commit (empty position ignored, matching Python).\n- GetNode/GetNodeByKey/QueryNodes/GetNodes resolve and attach the\n  tracked offset as after_offset, with wait_timeout_ms=30000 when an\n  offset is present and 0 otherwise (Python's\n  \"30000 if resolved else 0\"). GetNodeByKey carries it as int64,\n  matching the wire field and Python's int() coercion.\n- Per-call overrides via the request context (Go has no kwargs):\n  WithAfterOffset(ctx, pos) pins an explicit offset, and\n  WithoutOffsetTracking(ctx) opts out — the Go analogues of the\n  Python explicit-string and after_offset=None paths.\n- DbClient.ClearOffsets() drops tracked state (Python clear_offsets),\n  exposed via an optional offsetClearer capability so non-tracking\n  test doubles are a safe no-op.\n\nTests cover the read-after-write contract end-to-end through the\nbufconn fake server for all four read RPCs, per-tenant isolation,\nexplicit override, opt-out, ClearOffsets, nil-safety, and a -race\nconcurrency stress of the tracker. Full Go SDK CI (vet + test -race)\nis green. README documents the feature and the parity table gains\nthe offset-tracking rows.",
+          "timestamp": "2026-05-17T11:48:55+01:00",
+          "tree_id": "92e3b245ad7ce455744a87c35e6b51fd148ef7d0",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/bb799b857f90eb3107f8357fa580c9a1442c0720"
+        },
+        "date": 1779015349447,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2551.170640195124,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002800423508544716",
+            "extra": "mean: 391.97691610448913 usec\nrounds: 1037"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1809.5515090165115,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003314054392693235",
+            "extra": "mean: 552.6231196057516 usec\nrounds: 811"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 974.1278365745634,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00025289009446545724",
+            "extra": "mean: 1.0265593102404442 msec\nrounds: 664"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 730.2505890286969,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000670349869933001",
+            "extra": "mean: 1.3693929385666028 msec\nrounds: 586"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1244.9821046878496,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019108741907302453",
+            "extra": "mean: 803.2243967480375 usec\nrounds: 1230"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1144.2076499849939,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0024774730569159117",
+            "extra": "mean: 873.9672383881675 usec\nrounds: 1464"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1216.236778604918,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0020404394959830673",
+            "extra": "mean: 822.2083212670544 usec\nrounds: 1326"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1719.0389795592343,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028721625256850908",
+            "extra": "mean: 581.7203750995817 usec\nrounds: 1261"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1493.7670290915075,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003350470826217732",
+            "extra": "mean: 669.4484350803946 usec\nrounds: 439"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1294.4169684609362,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006660891071381897",
+            "extra": "mean: 772.5485870206118 usec\nrounds: 1017"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2111.7959038867907,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002627874566244997",
+            "extra": "mean: 473.5306087863347 usec\nrounds: 1434"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 182.091766317346,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009738178593376766",
+            "extra": "mean: 5.491736503105908 msec\nrounds: 161"
           }
         ]
       }
