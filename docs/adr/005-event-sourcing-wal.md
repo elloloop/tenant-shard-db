@@ -231,6 +231,24 @@ key.
   Python source semantics: covered by the e2e crash-recovery tests
   in `tests/python/e2e/` (Kafka backend today; other backends gain
   coverage as they port via #518).
+- In-memory consumer state on the cloud backends: the Kinesis /
+  Event Hubs checkpoints and the SQS / Service Bus pending-ack maps
+  are process memory only. A server restart loses them, so every
+  received-but-uncommitted record is re-replayed after restart. This
+  is safe — the contract is at-least-once and the applier dedupes on
+  `(tenant_id, idempotency_key)` — but operators should expect a
+  bounded burst of re-applied (no-op) events on restart for these
+  backends. Kafka/Redpanda persists offsets in the broker and does
+  not have this restart re-replay window.
+- Non-unique `StreamPos.Offset` within a millisecond: the Pub/Sub,
+  Service Bus, and Event Hubs `Append` receipts derive `Offset` from
+  a wall-clock millisecond, so two appends in the same millisecond
+  can return the same `StreamPos`. The receipt is a durability
+  acknowledgement, not a unique cursor, on these backends; ordering
+  and dedupe rely on the per-key/per-session stream and the
+  idempotency key, never on `StreamPos` uniqueness. SDK/operator
+  code must not treat the returned position string as a unique id on
+  these backends (Kafka's broker offset *is* unique per partition).
 
 ## References
 

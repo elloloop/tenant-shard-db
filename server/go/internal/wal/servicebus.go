@@ -19,7 +19,21 @@ package wal
 //                            as StreamPos.Offset.
 //   - Complete            -> commit. Commit calls CompleteMessage (the
 //                            Service Bus ack); an uncompleted message
-//                            is redelivered after the lock expires.
+//                            is redelivered after the session lock
+//                            expires.
+//
+// Session receivers (issue #543): the producer stamps every message
+// with SessionId = tenant key, and a session-enabled Service Bus queue
+// REQUIRES a *session* receiver — a plain `Client.NewReceiverForQueue`
+// receiver fails at runtime ("entity requires sessions") and, even if
+// it did not, could not preserve per-session FIFO. We therefore drive
+// the consumer through `Client.AcceptNextSessionForQueue`, servicing
+// one tenant session at a time and rotating fairly across sessions so
+// no tenant starves. Per-session FIFO == per-tenant ordering; ordering
+// across sessions is not promised by Service Bus and is not required by
+// the WAL contract (per-key order only). The ServiceBusAPI seam below
+// is deliberately session-shaped: there is no queue-wide Receive, so a
+// non-session receiver is structurally unrepresentable.
 //
 // Service Bus has no partitions; StreamPos.Partition is always 0.
 //
@@ -32,8 +46,9 @@ package wal
 // event surfaces at the applier (CLAUDE.md: WAL is the source of
 // truth).
 //
-// Testing: ServiceBusAPI is the seam. A thin adapter wraps the SDK
-// client/sender/receiver; unit tests inject a fake — no live Azure.
+// Testing: ServiceBusAPI / serviceBusSession are the seams. A thin
+// adapter wraps the SDK client/sender/session-receiver; unit tests
+// inject a fake that models sessions — no live Azure.
 
 import (
 	"context"
@@ -47,19 +62,57 @@ import (
 )
 
 // ServiceBusAPI is the slice of Service Bus operations the WAL backend
-// needs. The adapter in defaultNewClient wraps the SDK; tests fake it.
+// needs. It is deliberately session-shaped on the consume side: the
+// only way to read is to AcceptNextSession (a *session* receiver), so a
+// non-session receiver — the #543 bug — cannot be expressed through
+// this interface. The adapter in defaultNewClient wraps the SDK; tests
+// fake it.
 type ServiceBusAPI interface {
 	// Send sends one message to the queue with the given session id +
 	// application properties.
 	Send(ctx context.Context, sessionID string, body []byte, props map[string]string) error
-	// Receive receives up to maxMessages, waiting at most wait.
-	Receive(ctx context.Context, maxMessages int, wait time.Duration) ([]serviceBusMessage, error)
-	// Complete acks (completes) a previously-received message by its
-	// sequence number.
-	Complete(ctx context.Context, sequenceNumber int64) error
+	// AcceptNextSession accepts the next available session on the queue
+	// and returns a receiver scoped to exactly that session. It blocks
+	// up to wait for a session to become available; when none is
+	// available within wait it returns errNoSession (a normal "nothing
+	// to do right now" signal, not a failure). Per Azure semantics each
+	// accepted session is held (locked) until the returned
+	// serviceBusSession is Closed, at which point another consumer —
+	// or this one, on the next accept — may take it.
+	AcceptNextSession(ctx context.Context, wait time.Duration) (serviceBusSession, error)
 	// Close releases the client.
 	Close(ctx context.Context) error
 }
+
+// serviceBusSession is a receiver bound to a single Service Bus session
+// (one tenant). Messages it returns are in per-session FIFO order;
+// Complete acks a message by sequence number on this session's link.
+// There is no cross-session receive here by construction.
+type serviceBusSession interface {
+	// SessionID is the session this receiver is locked to.
+	SessionID() string
+	// Receive receives up to maxMessages from this session, waiting at
+	// most wait. An empty slice with a nil error means "no more right
+	// now" (the session is drained or the wait elapsed).
+	Receive(ctx context.Context, maxMessages int, wait time.Duration) ([]serviceBusMessage, error)
+	// Complete acks (completes) a previously-received message by its
+	// sequence number on this session's link.
+	Complete(ctx context.Context, sequenceNumber int64) error
+	// Pending reports how many received-but-not-yet-completed messages
+	// this session receiver still holds. Zero means every delivered
+	// message has been settled, so the consumer may release the session
+	// lock (close it) and let the accept-next loop rotate to the next
+	// tenant — keeping the queue fully drainable without starving any
+	// tenant.
+	Pending() int
+	// Close releases the session lock so another accept can take it.
+	Close(ctx context.Context) error
+}
+
+// errNoSession is returned by AcceptNextSession when no session became
+// available within the wait window. It is an internal control signal
+// (an empty poll), never surfaced to WAL callers as an error.
+var errNoSession = errors.New("servicebus: no session available")
 
 // serviceBusMessage is the transport-neutral shape Receive returns.
 type serviceBusMessage struct {
@@ -80,14 +133,20 @@ type ServiceBusConfig struct {
 	QueueName string
 	// MaxWaitTime bounds a single Receive call. Python default 5s.
 	MaxWaitTime time.Duration
+	// SessionAcceptTimeout bounds a single AcceptNextSession call. If a
+	// session does not become available within this window the accept
+	// is treated as an empty poll and the consumer rotates. Defaults to
+	// 5s.
+	SessionAcceptTimeout time.Duration
 }
 
 // DefaultServiceBusConfig returns a config matching the Python defaults.
 func DefaultServiceBusConfig(connStr, queueName string) ServiceBusConfig {
 	return ServiceBusConfig{
-		ConnectionString: connStr,
-		QueueName:        queueName,
-		MaxWaitTime:      5 * time.Second,
+		ConnectionString:     connStr,
+		QueueName:            queueName,
+		MaxWaitTime:          5 * time.Second,
+		SessionAcceptTimeout: 5 * time.Second,
 	}
 }
 
@@ -102,6 +161,12 @@ type ServiceBus struct {
 	api       ServiceBusAPI
 
 	idemp map[string]map[string]map[string]StreamPos
+
+	// open[sessionID] -> the session receiver currently held for that
+	// tenant. Commit resolves the owning session by the record's Key
+	// (SessionID); the consume loop closes a session once it drains so
+	// the lock can rotate to whoever needs it next.
+	open map[string]serviceBusSession
 }
 
 // NewServiceBus constructs a Service Bus WAL backend.
@@ -109,9 +174,13 @@ func NewServiceBus(cfg ServiceBusConfig) *ServiceBus {
 	if cfg.MaxWaitTime <= 0 {
 		cfg.MaxWaitTime = 5 * time.Second
 	}
+	if cfg.SessionAcceptTimeout <= 0 {
+		cfg.SessionAcceptTimeout = 5 * time.Second
+	}
 	s := &ServiceBus{
 		config: cfg,
 		idemp:  make(map[string]map[string]map[string]StreamPos),
+		open:   make(map[string]serviceBusSession),
 	}
 	s.newClient = s.defaultNewClient
 	return s
@@ -127,25 +196,16 @@ func (s *ServiceBus) defaultNewClient(ctx context.Context) (ServiceBusAPI, error
 		_ = client.Close(ctx)
 		return nil, err
 	}
-	receiver, err := client.NewReceiverForQueue(s.config.QueueName, nil)
-	if err != nil {
-		_ = sender.Close(ctx)
-		_ = client.Close(ctx)
-		return nil, err
-	}
 	return &azServiceBusAdapter{
-		client:   client,
-		sender:   sender,
-		receiver: receiver,
-		// Pending received messages keyed by sequence number so
-		// Complete can resolve the SDK *ReceivedMessage handle.
-		pending: make(map[int64]*azservicebus.ReceivedMessage),
+		client:    client,
+		sender:    sender,
+		queueName: s.config.QueueName,
 	}, nil
 }
 
-// Connect builds the client (sender + receiver). Service Bus has no
-// cheap describe; connectivity surfaces on first Send/Receive (parity
-// with servicebus.py, which only created the client here).
+// Connect builds the client (sender). Service Bus has no cheap
+// describe; connectivity surfaces on first Send/AcceptNextSession
+// (parity with servicebus.py, which only created the client here).
 func (s *ServiceBus) Connect(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,10 +224,15 @@ func (s *ServiceBus) Connect(ctx context.Context) error {
 	return nil
 }
 
-// Close releases the client. Safe to call multiple times.
+// Close releases the client and any held session receivers. Safe to
+// call multiple times.
 func (s *ServiceBus) Close(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for id, sess := range s.open {
+		_ = sess.Close(ctx)
+		delete(s.open, id)
+	}
 	if s.api != nil {
 		_ = s.api.Close(ctx)
 		s.api = nil
@@ -221,7 +286,18 @@ func (s *ServiceBus) Append(
 	return pos, nil
 }
 
-// PollBatch receives up to maxRecords, blocking up to timeout.
+// PollBatch services tenant sessions and returns up to maxRecords,
+// blocking up to timeout. It accepts the next available session,
+// receives what it can from that session in per-tenant FIFO order, then
+// rotates to the next session for fairness so no tenant starves. A
+// session from which records were delivered is kept open (tracked in
+// s.open) so Commit can ack on its link and so its still-locked
+// messages are not handed out twice within a poll cycle; a session that
+// yielded nothing is closed immediately so its lock rotates. Sessions
+// stay tracked across PollBatch calls until either every delivered
+// record is Committed (then the session is closed and its lock
+// released) or the lock is lost server-side (then those records
+// redeliver — at-least-once; the applier dedupes).
 func (s *ServiceBus) PollBatch(
 	ctx context.Context,
 	topic, groupID string,
@@ -239,37 +315,129 @@ func (s *ServiceBus) PollBatch(
 	api := s.api
 	s.mu.Unlock()
 
-	wait := timeout
-	if wait > s.config.MaxWaitTime {
-		wait = s.config.MaxWaitTime
-	}
-	msgs, err := api.Receive(ctx, maxRecords, wait)
-	if err != nil {
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-			return nil, err
+	deadline := time.Now().Add(timeout)
+	out := make([]Record, 0, maxRecords)
+	// Sessions we accepted this call but already drained, so the
+	// accept-next loop does not immediately re-pick them and spin.
+	visited := make(map[string]bool)
+
+	for len(out) < maxRecords {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
 		}
-		return nil, classifyServiceBusErr("servicebus receive", err)
-	}
-	out := make([]Record, 0, len(msgs))
-	for _, m := range msgs {
-		out = append(out, Record{
-			Key:   m.SessionID,
-			Value: m.Body,
-			Position: StreamPos{
-				Topic:       topic,
-				Partition:   0,
-				Offset:      m.SequenceNumber,
-				TimestampMs: m.EnqueuedMs,
-			},
-			Headers: bytesHeaders(m.Properties),
-		})
+
+		acceptWait := remaining
+		if acceptWait > s.config.SessionAcceptTimeout {
+			acceptWait = s.config.SessionAcceptTimeout
+		}
+		sess, err := api.AcceptNextSession(ctx, acceptWait)
+		if err != nil {
+			if errors.Is(err, errNoSession) {
+				// No session ready within the window. Return whatever we
+				// gathered; an empty slice + nil error is a normal "no
+				// records yet" signal per the Consumer contract.
+				break
+			}
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				if len(out) > 0 {
+					return out, nil
+				}
+				return nil, err
+			}
+			return nil, classifyServiceBusErr("servicebus accept session", err)
+		}
+		if sess == nil {
+			break
+		}
+
+		sid := sess.SessionID()
+		if visited[sid] {
+			// We already serviced this tenant this poll cycle. Releasing
+			// its lock lets the accept-next loop move on to other
+			// tenants (fair rotation) instead of spinning on this one.
+			s.closeSession(ctx, sess)
+			break
+		}
+		visited[sid] = true
+
+		rem := time.Until(deadline)
+		if rem <= 0 {
+			s.closeSession(ctx, sess)
+			break
+		}
+		recvWait := rem
+		if recvWait > s.config.MaxWaitTime {
+			recvWait = s.config.MaxWaitTime
+		}
+		msgs, rerr := sess.Receive(ctx, maxRecords-len(out), recvWait)
+		if rerr != nil {
+			if errors.Is(rerr, context.Canceled) || errors.Is(rerr, context.DeadlineExceeded) {
+				s.closeSession(ctx, sess)
+				if len(out) > 0 {
+					return out, nil
+				}
+				return nil, rerr
+			}
+			s.closeSession(ctx, sess)
+			return nil, classifyServiceBusErr("servicebus receive", rerr)
+		}
+		if len(msgs) == 0 {
+			// Empty session: release the lock so it rotates and another
+			// tenant (or this one later) can be accepted.
+			s.closeSession(ctx, sess)
+			continue
+		}
+		for _, m := range msgs {
+			out = append(out, Record{
+				Key:   m.SessionID,
+				Value: m.Body,
+				Position: StreamPos{
+					Topic:       topic,
+					Partition:   0,
+					Offset:      m.SequenceNumber,
+					TimestampMs: m.EnqueuedMs,
+				},
+				Headers: bytesHeaders(m.Properties),
+			})
+		}
+		// Keep this session open so Commit can ack on its link and so
+		// its in-flight (received, uncommitted) messages stay locked
+		// (not re-handed-out) until committed or the lock is lost.
+		s.trackSession(ctx, sess)
 	}
 	return out, nil
 }
 
-// Subscribe streams records by repeatedly receiving. Auto-completes
-// each delivered record, matching the InMemory/Kafka Subscribe
-// contract.
+// trackSession records a still-open session so Commit can resolve its
+// link by session id. If a previous receiver for the same session is
+// already tracked it is closed first (a fresh accept supersedes it).
+func (s *ServiceBus) trackSession(ctx context.Context, sess serviceBusSession) {
+	id := sess.SessionID()
+	s.mu.Lock()
+	prev, ok := s.open[id]
+	s.open[id] = sess
+	s.mu.Unlock()
+	if ok && prev != nil && prev != sess {
+		_ = prev.Close(ctx)
+	}
+}
+
+// closeSession closes a session receiver and drops it from the tracked
+// set if it was the tracked one for its session id.
+func (s *ServiceBus) closeSession(ctx context.Context, sess serviceBusSession) {
+	id := sess.SessionID()
+	s.mu.Lock()
+	if cur, ok := s.open[id]; ok && cur == sess {
+		delete(s.open, id)
+	}
+	s.mu.Unlock()
+	_ = sess.Close(ctx)
+}
+
+// Subscribe streams records by repeatedly polling sessions.
+// Auto-completes each delivered record, matching the InMemory/Kafka
+// Subscribe contract.
 func (s *ServiceBus) Subscribe(
 	ctx context.Context,
 	topic, groupID string,
@@ -310,18 +478,36 @@ func (s *ServiceBus) Subscribe(
 	return out, errCh, nil
 }
 
-// Commit completes (acks) the message by sequence number. Mirrors
-// servicebus.py commit -> complete_message.
+// Commit completes (acks) the message on the receiver that owns its
+// session. Mirrors servicebus.py commit -> complete_message. Service
+// Bus settlement is link-scoped: the message must be acked on the very
+// session receiver that delivered it, which is why we resolve the
+// session by record.Key (the SessionId / tenant) rather than holding a
+// single queue-wide receiver.
 func (s *ServiceBus) Commit(ctx context.Context, groupID string, record Record) error {
 	s.mu.Lock()
 	if !s.connected || s.api == nil {
 		s.mu.Unlock()
 		return fmt.Errorf("%w: not connected", ErrConnection)
 	}
-	api := s.api
+	sess, ok := s.open[record.Key]
 	s.mu.Unlock()
-	if err := api.Complete(ctx, record.Position.Offset); err != nil {
+	if !ok || sess == nil {
+		// The session lock was already released (drained + closed, or a
+		// rebalance). The message will be redelivered on a future accept
+		// of that session; the applier dedupes (at-least-once). This
+		// mirrors the "no pending message" no-op path in servicebus.py.
+		return nil
+	}
+	if err := sess.Complete(ctx, record.Position.Offset); err != nil {
 		return classifyServiceBusErr("servicebus complete", err)
+	}
+	// Once every in-flight message on this session is settled, release
+	// the session lock so the accept-next loop can re-take it (to drain
+	// any further messages for the same tenant) and so other tenants
+	// are not starved by a held-but-idle lock.
+	if sess.Pending() == 0 {
+		s.closeSession(ctx, sess)
 	}
 	return nil
 }
@@ -332,6 +518,18 @@ func classifyServiceBusErr(op string, err error) error {
 	}
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+	// Azure surfaces actionable failures as *azservicebus.Error with a
+	// programmatic Code. Map those before falling back to string sniff.
+	var sbErr *azservicebus.Error
+	if errors.As(err, &sbErr) {
+		switch sbErr.Code {
+		case azservicebus.CodeTimeout:
+			return fmt.Errorf("%w: %s: %v", ErrTimeout, op, err)
+		case azservicebus.CodeConnectionLost, azservicebus.CodeUnauthorizedAccess,
+			azservicebus.CodeNotFound, azservicebus.CodeClosed:
+			return fmt.Errorf("%w: %s: %v", ErrConnection, op, err)
+		}
 	}
 	if isTimeout(err) {
 		return fmt.Errorf("%w: %s: %v", ErrTimeout, op, err)
@@ -344,17 +542,13 @@ func classifyServiceBusErr(op string, err error) error {
 	return fmt.Errorf("%w: %s: %v", ErrWal, op, err)
 }
 
-// azServiceBusAdapter adapts the SDK client/sender/receiver to
-// ServiceBusAPI. It keeps a sequence-number -> *ReceivedMessage map so
-// Complete can resolve the SDK handle (the WAL Commit contract only
-// gives us the StreamPos offset).
+// azServiceBusAdapter adapts the SDK client/sender to ServiceBusAPI.
+// The consume side hands back azServiceBusSession values, one per
+// accepted Service Bus session, so settlement is always link-correct.
 type azServiceBusAdapter struct {
-	client   *azservicebus.Client
-	sender   *azservicebus.Sender
-	receiver *azservicebus.Receiver
-
-	mu      sync.Mutex
-	pending map[int64]*azservicebus.ReceivedMessage
+	client    *azservicebus.Client
+	sender    *azservicebus.Sender
+	queueName string
 }
 
 func (a *azServiceBusAdapter) Send(ctx context.Context, sessionID string, body []byte, props map[string]string) error {
@@ -372,7 +566,59 @@ func (a *azServiceBusAdapter) Send(ctx context.Context, sessionID string, body [
 	return a.sender.SendMessage(ctx, msg, nil)
 }
 
-func (a *azServiceBusAdapter) Receive(ctx context.Context, maxMessages int, wait time.Duration) ([]serviceBusMessage, error) {
+func (a *azServiceBusAdapter) AcceptNextSession(ctx context.Context, wait time.Duration) (serviceBusSession, error) {
+	actx := ctx
+	if wait > 0 {
+		var cancel context.CancelFunc
+		actx, cancel = context.WithTimeout(ctx, wait)
+		defer cancel()
+	}
+	// AcceptNextSessionForQueue blocks until a session is available or
+	// the (bounded) context elapses. When no session is available it
+	// returns an *azservicebus.Error with Code == CodeTimeout — we map
+	// that to errNoSession so the consume loop treats it as an empty
+	// poll, not a failure.
+	r, err := a.client.AcceptNextSessionForQueue(actx, a.queueName, nil)
+	if err != nil {
+		var sbErr *azservicebus.Error
+		if errors.As(err, &sbErr) && sbErr.Code == azservicebus.CodeTimeout {
+			return nil, errNoSession
+		}
+		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, errNoSession
+		}
+		return nil, err
+	}
+	return &azServiceBusSession{receiver: r}, nil
+}
+
+func (a *azServiceBusAdapter) Close(ctx context.Context) error {
+	if a.sender != nil {
+		_ = a.sender.Close(ctx)
+	}
+	if a.client != nil {
+		return a.client.Close(ctx)
+	}
+	return nil
+}
+
+// azServiceBusSession wraps one SDK *SessionReceiver. It keeps a
+// sequence-number -> *ReceivedMessage map so Complete can resolve the
+// SDK handle (the WAL Commit contract only gives us the StreamPos
+// offset). All settlement happens on this session's link, which is the
+// only correctness-safe place to ack a session message.
+type azServiceBusSession struct {
+	receiver *azservicebus.SessionReceiver
+
+	mu      sync.Mutex
+	pending map[int64]*azservicebus.ReceivedMessage
+}
+
+func (a *azServiceBusSession) SessionID() string {
+	return a.receiver.SessionID()
+}
+
+func (a *azServiceBusSession) Receive(ctx context.Context, maxMessages int, wait time.Duration) ([]serviceBusMessage, error) {
 	rctx := ctx
 	if wait > 0 {
 		var cancel context.CancelFunc
@@ -382,8 +628,12 @@ func (a *azServiceBusAdapter) Receive(ctx context.Context, maxMessages int, wait
 	msgs, err := a.receiver.ReceiveMessages(rctx, maxMessages, nil)
 	if err != nil {
 		// A receive that times out with no messages is a normal empty
-		// poll, not an error.
+		// poll (session drained for now), not an error.
 		if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+			return nil, nil
+		}
+		var sbErr *azservicebus.Error
+		if errors.As(err, &sbErr) && sbErr.Code == azservicebus.CodeTimeout {
 			return nil, nil
 		}
 		return nil, err
@@ -409,6 +659,9 @@ func (a *azServiceBusAdapter) Receive(ctx context.Context, maxMessages int, wait
 			sess = *m.SessionID
 		}
 		a.mu.Lock()
+		if a.pending == nil {
+			a.pending = make(map[int64]*azservicebus.ReceivedMessage)
+		}
 		a.pending[seq] = m
 		a.mu.Unlock()
 		out = append(out, serviceBusMessage{
@@ -422,7 +675,7 @@ func (a *azServiceBusAdapter) Receive(ctx context.Context, maxMessages int, wait
 	return out, nil
 }
 
-func (a *azServiceBusAdapter) Complete(ctx context.Context, sequenceNumber int64) error {
+func (a *azServiceBusSession) Complete(ctx context.Context, sequenceNumber int64) error {
 	a.mu.Lock()
 	msg, ok := a.pending[sequenceNumber]
 	if ok {
@@ -437,15 +690,15 @@ func (a *azServiceBusAdapter) Complete(ctx context.Context, sequenceNumber int64
 	return a.receiver.CompleteMessage(ctx, msg, nil)
 }
 
-func (a *azServiceBusAdapter) Close(ctx context.Context) error {
+func (a *azServiceBusSession) Pending() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return len(a.pending)
+}
+
+func (a *azServiceBusSession) Close(ctx context.Context) error {
 	if a.receiver != nil {
-		_ = a.receiver.Close(ctx)
-	}
-	if a.sender != nil {
-		_ = a.sender.Close(ctx)
-	}
-	if a.client != nil {
-		return a.client.Close(ctx)
+		return a.receiver.Close(ctx)
 	}
 	return nil
 }
