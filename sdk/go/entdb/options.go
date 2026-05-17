@@ -14,6 +14,15 @@ type clientConfig struct {
 	maxRetries   int
 	timeout      time.Duration
 	nodeResolver NodeResolver
+	// retryBudget bounds the total wall-clock time spent retrying a
+	// single call (backoff sleeps included). Zero means use
+	// defaultRetryWallClockBudget.
+	retryBudget time.Duration
+	// retryJitter is the randomness source for the transient-retry
+	// backoff. Left nil in production (a clock-seeded source is
+	// created on Connect); in-package tests set it to a
+	// deterministic source so backoff durations are reproducible.
+	retryJitter jitterSource
 	// dialOptions is appended to the grpc.NewClient option list on
 	// every dial — both the primary endpoint and any redirect
 	// sub-channels. Tests use it to install a contextDialer for
@@ -61,6 +70,23 @@ func WithMaxRetries(n int) ClientOption {
 func WithTimeout(d time.Duration) ClientOption {
 	return func(c *clientConfig) {
 		c.timeout = d
+	}
+}
+
+// WithRetryBudget caps the total wall-clock time the SDK spends
+// retrying a single failed RPC, including the exponential-backoff
+// sleeps between attempts. Once the elapsed time since the first
+// attempt would exceed the budget, the last error is returned even if
+// retry attempts (per [WithMaxRetries]) remain.
+//
+// This bounds tail latency under an outage: without it, a high
+// maxRetries combined with exponential backoff can block a caller for
+// minutes. A non-positive duration restores the 30s default.
+func WithRetryBudget(d time.Duration) ClientOption {
+	return func(c *clientConfig) {
+		if d > 0 {
+			c.retryBudget = d
+		}
 	}
 }
 

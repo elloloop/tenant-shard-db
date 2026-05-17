@@ -13,7 +13,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -249,7 +251,117 @@ _RETRYABLE_STATUS_CODES = frozenset(
     {grpc.StatusCode.UNAVAILABLE, grpc.StatusCode.DEADLINE_EXCEEDED}
 )
 
+# Retry tuning. Kept in lock-step with the Go SDK
+# (sdk/go/entdb/retry.go) so both clients behave identically under
+# an outage.
+#
+# - base of the exponential backoff (seconds): unjittered delay for
+#   attempt n is _RETRY_BASE_DELAY * 2**n.
+_RETRY_BASE_DELAY: float = 0.1
+# - cap on a single backoff sleep so a high max_retries doesn't
+#   produce multi-minute waits between attempts.
+_RETRY_MAX_DELAY: float = 5.0
+# - total wall-clock seconds the SDK will spend retrying one call
+#   (backoff sleeps included). Once the elapsed time since the first
+#   attempt would exceed this, the last error is raised even if
+#   retry attempts remain. Stops a slow-failing endpoint from
+#   blocking a caller far past their own deadline.
+_RETRY_WALL_CLOCK_BUDGET: float = 30.0
+
+# RPCs that are safe to retry on DEADLINE_EXCEEDED. Every entry is a
+# read-only / side-effect-free RPC: re-issuing it after a timeout
+# cannot duplicate a write.
+#
+# DEADLINE_EXCEEDED is deliberately NOT retried for mutating RPCs
+# (ExecuteAtomic, ShareNode, the admin/GDPR surface, ...): a timeout
+# means the deadline elapsed while the request was in flight, so the
+# write may already have committed server-side and a retry would risk
+# a duplicate mutation. UNAVAILABLE is still retried for every method
+# — it is a connection-level failure where the request almost
+# certainly never reached the server.
+_DEADLINE_RETRYABLE_METHODS = frozenset(
+    {
+        "GetConnectedNodes",
+        "GetEdgesFrom",
+        "GetEdgesTo",
+        "GetMailbox",
+        "GetNode",
+        "GetNodeByKey",
+        "GetNodes",
+        "GetReceiptStatus",
+        "GetSchema",
+        "GetTenant",
+        "GetTenantMembers",
+        "GetTenantQuota",
+        "GetUser",
+        "GetUserTenants",
+        "Health",
+        "ListMailboxUsers",
+        "ListSharedWithMe",
+        "ListTenants",
+        "ListUsers",
+        "QueryNodes",
+        "SearchMailbox",
+        "SearchNodes",
+        "WaitForOffset",
+        "ExportUserData",
+    }
+)
+
 _DEFAULT_TIMEOUT: float = 30.0
+
+
+def _short_method(fn: Any) -> str:
+    """Return the trailing RPC name from a bound stub multicallable.
+
+    grpc.aio binds each RPC's ``_method`` to its full path, e.g.
+    ``b"/entdb.v1.EntDBService/GetNode"``. We key the
+    DEADLINE_EXCEEDED allowlist off the trailing segment
+    (``"GetNode"``). Returns ``""`` for callables we can't introspect
+    (e.g. a test fake) so the caller treats them as non-allowlisted —
+    fail closed: an unknown method does not get DEADLINE retries.
+    """
+    method = getattr(fn, "_method", None)
+    if method is None:
+        return ""
+    if isinstance(method, (bytes, bytearray)):
+        method = method.decode()
+    return method.rsplit("/", 1)[-1]
+
+
+def _is_retryable(code: grpc.StatusCode, short_method: str) -> bool:
+    """Decide whether a failed RPC may be retried.
+
+    - UNAVAILABLE: always retryable (the request likely never
+      reached the server).
+    - DEADLINE_EXCEEDED: retryable only when the method is in the
+      read allowlist (retrying a write after a timeout could
+      duplicate a committed mutation).
+
+    Any other status code is terminal.
+    """
+    if code == grpc.StatusCode.UNAVAILABLE:
+        return True
+    if code == grpc.StatusCode.DEADLINE_EXCEEDED:
+        return short_method in _DEADLINE_RETRYABLE_METHODS
+    return False
+
+
+def _full_jitter_backoff(attempt: int, rng: random.Random | None = None) -> float:
+    """Return the backoff sleep (seconds) before ``attempt``.
+
+    Implements the "full jitter" strategy from AWS's
+    exponential-backoff guidance: a uniformly random delay in
+    ``[0, min(cap, base * 2**attempt))``. Full jitter de-correlates
+    the retry schedules of many clients recovering from the same
+    outage, avoiding a thundering herd.
+
+    ``rng`` is injectable so tests can pin the jitter and assert
+    exact sleep durations.
+    """
+    ceiling = min(_RETRY_MAX_DELAY, _RETRY_BASE_DELAY * (2**attempt))
+    r = rng if rng is not None else random
+    return r.uniform(0.0, ceiling)
 
 
 def _multicallable_rebinder(fn: Any):
@@ -491,6 +603,8 @@ class GrpcClient:
         credentials: grpc.ChannelCredentials | None = None,
         api_key: str | None = None,
         max_retries: int = 3,
+        retry_budget: float = _RETRY_WALL_CLOCK_BUDGET,
+        retry_rng: random.Random | None = None,
         registry: Any = None,
         node_resolver: Any | None = None,
     ) -> None:
@@ -503,6 +617,15 @@ class GrpcClient:
             credentials: Optional TLS credentials
             api_key: Optional API key for authentication
             max_retries: Maximum number of retries for transient failures
+            retry_budget: Total wall-clock seconds the SDK will spend
+                retrying a single call, backoff sleeps included. Once
+                the elapsed time since the first attempt would exceed
+                this, the last error is raised even if retry attempts
+                remain. A non-positive value restores the 30s default.
+            retry_rng: Optional :class:`random.Random` used as the
+                jitter source for the backoff. Injected by tests so
+                sleep durations are reproducible; production leaves it
+                ``None`` (module-global RNG).
             registry: Optional schema registry used to translate the
                 id-keyed wire payload back to user-facing field names.
             node_resolver: Optional :class:`NodeResolver` used to map
@@ -517,6 +640,8 @@ class GrpcClient:
         self._credentials = credentials
         self._api_key = api_key
         self._max_retries = max_retries
+        self._retry_budget = retry_budget if retry_budget > 0 else _RETRY_WALL_CLOCK_BUDGET
+        self._retry_rng = retry_rng
         self._registry = registry
         self._channel: grpc_aio.Channel | None = None
         self._stub: EntDBServiceStub | None = None
@@ -650,6 +775,11 @@ class GrpcClient:
                 rebind = _multicallable_rebinder(fn)
 
         retries = max_retries if max_retries is not None else self._max_retries
+        # Method name keys the DEADLINE_EXCEEDED allowlist. Resolved
+        # from the *original* bound multicallable so a redirect
+        # rebind (same RPC, different channel) keeps the same name.
+        short_method = _short_method(fn)
+        retry_start = time.monotonic()
         last_error: grpc.RpcError | None = None
         for attempt in range(retries + 1):
             try:
@@ -695,10 +825,28 @@ class GrpcClient:
                     and fn_channel is not primary_channel
                 ):
                     await self._redirect_cache.evict(tenant_id)
-                if e.code() not in _RETRYABLE_STATUS_CODES or attempt == retries:
+                # Terminal status, exhausted attempts, or a
+                # DEADLINE_EXCEEDED on a non-allowlisted (mutating)
+                # method: never retry — re-issuing a write after a
+                # timeout could duplicate a committed mutation.
+                if attempt == retries or not _is_retryable(e.code(), short_method):
                     raise
                 last_error = e
-                await asyncio.sleep(0.1 * (2**attempt))
+
+                # Full-jitter exponential backoff: de-correlates the
+                # retry schedules of many clients recovering from the
+                # same outage (no thundering herd).
+                sleep = _full_jitter_backoff(attempt, self._retry_rng)
+
+                # Wall-clock budget: if the next sleep would push
+                # total elapsed time past the budget, give up now and
+                # raise the last error rather than blocking the caller
+                # well past their own deadline on a slow endpoint.
+                elapsed = time.monotonic() - retry_start
+                if elapsed + sleep > self._retry_budget:
+                    raise
+
+                await asyncio.sleep(sleep)
         raise last_error  # type: ignore[misc]
 
     async def execute_atomic(

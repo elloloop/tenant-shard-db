@@ -705,6 +705,7 @@ class DbClient:
         api_key: str | None = None,
         credentials: Any | None = None,
         max_retries: int = 3,
+        retry_budget: float = 30.0,
         registry: SchemaRegistry | None = None,
         schema_module: Any | None = None,
         schema_fingerprint: str | None = None,
@@ -720,6 +721,11 @@ class DbClient:
             credentials: Optional gRPC channel credentials. When set,
                 `secure` should also be true.
             max_retries: Maximum number of retries for transient gRPC failures
+            retry_budget: Total wall-clock seconds spent retrying a single
+                failed RPC, backoff sleeps included. Bounds tail latency
+                under an outage: once elapsed time would exceed this, the
+                last error is raised even if retry attempts remain. A
+                non-positive value restores the 30s default.
             registry: Optional schema registry
             schema_module: Optional generated schema module (e.g. the module
                 produced by ``entdb codegen``). If provided and it exposes a
@@ -760,6 +766,7 @@ class DbClient:
             credentials=credentials,
             api_key=api_key,
             max_retries=max_retries,
+            retry_budget=retry_budget,
             registry=self.registry,
             node_resolver=node_resolver,
         )

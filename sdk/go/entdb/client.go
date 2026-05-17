@@ -274,8 +274,20 @@ func (t *grpcTransport) Connect(_ context.Context) error {
 		}
 		opts = append(opts, grpc.WithTransportCredentials(creds))
 	}
+	// Interceptor chain, outermost first. The retry interceptor
+	// wraps the redirect interceptor so every retry attempt still
+	// follows tenant redirects (and a redirect-follow that fails
+	// transiently is itself retried). grpc.WithChainUnaryInterceptor
+	// invokes interceptors in slice order — index 0 is outermost.
+	var chain []grpc.UnaryClientInterceptor
+	if t.config.maxRetries > 0 {
+		chain = append(chain, retryInterceptor(t.config.maxRetries, t.config.retryBudget, t.config.retryJitter))
+	}
 	if interceptor := redirectInterceptor(t.config.nodeResolver, t.redirectCache); interceptor != nil {
-		opts = append(opts, grpc.WithUnaryInterceptor(interceptor))
+		chain = append(chain, interceptor)
+	}
+	if len(chain) > 0 {
+		opts = append(opts, grpc.WithChainUnaryInterceptor(chain...))
 	}
 
 	conn, err := grpc.NewClient(t.address, opts...)
