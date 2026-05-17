@@ -3,19 +3,17 @@
 // interacts with the SDK via the typed surface in the parent
 // package (entdb.DbClient / entdb.Scope / entdb.Plan).
 //
-// Regenerate with:
+// Regenerate from the repository root with:
 //
-//	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-//	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
-//	go generate ./...
+//	buf generate --template sdk/go/entdb/buf.gen.yaml
 //
-// The go:generate directive below runs protoc from this directory
-// against the canonical .proto in dbaas/entdb_server/api/proto so
-// that the Go SDK is wire-compatible with the server and the
-// Python SDK. The ``Mentdb.proto=...;pb`` flag overrides the proto's
-// ``go_package`` placeholder so the stubs land in this package
-// with the right import path.
+// The buf template uses managed mode to override the proto's
+// ``go_package`` placeholder so the stubs land in this package with
+// the SDK module's import path. The Go SDK keeps its OWN copy of these
+// stubs (distinct from server/go/internal/pb/) so SDK consumers never
+// transitively pull server-only dependencies; the wire format is the
+// contract and both copies come from the same proto/entdb/v1/entdb.proto.
 
-//go:generate protoc -I ../../../../dbaas/entdb_server/api/proto --go_out=. --go_opt=paths=source_relative "--go_opt=Mentdb.proto=github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb;pb" --go-grpc_out=. --go-grpc_opt=paths=source_relative "--go-grpc_opt=Mentdb.proto=github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb;pb" ../../../../dbaas/entdb_server/api/proto/entdb.proto
+//go:generate sh -c "cd ../../../../ && buf generate --template sdk/go/entdb/buf.gen.yaml"
 
 package pb

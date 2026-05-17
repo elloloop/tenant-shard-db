@@ -388,6 +388,8 @@ func (a *Applier) dispatch(ctx context.Context, tx *BatchTxn, ev *Event, op map[
 		return a.applyUpdateNode(ctx, tx, ev, op, aliases, opIndex)
 	case OpDeleteNode:
 		return a.applyDeleteNode(ctx, tx, ev, op, aliases, res)
+	case OpDeleteWhere:
+		return a.applyDeleteWhere(ctx, tx, ev, op, res)
 	case OpCreateEdge:
 		return a.applyCreateEdge(ctx, tx, ev, op, aliases, res)
 	case OpDeleteEdge:

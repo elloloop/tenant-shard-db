@@ -112,6 +112,54 @@ class TestPlanBuilder:
         assert op["delete_node"]["type_id"] == 9001
         assert op["delete_node"]["id"] == "node_123"
 
+    def test_plan_delete_where(self):
+        """Plan.delete_where builds a single predicate-sweeper op (#504)."""
+        from entdb_sdk import Filter, FilterOp
+
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        plan.delete_where(
+            ts.Product,
+            [Filter("price_cents", FilterOp.LT, 100)],
+            limit=500,
+        )
+
+        assert len(plan._operations) == 1
+        op = plan._operations[0]
+        assert "delete_where" in op
+        dw = op["delete_where"]
+        assert dw["type_id"] == 9001
+        assert dw["limit"] == 500
+        # Lowered to the MongoDB-style predicate dict the query path
+        # also emits (issue #501 shared encoder): a non-EQ op nests
+        # under its "$op" key. Field NAME is kept; the server resolves
+        # it to a stable field id.
+        assert dw["where"] == {"price_cents": {"$lt": 100}}
+
+    def test_plan_delete_where_rejects_empty_predicate(self):
+        """An unconditional bulk delete must be rejected client-side."""
+        from entdb_sdk import Filter  # noqa: F401
+
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        with pytest.raises(ValueError, match="at least one filter"):
+            plan.delete_where(ts.Product, [])
+
+    def test_plan_delete_where_requires_class_witness(self):
+        """delete_where needs the proto *class*, not an instance."""
+        from entdb_sdk import Filter, FilterOp
+
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        with pytest.raises(TypeError, match="proto message class"):
+            plan.delete_where(
+                ts.Product(sku="x", name="y"),
+                [Filter("price_cents", FilterOp.LT, 1)],
+            )
+
     def test_plan_generates_idempotency_key(self):
         """Plan generates an idempotency key if not provided."""
         client = _mock_client()

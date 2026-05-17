@@ -12,6 +12,7 @@ from .entdb_pb2 import (
     CreateNodeOp,
     DeleteEdgeOp,
     DeleteNodeOp,
+    DeleteWhereOp,
     Edge,
     # Execute
     ExecuteAtomicRequest,
@@ -142,6 +143,7 @@ __all__ = [
     "UpdateNodePrecondition",
     "PreconditionFailure",
     "DeleteNodeOp",
+    "DeleteWhereOp",
     "CreateEdgeOp",
     "DeleteEdgeOp",
     "NodeRef",

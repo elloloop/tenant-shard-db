@@ -65,11 +65,12 @@ const (
 	// keys at apply/applier.py:929-1248. Kept local rather than imported
 	// from apply to avoid pulling that package's heavyweight deps into
 	// the api binary just for two strings.
-	opCreateNode = "create_node"
-	opUpdateNode = "update_node"
-	opDeleteNode = "delete_node"
-	opCreateEdge = "create_edge"
-	opDeleteEdge = "delete_edge"
+	opCreateNode  = "create_node"
+	opUpdateNode  = "update_node"
+	opDeleteNode  = "delete_node"
+	opDeleteWhere = "delete_where"
+	opCreateEdge  = "create_edge"
+	opDeleteEdge  = "delete_edge"
 )
 
 // ExecuteAtomic implements entdb.v1.EntDBService/ExecuteAtomic.
@@ -152,7 +153,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	hasDelete := false
 	for _, op := range ops {
 		switch op["op"].(string) {
-		case opDeleteNode, opDeleteEdge:
+		case opDeleteNode, opDeleteEdge, opDeleteWhere:
 			hasDelete = true
 		}
 	}
@@ -488,6 +489,50 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				"op":      opDeleteNode,
 				"type_id": int(del.GetTypeId()),
 				"id":      del.GetId(),
+			})
+
+		case *pb.Operation_DeleteWhere:
+			dw := v.DeleteWhere
+			if dw.GetTypeId() == 0 {
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"delete_where: type_id is required")
+			}
+			if len(dw.GetWhere()) == 0 {
+				// An unconditional bulk delete is too dangerous to
+				// express implicitly (issue #504). Callers that truly
+				// want to clear a type pass an explicit predicate.
+				return nil, errs.Errorf(codes.InvalidArgument,
+					"delete_where: at least one `where` predicate is required")
+			}
+			// Resolve the developer-facing FieldFilter names to stable
+			// field_ids using the EXACT same path QueryNodes uses
+			// (issue #501) so the predicate is schema-less on the WAL.
+			typeName := ""
+			if s.registry != nil {
+				nt := s.registry.NodeTypeByID(dw.GetTypeId())
+				if nt == nil {
+					return nil, errs.Errorf(codes.InvalidArgument,
+						"delete_where: unknown type_id %d", dw.GetTypeId())
+				}
+				typeName = nt.Name
+			}
+			storeFilters, err := s.fieldFiltersToStoreFilters(typeName, dw.GetWhere())
+			if err != nil {
+				return nil, err
+			}
+			where := make([]any, 0, len(storeFilters))
+			for _, f := range storeFilters {
+				where = append(where, map[string]any{
+					"field_id": int(f.FieldID),
+					"op":       storeFilterOpToToken(f.Op),
+					"value":    f.Value,
+				})
+			}
+			out = append(out, map[string]any{
+				"op":      opDeleteWhere,
+				"type_id": int(dw.GetTypeId()),
+				"where":   where,
+				"limit":   int(dw.GetLimit()),
 			})
 
 		case *pb.Operation_CreateEdge:

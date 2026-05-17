@@ -5,6 +5,7 @@ import (
 	"context"
 	"testing"
 
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
 	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
 	"google.golang.org/protobuf/proto"
 )
@@ -257,6 +258,58 @@ func TestPlan_Delete(t *testing.T) {
 	}
 	if ops[0].TypeID != 201 {
 		t.Errorf("TypeID = %d, want 201", ops[0].TypeID)
+	}
+}
+
+func TestPlan_DeleteWhere(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	DeleteWhere[*testpb.Product](plan, []Filter{
+		{Field: "price_cents", Op: FilterLt, Value: 100},
+	}, 500)
+
+	ops := plan.Operations()
+	if len(ops) != 1 {
+		t.Fatalf("expected 1 operation, got %d", len(ops))
+	}
+	if ops[0].Type != OpDeleteWhere {
+		t.Errorf("expected OpDeleteWhere, got %v", ops[0].Type)
+	}
+	if ops[0].TypeID != 201 {
+		t.Errorf("TypeID = %d, want 201", ops[0].TypeID)
+	}
+	if len(ops[0].Where) != 1 || ops[0].Where[0].Field != "price_cents" {
+		t.Errorf("Where = %#v, want one price_cents filter", ops[0].Where)
+	}
+	if ops[0].Limit != 500 {
+		t.Errorf("Limit = %d, want 500", ops[0].Limit)
+	}
+
+	// Wire conversion: typed Filter -> *pb.DeleteWhereOp with the
+	// field NAME preserved (server resolves name->id, issue #501).
+	protoOps, err := operationsToProto(ops)
+	if err != nil {
+		t.Fatalf("operationsToProto: %v", err)
+	}
+	dw := protoOps[0].GetDeleteWhere()
+	if dw == nil {
+		t.Fatalf("expected DeleteWhere proto op, got %#v", protoOps[0].GetOp())
+	}
+	if dw.GetTypeId() != 201 {
+		t.Errorf("proto TypeId = %d, want 201", dw.GetTypeId())
+	}
+	if dw.GetLimit() != 500 {
+		t.Errorf("proto Limit = %d, want 500", dw.GetLimit())
+	}
+	if len(dw.GetWhere()) != 1 {
+		t.Fatalf("proto Where len = %d, want 1", len(dw.GetWhere()))
+	}
+	if dw.GetWhere()[0].GetField() != "price_cents" {
+		t.Errorf("proto filter field = %q, want price_cents", dw.GetWhere()[0].GetField())
+	}
+	if dw.GetWhere()[0].GetOp() != pb.FilterOp_LT {
+		t.Errorf("proto filter op = %v, want LT", dw.GetWhere()[0].GetOp())
 	}
 }
 

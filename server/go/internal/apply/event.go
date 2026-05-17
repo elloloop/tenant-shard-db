@@ -48,6 +48,14 @@ const (
 	OpCreateEdge OpType = "create_edge"
 	OpDeleteEdge OpType = "delete_edge"
 
+	// OpDeleteWhere is the single-RPC predicate-based sweeper
+	// (GitHub issue #504): delete every node of a type whose payload
+	// matches an AND-ed FieldFilter predicate, capped best-effort by
+	// a limit. Idempotency is the standard whole-batch applied_events
+	// memoization (issue #500); the predicate primitives are the
+	// issue-#501 range operators reused via store.QueryFilter.
+	OpDeleteWhere OpType = "delete_where"
+
 	// admin ops the Python applier already implements (broadened in Go).
 	OpAdminTransferContent OpType = "admin_transfer_content"
 	OpAdminRevokeAccess    OpType = "admin_revoke_access"

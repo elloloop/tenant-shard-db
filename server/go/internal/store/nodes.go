@@ -261,6 +261,28 @@ type QueryFilter struct {
 // values are kept in lock-step by the store-layer clamp test.
 const storeMaxQueryLimit = 1000
 
+// CompileQueryFilters lowers a [QueryFilter] slice into AND-able SQL
+// predicate fragments and their bound parameters. Each filter compiles
+// to “json_extract(payload_json, '$."<field_id>"') <op> ?“ — the same
+// shape [CanonicalStore.QueryNodes] builds inline, factored out so the
+// applier's predicate-based sweeper (OpDeleteWhere, GitHub issue #504)
+// reuses the identical, injection-safe construction. The returned
+// clauses and params are positionally aligned with `filters`.
+func CompileQueryFilters(filters []QueryFilter) (clauses []string, params []any) {
+	if len(filters) == 0 {
+		return nil, nil
+	}
+	clauses = make([]string, 0, len(filters))
+	params = make([]any, 0, len(filters))
+	for _, f := range filters {
+		clauses = append(clauses, fmt.Sprintf(
+			`json_extract(payload_json, '$."%d"') %s ?`, f.FieldID, f.Op.sqlOp(),
+		))
+		params = append(params, f.Value)
+	}
+	return clauses, params
+}
+
 // QueryNodesArgs is the input to QueryNodes. Mirrors
 // canonical_store.py:_sync_query_nodes (2394) signature minus the
 // MongoDB filter (deferred to W1.10 query_filter port).
@@ -323,11 +345,9 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 		))
 		params = append(params, val)
 	}
-	for _, f := range args.Filters {
-		whereParts = append(whereParts, fmt.Sprintf(
-			`json_extract(payload_json, '$."%d"') %s ?`, f.FieldID, f.Op.sqlOp(),
-		))
-		params = append(params, f.Value)
+	if fClauses, fParams := CompileQueryFilters(args.Filters); len(fClauses) > 0 {
+		whereParts = append(whereParts, fClauses...)
+		params = append(params, fParams...)
 	}
 	params = append(params, limit, args.Offset)
 

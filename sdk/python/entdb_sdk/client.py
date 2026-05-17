@@ -555,6 +555,82 @@ class Plan:
         )
         return self
 
+    def delete_where(
+        self,
+        node_type: Any,
+        where: list[Filter],
+        *,
+        limit: int = 0,
+    ) -> Plan:
+        """Delete every node of a type matching a predicate, in one op.
+
+        This is the single-RPC predicate-based sweeper (GitHub issue
+        #504). It collapses the TTL-sweeper "query for matching ids,
+        then delete them" loop into a single round trip: instead of a
+        :meth:`DbClient.query` followed by N :meth:`delete` calls, the
+        server evaluates ``where`` and deletes the matches atomically
+        as one ``ExecuteAtomic`` op.
+
+        Like :meth:`delete`, this requires a type witness — pass the
+        proto message *class* (not an instance) so the SDK resolves
+        ``type_id`` without guessing. The :class:`~entdb_sdk.Filter`
+        field names are resolved to payload field ids server-side,
+        exactly like :meth:`DbClient.query` with ``where=`` (issue
+        #501), so the same six comparison operators are available and
+        AND-ed together.
+
+        Args:
+            node_type: The proto message *class* (e.g.
+                ``schema_pb2.WebAuthnChallenge``) whose descriptor
+                carries the ``(entdb.node)`` option.
+            where: A non-empty list of :class:`~entdb_sdk.Filter`
+                predicates, AND-ed together. An empty list is rejected
+                — an unconditional bulk delete is too dangerous to
+                express implicitly; delete by id instead.
+            limit: Best-effort cap on the number of nodes deleted by
+                this op (Postgres ``DELETE … LIMIT`` semantics). ``0``
+                (the default) selects the server default; the server
+                clamps to its own hard ceiling so a runaway predicate
+                cannot pin the single applier goroutine for a tenant.
+                To drain a large backlog, sweep in a loop until a
+                sweep deletes nothing.
+
+        Returns:
+            Self for chaining.
+
+        Raises:
+            TypeError: If ``node_type`` is not a proto message class.
+            ValueError: If ``where`` is empty.
+        """
+        self._ensure_not_committed()
+
+        if not _is_proto_message_class(node_type):
+            raise TypeError(
+                "Plan.delete_where requires a proto message class as the type "
+                f"witness — got {type(node_type).__name__}. Pass the class "
+                "itself, e.g. schema_pb2.WebAuthnChallenge."
+            )
+        if not where:
+            raise ValueError(
+                "Plan.delete_where requires at least one filter — an "
+                "unconditional bulk delete is rejected. Use delete(node_type, "
+                "node_id) for a single node, or pass an explicit predicate."
+            )
+
+        from .filter import filters_to_filter_dict
+
+        type_id = _node_type_id_from_descriptor(node_type.DESCRIPTOR)
+        self._operations.append(
+            {
+                "delete_where": {
+                    "type_id": type_id,
+                    "where": filters_to_filter_dict(where),
+                    "limit": int(limit),
+                }
+            }
+        )
+        return self
+
     def edge_create(
         self,
         edge_type: Any,
