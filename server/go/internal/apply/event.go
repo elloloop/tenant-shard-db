@@ -18,10 +18,14 @@
 //   - global admin ops added so control-plane globalstore writes can be
 //     replayed from the WAL.
 //
-// Concurrency model: a single consumer goroutine drives Run; per-tenant
-// SQLite isolation comes from the store package's per-tenant write
-// mutex. Halt-on-poison: any error in op-dispatch returns from Run with
-// a non-nil error and does not advance the WAL offset.
+// Concurrency model: one consumer drives Run; within a poll batch it
+// applies records for distinct tenants in parallel while keeping each
+// tenant's records serial in offset order and committing offsets
+// strictly in batch order (#140 PERF-4, see applier.go processBatch).
+// Per-tenant SQLite isolation comes from the store package's
+// per-tenant write mutex. Halt-on-poison: any error in op-dispatch
+// halts finalisation at that record and does not advance the WAL
+// offset past it.
 package apply
 
 import "github.com/elloloop/tenant-shard-db/server/go/internal/wal"

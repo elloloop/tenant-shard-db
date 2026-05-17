@@ -353,6 +353,15 @@ func (m *InMemory) partitionFor(key string) int32 {
 	return int32(hashInt % uint32(m.numPartitions))
 }
 
+// PartitionFor exposes the partition a WAL key routes to. It is the
+// exact mapping Append uses to place records, so external callers
+// (notably the ADR-027 same-partition poison test in
+// internal/apply) can confirm two tenant ids collide on one partition
+// without reaching into unexported internals.
+func (m *InMemory) PartitionFor(key string) int32 {
+	return m.partitionFor(key)
+}
+
 func copyHeaders(in map[string][]byte) map[string][]byte {
 	if len(in) == 0 {
 		return nil

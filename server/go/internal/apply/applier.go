@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -49,11 +50,33 @@ type Options struct {
 	// pinned by docs/go-port/shared/applier.md is that production must
 	// halt.
 	HaltOnPoison *bool
+
+	// MaxApplyConcurrency caps how many distinct tenants' records the
+	// Run loop applies in parallel within a single poll batch (#140
+	// PERF-4). Records for the SAME tenant are always applied serially
+	// in offset order by a single worker, and offsets are committed in
+	// strict batch order along the contiguous fully-applied prefix, so
+	// this knob never weakens per-tenant ordering or the
+	// single-writer-per-tenant invariant (ADR-016) — it only bounds the
+	// goroutine fan-out across independent tenant SQLite files.
+	//
+	// 0 (default) -> runtime.GOMAXPROCS(0). 1 -> fully serial (the
+	// pre-#140 behaviour, kept as an escape hatch). Values >0 cap the
+	// worker pool; the cap never exceeds the number of distinct tenants
+	// in the batch.
+	MaxApplyConcurrency int
 }
 
 // Applier is the WAL consumer that materialises TransactionEvents into
-// per-tenant SQLite. Single consumer goroutine per (topic, group_id)
-// (Python parity); per-tenant pool deferred to a follow-up.
+// per-tenant SQLite. One consumer per (topic, group_id): it polls the
+// WAL serially and commits offsets serially in batch order. Within a
+// poll batch it applies records for DISTINCT tenants in parallel (#140
+// PERF-4) — see processBatch for the invariant-preservation argument.
+// This does not change the consumer-group model ADR-016 describes
+// ("one consumer per partition; events apply serially within a
+// partition"): the consumer-group offset is still committed strictly
+// in offset order along the contiguous fully-applied prefix, and
+// records for any single tenant still apply serially in offset order.
 //
 // Concurrency: Run is meant to be called once per Applier. Stop is
 // safe to call from any goroutine and is idempotent. Replay is safe to
@@ -72,6 +95,7 @@ type Applier struct {
 	nowFn        func() int64
 	fanoutHook   func(ctx context.Context, ev *Event, res *Result)
 	haltOnPoison bool
+	maxApplyConc int
 
 	// running is non-zero when the Run loop has started. Used by
 	// Stop to skip the wait-for-loop-exit path when Run never started.
@@ -112,6 +136,13 @@ func New(opts Options) (*Applier, error) {
 	if opts.HaltOnPoison != nil {
 		halt = *opts.HaltOnPoison
 	}
+	maxConc := opts.MaxApplyConcurrency
+	if maxConc <= 0 {
+		maxConc = runtime.GOMAXPROCS(0)
+	}
+	if maxConc < 1 {
+		maxConc = 1
+	}
 	return &Applier{
 		store:        opts.Store,
 		global:       opts.Global,
@@ -123,6 +154,7 @@ func New(opts Options) (*Applier, error) {
 		nowFn:        nowFn,
 		fanoutHook:   opts.FanoutHook,
 		haltOnPoison: halt,
+		maxApplyConc: maxConc,
 		stopCh:       make(chan struct{}),
 		doneCh:       make(chan struct{}),
 	}, nil
@@ -158,37 +190,183 @@ func (a *Applier) Run(ctx context.Context) error {
 			}
 			return fmt.Errorf("apply: poll batch: %w", err)
 		}
-		for i, rec := range records {
-			res := a.applyRecord(ctx, rec)
-			if res.Err != nil {
-				if a.haltOnPoison {
-					// Do NOT advance offset; the consumer group's
-					// committed position stays at the last successful
-					// record. Subsequent records (records[i+1:]) are
-					// dropped on the floor — they'll be re-delivered
-					// after restart.
-					_ = i
-					return res.Err
-				}
-				// skip-and-continue: still commit the offset (mirrors
-				// Python halt_on_error=False) and move on.
-			}
-			if err := a.consumer.Commit(ctx, a.groupID, rec); err != nil {
-				return fmt.Errorf("apply: commit offset: %w", err)
-			}
-			if res.Status == StatusApplied || res.Status == StatusSkipped || res.Status == StatusFailedPrecondition {
-				if err := a.store.UpdateAppliedOffset(ctx, res.TenantID, rec.Position.Topic, rec.Position.Partition, rec.Position.Offset); err != nil {
-					// Persisting the offset is best-effort; the in-
-					// memory tracker has already been updated by the
-					// in-txn UpdateAppliedOffsetTx call. Surface the
-					// error so the supervisor can act.
-					return fmt.Errorf("apply: persist offset: %w", err)
-				}
-			}
-			// Best-effort post-commit fan-out + shared_index.
-			a.fanout(ctx, decodeOrZero(rec), &res)
+		if len(records) == 0 {
+			continue
+		}
+		if err := a.processBatch(ctx, records); err != nil {
+			return err
 		}
 	}
+}
+
+// processBatch applies one poll batch with cross-tenant parallelism
+// (#140 PERF-4) while preserving every consistency invariant the
+// single-threaded loop guaranteed:
+//
+//   - Per-tenant ordering: records are partitioned by tenant_id and
+//     each tenant's records are applied SERIALLY in batch (== offset)
+//     order by exactly one worker goroutine. Two records for the same
+//     tenant never run concurrently.
+//   - Single-writer-per-tenant (ADR-016): distinct tenants own
+//     independent SQLite files; workers only ever touch their own
+//     tenant. The store's per-tenant write mutex remains the backstop
+//     but is never contended by the applier itself.
+//   - Monotonic, gap-free offset commit: results are FINALISED
+//     (consumer-group commit + persisted per-tenant offset + fan-out)
+//     strictly in original batch order, stopping at the first
+//     halt-on-poison failure. Because PollBatch returns records in
+//     offset order within each partition, finalising in batch order
+//     advances each partition's committed offset only along its
+//     contiguous fully-applied prefix — a later tenant finishing first
+//     never advances an offset past an earlier un-applied record.
+//
+// On a halt-on-poison failure, workers for other tenants may already
+// have applied later records. Their SQLite writes are durable but
+// their offsets are NOT committed, so a restart re-delivers them and
+// the in-txn idempotency probe SKIPs them — identical to the
+// pre-#140 "dropped on the floor, re-delivered after restart"
+// contract, just generalised across tenants.
+func (a *Applier) processBatch(ctx context.Context, records []Record) error {
+	n := len(records)
+
+	// Decode the tenant routing key for every record up front, in
+	// order. Decode failures are deferred to applyRecord (which maps
+	// them to ErrPoisonEvent) so the halt semantics are unchanged; we
+	// route those records to a stable synthetic key so they still
+	// apply serially relative to each other.
+	results := make([]Result, n)
+	type recRef struct {
+		idx int
+		rec Record
+	}
+	groups := make(map[string][]recRef)
+	order := make([]string, 0, 8) // distinct tenants, first-seen order
+	for i, rec := range records {
+		key := routeKey(rec)
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], recRef{idx: i, rec: rec})
+	}
+
+	// applyChain applies one tenant's records serially in batch (offset)
+	// order. Under halt-on-poison it STOPS at the first failing record
+	// in this tenant's own stream — preserving the exact pre-#140
+	// per-tenant semantics ("subsequent records dropped on the floor;
+	// re-delivered after restart"). Records left unapplied keep their
+	// zero-value Result; finalizeBatch halts at the failing record in
+	// batch order before it could ever inspect them. Cross-tenant
+	// speculative apply past a poison in a DIFFERENT tenant can still
+	// happen (different worker, no shared stop) and is safe by the
+	// idempotent-replay invariant (ADR-016).
+	applyChain := func(refs []recRef) {
+		for _, r := range refs {
+			res := a.applyRecord(ctx, r.rec)
+			results[r.idx] = res
+			if res.Err != nil && a.haltOnPoison {
+				return
+			}
+		}
+	}
+
+	// Fast path: a single tenant in the batch -> apply serially in this
+	// goroutine, behaving exactly like the old serial loop.
+	if len(order) <= 1 {
+		for _, key := range order {
+			applyChain(groups[key])
+		}
+		return a.finalizeBatch(ctx, records, results)
+	}
+
+	// Bound the worker pool by the smaller of the configured cap and
+	// the number of distinct tenants.
+	workers := a.maxApplyConc
+	if workers > len(order) {
+		workers = len(order)
+	}
+
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+	for _, key := range order {
+		key := key
+		sem <- struct{}{}
+		wg.Add(1)
+		go func(refs []recRef) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			applyChain(refs)
+		}(groups[key])
+	}
+	wg.Wait()
+
+	return a.finalizeBatch(ctx, records, results)
+}
+
+// finalizeBatch commits offsets + runs fan-out for an already-applied
+// batch, strictly in batch order, stopping at the first halt-on-poison
+// failure (the contiguous-prefix commit rule). Records past a halted
+// failure are intentionally left uncommitted for redelivery.
+func (a *Applier) finalizeBatch(ctx context.Context, records []Record, results []Result) error {
+	for i := range records {
+		rec := records[i]
+		res := results[i]
+		if res.Err != nil {
+			if a.haltOnPoison {
+				// Do NOT advance the offset. The consumer group's
+				// committed position stays at the last successful
+				// record; records[i:] are left uncommitted and will
+				// be re-delivered after restart.
+				return res.Err
+			}
+			// skip-and-continue: still commit the offset (mirrors
+			// Python halt_on_error=False) and move on.
+		}
+		// ADR-027 invariant 3 (load-bearing): the WAL/consumer-group
+		// offset commit and the persisted per-tenant offset advance
+		// below are the ONLY places these offsets move forward, and
+		// they run here in the single serial finalizeBatch loop, in
+		// strict batch order, returning at the first poisoned record.
+		// That ordered early-return is the entire gap-free
+		// contiguous-prefix guarantee. Calling consumer.Commit (or
+		// store.UpdateAppliedOffset for the consumer-group position)
+		// from a parallel apply worker, a fan-out hook, or any path
+		// other than this serial loop lets a faster later-tenant
+		// worker advance the offset past an earlier un-applied record
+		// and BREAKS gap-freeness. Do not move offset commits out of
+		// this loop.
+		if err := a.consumer.Commit(ctx, a.groupID, rec); err != nil {
+			return fmt.Errorf("apply: commit offset: %w", err)
+		}
+		if res.Status == StatusApplied || res.Status == StatusSkipped || res.Status == StatusFailedPrecondition {
+			if err := a.store.UpdateAppliedOffset(ctx, res.TenantID, rec.Position.Topic, rec.Position.Partition, rec.Position.Offset); err != nil {
+				// Persisting the offset is best-effort; the in-memory
+				// tracker has already been updated by the in-txn
+				// UpdateAppliedOffsetTx call. Surface the error so the
+				// supervisor can act.
+				return fmt.Errorf("apply: persist offset: %w", err)
+			}
+		}
+		// Best-effort post-commit fan-out + shared_index.
+		a.fanout(ctx, decodeOrZero(rec), &res)
+	}
+	return nil
+}
+
+// routeKey returns the partition key a record's apply work is grouped
+// under. It is the event's tenant_id (global events route under the
+// synthetic global tenant). A decode failure cannot expose a tenant,
+// so such records share one stable synthetic bucket — they still apply
+// serially relative to each other and halt-on-poison still fires when
+// finalizeBatch reaches them in order.
+func routeKey(rec Record) string {
+	ev, err := wal.DecodeEvent(rec.Value)
+	if err != nil {
+		return "\x00poison"
+	}
+	if ev.TenantID == "" {
+		return "\x00poison"
+	}
+	return string(ev.Scope) + "\x00" + ev.TenantID
 }
 
 // Stop signals Run to return and waits for it to exit. Safe to call
