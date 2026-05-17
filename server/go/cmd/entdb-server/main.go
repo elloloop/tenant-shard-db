@@ -50,6 +50,7 @@ func main() {
 	oauthIssuer := flag.String("oauth-issuer", "", "OIDC issuer URL; expected JWT 'iss' and the discovery base when --jwks-url is unset")
 	oauthJWKSURL := flag.String("jwks-url", "", "explicit JWKS endpoint; when set, OIDC discovery is skipped")
 	oauthAudience := flag.String("oauth-audience", "", "expected JWT 'aud' (your OAuth client/app id); empty disables the audience check (dev only)")
+	apiKeyAuth := flag.Bool("api-key-auth", false, "enable persistent argon2id-hashed API-key authentication backed by global.db (x-api-key header)")
 	kmsProvider := flag.String("kms-provider", "", "encryption master-key provider: file | aws | gcp | azure | vault")
 	kmsKeyID := flag.String("kms-key-id", "", "master-key provider identifier; file provider accepts path or env:NAME")
 	encryptionRequired := flag.Bool("encryption-required", false, "require encrypted global.db and tenant SQLite files")
@@ -348,10 +349,10 @@ func main() {
 	// network-backed JWKSValidator (real JWKS fetch + caching + key
 	// rotation, OIDC discovery, provider presets) and install the auth
 	// interceptor. The interceptor reads gRPC metadata, so it is wired
-	// independently of TLS. API-key / session managers stay nil here
-	// (in-memory dev managers and their flags are tracked under
-	// sibling issues #87/#88); a nil backend simply means that
-	// credential type is not accepted.
+	// independently of TLS. The session manager stays nil here
+	// (in-memory dev manager and its flag are tracked under sibling
+	// issue #88); a nil backend simply means that credential type is
+	// not accepted.
 	oc := oauthConfig{
 		provider: *oauthProvider,
 		issuer:   *oauthIssuer,
@@ -371,6 +372,23 @@ func main() {
 		log.Printf("entdb-server: OAuth/OIDC authentication enabled (%s)", oauthSummary(oc, validator))
 	} else {
 		log.Printf("entdb-server: WARNING: OAuth/OIDC authentication disabled; no -oauth-* flags set (local/dev only — production MUST set --oauth-issuer)")
+	}
+
+	// Persistent API-key auth. When enabled, every non-Health RPC must
+	// present a valid x-api-key whose argon2id hash is stored in
+	// global.db. Rotation is supported out of band (issue a new key,
+	// flip clients, revoke the old key_id) -- both keys validate while
+	// both are active. Installed AFTER the mTLS peer interceptor so a
+	// future authorization layer sees the API-key Identity on the
+	// context.
+	if *apiKeyAuth {
+		keyMgr := auth.NewPersistentAPIKeyManager(globalStoreAPIKeys{global})
+		apiKeyInterceptor := auth.NewInterceptor(nil, keyMgr, nil)
+		grpcServerOpts = append(grpcServerOpts,
+			grpc.ChainUnaryInterceptor(apiKeyInterceptor.Unary()),
+			grpc.ChainStreamInterceptor(apiKeyInterceptor.Stream()),
+		)
+		log.Printf("entdb-server: persistent API-key auth enabled (argon2id, global.db-backed, rotatable)")
 	}
 
 	srv := grpc.NewServer(grpcServerOpts...)
@@ -506,6 +524,48 @@ func splitBrokers(s string) []string {
 		}
 	}
 	return out
+}
+
+// globalStoreAPIKeys adapts *globalstore.GlobalStore to
+// auth.APIKeyStore. The adapter lives here -- the only place that wires
+// both packages -- so neither auth nor globalstore takes a dependency on
+// the other (the cross-package edge is owned by main, like every other
+// backend wiring in this file).
+type globalStoreAPIKeys struct {
+	g *globalstore.GlobalStore
+}
+
+func (a globalStoreAPIKeys) PutAPIKey(ctx context.Context, k auth.StoredAPIKey) error {
+	return a.g.PutAPIKey(ctx, globalstore.APIKeyRecord{
+		KeyID:     k.KeyID,
+		Name:      k.Name,
+		Hash:      k.Hash,
+		Scopes:    k.Scopes,
+		Status:    globalstore.APIKeyStatusActive,
+		ExpiresAt: k.ExpiresAt,
+	})
+}
+
+func (a globalStoreAPIKeys) RevokeAPIKey(ctx context.Context, keyID string) (bool, error) {
+	return a.g.RevokeAPIKey(ctx, keyID)
+}
+
+func (a globalStoreAPIKeys) ListActiveAPIKeys(ctx context.Context, now int64) ([]auth.StoredAPIKey, error) {
+	recs, err := a.g.ListActiveAPIKeys(ctx, now)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]auth.StoredAPIKey, 0, len(recs))
+	for _, r := range recs {
+		out = append(out, auth.StoredAPIKey{
+			KeyID:     r.KeyID,
+			Name:      r.Name,
+			Hash:      r.Hash,
+			Scopes:    r.Scopes,
+			ExpiresAt: r.ExpiresAt,
+		})
+	}
+	return out, nil
 }
 
 func effectiveKMSProvider(provider string) string {

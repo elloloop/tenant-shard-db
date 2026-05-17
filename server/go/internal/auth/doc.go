@@ -20,15 +20,28 @@
 //	jwks.go Production JWKSValidator: network JWKS fetch +
 //	                 caching + key rotation, OIDC discovery,
 //	                 Google/Microsoft/Okta presets (RS256 / ES256).
-//	apikey.go In-memory APIKeyManager.
+//	apikey.go argon2id hashing + in-memory APIKeyManager.
+//	apikey_persistent.go PersistentAPIKeyManager (durable, rotatable).
 //	session.go In-memory SessionManager.
 //	errors.go UNAUTHENTICATED / PERMISSION_DENIED wrappers.
 //
-// Production OAuth/OIDC ships here (JWKSValidator), wired into the
-// server via the -oauth-issuer / -jwks-url / -oauth-audience /
-// -oauth-provider flags on cmd/entdb-server. Redis-backed sessions, the
-// production API-key store, and the quota interceptor are tracked
-// separately (#87/#88); this package ships the OAuth validators plus the
-// trusted-actor plumbing, with in-memory API-key/session managers for
-// tests and dev.
+// Production OAuth/OIDC ships here (JWKSValidator: network JWKS fetch +
+// caching + key rotation, OIDC discovery, Google/Microsoft/Okta
+// presets), wired into the server via the -oauth-issuer / -jwks-url /
+// -oauth-audience / -oauth-provider flags on cmd/entdb-server.
+//
+// API keys are hashed with argon2id (golang.org/x/crypto/argon2) in a
+// PHC-format string with a per-key random salt; verification is a
+// constant-time compare of the derived key. The PersistentAPIKeyManager
+// stores those hashes in global.db (via the APIKeyStore interface, so
+// auth never imports globalstore) and supports rotation: multiple
+// simultaneously-active keys for a documented migration window (issue
+// the new key, flip clients over, then revoke the old key_id). It is
+// wired into cmd/entdb-server behind the --api-key-auth flag.
+//
+// Redis-backed sessions and the quota interceptor are tracked
+// separately (#88); this package ships the production OAuth validators
+// and the argon2id API-key managers (in-memory + persistent), plus the
+// trusted-actor plumbing, with an in-memory session manager for tests
+// and dev.
 package auth
