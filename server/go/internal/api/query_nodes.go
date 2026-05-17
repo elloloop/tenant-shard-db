@@ -138,7 +138,7 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	})
 	if err != nil {
 		resultStatus = "error"
-		return nil, errs.Errorf(codes.Internal, "store: query nodes: %v", err)
+		return nil, errs.Internal(ctx, "store: query nodes", err)
 	}
 
 	// ACL post-filter (cross-tenant readers). Same-tenant member access
@@ -360,7 +360,7 @@ func (s *Server) applyQueryACLFilter(ctx context.Context, tenantID string, a aut
 	}
 	visible, err := filter.FilterReadable(ctx, tenantID, aclActor, ids)
 	if err != nil {
-		return nil, errs.Errorf(codes.Internal, "QueryNodes: acl filter: %v", err)
+		return nil, errs.Internal(ctx, "QueryNodes: acl filter", err)
 	}
 	visibleSet := make(map[string]struct{}, len(visible))
 	for _, id := range visible {

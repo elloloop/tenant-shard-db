@@ -126,8 +126,7 @@ func (s *Server) RevokeAllUserAccess(
 			r, err := s.getTenantMemberRole(ctx, req.GetTenantId(), trusted.ID())
 			if err != nil {
 				status = "error"
-				return nil, errs.Errorf(codes.Internal,
-					"RevokeAllUserAccess: lookup caller role: %v", err)
+				return nil, errs.Internal(ctx, "RevokeAllUserAccess: lookup caller role", err)
 			}
 			role = r
 		}
@@ -157,8 +156,7 @@ func (s *Server) RevokeAllUserAccess(
 	)
 	if err != nil {
 		status = "error"
-		return nil, errs.Errorf(codes.Internal,
-			"RevokeAllUserAccess: count rows: %v", err)
+		return nil, errs.Internal(ctx, "RevokeAllUserAccess: count rows", err)
 	}
 	revokedShared := s.countSharedIndexRows(ctx, req.GetUserId(), req.GetTenantId())
 
@@ -187,8 +185,7 @@ func (s *Server) RevokeAllUserAccess(
 	encoded, err := ev.Encode()
 	if err != nil {
 		status = "error"
-		return nil, errs.Errorf(codes.Internal,
-			"RevokeAllUserAccess: encode event: %v", err)
+		return nil, errs.Internal(ctx, "RevokeAllUserAccess: encode event", err)
 	}
 	headers := map[string][]byte{
 		wal.HeaderIdempotencyKey: []byte(idempKey),
@@ -198,8 +195,7 @@ func (s *Server) RevokeAllUserAccess(
 	)
 	if err != nil {
 		status = "error"
-		return nil, errs.Errorf(codes.Internal,
-			"RevokeAllUserAccess: wal append: %v", err)
+		return nil, errs.Internal(ctx, "RevokeAllUserAccess: wal append", err)
 	}
 	if err := s.waitForAdminApplied(ctx, req.GetTenantId(), pos.Offset, idempKey, "revoke all user access event"); err != nil {
 		status = "error"

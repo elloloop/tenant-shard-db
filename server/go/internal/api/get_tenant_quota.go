@@ -91,8 +91,7 @@ func (s *Server) GetTenantQuota(
 		role, err := s.lookupMemberRole(ctx, tenantID, trusted.ID())
 		if err != nil {
 			outcome = "error"
-			return nil, errs.Errorf(codes.Internal,
-				"GetTenantQuota: lookup member role: %v", err)
+			return nil, errs.Internal(ctx, "GetTenantQuota: lookup member role", err)
 		}
 		if role != "owner" && role != "admin" {
 			outcome = "error"
@@ -104,14 +103,12 @@ func (s *Server) GetTenantQuota(
 	cfg, err := s.global.GetTenantQuota(ctx, tenantID)
 	if err != nil {
 		outcome = "error"
-		return nil, errs.Errorf(codes.Internal,
-			"GetTenantQuota: read quota config: %v", err)
+		return nil, errs.Internal(ctx, "GetTenantQuota: read quota config", err)
 	}
 	usage, err := s.global.GetUsage(ctx, tenantID)
 	if err != nil {
 		outcome = "error"
-		return nil, errs.Errorf(codes.Internal,
-			"GetTenantQuota: read usage: %v", err)
+		return nil, errs.Internal(ctx, "GetTenantQuota: read usage", err)
 	}
 
 	// period_end_ms is computed locally — never read from the DB row.

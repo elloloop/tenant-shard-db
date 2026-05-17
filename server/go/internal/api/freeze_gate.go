@@ -32,6 +32,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 )
 
@@ -121,7 +122,7 @@ func (s *Server) checkFreezeGate(ctx context.Context, fullMethod string) error {
 		// Globalstore IO error — surface as Internal so the operator
 		// can detect it. Do NOT swallow as "passed" — that would let
 		// a flaky DB silently disable the gate.
-		return status.Errorf(codes.Internal, "freeze-gate: lookup user %q: %v", trusted.ID(), err)
+		return errs.Internal(ctx, "freeze-gate: lookup user", err)
 	}
 	if user == nil {
 		// Unknown user — fail closed (Python does the same: an

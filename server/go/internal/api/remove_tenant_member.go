@@ -109,7 +109,7 @@ func (s *Server) RemoveTenantMember(
 		role, err := s.getTenantMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
 			status = "error"
-			return nil, errs.Errorf(codes.Internal, "RemoveTenantMember: lookup caller role: %v", err)
+			return nil, errs.Internal(ctx, "RemoveTenantMember: lookup caller role", err)
 		}
 		if role != "owner" && role != "admin" {
 			status = "error"
@@ -123,7 +123,7 @@ func (s *Server) RemoveTenantMember(
 	members, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
 	if err != nil {
 		status = "error"
-		return nil, errs.Errorf(codes.Internal, "RemoveTenantMember: list members: %v", err)
+		return nil, errs.Internal(ctx, "RemoveTenantMember: list members", err)
 	}
 	var (
 		target     *string // role of the target user, nil if not a member

@@ -99,7 +99,7 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 
 	if existing, err := s.global.GetUser(ctx, req.GetUserId()); err != nil {
 		outcome = "error"
-		return nil, errs.Errorf(codes.Internal, "get user: %v", err)
+		return nil, errs.Internal(ctx, "get user", err)
 	} else if existing != nil {
 		outcome = "error"
 		return nil, errs.Errorf(codes.AlreadyExists,
@@ -107,7 +107,7 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 	}
 	if existing, err := s.global.GetUserByEmail(ctx, req.GetEmail()); err != nil {
 		outcome = "error"
-		return nil, errs.Errorf(codes.Internal, "get user by email: %v", err)
+		return nil, errs.Internal(ctx, "get user by email", err)
 	} else if existing != nil {
 		outcome = "error"
 		return nil, errs.Errorf(codes.AlreadyExists,

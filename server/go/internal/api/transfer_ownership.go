@@ -161,7 +161,7 @@ func (s *Server) TransferOwnership(
 			return nil, errs.Errorf(codes.NotFound, "node %q not found", req.GetNodeId())
 		}
 		statusLabel = "error"
-		return nil, errs.Errorf(codes.Internal, "read node: %v", err)
+		return nil, errs.Internal(ctx, "read node", err)
 	}
 
 	// 5. Current-owner-only authorization. The trusted actor's full
@@ -182,7 +182,7 @@ func (s *Server) TransferOwnership(
 	idempKey, err := newIdempotencyKey()
 	if err != nil {
 		statusLabel = "error"
-		return nil, errs.Errorf(codes.Internal, "generate idempotency key: %v", err)
+		return nil, errs.Internal(ctx, "generate idempotency key", err)
 	}
 	evt := wal.Event{
 		TenantID:       tenantID,
@@ -200,14 +200,14 @@ func (s *Server) TransferOwnership(
 		value, encErr := evt.Encode()
 		if encErr != nil {
 			statusLabel = "error"
-			return nil, errs.Errorf(codes.Internal, "encode wal event: %v", encErr)
+			return nil, errs.Internal(ctx, "encode wal event", encErr)
 		}
 		headers := map[string][]byte{
 			wal.HeaderIdempotencyKey: []byte(idempKey),
 		}
 		if _, appendErr := s.producer.Append(ctx, transferOwnershipTopic, tenantID, value, headers); appendErr != nil {
 			statusLabel = "error"
-			return nil, errs.Errorf(codes.Internal, "wal append: %v", appendErr)
+			return nil, errs.Internal(ctx, "wal append", appendErr)
 		}
 	}
 
@@ -222,7 +222,7 @@ func (s *Server) TransferOwnership(
 			return nil, errs.Errorf(codes.NotFound, "node %q not found", req.GetNodeId())
 		}
 		statusLabel = "error"
-		return nil, errs.Errorf(codes.Internal, "apply transfer_ownership: %v", err)
+		return nil, errs.Internal(ctx, "apply transfer_ownership", err)
 	}
 
 	return &pb.TransferOwnershipResponse{Found: true}, nil
