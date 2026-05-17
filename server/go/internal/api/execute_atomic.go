@@ -269,13 +269,22 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutMs)*time.Millisecond)
 		if err := s.store.WaitForOffset(waitCtx, tenantID, parseStreamOffset(posStr)); err == nil {
 			// Poll briefly for the idempotency row to be present.
-			// WaitForOffset's in-memory tracker can be advanced by
-			// non-event paths (e.g. the contract seed pre-bumps the
-			// offset), so the wait alone does not guarantee the
-			// applier has finalised THIS event's idempotency record.
-			// Polling closes the race without changing the wait
-			// semantics that the rest of the codebase relies on.
-			// GitHub issue #500.
+			// WaitForOffset's in-memory tracker is advanced from
+			// UpdateAppliedOffsetTx BEFORE the applier's batch txn
+			// commits (see store/offset.go: the cond broadcast is
+			// pre-commit), so the wait returning does NOT guarantee
+			// THIS event's applied_events row is committed/visible on
+			// a fresh read connection. Polling the idempotency record
+			// closes that residual race without changing the wait
+			// semantics the rest of the codebase relies on.
+			//
+			// NOTE (GitHub issue #505): the original trigger — the
+			// contract seed pre-bumping the in-memory offset via a
+			// WAL-bypassing CreateNodeRaw — has been removed; the seed
+			// now goes through the real producer→applier path. This
+			// poll is retained because the pre-commit broadcast above
+			// is an independent source of the same race and is not
+			// addressed by the seed fix. GitHub issues #500, #503, #505.
 			rec := waitForIdempotencyRecord(ctx, s.store, tenantID, idem, time.Duration(timeoutMs)*time.Millisecond)
 			switch {
 			case rec.Present && rec.Status == store.IdempotencyStatusFailedPrecondition:

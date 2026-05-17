@@ -295,7 +295,10 @@ func main() {
 		}
 		switch profile {
 		case "contract":
-			if err := testseed.SeedTenantContract(ctx, global, canonical, *seedTenant); err != nil {
+			// Seed through the shared producer; the applier goroutine
+			// started above consumes the event and writes the receipt +
+			// offset rows (GitHub issue #505).
+			if err := testseed.SeedTenantContract(ctx, global, canonical, walImpl, *walTopic, *seedTenant); err != nil {
 				log.Fatalf("entdb-server: seed tenant %q (contract): %v", *seedTenant, err)
 			}
 			log.Printf("entdb-server: seeded tenant %q with contract profile (alice=owner, bob=member, seed node + receipt)", *seedTenant)
