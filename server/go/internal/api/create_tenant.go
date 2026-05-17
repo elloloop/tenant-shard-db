@@ -100,7 +100,7 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 
 	if existing, err := s.global.GetTenant(ctx, req.GetTenantId()); err != nil {
 		resultStatus = "error"
-		return nil, errs.Errorf(codes.Internal, "get tenant: %v", err)
+		return nil, errs.Internal(ctx, "get tenant", err)
 	} else if existing != nil {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.AlreadyExists,

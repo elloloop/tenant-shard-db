@@ -138,8 +138,7 @@ func (s *Server) RemoveGroupMember(
 		role, err := s.lookupMemberRole(ctx, tenantID, trusted.ID())
 		if err != nil {
 			status = "error"
-			return nil, errs.Errorf(codes.Internal,
-				"RemoveGroupMember: lookup caller role: %v", err)
+			return nil, errs.Internal(ctx, "RemoveGroupMember: lookup caller role", err)
 		}
 		if role != "owner" && role != "admin" {
 			status = "error"

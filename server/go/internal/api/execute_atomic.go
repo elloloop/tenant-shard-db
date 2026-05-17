@@ -760,7 +760,7 @@ func (s *Server) checkTenantWriteAccess(ctx context.Context, tenantID string, ac
 
 	t, err := s.global.GetTenant(ctx, tenantID)
 	if err != nil {
-		return errs.Errorf(codes.Internal, "tenant lookup: %v", err)
+		return errs.Internal(ctx, "tenant lookup", err)
 	}
 	if t == nil {
 		return errs.Errorf(codes.NotFound, "tenant %q does not exist", tenantID)
@@ -788,7 +788,7 @@ func (s *Server) checkTenantWriteAccess(ctx context.Context, tenantID string, ac
 
 	members, err := s.global.GetTenantMembers(ctx, tenantID)
 	if err != nil {
-		return errs.Errorf(codes.Internal, "membership lookup: %v", err)
+		return errs.Internal(ctx, "membership lookup", err)
 	}
 	var role string
 	for _, m := range members {

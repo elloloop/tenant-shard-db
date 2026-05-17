@@ -153,8 +153,7 @@ func (s *Server) TransferUserContent(
 		role, err := s.getTenantMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
 			statusLabel = "error"
-			return nil, errs.Errorf(codes.Internal,
-				"TransferUserContent: lookup caller role: %v", err)
+			return nil, errs.Internal(ctx, "TransferUserContent: lookup caller role", err)
 		}
 		if role != "owner" && role != "admin" {
 			statusLabel = "error"

@@ -225,8 +225,7 @@ func edgePropsToStruct(propsJSON string) *structpb.Struct {
 func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, error) {
 	idPayload, err := decodeIDKeyedPayload(n.PayloadJSON)
 	if err != nil {
-		return nil, errs.Errorf(codes.Internal,
-			"parse payload for %s: %v", n.NodeID, err)
+		return nil, errs.InternalNoCtx("parse node payload", err)
 	}
 	pStruct, err := payload.PayloadToStruct(s.registry, typeName, idPayload)
 	if err != nil {
@@ -234,8 +233,7 @@ func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, err
 	}
 	aclEntries, err := decodeACLEntries(n.ACLJSON)
 	if err != nil {
-		return nil, errs.Errorf(codes.Internal,
-			"parse acl for %s: %v", n.NodeID, err)
+		return nil, errs.InternalNoCtx("parse node acl", err)
 	}
 	return &pb.Node{
 		TenantId:   n.TenantID,
@@ -435,7 +433,7 @@ func (s *Server) appendGlobalAdminOp(ctx context.Context, actor string, op map[s
 	}
 	idem, err := newIdempotencyKey()
 	if err != nil {
-		return wal.StreamPos{}, "", errs.Errorf(codes.Internal, "%v", err)
+		return wal.StreamPos{}, "", errs.Internal(ctx, "generate idempotency key", err)
 	}
 	ev := wal.Event{
 		TenantID:       wal.GlobalTenantID,
@@ -447,14 +445,14 @@ func (s *Server) appendGlobalAdminOp(ctx context.Context, actor string, op map[s
 	}
 	value, err := ev.Encode()
 	if err != nil {
-		return wal.StreamPos{}, "", errs.Errorf(codes.Internal, "encode global admin event: %v", err)
+		return wal.StreamPos{}, "", errs.Internal(ctx, "encode global admin event", err)
 	}
 	headers := map[string][]byte{
 		wal.HeaderIdempotencyKey: []byte(idem),
 	}
 	pos, err := s.producer.Append(ctx, s.walTopic(), wal.GlobalTenantID, value, headers)
 	if err != nil {
-		return wal.StreamPos{}, "", errs.Errorf(codes.Internal, "append global admin event: %v", err)
+		return wal.StreamPos{}, "", errs.Internal(ctx, "append global admin event", err)
 	}
 
 	if err := s.waitForAdminApplied(ctx, wal.GlobalTenantID, pos.Offset, idem, "global admin event"); err != nil {

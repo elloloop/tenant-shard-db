@@ -91,7 +91,7 @@ func (s *Server) ChangeMemberRole(
 		callerRole, err := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
 			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
-			return nil, errs.Errorf(codes.Internal, "list tenant members: %v", err)
+			return nil, errs.Internal(ctx, "list tenant members", err)
 		}
 		if callerRole != "owner" && callerRole != "admin" {
 			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
@@ -103,7 +103,7 @@ func (s *Server) ChangeMemberRole(
 	members, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
 	if err != nil {
 		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
-		return nil, errs.Errorf(codes.Internal, "list tenant members: %v", err)
+		return nil, errs.Internal(ctx, "list tenant members", err)
 	}
 	var targetJoinedAt int64
 	targetFound := false

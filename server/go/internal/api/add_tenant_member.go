@@ -117,7 +117,7 @@ func (s *Server) AddTenantMember(
 		role, err := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
 			status = "error"
-			return nil, errs.Errorf(codes.Internal, "lookup member role: %v", err)
+			return nil, errs.Internal(ctx, "lookup member role", err)
 		}
 		if role != "owner" && role != "admin" {
 			status = "error"
