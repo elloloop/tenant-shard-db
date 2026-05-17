@@ -436,6 +436,35 @@ If the same `order-12345` key is replayed by a client after a network
 partition, the server short-circuits the second attempt and hands back
 the same `CreatedNodeIDs` as the first.
 
+## Read-after-write consistency
+
+Reads are automatically consistent with your own writes — zero
+application code. Every `Commit` records the receipt's WAL stream
+position per tenant, and the next `Get` / `GetByKey` / `Query` /
+`GetMany` against that tenant transparently attaches it as the
+`after_offset` so the read observes the just-written data:
+
+```go
+result, _ := plan.Commit(ctx)            // records the offset
+p, _ := entdb.Get[*shop.Product](ctx, scope, result.CreatedNodeIDs[0])
+// p reflects the commit even if the applier is momentarily behind
+```
+
+Per-tenant: a write to tenant `acme` never pins reads of another
+tenant. Override per call when you need to:
+
+```go
+// Force a specific offset (e.g. one shared across processes):
+entdb.Get[*shop.Product](entdb.WithAfterOffset(ctx, "42"), scope, id)
+
+// Opt out — read whatever the replica currently has, no wait:
+entdb.Query[*shop.Product](entdb.WithoutOffsetTracking(ctx), scope, nil)
+```
+
+`client.ClearOffsets()` drops all tracked positions (useful in tests
+or to stop enforcing read-after-write). This mirrors the Python SDK's
+automatic offset tracking exactly.
+
 ## Error handling
 
 All SDK errors implement the `error` interface; use `errors.As` to
@@ -560,6 +589,10 @@ team that uses both can copy the shape of a call between languages:
 | Share | `await scope.share("node-42", Actor.user("bob"), Permission.READ)` | `scope.Share(ctx, "node-42", entdb.UserActor("bob"), entdb.PermissionRead)` |
 | Commit | `await plan.commit()` | `plan.Commit(ctx)` |
 | Idempotent plan | `plan = scope.plan(idempotency_key="order-12345")` | `plan := scope.PlanWithKey("order-12345")` |
+| Read-after-write | automatic (per-tenant offset tracking) | automatic (per-tenant offset tracking) |
+| Override offset | `await scope.get(T, id, after_offset="42")` | `entdb.Get[T](entdb.WithAfterOffset(ctx, "42"), scope, id)` |
+| Opt out of tracking | `await scope.get(T, id, after_offset=None)` | `entdb.Get[T](entdb.WithoutOffsetTracking(ctx), scope, id)` |
+| Clear offsets | `db.clear_offsets()` | `client.ClearOffsets()` |
 
 ## Full example
 
