@@ -1154,6 +1154,15 @@ func (c *DbClient) Address() string { return c.address }
 // Config returns a copy of the client configuration (for inspection/testing).
 func (c *DbClient) Config() clientConfig { return c.config }
 
+// Transport returns the underlying [Transport] this client uses.
+//
+// It is a read-only accessor intended for advanced consumers (e.g.
+// custom tooling or tests) that need to reach the transport without
+// resorting to reflection and unsafe. The returned value must be
+// treated as read-only; mutating transport state out from under the
+// client is unsupported.
+func (c *DbClient) Transport() Transport { return c.transport }
+
 // Tenant returns a TenantScope for the given tenant.
 //
 //	scope := client.Tenant("acme").Actor(entdb.UserActor("bob"))

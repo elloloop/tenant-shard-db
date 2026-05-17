@@ -222,6 +222,29 @@ func TestNewClient_ValidAddress(t *testing.T) {
 	}
 }
 
+func TestClient_Transport_ReturnsUnderlyingTransport(t *testing.T) {
+	mt := &mockTransport{}
+	client := newTestClient(t, mt)
+
+	got := client.Transport()
+	if got == nil {
+		t.Fatal("expected non-nil Transport, got nil")
+	}
+	if got != Transport(mt) {
+		t.Errorf("expected Transport to return the injected transport %p, got %p", mt, got)
+	}
+}
+
+func TestClient_Transport_RealClient(t *testing.T) {
+	client, err := NewClient("localhost:50051")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if client.Transport() == nil {
+		t.Fatal("expected non-nil Transport for a real client, got nil")
+	}
+}
+
 func TestNewClient_EmptyAddress(t *testing.T) {
 	_, err := NewClient("")
 	if err == nil {
