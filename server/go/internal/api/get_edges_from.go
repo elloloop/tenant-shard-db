@@ -1,11 +1,10 @@
-// GetEdgesFrom RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// GetEdgesFrom RPC.
 //
 // Spec: docs/go-port/rpcs/GetEdgesFrom.md. Pure read of the per-tenant
 // `edges` table indexed by (tenant_id, from_node_id), translated into
 // the wire `Edge` shape.
 //
-// Semantics preserved from server/python/entdb_server/api/grpc_server.py
-// :1384-1418:
+// Semantics:
 //
 //   - Tenant gate (s.checkTenant) is the only ingress check. Its
 //     UNAVAILABLE / FAILED_PRECONDITION / NotFound / InvalidArgument
@@ -119,5 +118,5 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 }
 
 // edgeToProto is shared with GetEdgesTo and lives in helpers.go (after
-// the round-3 Wave-2 dedupe). The defensive empty-Struct shape is
+// the round-3 dedupe). The defensive empty-Struct shape is
 // preserved there; behaviour is otherwise identical.

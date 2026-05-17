@@ -238,7 +238,7 @@ func TestTransferOwnership_PrivilegeEscalation_IgnoresClaimedActor(t *testing.T)
 
 // TestTransferOwnership_MissingNode_NotFound: the node_id does not
 // exist in the tenant → codes.NotFound. Hardens the Python "found=false,
-// error=''" soft-fail per spec §"Error contract".
+// error=”" soft-fail per spec §"Error contract".
 func TestTransferOwnership_MissingNode_NotFound(t *testing.T) {
 	t.Parallel()
 	f := newXferFixture(t)

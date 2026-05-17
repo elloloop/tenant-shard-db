@@ -144,8 +144,10 @@ This ADR supersedes the physical file mapping and scale/mobility notes in:
 
 - ADR-001, "Storage Architecture";
 - ADR-009, "Scale Targets and Deployment Architecture";
-- `docs/decisions/storage.md`, "Immutable storage mode, no built-in
-  drafts primitive".
+- [ADR-020](020-immutable-storage-mode.md), "Immutable storage mode,
+  no built-in drafts primitive" (the logical-storage-mode contract
+  itself stays in force in ADR-020; ADR-014 owns the physical file
+  mapping).
 
 Those documents still own their original higher-level decisions where
 not contradicted here: tenant isolation, immutable logical storage mode,

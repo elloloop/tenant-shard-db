@@ -195,7 +195,8 @@ func TestHealth_WALProbePanicIsCaught(t *testing.T) {
 // pinned by tests/python/unit/test_cron_fixes.py:116-147. The
 // node_id / assigned_tenants info keys MUST NOT count against `healthy`.
 //
-// Wave-1 has no sharding handle on the Server struct yet, so today the
+//	has no sharding handle on the Server struct yet, so today the
+//
 // best we can do is post-process the response: stuff arbitrary info keys
 // in and re-derive healthy the way the handler does. The derived bool
 // MUST stay true even with extra keys present — i.e. the gating check

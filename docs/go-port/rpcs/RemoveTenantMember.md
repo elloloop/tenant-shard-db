@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/RemoveTenantMember`
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2492-2541`.
+> Implementation: `server/go/internal/api/remove_tenant_member.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
+`server/go/internal/api/remove_tenant_member.go`.
 
 ## Wire contract
 
@@ -24,8 +29,8 @@ Response — `TenantMemberResponse`:
 ## Auth (admin only; trusted-actor)
 
 KNOWN GAP IN PYTHON: the Python handler does NOT enforce admin/owner role.
-`AddTenantMember` (`grpc_server.py:2466-2474`) and `ChangeMemberRole`
-(`grpc_server.py:2627-2634`) both call `_trusted_actor` + `_is_admin_or_system`
+`AddTenantMember` (`server/go/internal/api/remove_tenant_member.go`) and `ChangeMemberRole`
+(`server/go/internal/api/remove_tenant_member.go`) both call `_trusted_actor` + `_is_admin_or_system`
 + `_get_member_role` and abort `PERMISSION_DENIED` for non-admins.
 `RemoveTenantMember` skips this check entirely. The contract test at
 `tests/python/integration/test_grpc_contract.py:547-551` only asserts the
@@ -37,10 +42,10 @@ client-claimed actor in gRPC handlers").
 **Go port MUST close the gap**, mirroring `AddTenantMember`:
 
 ```
-trusted := s.trustedActor(req.GetActor())          // grpc_server.py:418-437
-if !s.isAdminOrSystem(trusted) {                   // grpc_server.py:2053
+trusted := s.trustedActor(req.GetActor())          // server/go/internal/api/remove_tenant_member.go
+if !s.isAdminOrSystem(trusted) {                   // server/go/internal/api/remove_tenant_member.go
     role, _ := s.getMemberRole(req.TenantId,
-        s.actorUserID(trusted))                    // grpc_server.py:2290
+        s.actorUserID(trusted))                    // server/go/internal/api/remove_tenant_member.go
     if role != "owner" && role != "admin" {
         return abort(codes.PermissionDenied,
             "Only owner or admin can remove members")
@@ -59,16 +64,16 @@ Rate limiter applies normally (per-tenant bucket).
 
 ## Side effects (WAL append; ACL cascade revocation; mailbox?)
 
-In-order narration of the Python handler (`grpc_server.py:2498-2537`):
+In-order narration of the Python handler (`server/go/internal/api/remove_tenant_member.go`):
 
 1. `start = perf_counter()` for metrics.
 2. Guard: `self.global_store == nil` → abort `UNIMPLEMENTED "Tenant registry not configured"` (`:2500-2504`).
 3. Validate `actor`, `tenant_id`, `user_id` non-empty → abort `INVALID_ARGUMENT` (`:2506-2511`).
-4. Read all members via `global_store.get_members(tenant_id)` (`:2514`, `global_store.py:598`).
+4. Read all members via `global_store.get_members(tenant_id)` (`:2514`, `server/go/internal/globalstore/`).
 5. Single pass: count owners; locate target by `user_id` (`:2515-2521`).
 6. If target missing → return `success=false, error="Member not found"`, metric `ok` (`:2523-2525`). NOT an error code — handler treats it as a normal "no-op".
 7. If target is owner AND `owner_count <= 1` → return `success=false, error="Cannot remove the last owner of a tenant"`, metric `error` (`:2527-2532`).
-8. `removed = await global_store.remove_member(tenant_id, user_id)` → `DELETE FROM tenant_members` returning `rowcount > 0` (`global_store.py:582-596`).
+8. `removed = await global_store.remove_member(tenant_id, user_id)` → `DELETE FROM tenant_members` returning `rowcount > 0` (`server/go/internal/globalstore/`).
 9. Return `success=removed`, metric `ok` (`:2536-2537`).
 10. Outer `except`: log + return `success=false, error=str(e)`, metric `error` (`:2538-2541`).
 
@@ -107,8 +112,8 @@ add an "admin" guard in Go without an ADR.
 ## Shared Go package deps
 
 - `pb` (`server/go/internal/pb/entdbv1`) — `TenantMemberRequest`, `TenantMemberResponse`. Required.
-- `globalstore` — `GetMembers(ctx, tenantID) ([]Member, error)`, `RemoveMember(ctx, tenantID, userID) (bool, error)`. Mirrors `global_store.py:558-596`. Required.
-- `auth` — `GetAuthoritativeActor(ctx, requestActor) string`, `IsAdminOrSystem(actor) bool`, `ActorUserID(actor) string`. Mirrors `grpc_server.py:412-437,2053`. Required.
+- `globalstore` — `GetMembers(ctx, tenantID) ([]Member, error)`, `RemoveMember(ctx, tenantID, userID) (bool, error)`. Mirrors `server/go/internal/globalstore/`. Required.
+- `auth` — `GetAuthoritativeActor(ctx, requestActor) string`, `IsAdminOrSystem(actor) bool`, `ActorUserID(actor) string`. Mirrors `server/go/internal/api/remove_tenant_member.go,2053`. Required.
 - `metrics` — `RecordGRPCRequest("RemoveTenantMember", status, dur)`. Required.
 - `errs` — wraps `status.Error(codes.X, msg)` with the exact strings above. Required.
 
@@ -120,11 +125,11 @@ NOT used and MUST NOT be imported: `canonicalstore`, `acl`, `schema`,
 This RPC is **paired** with two siblings — Go port should land them in the
 same PR if practical because callers compose them:
 
-- `AddTenantMember` (`grpc_server.py:2442-2490`) — inverse op; shares request type and auth shape.
-- `ChangeMemberRole` (`grpc_server.py:2620-2680`) — alternative to remove+add; shares the owner/admin enforcement pattern.
-- `GetTenantMembers` (`grpc_server.py:2543-2570`) — Go port can reuse the same `globalstore.GetMembers` call.
-- `RevokeAllUserAccess` (`grpc_server.py:2864-2921`) — **complementary**, NOT a substitute. Strips ACL grants, group memberships, and `shared_index` entries; does NOT delete the membership row. Off-boarding flow = `TransferUserContent` → `RevokeAllUserAccess` → `RemoveTenantMember`. Document this ordering in the Go SDK package doc.
-- `TransferUserContent` (`grpc_server.py:2692-2780`) — reassigns nodes owned by the leaving user.
+- `AddTenantMember` (`server/go/internal/api/remove_tenant_member.go`) — inverse op; shares request type and auth shape.
+- `ChangeMemberRole` (`server/go/internal/api/remove_tenant_member.go`) — alternative to remove+add; shares the owner/admin enforcement pattern.
+- `GetTenantMembers` (`server/go/internal/api/remove_tenant_member.go`) — Go port can reuse the same `globalstore.GetMembers` call.
+- `RevokeAllUserAccess` (`server/go/internal/api/remove_tenant_member.go`) — **complementary**, NOT a substitute. Strips ACL grants, group memberships, and `shared_index` entries; does NOT delete the membership row. Off-boarding flow = `TransferUserContent` → `RevokeAllUserAccess` → `RemoveTenantMember`. Document this ordering in the Go SDK package doc.
+- `TransferUserContent` (`server/go/internal/api/remove_tenant_member.go`) — reassigns nodes owned by the leaving user.
 
 The four-RPC off-board ordering is encoded only in the Go SDK doc comment
 today (`sdk/go/entdb/admin.go:68-71`). Mention it in the Go server's package
@@ -134,10 +139,10 @@ doc as well.
 
 - `tests/python/integration/test_grpc_contract.py:546-551` — happy path: `RemoveTenantMember{actor=ALICE, tenant_id=TENANT, user_id="bob"}` over a real gRPC channel. The Go server must pass this verbatim.
 - `tests/python/integration/test_grpc_contract.py:552-556` — empty `actor` → `INVALID_ARGUMENT`.
-- `tests/python/unit/test_tenant_registry.py:462-479` — happy path; one owner + one member; remove member; member list shrinks to owner only.
-- `tests/python/unit/test_tenant_registry.py:481-495` — last-owner protection; `success=false`, `"last owner" in error`.
-- `tests/python/unit/test_tenant_registry.py:497-511` — owner removable when ≥2 owners exist.
-- `tests/python/unit/test_tenant_registry.py:513-526` — non-existent member → `success=false`, `"not found" in error.lower()`.
+- (legacy Python unit test, removed in Phase 4D) — happy path; one owner + one member; remove member; member list shrinks to owner only.
+- (legacy Python unit test, removed in Phase 4D) — last-owner protection; `success=false`, `"last owner" in error`.
+- (legacy Python unit test, removed in Phase 4D) — owner removable when ≥2 owners exist.
+- (legacy Python unit test, removed in Phase 4D) — non-existent member → `success=false`, `"not found" in error.lower()`.
 - `sdk/go/entdb/admin_test.go:203-216` — Go SDK transport happy path; the fake server returns `Success=true` and the SDK swallows it. Pins the wire shape.
 - `sdk/go/entdb/grpc_transport_test.go:349` — fake-server hook used by SDK tests; ensures the Go SDK transport still calls the right RPC.
 

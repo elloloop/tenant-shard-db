@@ -2,7 +2,6 @@
 
 // ChangeMemberRole implements entdb.v1.EntDBService/ChangeMemberRole.
 //
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2601-2652.
 // Port spec: docs/go-port/rpcs/ChangeMemberRole.md.
 //
 // Behaviour parity vs. the Python handler is preserved on the wire shape

@@ -11,10 +11,6 @@
 // the id→name lookup on the client side.
 //
 // Spec: docs/go-port/shared/payload-translation.md.
-//
-// Source-of-truth Python:
-//   - server/python/entdb_server/schema/field_id_translation.py
-//   - tests/python/unit/test_grpc_wire_format.py
 package payload
 
 import (
@@ -49,21 +45,21 @@ import (
 //     so the client learns immediately that its SDK is misconfigured
 //     or out of date.
 //   - Schema-aware path:
-//       - Digit-only key matching a known field_id is kept as-is.
-//       - String key matching a field name is translated to its id
-//         (back-compat for pre-fix SDKs; new SDKs send id-keyed and
-//         skip this path).
-//       - Unknown name keys are dropped silently (Python parity:
-//         ingress is permissive so legacy clients sending deprecated
-//         fields don't break writes).
+//   - Digit-only key matching a known field_id is kept as-is.
+//   - String key matching a field name is translated to its id
+//     (back-compat for pre-fix SDKs; new SDKs send id-keyed and
+//     skip this path).
+//   - Unknown name keys are dropped silently (Python parity:
+//     ingress is permissive so legacy clients sending deprecated
+//     fields don't break writes).
 //   - Field-kind coercion (only when schema is known):
-//       - BYTES: structpb has no bytes type; the wire carries base64
-//         strings. Decode to []byte for storage.
-//       - TIMESTAMP / INTEGER: structpb represents numbers as float64.
-//         Coerce to int64 on ingress so disk values are integers.
-//       - JSON: top-level passthrough. Nested *structpb.Struct values
-//         are converted to map[string]any once at this layer; the
-//         translator never recurses into them.
+//   - BYTES: structpb has no bytes type; the wire carries base64
+//     strings. Decode to []byte for storage.
+//   - TIMESTAMP / INTEGER: structpb represents numbers as float64.
+//     Coerce to int64 on ingress so disk values are integers.
+//   - JSON: top-level passthrough. Nested *structpb.Struct values
+//     are converted to map[string]any once at this layer; the
+//     translator never recurses into them.
 //
 // Order independence is a property of map iteration; do not rely on
 // Struct.Fields insertion order anywhere downstream.
@@ -437,4 +433,3 @@ func newValue(raw any) (*structpb.Value, error) {
 	}
 	return v, nil
 }
-

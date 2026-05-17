@@ -1,5 +1,5 @@
 // Tests for the SearchMailbox stub handler. Two cases pin the contract
-// for Wave 2:
+//
 //
 //  1. Happy path: known tenant -> empty SearchMailboxResponse, nil error.
 //     Mirrors tests/python/integration/test_grpc_contract.py:267-273.

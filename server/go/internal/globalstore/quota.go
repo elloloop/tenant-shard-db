@@ -1,5 +1,4 @@
 // tenant_quotas + tenant_usage CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:1102 (set_quota_config)
 // through :1333 (reset_period).
 //
 // IMPORTANT: tenant_usage.period_start_ms is the start of the current

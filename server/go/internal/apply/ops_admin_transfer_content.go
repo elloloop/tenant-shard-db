@@ -16,9 +16,9 @@ import (
 // op shape:
 //
 //	{
-//	  "op":        "admin_transfer_content",
+//	  "op": "admin_transfer_content",
 //	  "from_user": "user:alice",
-//	  "to_user":   "user:bob",
+//	  "to_user": "user:bob",
 //	}
 func (a *Applier) applyAdminTransferContent(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any) error {
 	fromUser := stringField(op, "from_user")

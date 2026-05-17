@@ -1,266 +1,262 @@
-# Schema Evolution in EntDB
+# Schema Evolution
 
-EntDB uses a protobuf-like schema evolution model that ensures backward and forward compatibility as your schema evolves.
+EntDB uses protobuf for schema definition ([ADR-006](adr/006-proto-schema-definition.md)). The proto field number IS the on-disk `field_id` ([ADR-018](adr/018-field-id-keyed-payloads.md)) — renames are free, removals retire the number. This page documents which evolutions are safe, which are breaking, and how to enforce the rules at CI time via `entdb-schema`.
 
-## Key Principles
+## Core principles
 
-1. **Stable Numeric IDs**: Each type and field has a permanent numeric ID
-2. **Never Remove or Reuse IDs**: Deleted IDs are retired forever
-3. **Field Order Doesn't Matter**: Fields are identified by ID, not position
-4. **Names Are Display-Only**: Renaming is safe
+1. **Stable numeric IDs.** Every type has a `type_id`; every field has a number (the proto field tag) that IS its `field_id`. These are forever.
+2. **Never remove or reuse IDs.** Once a field number is in use, it can be deprecated but never reassigned.
+3. **Names are display-only.** Renaming a proto field doesn't touch the wire / disk format. Rename freely.
+4. **Field order doesn't matter.** Fields are identified by number.
+5. **Schema lockdown is CI-enforced.** `entdb-schema check` against a committed `.schema-snapshot.json` catches breaking changes before they merge.
 
-## Field Types
+## Field types
 
-Supported field kinds:
+| Proto type | EntDB kind | Notes |
+|---|---|---|
+| `string` | `str` | UTF-8 string |
+| `int32`, `int64`, `sint64`, `fixed64`, `sfixed64` | `int` | 64-bit integer on the wire |
+| `float`, `double` | `float` | 64-bit float |
+| `bool` | `bool` | |
+| `bytes` | `bytes` | base64-encoded on the wire (structpb has no bytes type), stored as raw bytes |
+| `int64` (epoch millis convention) | `timestamp` | declared with `(entdb.field) = { kind: "timestamp" }` |
+| `enum` | `enum` | declared with `(entdb.field) = { enum_values: "a,b,c" }`; stored as enum-name string |
+| repeated `string` / `int32` etc. | `list_str` / `list_int` | declared via the proto `repeated` keyword |
+| nested `message` | `json` | nested struct stored as JSON in the parent payload |
+| reference to another `(entdb.node)` message | `ref` | stored as a typed `{type_id, id}` pair |
 
-| Kind | Description | Python Type |
-|------|-------------|-------------|
-| `str` | UTF-8 string | `str` |
-| `int` | 64-bit integer | `int` |
-| `float` | 64-bit floating point | `float` |
-| `bool` | Boolean | `bool` |
-| `timestamp` | Unix timestamp (ms) | `int` |
-| `enum` | String from fixed set | `str` |
-| `list_str` | List of strings | `List[str]` |
-| `list_int` | List of integers | `List[int]` |
-| `ref` | Reference to another node | `dict` |
+## Safe changes (non-breaking)
 
-## Safe Changes (Non-Breaking)
+### Adding new types
 
-These changes are always safe:
+```protobuf
+// Before
+message User {
+  option (entdb.node) = { type_id: 1 };
+  string email = 1;
+}
 
-### Adding New Types
-
-```python
-# Before
-User = NodeTypeDef(type_id=1, name="User", ...)
-
-# After - Add new type with new ID
-User = NodeTypeDef(type_id=1, name="User", ...)
-Task = NodeTypeDef(type_id=2, name="Task", ...)  # NEW
+// After — new type with a new type_id
+message User { ... }
+message Task {
+  option (entdb.node) = { type_id: 2 };
+  string title = 1;
+}
 ```
 
-### Adding New Fields
+### Adding new fields
 
-```python
-# Before
-User = NodeTypeDef(
-    type_id=1,
-    name="User",
-    fields=(
-        field(1, "email", "str"),
-    ),
-)
+Pick the next unused number for the type.
 
-# After - Add field with new ID
-User = NodeTypeDef(
-    type_id=1,
-    name="User",
-    fields=(
-        field(1, "email", "str"),
-        field(2, "name", "str"),  # NEW
-    ),
-)
+```protobuf
+// Before
+message User {
+  option (entdb.node) = { type_id: 1 };
+  string email = 1;
+}
+
+// After
+message User {
+  option (entdb.node) = { type_id: 1 };
+  string email = 1;
+  string name  = 2;  // NEW
+}
 ```
 
-### Renaming Types or Fields
+Old SDKs ignore field 2; old data has no field 2 (reads return zero-value). Forward and backward compatible.
 
-```python
-# Before
-field(1, "email", "str")
+### Renaming types or fields
 
-# After - Same ID, different name
-field(1, "emailAddress", "str")  # SAFE
+The name is metadata only.
+
+```protobuf
+// Before
+string email = 1;
+
+// After — same number, different name
+string email_address = 1;  // SAFE
 ```
 
-### Deprecating Fields
+Old SDKs sending `"email"` still hit field 1 because the proto descriptor maps name → number client-side ([ADR-018](adr/018-field-id-keyed-payloads.md)). New SDKs see the renamed name; everyone agrees on field 1.
 
-```python
-# Mark field as deprecated (still readable, warns on write)
-field(1, "legacy_field", "str", deprecated=True)
+### Deprecating fields
+
+Mark deprecated; keep the number reserved.
+
+```protobuf
+string old_field = 5 [(entdb.field) = { deprecated: true }];
 ```
 
-### Adding Enum Values
+Existing data with this field is still readable; new writes get a deprecation warning. Tooling can surface usage to plan a future removal.
 
-```python
-# Before
-field(1, "status", "enum", enum_values=("todo", "done"))
+### Adding enum values
 
-# After - Add new value
-field(1, "status", "enum", enum_values=("todo", "doing", "done"))
+Append-only on enum lists. Existing values stay.
+
+```protobuf
+// Before
+string status = 3 [(entdb.field) = { enum_values: "todo,doing,done" }];
+
+// After
+string status = 3 [(entdb.field) = { enum_values: "todo,doing,done,archived" }];
 ```
 
-### Making Required Field Optional
+### Making a required field optional
 
-```python
-# Before
-field(1, "name", "str", required=True)
+```protobuf
+// Before
+string name = 1 [(entdb.field) = { required: true }];
 
-# After - Remove required constraint
-field(1, "name", "str")  # Now optional
+// After
+string name = 1;  // optional now
 ```
 
-## Breaking Changes (Forbidden)
+Old required data is still valid (it has the field). New optional data is also valid.
 
-These changes will fail schema compatibility checks:
+## Breaking changes (CI blocks)
 
-### Removing Types
+### Changing a field's number
 
-```python
-# FORBIDDEN - Would break existing data
-# Don't delete User type if it has data
+```protobuf
+// DON'T — field number change breaks all existing data
+string email = 1;   // before
+string email = 7;   // after — field 1's data is now orphaned
 ```
 
-### Removing Fields
+### Changing a field's type
 
-```python
-# FORBIDDEN - Would break existing data
-# Use deprecation instead
+```protobuf
+// DON'T — type change breaks reads of existing data
+string age = 1;     // before
+int64  age = 1;     // after — old "age" strings can't be read as int64
 ```
 
-### Changing Field Types
+### Removing a type or reassigning a `type_id`
 
-```python
-# FORBIDDEN
-# Before: field(1, "age", "str")
-# After: field(1, "age", "int")  # Type change not allowed
+```protobuf
+// DON'T — type_id reuse silently corrupts reads
+message User { option (entdb.node) = { type_id: 1 }; ... }   // before
+message Tenant { option (entdb.node) = { type_id: 1 }; ... } // after — old User data is now read as Tenant
 ```
 
-### Removing Enum Values
+If you need to remove a type, delete the proto message but **never** reuse the `type_id`. `entdb-schema check` enforces this by remembering retired ids.
 
-```python
-# FORBIDDEN - Existing data may have this value
-# Before: enum_values=("a", "b", "c")
-# After: enum_values=("a", "b")  # Can't remove "c"
+### Reordering enum values
+
+```protobuf
+// DON'T — old data with the integer encoding gets the wrong value back
+enum Status { TODO = 0; DOING = 1; DONE = 2; }   // before
+enum Status { DONE = 0; TODO = 1; DOING = 2; }   // after — silent corruption
 ```
 
-### Making Optional Field Required
+Always append new enum values at the end.
 
-```python
-# FORBIDDEN - Existing data may have NULL
-# Before: field(1, "name", "str")
-# After: field(1, "name", "str", required=True)
+### Making an optional field required
+
+```protobuf
+// DON'T — existing nodes without the field become invalid
+string name = 1;   // was optional
+string name = 1 [(entdb.field) = { required: true }];  // now required
 ```
 
-### Reusing IDs
+If you need to add a required field, declare it required from the start; existing types should add fields as optional.
 
-```python
-# FORBIDDEN
-# If field ID 5 was ever used, it cannot be reused
-# Even after deletion
-```
+## The `entdb-schema` CLI
 
-## Schema Versioning Workflow
+`entdb-schema` ([guide](guides/schema-lockdown.md)) is the authoritative tool for runtime schema compatibility.
 
-### 1. Create Schema Snapshot
+### One-time setup
+
+Snapshot the schema and commit the snapshot:
 
 ```bash
-# Generate baseline snapshot
-python -m dbaas.entdb_server.tools.schema_cli snapshot \
-  --module myapp.schema \
-  --output .schema-snapshot.json
-```
+# Boot the server with your registered schema
+entdb-server -addr=:50051 -data-dir=/tmp/init -wal-backend=memory &
+SERVER_PID=$!
+sleep 1
 
-### 2. Check Compatibility in CI
+# Snapshot
+entdb-schema snapshot --from-server localhost:50051 > .schema-snapshot.json
 
-```bash
-# Compare current schema against baseline
-python -m dbaas.entdb_server.tools.schema_cli check \
-  --module myapp.schema \
-  --baseline .schema-snapshot.json
-```
-
-### 3. Update Snapshot After Release
-
-After a successful deployment:
-
-```bash
-# Update the baseline
-python -m dbaas.entdb_server.tools.schema_cli snapshot \
-  --module myapp.schema \
-  --output .schema-snapshot.json
-
+kill $SERVER_PID
 git add .schema-snapshot.json
-git commit -m "Update schema snapshot for v1.2.0"
+git commit -m "chore: lock initial schema snapshot"
 ```
 
-## CI Integration
+### Every PR
 
-Add to your CI pipeline:
+Run a compatibility check in CI:
 
-```yaml
-# .github/workflows/ci.yml
-schema-check:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-    - name: Check schema compatibility
-      run: |
-        pip install -e .
-        python -m dbaas.entdb_server.tools.schema_cli check \
-          --module myapp.schema \
-          --baseline .schema-snapshot.json \
-          --fail-on-breaking
+```bash
+entdb-schema check \
+  --baseline .schema-snapshot.json \
+  --from-server localhost:50051 \
+  --format json
 ```
 
-## Handling Breaking Changes
+Exit code 0 = compatible; non-zero = breaking change detected. The full GitHub Actions setup is in `docs/guides/schema-lockdown.md`.
 
-If you must make a breaking change:
+### Subcommands
 
-### Option 1: Data Migration
+| Command | Purpose |
+|---|---|
+| `entdb-schema snapshot` | Emit the current schema as a deterministic JSON envelope |
+| `entdb-schema check` | Verify the current schema is compatible with a baseline |
+| `entdb-schema diff` | Show differences between two snapshots |
+| `entdb-schema validate` | Run cross-reference validation over a registry |
+| `entdb-schema version` | Print version |
 
-1. Create new field with new ID
-2. Migrate existing data
-3. Deprecate old field
-4. Eventually remove (after all clients updated)
+Stable exit codes: `0` = compatible, `1` = breaking change, `2` = usage / I/O error. Machine output on stdout, progress on stderr.
 
-```python
-# Step 1: Add new field
-fields=(
-    field(1, "status_old", "str", deprecated=True),
-    field(2, "status", "enum", enum_values=("active", "inactive")),
-)
+## When you really need to break
 
-# Step 2: Migration script
-async def migrate_status():
-    nodes = await store.query_nodes(tenant_id, type_id=1)
-    for node in nodes:
-        old_status = node.payload.get("status_old")
-        if old_status and not node.payload.get("status"):
-            new_status = "active" if old_status == "1" else "inactive"
-            await store.update_node(node.id, {"status": new_status})
+Sometimes you do want to break — major-version cut, migration window, data-corruption fix.
+
+1. **Regenerate the snapshot in the same PR** that makes the change. The diff is part of code review.
+2. **Apply the `breaking-schema-change` label** to the PR; CI accepts the change only when the label is present (the workflow is shown in `docs/guides/schema-lockdown.md`).
+3. **Add a `BREAKING CHANGE:` entry** to your `CHANGELOG.md` for the release.
+
+For data-level migrations (e.g. you really need to change a field's type for a small set of rows): write a server-side migration tool. EntDB itself doesn't ship one.
+
+## Renaming a field without breaking
+
+```protobuf
+// V1
+message User { string email = 1; }
+
+// V2 — same number, new name
+message User { string email_address = 1; }
 ```
 
-### Option 2: New Type Version
+Both old and new SDKs work — both resolve their local name to number 1 client-side. No data migration needed.
 
-1. Create new type (e.g., `UserV2`)
-2. Migrate data to new type
-3. Update clients to use new type
-4. Deprecate old type
+## Deprecating a field
 
-```python
-UserV1 = NodeTypeDef(type_id=1, name="User", deprecated=True, ...)
-UserV2 = NodeTypeDef(type_id=10, name="UserV2", ...)
+```protobuf
+// V1
+message User {
+  string email = 1;
+  string ssn   = 2;  // PII, shouldn't have collected it
+}
+
+// V2 — mark deprecated; new SDKs warn or hide the field
+message User {
+  string email = 1;
+  string ssn   = 2 [(entdb.field) = { deprecated: true }];
+}
+
+// V3 (later) — stop writing the field but keep the number reserved
+message User {
+  string email = 1;
+  // field 2 reserved (was: ssn)
+}
 ```
 
-## Schema Fingerprinting
+Existing data with the field is still readable. New writes can skip the field. The number stays retired.
 
-EntDB generates a deterministic fingerprint for schema comparison:
+## Related
 
-```python
-from entdb_sdk import SchemaRegistry
-
-registry = SchemaRegistry()
-registry.register(User, Task)
-registry.freeze()
-
-print(f"Schema fingerprint: {registry.fingerprint}")
-# "sha256:a1b2c3..."
-```
-
-The fingerprint changes when:
-- Types are added/removed
-- Fields are added/removed
-- Field properties change
-
-Use fingerprints to verify client-server schema compatibility.
+- [ADR-006](adr/006-proto-schema-definition.md) — proto-as-type-system
+- [ADR-018](adr/018-field-id-keyed-payloads.md) — payloads keyed by `field_id` on wire and disk
+- [`docs/guides/schema-lockdown.md`](guides/schema-lockdown.md) — CI integration guide
+- [SDK reference](sdk-reference.md) — using the proto-generated types from your app

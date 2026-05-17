@@ -1,5 +1,4 @@
 // legal_holds CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:967 (set_legal_hold_record)
 // through :1057 (is_under_legal_hold).
 //
 // Two concepts collide here:

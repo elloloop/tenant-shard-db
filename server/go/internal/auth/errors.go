@@ -13,8 +13,8 @@ import (
 // session, etc.) funnel through this so the interceptor returns a
 // consistent codes.Unauthenticated.
 //
-// Mirrors the Python except (AuthenticationError, ApiKeyError, SessionError)
-// catch in server/python/entdb_server/auth/auth_interceptor.py:193-198.
+// Bad-JWT / unknown-API-key / expired-session paths all funnel
+// through this wrapper.
 func unauthenticatedf(format string, a ...any) error {
 	return errs.Errorf(codes.Unauthenticated, format, a...)
 }

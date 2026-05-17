@@ -38,7 +38,7 @@ import (
 //   - Wire actor (req.Actor) is UNTRUSTED. The trusted principal is
 //     resolved via auth.Authoritative(ctx, claimed) — privilege-escalation
 //     remediation per commit fece3fb.
-//   - Admin-only: Wave-2 decision deviating from current Python (which
+//   - Admin-only: decision deviating from current Python (which
 //     has no admin gate today). Any caller whose trusted actor is not
 //     admin: or system: gets PERMISSION_DENIED. This closes the multi-
 //     tenant abuse vector flagged in the spec ("Admin gate" open

@@ -1,10 +1,15 @@
 # GetNodeByKey — Go Port Spec
 
+> Implementation: `server/go/internal/api/get_node_by_key.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Resolve a node via a **declared unique field** (typed
 `(field_id, value)` token), then delegate to `GetNode` for the
 authoritative ACL check. Read-only.
 
-Python source of truth: `server/python/entdb_server/api/grpc_server.py:1066-1128`.
+Python source of truth: `server/go/internal/api/get_node_by_key.go`.
 Frozen design: `docs/decisions/unique_keys.md` (2026-04-13, superseded by
 `sdk_api.md` 2026-04-14: `field_id` replaces `key_name`, message-level
 `keys: [...]` becomes field-level `(entdb.field).unique = true`,
@@ -36,16 +41,16 @@ Notes for the Go port:
 - **No `RequestContext`.** This RPC predates the context wrapper used
   by `GetNode`/`GetNodes`; `tenant_id`/`actor` are top-level. Don't
   "fix" this — it would break wire compat. Pinned by
-  `tests/python/unit/test_unique_keys.py:692-704`.
+  (legacy Python unit test, removed in Phase 4D).
 - **`value` is `google.protobuf.Value`.** The Python handler unwraps
-  via `json_format.MessageToDict` (`grpc_server.py:1094-1096`). Go
+  via `json_format.MessageToDict` (`server/go/internal/api/get_node_by_key.go`). Go
   port: unwrap with `value.AsInterface()` and pass the resulting
   `any` straight to the SQLite param binder. Do **not** stringify —
   SQLite's planner needs the native type to hit the unique expression
   index.
 - **`after_offset` is `int64`** here (not the `string` form used by
   `GetNode`). The Python handler stringifies it on call to
-  `_wait_for_offset` (`grpc_server.py:1089`). Default wait is 30s
+  `_wait_for_offset` (`server/go/internal/api/get_node_by_key.go`). Default wait is 30s
   (no `wait_timeout_ms` field on this request — fixed).
 - **Token shape is codegen'd, not stringly-typed.** SDKs construct
   the `(type_id, field_id)` pair from a `UniqueKey[T]` token emitted
@@ -59,28 +64,28 @@ Notes for the Go port:
 Same trusted-actor invariant as `GetNode` but the **outer** handler
 runs only the tenant check directly:
 
-1. `_check_tenant(request.tenant_id)` (`grpc_server.py:1086`) →
+1. `_check_tenant(request.tenant_id)` (`server/go/internal/api/get_node_by_key.go`) →
    shard redirect (`UNAVAILABLE` + `entdb-redirect-node` trailer) or
    region pin (`FAILED_PRECONDITION`). See `GetNode.md` for shape.
 2. `request.actor` is **untrusted**. The handler reads it but does
    **not** rebind for the unique-index lookup itself (the SQL is
    tenant-scoped, not actor-scoped). The trusted actor is bound via
-   `self._trusted_actor(request.actor)` (`grpc_server.py:1117`,
+   `self._trusted_actor(request.actor)` (`server/go/internal/api/get_node_by_key.go`,
    `:418-437`) only when constructing the inner `GetNodeRequest`, so
    the cross-tenant / per-node ACL check inside the delegated
    `GetNode` runs on the authoritative identity. Privilege-escalation
    pinning by `tests/python/integration/test_privilege_escalation.py`
    (same fixture covers both RPCs).
 3. **Capability mapping.** `GetNodeByKey → CoreCapability.READ`
-   (`server/python/entdb_server/auth/capability_registry.py:64`).
-   Pinned by `tests/python/unit/test_unique_keys.py:706-712`.
+   (`server/go/internal/auth/capability_registry.go`).
+   Pinned by (legacy Python unit test, removed in Phase 4D).
 
 ## Side effects (read on canonical_store unique index)
 
 **None.** Pure read. Two SQLite reads at most:
 
 - `canonical_store.get_node_by_key(tenant_id, type_id, field_id,
-  value)` (`canonical_store.py:2215-2227` → `_sync_get_node_by_key`
+  value)` (`server/go/internal/store/` → `_sync_get_node_by_key`
   `:2177-2213`). One indexed `SELECT … LIMIT 1` against:
 
   ```sql
@@ -92,7 +97,7 @@ runs only the tenant check directly:
 
   Hits the partial unique expression index
   `idx_unique_t<type>_f<field>` lazily created by
-  `_ensure_unique_indexes` (`canonical_store.py:1721-1798`). The
+  `_ensure_unique_indexes` (`server/go/internal/store/`). The
   index is keyed on `(tenant_id, json_extract(...))` filtered by
   `type_id` so multi-tenant physical files (mailbox/public) stay
   isolated.
@@ -118,12 +123,12 @@ Ordered, first-failure-wins:
 2. Unknown-tenant catch-all path returns `found=False` in the current
    Python handler when `_check_tenant` raises and the broad
    `try/except` swallows it (see Quirk below). Pinned by
-   `tests/python/unit/test_unique_keys.py:642-656`
+   (legacy Python unit test, removed in Phase 4D)
    (`test_get_node_by_key_unknown_tenant` → `resp.found is False`).
 3. `_wait_for_offset` (silent failure on timeout — same as `GetNode`).
 4. `canonical_store.get_node_by_key` returns `None` →
    `GetNodeByKeyResponse(found=False)`, status `OK`. **No abort.**
-   Pinned by `tests/python/unit/test_unique_keys.py:625-640` and
+   Pinned by (legacy Python unit test, removed in Phase 4D) and
    `tests/python/integration/test_grpc_contract.py:614-626` (mode
    `not_found`, `r.found is False`).
 5. Index hit → delegated `GetNode` runs. Its ACL chain decides
@@ -135,7 +140,7 @@ Ordered, first-failure-wins:
    `docs/decisions/unique_keys.md:60-61`.
 
 **Quirk to preserve / fix.** The handler's outer
-`try/except Exception` (`grpc_server.py:1125-1128`) converts every
+`try/except Exception` (`server/go/internal/api/get_node_by_key.go`) converts every
 uncaught exception — including `_check_tenant` aborts in tests — into
 `GetNodeByKeyResponse(found=False)`. In real `grpc.aio`,
 `context.abort` is terminal, so clients see the abort status; in
@@ -165,11 +170,11 @@ unit-test mocks they see `found=False`. The Go port should:
 - `canonical.Store.EnsureUniqueIndexes(ctx, tenantID, typeID,
   fieldIDs []int32)` — invoked at schema-register and applier-write
   time; idempotent via process-local cache keyed on
-  `(physical_db_path, type_id)` (`canonical_store.py:1762-1798`).
+  `(physical_db_path, type_id)` (`server/go/internal/store/`).
   GetNodeByKey itself does **not** call this — the index must already
   exist. Document this invariant.
 - `canonical.Store.GetNodeByCompositeKey(ctx, tenantID, typeID,
-  fieldIDs, values)` — composite variant (`canonical_store.py:2229+`).
+  fieldIDs, values)` — composite variant (`server/go/internal/store/+`).
   Not exposed by `GetNodeByKey` today; see Open questions.
 - `wire.UnwrapValue(*structpb.Value) any` — Python equivalent of
   `MessageToDict`. The `structpb` Go API already provides
@@ -179,7 +184,7 @@ unit-test mocks they see `found=False`. The Go port should:
 ## Other-RPC deps (GetNode for the resolved id)
 
 - **`GetNode`** is the authoritative read entry-point. The handler at
-  `grpc_server.py:1112-1124` constructs an internal `GetNodeRequest`
+  `server/go/internal/api/get_node_by_key.go` constructs an internal `GetNodeRequest`
   with `RequestContext{tenant_id, _trusted_actor(request.actor)}` and
   calls `self.GetNode(get_req, context)`. The Go port MUST call the
   **internal** Go `GetNode` (same package) — not via the gRPC stub —
@@ -192,20 +197,20 @@ unit-test mocks they see `found=False`. The Go port should:
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_unique_keys.py:597-623` —
+- (legacy Python unit test, removed in Phase 4D) —
   happy: `found=True`, `node.node_id == "alice"`.
-- `tests/python/unit/test_unique_keys.py:625-640` —
+- (legacy Python unit test, removed in Phase 4D) —
   miss: `found=False`, status `OK`.
-- `tests/python/unit/test_unique_keys.py:642-656` —
+- (legacy Python unit test, removed in Phase 4D) —
   unknown tenant returns `found=False` (see Quirk; Go port should
   decide whether to preserve or upgrade to `NOT_FOUND`).
-- `tests/python/unit/test_unique_keys.py:692-704` — wire round-trip:
+- (legacy Python unit test, removed in Phase 4D) — wire round-trip:
   `field_id` + typed `Value` survive serialize/parse.
-- `tests/python/unit/test_unique_keys.py:706-712` — capability
+- (legacy Python unit test, removed in Phase 4D) — capability
   mapping: `DEFAULT_OP_REQUIREMENTS["GetNodeByKey"] == READ`.
 - `tests/python/integration/test_grpc_contract.py:614-626` —
   contract: type with no unique fields → `found=False`.
-- `tests/python/unit/test_composite_unique_schema.py:67-128` —
+- (legacy Python unit test, removed in Phase 4D) —
   composite constraint declaration and registry surface (no RPC for
   composite lookup yet — see Open questions).
 - `sdk/go/entdb/grpc_transport_test.go:566-589` — Go transport happy
@@ -272,7 +277,7 @@ func (s *EntDBServer) GetNodeByKey(
 
 1. **Composite keys.** `_ensure_composite_unique_indexes` and
    `_sync_get_node_by_composite_key` exist server-side
-   (`canonical_store.py:1800+`, `:2229+`) and `composite_unique` is a
+   (`server/go/internal/store/+`, `:2229+`) and `composite_unique` is a
    declared proto option (`test_proto_options.py:204-219`, tag 24),
    but **no `GetNodeByCompositeKey` RPC** is wired. The current
    `GetNodeByKey` request has a single `field_id` + single `value`.

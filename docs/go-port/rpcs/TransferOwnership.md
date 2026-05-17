@@ -1,9 +1,14 @@
 # TransferOwnership — Go Port Spec
 
+> Implementation: `server/go/internal/api/transfer_ownership.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Reference Python handler:
-`server/python/entdb_server/api/grpc_server.py:2030-2049`. Proto:
+`server/go/internal/api/transfer_ownership.go`. Proto:
 `proto/entdb/v1/entdb.proto:108-109, 780-789`. Capability declaration:
-`server/python/entdb_server/auth/capability_registry.py:75`.
+`server/go/internal/auth/capability_registry.go`.
 
 > NOTE: the Python handler is thin and intentionally under-enforced.
 > Go port MUST close the gaps in "Open questions / risks" before
@@ -19,27 +24,27 @@ Request `entdb.v1.TransferOwnershipRequest` (proto:780):
 - `string new_owner` — fully-qualified principal string
   (`"user:alice"`, `"group:admins"`, or `"system"`). The Python store
   writes whatever string it receives; there is no validation today
-  (canonical_store.py:3631-3650). Go port MUST validate the prefix
+  (server/go/internal/store/). Go port MUST validate the prefix
   matches `Actor.user(...)` / `Actor.group(...)` (CLAUDE.md §"Actors")
   and reject empty strings with `INVALID_ARGUMENT`.
 
 Response `TransferOwnershipResponse` (proto:786):
 - `bool found` — `true` iff the row existed and was updated
-  (`cursor.rowcount > 0`, canonical_store.py:3650). For a missing
+  (`cursor.rowcount > 0`, server/go/internal/store/). For a missing
   node, returns `found=false` (no error string). Pinned by
   `test_acl_v2.py:534-536`.
 - `string error` — set ONLY on exception path
-  (grpc_server.py:2049). Successful "node not found" returns
+  (server/go/internal/api/transfer_ownership.go). Successful "node not found" returns
   `(found=false, error="")`.
 
 ## Auth (current owner only; trusted-actor)
 
-Today the handler ONLY calls `_check_tenant` (grpc_server.py:2038)
+Today the handler ONLY calls `_check_tenant` (server/go/internal/api/transfer_ownership.go)
 and trusts whatever caller asks. This is a known gap.
 
 Go port MUST enforce, before any mutation:
 1. `_check_tenant(tenant_id)` — tenant exists and is not archived
-   (grpc_server.py:362).
+   (server/go/internal/api/transfer_ownership.go).
 2. `trustedActor := AuthInterceptor.GetAuthoritativeActor(ctx)` —
    IGNORE `request.context.actor`. Same fix as commit fece3fb
    ("ignore client-claimed actor in gRPC handlers"). Pinned by
@@ -50,7 +55,7 @@ Go port MUST enforce, before any mutation:
    on the node (capability_registry.py:75). Use
    `_check_capability(tenant_id, trustedActor, node_id, type_id,
    "TransferOwnership")`, mirroring `ShareNode`
-   (grpc_server.py:1782-1793). On `PermissionError` return
+   (server/go/internal/api/transfer_ownership.go). On `PermissionError` return
    `(found=false, error="permission denied: …")` — no gRPC abort,
    string-error in the response is the existing convention for ACL
    ops (`ShareNode`/`RevokeAccess`).
@@ -69,7 +74,7 @@ which uses `BOB` without membership setup).
 
 ### WAL append (REQUIRED — gap vs CLAUDE.md §1)
 
-Python today writes SQLite directly (canonical_store.py:3637-3650),
+Python today writes SQLite directly (server/go/internal/store/),
 violating the invariant "every mutation goes through the WAL". Go
 port MUST:
 - Append a new `OwnershipTransferOp` (or reuse a generic
@@ -77,7 +82,7 @@ port MUST:
   WAL via the shared `wal.Append` package.
 - Have the `Applier` apply it: `UPDATE nodes SET owner_actor=?` and
   refresh `node_visibility` (mirrors `_update_visibility` call at
-  canonical_store.py:3643-3649).
+  server/go/internal/store/).
 - Block the handler on `WaitForOffset` if `wait_applied=true` is
   signalled via context — TransferOwnership has no such field today,
   but the Go port should default to **synchronous-apply** (the
@@ -92,9 +97,9 @@ not in `field_mask`.
 ### ACL changes
 
 On apply:
-- `nodes.owner_actor` row mutated (canonical_store.py:3639-3641).
+- `nodes.owner_actor` row mutated (server/go/internal/store/).
 - `node_visibility` rebuilt for that node with the NEW owner as a
-  principal (canonical_store.py:3643-3649). The OLD owner is dropped
+  principal (server/go/internal/store/). The OLD owner is dropped
   unless they retain access via an ACL grant — verified by
   `test_acl_v2.py:528-532` (ALICE can access pre-transfer; BOB can
   access post-transfer; no assertion that ALICE loses access — but
@@ -159,24 +164,24 @@ both via the message body, not status.
 - `WaitForOffset` — if a future revision adds `wait_applied`, this
   is the synchronisation primitive.
 - `ShareNode` / `RevokeAccess` — share the capability-check pattern
-  (`grpc_server.py:1782-1793`). Copy the same scaffolding.
+  (`server/go/internal/api/transfer_ownership.go`). Copy the same scaffolding.
 - `TransferUserContent` (proto:`TransferUserContentRequest`) — the
   bulk, cross-user variant. Distinct semantics: bulk reassign by
   old-owner identity, not per-node.
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_acl_v2.py:525-536` — happy path returns
+- (legacy Python unit test, removed in Phase 4D) — happy path returns
   `True`, ALICE→BOB owner change makes the node visible to BOB; a
   missing `node_id` returns `False`.
 - `tests/python/integration/test_grpc_contract.py:385-393` — gRPC
   wire happy path: `TransferOwnershipRequest(context, SEED_NODE_ID,
   BOB)` ⇒ `r.found is True`.
-- `tests/python/unit/test_admin_ops.py:127-144` — adjacent
+- (legacy Python unit test, removed in Phase 4D) — adjacent
   `transfer_user_content` tests; useful as a sanity reference for
   what BULK ownership transfer looks like (do NOT confuse with this
   RPC).
-- `server/python/entdb_server/auth/capability_registry.py:75` —
+- `server/go/internal/auth/capability_registry.go` —
   fixes `TransferOwnership: CoreCapability.ADMIN` for the
   capability table.
 

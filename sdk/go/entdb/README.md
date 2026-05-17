@@ -311,8 +311,8 @@ either, err := entdb.Query[*shop.Product](ctx, alice, map[string]any{
 Supported operators: `$eq` (default), `$ne`, `$gt`, `$gte`, `$lt`,
 `$lte`, `$in`, `$nin`, `$like`, `$between`, plus top-level `$and` and
 `$or`. See
-[`docs/decisions/sdk_api.md`](../../../docs/decisions/sdk_api.md) for
-the complete operator table.
+[ADR-025](../../../docs/adr/025-single-shape-sdk-api.md) for the
+complete operator table.
 
 ## Updating
 
@@ -675,7 +675,7 @@ func main() {
 ## Links
 
 - [Full docs](https://elloloop.github.io/tenant-shard-db/)
-- [SDK API ADR](../../../docs/decisions/sdk_api.md)
+- [SDK API ADR](../../../docs/adr/025-single-shape-sdk-api.md)
 - [Python SDK](https://pypi.org/project/entdb-sdk/)
 - [pkg.go.dev reference](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb)
 - [GitHub](https://github.com/elloloop/tenant-shard-db)

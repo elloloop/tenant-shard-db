@@ -2,7 +2,7 @@
 //
 // Behavioural pins from the Python suite this port must satisfy:
 //
-//   - tests/python/unit/test_user_registry.py:68-97   — happy path with
+//   - tests/python/unit/test_user_registry.py:68-97 — happy path with
 //     actor="system:admin".
 //   - tests/python/unit/test_user_registry.py:126-145 — non-admin caller
 //     returns PERMISSION_DENIED and the store is NOT touched.

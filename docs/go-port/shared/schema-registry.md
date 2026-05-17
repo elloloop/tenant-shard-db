@@ -2,7 +2,7 @@
 
 EPIC #407 — Python → Go server port. Source of truth:
 `server/python/entdb_server/schema/` (the whole package). Behavioural pins:
-`tests/python/unit/test_schema.py`, `test_schema_validator.py`,
+`(legacy Python unit test, removed in Phase 4D)`, `test_schema_validator.py`,
 `test_compat.py`, `test_composite_unique_schema.py`,
 `test_schema_cli_e2e.py`. The registry is a *server-wide singleton*,
 populated at boot, frozen before serving — every privileged RPC under
@@ -64,7 +64,7 @@ The registry is a **process-wide singleton**, mutable during boot,
 frozen exactly once before serving. There is **no per-tenant variant**;
 all tenants share one schema (`registry.py:46-48,554-585`).
 
-Boot sequence as Python runs it today (`server/python/entdb_server/main.py:278-289`):
+Boot sequence as Python runs it today (`server/go/cmd/entdb-server/main.go`):
 
 1. `registry = get_registry()` — lazily creates the global on first call.
 2. Optional `_load_schema_file(registry, path)` — reads a JSON file
@@ -227,7 +227,7 @@ Go-side parity tests, all reading the same Python-emitted JSON
 
 - `internal/schema/registry_test.go` — register / get / freeze /
   duplicate-id / frozen-write rejection (mirrors
-  `tests/python/unit/test_schema.py`).
+  `(legacy Python unit test, removed in Phase 4D)`).
 - `internal/schema/compat_test.go` — every `ChangeKind` enum case from
   `compat.py:45-97` produces the expected breaking/non-breaking
   classification (mirrors `test_compat.py`).

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// RevokeAllUserAccess RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// RevokeAllUserAccess RPC.
 // Spec: docs/go-port/rpcs/RevokeAllUserAccess.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:133 (rpc), :994-1006 (messages).
-// Reference Python: server/python/entdb_server/api/grpc_server.py:2864-2921.
 //
 // # Behavioural pins
 //
@@ -13,7 +12,7 @@
 //     (canonical_store.py:3871) — a CLAUDE.md invariant #1 violation
 //     pinned by docs/go-port/rpcs/RevokeAllUserAccess.md "WAL invariant
 //     gap (Go port MUST fix)". The Go port appends a single
-//     `admin_revoke_access` op into the WAL; the Wave-1 broadened
+//     `admin_revoke_access` op into the WAL; the broadened
 //     applier (server/go/internal/apply/ops_admin_revoke_access.go)
 //     deletes from node_access AND group_users AND node_visibility for
 //     the user. PLAN.md §6.4 item 2.
@@ -77,7 +76,7 @@ const revokeAllUserAccessMethod = "RevokeAllUserAccess"
 // revokeAllUserAccessTopic is the WAL topic the handler appends to.
 // Mirrors the cmd/entdb-server/main.go default flag value
 // ("entdb-wal"). Hard-coded here because the Server type has no topic
-// option in Wave 1; centralizing this constant keeps the api package
+// option; centralizing this constant keeps the api package
 // self-contained until the cross-RPC topic wiring lands.
 const revokeAllUserAccessTopic = "entdb-wal"
 

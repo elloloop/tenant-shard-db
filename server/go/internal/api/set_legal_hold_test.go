@@ -6,15 +6,15 @@
 //
 //   - tests/python/unit/test_admin_operations.py:594-609 — happy-path
 //     enable; status flips to "legal_hold".
-//   - :611-624                                            — disable returns to "active".
-//   - :626-638                                            — non-admin / non-owner -> PERMISSION_DENIED.
-//   - :860-868                                            — empty tenant_id -> INVALID_ARGUMENT.
+//   - :611-624 — disable returns to "active".
+//   - :626-638 — non-admin / non-owner -> PERMISSION_DENIED.
+//   - :860-868 — empty tenant_id -> INVALID_ARGUMENT.
 //   - tests/python/integration/test_grpc_contract.py:573-583 — wire-level sweep.
 //
-// Wave-2 deviations (intentional, documented in set_legal_hold.go header):
+//  deviations (intentional, documented in set_legal_hold.go header):
 //
 //   - Unknown tenant -> NOT_FOUND (Python: OK + success=false). All
-//     mutating Wave-2 RPCs converge on the status-code form.
+//     mutating RPCs converge on the status-code form.
 //   - Owner role bypass deferred — admin-only. Mirrors ArchiveTenant.
 
 package api_test
@@ -256,7 +256,9 @@ func TestSetLegalHold_GlobalStoreNotConfigured(t *testing.T) {
 
 // TestSetLegalHold_UnknownTenantNotFound: an admin call against a tenant
 // not in the registry returns NOT_FOUND (via checkTenant). This is the
-// Wave-2 deviation from Python's OK + success=false response — see
+//
+//	deviation from Python's OK + success=false response — see
+//
 // set_legal_hold.go header note.
 func TestSetLegalHold_UnknownTenantNotFound(t *testing.T) {
 	t.Parallel()

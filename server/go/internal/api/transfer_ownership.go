@@ -2,7 +2,6 @@
 
 // TransferOwnership implements entdb.v1.EntDBService/TransferOwnership.
 //
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2030-2049.
 // Port spec: docs/go-port/rpcs/TransferOwnership.md.
 //
 // # WAL-first restoration (CLAUDE.md §1)
@@ -51,19 +50,19 @@
 //
 // # Error contract
 //
-//	INVALID_ARGUMENT      empty node_id / new_owner / context.tenant_id
+//	INVALID_ARGUMENT empty node_id / new_owner / context.tenant_id
 //	                      OR new_owner is not a kind:id-prefixed actor
 //	                      string (user:/group:/system:).
-//	NOT_FOUND             tenant does not exist (from checkTenant) OR
+//	NOT_FOUND tenant does not exist (from checkTenant) OR
 //	                      node does not exist in the tenant.
-//	UNAVAILABLE           tenant pinned to another node.
-//	PERMISSION_DENIED     trusted actor is not the current owner.
-//	OK + found=true       transfer applied.
+//	UNAVAILABLE tenant pinned to another node.
+//	PERMISSION_DENIED trusted actor is not the current owner.
+//	OK + found=true transfer applied.
 //
 // Note: the Python wire contract returns (found=false, error="") for a
 // missing node (no gRPC status). The Go port hardens this to NOT_FOUND
 // because:
-//   - It is consistent with the rest of the Wave-2 surface (every
+//   - It is consistent with the rest of the surface (every
 //     "row missing" path uses codes.NotFound), AND
 //   - The contract test that pinned the soft-fail behaviour
 //     (test_acl_v2.py:534-536) is being retired alongside the Python
@@ -257,4 +256,4 @@ func isValidActorString(s string) bool {
 }
 
 // newIdempotencyKey lives in helpers.go (consolidated in the round-3
-// Wave-2 dedupe).
+//  dedupe).

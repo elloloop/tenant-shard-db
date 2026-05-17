@@ -17,7 +17,7 @@ import (
 
 // writeTestProtoset materialises the in-package testpb file
 // descriptor into a binary FileDescriptorSet on disk — same shape
-// ``protoc --descriptor_set_out=FILE`` produces.
+// “protoc --descriptor_set_out=FILE“ produces.
 func writeTestProtoset(t *testing.T) string {
 	t.Helper()
 	fp := testpb.ProductDesc.ParentFile()

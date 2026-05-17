@@ -1,7 +1,6 @@
 // Package globalstore owns the cross-tenant SQLite database (`global.db`).
 //
-// Spec: docs/go-port/shared/global-store.md. Source-of-truth Python:
-// server/python/entdb_server/global_store.py. This file holds the schema
+// Spec: docs/go-port/shared/global-store.md. This file holds the schema
 // DDL and idempotent migrations; CRUD lives in users.go, tenants.go, etc.
 //
 // Schema is created on every open via initSchema. Column additions guard
@@ -20,7 +19,6 @@ import (
 // schemaDDL is the canonical CREATE TABLE script. Every table is IF NOT
 // EXISTS so concurrent first-open from sibling processes (test fixtures)
 // is a no-op. Mirrors `_create_schema` in
-// server/python/entdb_server/global_store.py:199.
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS user_registry (
     user_id     TEXT PRIMARY KEY,

@@ -1,10 +1,8 @@
-// shared_index CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:670 (add_shared) through
-// :796 (get_shared_entries_for_node).
+// shared_index CRUD: add_shared through get_shared_entries_for_node.
 //
 // IMPORTANT: shared_index is a HINT — authoritative ACLs live in the
 // per-tenant canonical_store. Never gate access checks on these rows
-// alone (global_store.py:755 comment).
+// alone.
 
 package globalstore
 

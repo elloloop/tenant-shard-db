@@ -20,12 +20,12 @@ import (
 const (
 	extFieldOpts = 50102
 
-	fieldOptsRequiredField    = 1
-	fieldOptsSearchableField  = 2
-	fieldOptsIndexedField     = 3
-	fieldOptsEnumValuesField  = 6
+	fieldOptsRequiredField     = 1
+	fieldOptsSearchableField   = 2
+	fieldOptsIndexedField      = 3
+	fieldOptsEnumValuesField   = 6
 	fieldOptsKindOverrideField = 7
-	fieldOptsUniqueField      = 13
+	fieldOptsUniqueField       = 13
 )
 
 // EdgeOpts has its (from_type, to_type) wired into the message
@@ -40,27 +40,27 @@ const (
 
 // ExtractSchemaJSON reads an EntDB schema out of a compiled
 // protobuf descriptor set and returns the JSON bytes the
-// EntDB server expects in ``SCHEMA_FILE``.
+// EntDB server expects in “SCHEMA_FILE“.
 //
-// The descriptor set is what ``protoc --descriptor_set_out=FILE
-// --include_imports`` produces — the binary
-// ``descriptorpb.FileDescriptorSet`` form. Every message annotated
-// with ``(entdb.node)`` or ``(entdb.edge)`` becomes a node or edge
+// The descriptor set is what “protoc --descriptor_set_out=FILE
+// --include_imports“ produces — the binary
+// “descriptorpb.FileDescriptorSet“ form. Every message annotated
+// with “(entdb.node)“ or “(entdb.edge)“ becomes a node or edge
 // type in the output JSON. Every field on a node or edge gets its
 // kind inferred from the proto field type (with the
-// ``(entdb.field).kind`` string override winning when set), and
-// the ``(entdb.field).{required,indexed,searchable,unique}`` flags
+// “(entdb.field).kind“ string override winning when set), and
+// the “(entdb.field).{required,indexed,searchable,unique}“ flags
 // flow through.
 //
-// Output is the same wrapped envelope produced by ``entdb-schema
-// snapshot`` (Python) — ``{"version": 1, "fingerprint": "...",
-// "schema": {...}}`` — so the same server boot path
-// (``_load_schema_file``) consumes both.
+// Output is the same wrapped envelope produced by “entdb-schema
+// snapshot“ (Python) — “{"version": 1, "fingerprint": "...",
+// "schema": {...}}“ — so the same server boot path
+// (“_load_schema_file“) consumes both.
 //
 // Errors come back when the descriptor set is malformed or when a
-// node has a missing required field id (``(entdb.node).type_id ==
-// 0``). Messages with no ``(entdb.node)`` / ``(entdb.edge)`` option
-// are silently skipped — same as the Python ``register_proto_schema``
+// node has a missing required field id (“(entdb.node).type_id ==
+// 0“). Messages with no “(entdb.node)“ / “(entdb.edge)“ option
+// are silently skipped — same as the Python “register_proto_schema“
 // behaviour.
 func ExtractSchemaJSON(fds *descriptorpb.FileDescriptorSet) ([]byte, error) {
 	if fds == nil {
@@ -201,8 +201,8 @@ func extractFields(md protoreflect.MessageDescriptor) []map[string]any {
 	return out
 }
 
-// readMessageOptInt returns the int32 at ``innerField`` inside the
-// ``extNum`` extension on the message's options, plus whether the
+// readMessageOptInt returns the int32 at “innerField“ inside the
+// “extNum“ extension on the message's options, plus whether the
 // extension was present at all.
 func readMessageOptInt(md protoreflect.MessageDescriptor, extNum, innerField int32) (int32, bool) {
 	opts := md.Options()
@@ -227,8 +227,8 @@ func readMessageOptInt(md protoreflect.MessageDescriptor, extNum, innerField int
 	return int32(v), true
 }
 
-// readEdgeName reads ``EdgeOpts.name`` (proto field 2, string) when
-// present; otherwise returns ``fallback`` (the message's short
+// readEdgeName reads “EdgeOpts.name“ (proto field 2, string) when
+// present; otherwise returns “fallback“ (the message's short
 // name).
 func readEdgeName(md protoreflect.MessageDescriptor, fallback string) string {
 	opts := md.Options()
@@ -293,11 +293,11 @@ func readFieldOpts(fd protoreflect.FieldDescriptor) fieldOptsRaw {
 	return out
 }
 
-// fieldKindFor maps a proto field type to the EntDB ``kind`` string
-// the server's ``FieldKind.from_str`` accepts. The
-// ``(entdb.field).kind`` override wins when set — that's how a proto
-// ``int64`` carrying epoch milliseconds gets stored as ``kind:
-// "timestamp"``.
+// fieldKindFor maps a proto field type to the EntDB “kind“ string
+// the server's “FieldKind.from_str“ accepts. The
+// “(entdb.field).kind“ override wins when set — that's how a proto
+// “int64“ carrying epoch milliseconds gets stored as “kind:
+// "timestamp"“.
 func fieldKindFor(fd protoreflect.FieldDescriptor, override string) string {
 	if override != "" {
 		return override
@@ -326,7 +326,7 @@ func fieldKindFor(fd protoreflect.FieldDescriptor, override string) string {
 }
 
 // findString walks the wire-format buffer looking for a
-// length-delimited (string) field with ``fieldNum``. Returns the
+// length-delimited (string) field with “fieldNum“. Returns the
 // decoded UTF-8 string or "" plus false if not found.
 func findString(buf []byte, fieldNum uint64) (string, bool) {
 	payload, ok := findLengthDelimited(buf, fieldNum)

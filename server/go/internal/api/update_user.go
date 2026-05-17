@@ -1,12 +1,10 @@
-// UpdateUser RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// UpdateUser RPC.
 // Spec: docs/go-port/rpcs/UpdateUser.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:114 (rpc), :826-838 (request/
-// response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:2184-2229 (handler) and
-// server/python/entdb_server/global_store.py:386-409 (backing store).
+// response).
 //
-// Semantics (preserved byte-for-byte from the Python handler):
+// Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
 //     codes.Unimplemented "User registry not configured" — the same

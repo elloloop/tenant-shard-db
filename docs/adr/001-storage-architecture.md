@@ -2,12 +2,13 @@
 
 ## Status: Accepted
 
-## Supersedure note
+## Pointer to ADR-014
 
-ADR-014 supersedes this document's physical file map, scale envelope, and
-tenant-mobility assumptions. This ADR remains the historical decision for
-tenant isolation and colocating tenant data, ACLs, notifications, and
-apply metadata in the tenant file.
+The physical file layout, scale envelope, and tenant-mobility design
+are owned by [ADR-014](014-physical-storage-layout.md). This ADR
+records the original "tenant file as the primary data boundary"
+decision and the per-tenant table list (the actual Go DDL is at
+`server/go/internal/store/schema.go`, which is source-of-truth).
 
 ## Context
 
@@ -22,15 +23,18 @@ and tenant-local derived state:
 
 ```
 /data/
-  tenant_acme.db        — Acme data, ACL, notifications, apply metadata
-  tenant_smith.db       — Smith tenant data, ACL, notifications, apply metadata
+  tenant_acme.db        — Acme tenant data, ACL, apply metadata
+  tenant_smith.db       — Smith tenant data, ACL, apply metadata
 ```
 
-ADR-014 owns the full physical file strategy, including global control-
-plane state, reserved mailbox/public modes, scale limits, and tenant
-mobility.
+ADR-014 owns the full physical file strategy, including the global
+control-plane file (`global.db`), per-user mailbox files
+(`{tenant}/user_{user_id}.db`), and `public.db` semantics.
 
 ### Tables per tenant file
+
+The canonical DDL is `server/go/internal/store/schema.go`; this list
+is informational only.
 
 ```sql
 -- Application data (schema-defined)
@@ -40,36 +44,22 @@ edges               — all edge types in one table
 -- ACL
 node_access         — direct grants
 acl_inherit         — inheritance pointers
-groups              — per-tenant groups
 group_users         — group membership
 node_visibility     — derived visibility index
 
--- Notifications
-notifications       — all users' notifications in this tenant
-read_cursors        — per-user read position per channel/thread
-
 -- System
-applied_events      — idempotency tracking
+applied_events      — idempotency tracking (event_id dedup)
+applied_offsets     — last applied WAL offset per partition
 schema_version      — migration tracking
 ```
 
 ### Why single file per tenant
 
-1. **Atomic operations**: create node + notify + audit in one transaction
+1. **Atomic operations**: create node + grant ACL + write visibility in one transaction
 2. **Simple backup**: one file = complete tenant state
 3. **Simple recovery**: replay WAL into one file
-4. **No cross-file consistency**: notifications and data always in sync
-5. **Tenant isolation**: one tenant's SQLite cannot affect another's
-6. **GDPR deletion**: tenant-local application data is bounded by one file
-
-### Why NOT per-user mailbox files
-
-Original design had `mailbox_{tenant}_{user}.db` per user. With 1000 users per tenant, posting in #general required opening 1000 files. This was the bottleneck.
-
-Moving notifications into the tenant file:
-- 1 file open instead of 1000
-- Batch insert 1000 notifications in one transaction (~5-10ms)
-- Atomic with the message creation
+4. **Tenant isolation**: one tenant's SQLite cannot affect another's
+5. **GDPR deletion**: tenant-local application data is bounded by one file (with the per-tenant encryption key shredded per ADR-011)
 
 ## Consequences
 

@@ -1,11 +1,8 @@
-// FreezeUser RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// FreezeUser RPC.
 // Spec: docs/go-port/rpcs/FreezeUser.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:138 (rpc), :1039-1050
-// (request/response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:3072-3104 (handler) and
-// server/python/entdb_server/global_store.py:434-447
-// (`set_user_status`).
+// (request/response).
 //
 // GDPR Article 18 ("restrict processing"): toggle a user between
 // `active` and `frozen`. Freeze blocks user-initiated mutations but

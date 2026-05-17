@@ -57,9 +57,9 @@ func seedAliceNode(t *testing.T, cs *store.CanonicalStore, tenant string) string
 func decodeBundle(t *testing.T, raw string) (userID string, generatedAt int64, tenants []map[string]any) {
 	t.Helper()
 	var b struct {
-		UserID      string                   `json:"user_id"`
-		GeneratedAt int64                    `json:"generated_at"`
-		Tenants     []map[string]any         `json:"tenants"`
+		UserID      string           `json:"user_id"`
+		GeneratedAt int64            `json:"generated_at"`
+		Tenants     []map[string]any `json:"tenants"`
 	}
 	if err := json.Unmarshal([]byte(raw), &b); err != nil {
 		t.Fatalf("decode bundle: %v\nraw=%s", err, raw)

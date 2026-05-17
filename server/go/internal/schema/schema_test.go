@@ -11,11 +11,9 @@ import (
 	"testing"
 )
 
-// pythonSampleJSON mirrors the fixture used in
-// server/python/entdb_server/schema fixtures and the Python fingerprint
-// reference computed in tests/contract. Two node types (User, Task)
-// plus one edge type (AssignedTo). Sorted-key, compact-separator
-// canonical form.
+// pythonSampleJSON is the cross-language fixture for the SDK / server
+// schema JSON contract. Two node types (User, Task) plus one edge type
+// (AssignedTo). Sorted-key, compact-separator canonical form.
 const pythonSampleJSON = `{
   "node_types": [
     {

@@ -126,7 +126,7 @@ type Transport interface {
 	Health(ctx context.Context) (*HealthStatus, error)
 }
 
-// HealthStatus mirrors ``pb.HealthResponse`` — the boolean
+// HealthStatus mirrors “pb.HealthResponse“ — the boolean
 // healthy flag, the server version string, and a map of named
 // components to their status (e.g. "wal" → "ok",
 // "global_store" → "ok").
@@ -136,7 +136,7 @@ type HealthStatus struct {
 	Components map[string]string
 }
 
-// DeletionScheduled is what ``Admin.DeleteUser`` returns — the
+// DeletionScheduled is what “Admin.DeleteUser“ returns — the
 // GDPR-mandated timestamps so callers can show "your data will be
 // permanently removed at <date>" UI without a follow-up read.
 type DeletionScheduled struct {
@@ -145,11 +145,11 @@ type DeletionScheduled struct {
 	Status        string // typically "deletion_pending"
 }
 
-// TenantDetail mirrors ``pb.TenantDetail`` — the identity-layer
+// TenantDetail mirrors “pb.TenantDetail“ — the identity-layer
 // description of a tenant (not its quota, not its data).
 //
-// ``Region`` is the geographic region the tenant's data is pinned to
-// (e.g. ``"us-east-1"``, ``"eu-west-1"``). It is set when the tenant
+// “Region“ is the geographic region the tenant's data is pinned to
+// (e.g. “"us-east-1"“, “"eu-west-1"“). It is set when the tenant
 // is created — either explicitly via [WithRegion] on
 // [Admin.CreateTenant] or, when omitted, defaulted server-side to
 // the serving region. Cross-region requests are rejected with
@@ -163,7 +163,7 @@ type TenantDetail struct {
 	CreatedAt int64
 }
 
-// UserInfo mirrors ``pb.UserInfo`` from the global user registry.
+// UserInfo mirrors “pb.UserInfo“ from the global user registry.
 type UserInfo struct {
 	UserID    string
 	Email     string
@@ -173,9 +173,9 @@ type UserInfo struct {
 	UpdatedAt int64
 }
 
-// TenantMember describes one ``(tenant_id, user_id, role)`` row
-// from ``tenant_members`` — used by both ``GetTenantMembers`` (rows
-// for one tenant) and ``GetUserTenants`` (rows for one user).
+// TenantMember describes one “(tenant_id, user_id, role)“ row
+// from “tenant_members“ — used by both “GetTenantMembers“ (rows
+// for one tenant) and “GetUserTenants“ (rows for one user).
 type TenantMember struct {
 	TenantID string
 	UserID   string
@@ -183,14 +183,14 @@ type TenantMember struct {
 	JoinedAt int64
 }
 
-// DelegateResult is returned by ``Admin.DelegateAccess`` — how many
+// DelegateResult is returned by “Admin.DelegateAccess“ — how many
 // nodes were affected and the absolute expiry timestamp.
 type DelegateResult struct {
 	Delegated   int32
 	ExpiresAtMs int64
 }
 
-// RevokeAllResult tallies what ``Admin.RevokeAllUserAccess`` removed.
+// RevokeAllResult tallies what “Admin.RevokeAllUserAccess“ removed.
 type RevokeAllResult struct {
 	RevokedGrants int32
 	RevokedGroups int32
@@ -232,9 +232,9 @@ func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
 // than on the dial to match the Python SDK's behaviour — the
 // metadata is per-call, not per-channel.
 //
-// When ``tenantID`` is non-empty it is also stamped onto the
-// outgoing context as ``entdb-tenant-id``. The redirect
-// interceptor (see ``redirect_cache.go``) reads this header to
+// When “tenantID“ is non-empty it is also stamped onto the
+// outgoing context as “entdb-tenant-id“. The redirect
+// interceptor (see “redirect_cache.go“) reads this header to
 // route the call against a cached sub-channel without having to
 // reflect over every request type.
 func (t *grpcTransport) callContext(ctx context.Context, tenantID string) context.Context {
@@ -1184,12 +1184,12 @@ func (c *DbClient) GetTenantQuota(ctx context.Context, actor, tenantID string) (
 }
 
 // WaitForOffset blocks server-side until the WAL applier has reached
-// ``streamPosition`` for ``tenantID``, or ``timeoutMs`` elapses.
-// Returns ``(reached, currentPosition, err)``.  ``reached`` is true
-// when the offset was met; ``currentPosition`` lets the caller see
+// “streamPosition“ for “tenantID“, or “timeoutMs“ elapses.
+// Returns “(reached, currentPosition, err)“. “reached“ is true
+// when the offset was met; “currentPosition“ lets the caller see
 // how far behind the applier is when it wasn't.
 //
-// This is the explicit form of the ``wait_applied`` option callers
+// This is the explicit form of the “wait_applied“ option callers
 // can pass to [Plan.Commit] — useful for read-after-write across
 // independent processes that share an idempotency key but not a
 // commit chain.
@@ -1200,7 +1200,7 @@ func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPos
 // Health returns a snapshot of server health for liveness /
 // readiness probes. The response includes a boolean healthy flag,
 // the server version string, and a per-component status map (e.g.
-// ``"wal"`` → ``"ok"``).
+// “"wal"“ → “"ok"“).
 func (c *DbClient) Health(ctx context.Context) (*HealthStatus, error) {
 	return c.transport.Health(ctx)
 }
@@ -1211,7 +1211,7 @@ func (c *DbClient) Health(ctx context.Context) (*HealthStatus, error) {
 //
 // Useful when a network blip dropped the original commit response
 // — re-issuing the same idempotency_key on a new ExecuteAtomic call
-// is also safe (the WAL deduplicates) but ``GetReceiptStatus`` is
+// is also safe (the WAL deduplicates) but “GetReceiptStatus“ is
 // the cheap "did it actually land?" probe.
 func (c *DbClient) GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error) {
 	return c.transport.GetReceiptStatus(ctx, tenantID, actor, idempotencyKey)

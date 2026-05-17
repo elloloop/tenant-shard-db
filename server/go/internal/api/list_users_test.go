@@ -1,6 +1,4 @@
-// Behavioural tests for ListUsers (W2). The Python source-of-truth is
-// server/python/entdb_server/api/grpc_server.py:2231-2265; spec is
-// docs/go-port/rpcs/ListUsers.md.
+// Behavioural tests for ListUsers. Spec is docs/go-port/rpcs/ListUsers.md.
 //
 // The four cases below cover the parity shape Python pins:
 //

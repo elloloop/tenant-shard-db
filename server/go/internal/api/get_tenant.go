@@ -1,9 +1,8 @@
-// GetTenant RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// GetTenant RPC.
 // Spec: docs/go-port/rpcs/GetTenant.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:119 (rpc), :880-883
 // (request), :885-888 (response), :853-863 (TenantDetail). Reference
-// Python: server/python/entdb_server/api/grpc_server.py:2362-2395.
 //
 // Semantics (preserved byte-for-byte from the Python handler):
 //

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// SetLegalHold RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// SetLegalHold RPC.
 // Spec: docs/go-port/rpcs/SetLegalHold.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:132 (rpc), :982-992 (messages).
-// Reference Python: server/python/entdb_server/api/grpc_server.py:2808-2862.
 //
 // Behavioural parity with Python is preserved on the wire shape. Three
 // PLAN.md §6 drifts are folded in here:
@@ -32,12 +31,12 @@
 //
 // Error contract (spec §"Error contract"):
 //
-//   - global_store nil               -> UNIMPLEMENTED  "Tenant registry not configured"
-//   - empty actor                    -> INVALID_ARGUMENT "actor is required"
-//   - empty tenant_id                -> INVALID_ARGUMENT "tenant_id is required"
-//   - tenant not served by this node -> UNAVAILABLE   (via s.checkTenant; sharding gate)
-//   - tenant not in registry         -> NOT_FOUND     (via s.checkTenant)
-//   - non-admin / non-system caller  -> PERMISSION_DENIED "SetLegalHold requires admin or owner role"
+//   - global_store nil -> UNIMPLEMENTED "Tenant registry not configured"
+//   - empty actor -> INVALID_ARGUMENT "actor is required"
+//   - empty tenant_id -> INVALID_ARGUMENT "tenant_id is required"
+//   - tenant not served by this node -> UNAVAILABLE (via s.checkTenant; sharding gate)
+//   - tenant not in registry -> NOT_FOUND (via s.checkTenant)
+//   - non-admin / non-system caller -> PERMISSION_DENIED "SetLegalHold requires admin or owner role"
 //
 // On success the response carries `success=true` and `status` set to
 // "legal_hold" (when enabled) or "active" (when cleared) — pinned by
@@ -107,7 +106,7 @@ func (s *Server) SetLegalHold(
 	// tenant_registry. This is a Go-port tightening over the Python
 	// handler (which returns OK + success=false + error="Tenant not
 	// found"); the Python asymmetry is hostile to SDK callers and
-	// every other Wave-2 mutating RPC has converged on the
+	// every other mutating RPC has converged on the
 	// status-code form.
 	if err := s.checkTenant(ctx, req.GetTenantId()); err != nil {
 		resultStatus = "error"
@@ -125,7 +124,7 @@ func (s *Server) SetLegalHold(
 	// Compliance-officer gate. Today admin: / system: stand in for
 	// the not-yet-wired "compliance officer" role (spec "Open questions"
 	// item 5). The owner branch in the Python handler is deferred to
-	// match other Wave-2 RPCs (e.g. ArchiveTenant) — admin-only.
+	// match other RPCs (e.g. ArchiveTenant) — admin-only.
 	if !(trusted.IsAdmin() || trusted.IsSystem()) {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.PermissionDenied,
@@ -161,7 +160,7 @@ func (s *Server) SetLegalHold(
 }
 
 // newIdempotencyKey lives in helpers.go (consolidated in the round-3
-// Wave-2 dedupe). Its signature is now (string, error); the
+//  dedupe). Its signature is now (string, error); the
 // time-based fallback this file previously used has been dropped — a
 // crypto/rand failure is vanishingly rare and the best-effort WAL
 // append above simply skips the audit row in that case.

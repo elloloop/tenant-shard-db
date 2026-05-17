@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for the CreateTenant RPC. Pins the Wave-2 contract:
+// Tests for the CreateTenant RPC. Pins the contract:
 //
 //   - Admin happy path → Success=true, registry row + owner membership.
-//   - Non-admin trusted actor → PERMISSION_DENIED (Wave-2 admin gate).
+//   - Non-admin trusted actor → PERMISSION_DENIED ( admin gate).
 //   - Duplicate tenant_id → ALREADY_EXISTS.
 //   - Empty/invalid tenant_id (and other required fields) → INVALID_ARGUMENT.
 //
@@ -158,7 +158,7 @@ func TestCreateTenant_NonAdminPermissionDenied(t *testing.T) {
 }
 
 // TestCreateTenant_DuplicateAlreadyExists: a second CreateTenant with the
-// same tenant_id surfaces as ALREADY_EXISTS. (Wave-2 deviates from
+// same tenant_id surfaces as ALREADY_EXISTS. ( deviates from
 // Python's success=false channel for typed-error ergonomics; spec note
 // in CreateTenant.md "Error contract" allows the deviation in the Go
 // port.)

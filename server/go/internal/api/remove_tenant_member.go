@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // RemoveTenantMember drops a (tenant_id, user_id) row from the
-// cross-tenant tenant_members table. EPIC #407 Wave 2.
+// cross-tenant tenant_members table.
 //
 // Spec: docs/go-port/rpcs/RemoveTenantMember.md.
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:2492-2541.
 //
 // # Behavioural pins
 //

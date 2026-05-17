@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/CreateTenant`
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2304-2360`.
+> Implementation: `server/go/internal/api/create_tenant.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
+`server/go/internal/api/create_tenant.go`.
 
 ## Wire contract
 
@@ -10,8 +15,8 @@ Proto: `proto/entdb/v1/entdb.proto:118` (rpc), `:865-878` (messages).
 `CreateTenantRequest`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `actor` | 1 | `string` | Wire-claimed actor. **UNTRUSTED** — see Auth. Required, non-empty (`grpc_server.py:2318-2319`). |
-| `tenant_id` | 2 | `string` | New tenant identifier. Required (`:2320-2321`). MUST also pass `_validate_filesystem_id` rules (`[A-Za-z0-9_-]+`) because it becomes a filename: `data_dir/tenant_<id>.db` (`canonical_store.py:629-640`). |
+| `actor` | 1 | `string` | Wire-claimed actor. **UNTRUSTED** — see Auth. Required, non-empty (`server/go/internal/api/create_tenant.go`). |
+| `tenant_id` | 2 | `string` | New tenant identifier. Required (`:2320-2321`). MUST also pass `_validate_filesystem_id` rules (`[A-Za-z0-9_-]+`) because it becomes a filename: `data_dir/tenant_<id>.db` (`server/go/internal/store/`). |
 | `name` | 3 | `string` | Display name. Required, non-empty (`:2322-2323`). No charset constraint. |
 | `region` | 4 | `string` | Optional region pin (e.g. `eu-west-1`). Empty → server's `served_region`, falling back to `"us-east-1"` for single-region back-compat (`:2331-2334`). |
 
@@ -33,12 +38,12 @@ only condition that uses `context.abort` (`:2319, :2321, :2323`).
   OAuth/JWT) — same as every other tenant-admin RPC.
 - **Trusted-actor invariant (MANDATORY).** The wire `request.actor` is reduced
   to a server-trusted principal via `self._trusted_actor(request.actor)`
-  (`grpc_server.py:2329`). The Go port MUST mirror this: ignore the wire
+  (`server/go/internal/api/create_tenant.go`). The Go port MUST mirror this: ignore the wire
   `actor` for any decision and read the principal from the auth interceptor's
   per-RPC context. The fix that introduced this is the privilege-escalation
   remediation in commit `fece3fb` ("Fix privilege escalation: ignore client-
   claimed actor in gRPC handlers"). Pinned by `_trusted_actor` definition at
-  `grpc_server.py:418-450` and the per-handler comment at `:2325-2328`.
+  `server/go/internal/api/create_tenant.go` and the per-handler comment at `:2325-2328`.
 - **Admin scope.** Today, no explicit admin gate runs inside `CreateTenant` —
   any authenticated caller can create a tenant and is auto-recorded as `owner`.
   EPIC #407 owners SHOULD decide whether to add an explicit `is_admin` gate in
@@ -61,14 +66,14 @@ In-order narration of the Python handler:
    (`:2334`).
 5. `await self.global_store.create_tenant(tenant_id, name, region=region)` —
    `INSERT INTO tenant_registry (tenant_id, name, status='active', created_at,
-   region)` on the **global** SQLite (`global_store.py:471-487`). UNIQUE on
+   region)` on the **global** SQLite (`server/go/internal/globalstore/`). UNIQUE on
    `tenant_id` enforces idempotence.
 6. `await self.canonical_store.initialize_tenant(tenant_id)` — opens
    `data_dir/tenant_<id>.db` with `create=True` and runs `_create_schema(conn)`
-   (`canonical_store.py:1359-1371`). This **creates the SQLite file** and
+   (`server/go/internal/store/`). This **creates the SQLite file** and
    bootstraps the per-tenant tables (nodes, edges, applied_events, etc.).
 7. `await self.global_store.add_member(tenant_id, creator_uid, role="owner")`
-   (`global_store.py:558-575`).
+   (`server/go/internal/globalstore/`).
 8. Metrics: `record_grpc_request("CreateTenant", "ok"|"error", elapsed)`.
 
 **WAL-append parity (CRITICAL — see Open questions).** The Python handler does
@@ -85,7 +90,7 @@ the per-tenant quota row (rate-limit bucket, storage cap) at this point if the
 Go quota subsystem requires it; current Python lazy-creates on first use.
 
 **Region pinning.** The `region` column is the data-plane gate enforced by
-`_check_tenant` (`grpc_server.py:400-415`): a request landing on a server with
+`_check_tenant` (`server/go/internal/api/create_tenant.go`): a request landing on a server with
 `served_region != tenant.region` is rejected `FAILED_PRECONDITION`. Pinned by
 `tests/python/integration/test_region_pinning.py:108-134`.
 
@@ -95,7 +100,7 @@ Go quota subsystem requires it; current Python lazy-creates on first use.
 |----------------------------|---------|
 | `INVALID_ARGUMENT` (abort) | `actor`, `tenant_id`, or `name` empty (`:2319, :2321, :2323`). |
 | `UNIMPLEMENTED` (abort) | `global_store` not configured (`:2313`). |
-| `success=false, error="Tenant already exists: …"` | UNIQUE constraint on `tenant_registry.tenant_id` (`:2352-2357`). NOT `ALREADY_EXISTS` — Python returns `OK` + `success=false`. Go port MUST preserve this (contract test pins `success is False` and `"already exists" in error`, `tests/python/unit/test_tenant_registry.py:293-294`). |
+| `success=false, error="Tenant already exists: …"` | UNIQUE constraint on `tenant_registry.tenant_id` (`:2352-2357`). NOT `ALREADY_EXISTS` — Python returns `OK` + `success=false`. Go port MUST preserve this (contract test pins `success is False` and `"already exists" in error`, (legacy Python unit test, removed in Phase 4D)). |
 | `success=false, error=<exc str>` | Any other exception (`:2358-2360`). |
 | Filesystem errors from `initialize_tenant` | Today bubble as generic exceptions → `success=false`. Go port should map `EEXIST` (idempotent — see Implementation) and surface `INTERNAL` for `EROFS`/`ENOSPC`. |
 | Quota | No quota check today. If Go adds one, return `success=false, error="quota exceeded: …"`; do NOT abort with `RESOURCE_EXHAUSTED` unless the contract is updated. |
@@ -110,14 +115,14 @@ Each lives under `server/go/internal/...` unless noted.
 - `pb` (`server/go/internal/pb/entdbv1`) — generated `CreateTenantRequest`,
   `CreateTenantResponse`, `TenantDetail`. Required.
 - `globalstore` — `CreateTenant(ctx, id, name, region) (*Tenant, error)`,
-  `AddMember(ctx, tenantID, userID, role)` (mirrors `global_store.py:453,558`).
+  `AddMember(ctx, tenantID, userID, role)` (mirrors `server/go/internal/globalstore/,558`).
   Required.
 - `canonicalstore` — `InitializeTenant(ctx, tenantID) error` (mirrors
-  `canonical_store.py:1359`). Must be idempotent on retry. Required.
+  `server/go/internal/store/`). Must be idempotent on retry. Required.
 - `auth` — provides the trusted principal via `auth.PrincipalFromContext(ctx)`
   (Go equivalent of `_trusted_actor`). Required.
 - `region` — package-level `ServedRegion string` (mirrors
-  `grpc_server.py:281`). Required.
+  `server/go/internal/api/create_tenant.go`). Required.
 - `metrics` — `RecordGRPCRequest(method, status, dur)`. Required.
 - `errs` — sentinel `ErrTenantExists` returned by `globalstore.CreateTenant`
   on UNIQUE collision; handler maps to `success=false, error="Tenant already
@@ -130,7 +135,7 @@ NOT used: `apply.Applier` (no per-tenant event yet), `acl`, `schema`,
 
 ## Other-RPC deps
 
-- **Downstream — `AddTenantMember`** (`grpc_server.py:2442-2490`): uses the
+- **Downstream — `AddTenantMember`** (`server/go/internal/api/create_tenant.go`): uses the
   same `global_store.add_member` path. `CreateTenant` already invokes it
   internally for the creator-as-owner step, so the Go port of
   `AddTenantMember` should share the `globalstore.AddMember` primitive
@@ -138,7 +143,7 @@ NOT used: `apply.Applier` (no per-tenant event yet), `acl`, `schema`,
   duplicate-member error string (`"Member already exists in this tenant"`,
   `:2486`) is the parallel of CreateTenant's "Tenant already exists" — same
   pattern, do not diverge.
-- **Downstream — `GetTenant`** (`grpc_server.py:2362-…`) reads what
+- **Downstream — `GetTenant`** (`server/go/internal/api/create_tenant.go-…`) reads what
   `CreateTenant` wrote; ports together for a coherent contract test surface.
 - **Downstream — every data-plane RPC** depends on `_check_tenant`
   (`:400-415`) reading the `region` column populated here.
@@ -147,12 +152,12 @@ NOT used: `apply.Applier` (no per-tenant event yet), `acl`, `schema`,
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_tenant_registry.py:256-278` — happy path:
+- (legacy Python unit test, removed in Phase 4D) — happy path:
   `success=True`, `tenant.tenant_id`, `tenant.name`, `tenant.status="active"`,
   `canonical_store.initialize_tenant` awaited once with the id, creator
   recorded as `owner` member. **The Go server must satisfy these assertions
   verbatim once stubs are swapped.**
-- `tests/python/unit/test_tenant_registry.py:280-294` — duplicate tenant_id
+- (legacy Python unit test, removed in Phase 4D) — duplicate tenant_id
   yields `success=False` with `"already exists"` in `error` (NOT a gRPC abort).
 - `tests/python/integration/test_grpc_contract.py:477-487` — over a live
   channel: happy path with `actor=ADMIN, tenant_id="newtenant"` returns
@@ -165,7 +170,7 @@ NOT used: `apply.Applier` (no per-tenant event yet), `acl`, `schema`,
 - `tests/python/integration/test_region_pinning.py:108-134` — region pin then
   drives `_check_tenant` rejection with `FAILED_PRECONDITION` on the wrong
   server (downstream pin; ensures `CreateTenant` populated the column).
-- `tests/python/unit/test_tenant_registry.py:697-...` (`TestSDKCreateTenantRegion`)
+- `(legacy Python unit test, removed)-...` (`TestSDKCreateTenantRegion`)
   — SDK-level region propagation (informational; SDK port, not server).
 
 ## Implementation outline (Go handler)

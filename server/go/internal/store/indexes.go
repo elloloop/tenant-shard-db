@@ -13,15 +13,15 @@ import (
 // tenant_id so mailbox / public stores (which multiplex tenants onto
 // one file in Python) only emit one CREATE INDEX per type per file.
 //
-// Wave 1 keeps one DB per tenant so the path-vs-tenant_id distinction
+// keeps one DB per tenant so the path-vs-tenant_id distinction
 // is moot, but mirroring the Python shape simplifies any future
 // re-introduction of shared physical files.
 type indexCache struct {
-	mu             sync.Mutex
-	uniqueDone     map[indexKey]struct{}
-	queryDone      map[indexKey]struct{}
-	compositeDone  map[indexKey]struct{}
-	ftsDone        map[indexKey]struct{}
+	mu            sync.Mutex
+	uniqueDone    map[indexKey]struct{}
+	queryDone     map[indexKey]struct{}
+	compositeDone map[indexKey]struct{}
+	ftsDone       map[indexKey]struct{}
 }
 
 type indexKey struct {
@@ -269,4 +269,3 @@ func (s *CanonicalStore) ensureFieldIndexes(ctx context.Context, tenantID string
 	}
 	return nil
 }
-

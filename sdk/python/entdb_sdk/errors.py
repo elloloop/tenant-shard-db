@@ -277,8 +277,8 @@ class PreconditionFailedError(EntDbError):
 class UniqueConstraintError(EntDbError):
     """Raised when a write would violate a declared unique field.
 
-    Implements the client-facing side of the 2026-04-14 SDK v0.3
-    decision (``docs/decisions/sdk_api.md``). Unique fields are
+    Implements the client-facing side of ADR-025
+    (``docs/adr/025-single-shape-sdk-api.md``). Unique fields are
     declared on the proto field via ``(entdb.field).unique = true``
     and enforced server-side by a unique expression index on the
     payload. Duplicates surface either as a gRPC ``ALREADY_EXISTS``

@@ -1,19 +1,24 @@
 # CancelUserDeletion — Go Port Spec
 
+> Implementation: `server/go/internal/api/cancel_user_deletion.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Reverses a pending GDPR right-to-erasure request during the
 grace window. Reference Python handler:
-`server/python/entdb_server/api/grpc_server.py:2983-3012`. Proto:
+`server/go/internal/api/cancel_user_deletion.go`. Proto:
 `proto/entdb/v1/entdb.proto:139, 1052-1060`. Backing store:
-`server/python/entdb_server/global_store.py:834-848` (`cancel_deletion`)
+`server/go/internal/globalstore/` (`cancel_deletion`)
 and `:434-450` (`set_user_status`). Counterpart RPC `DeleteUser`:
-`grpc_server.py:2925-2981`.
+`server/go/internal/api/cancel_user_deletion.go`.
 
 ## Wire contract
 
 Request `entdb.v1.CancelUserDeletionRequest` (proto:1052):
 - `string actor` — UNTRUSTED payload. See Auth.
 - `string user_id` — required. Identifies the row in the global
-  `deletion_queue` table (global_store.py:239) and the corresponding
+  `deletion_queue` table (server/go/internal/globalstore/) and the corresponding
   row in `user_registry`. Plain user id, NOT a `tenant_principal`
   (`user:` prefix is stripped at the boundary).
 
@@ -23,9 +28,9 @@ deletion entries are global-registry rows.
 Response `entdb.v1.CancelUserDeletionResponse` (proto:1057):
 - `bool success` — mirrors `cancel_deletion`'s rowcount: `True` iff a
   `pending` deletion row existed and was deleted
-  (global_store.py:842-848; grpc_server.py:3002-3006).
+  (server/go/internal/globalstore/; server/go/internal/api/cancel_user_deletion.go).
 - `string error` — populated only by the in-band catch-all
-  (grpc_server.py:3012).
+  (server/go/internal/api/cancel_user_deletion.go).
 
 Note: success=false carries NO error text when the row simply was not
 in `pending` state (e.g. already completed, or never queued). The Go
@@ -38,13 +43,13 @@ status codes.
 ## Auth (self within grace window / admin; trusted-actor)
 
 - Empty `actor` → `INVALID_ARGUMENT "actor is required"`
-  (grpc_server.py:2993-2994).
+  (server/go/internal/api/cancel_user_deletion.go).
 - Empty `user_id` → `INVALID_ARGUMENT "user_id is required"`
-  (grpc_server.py:2995-2996).
+  (server/go/internal/api/cancel_user_deletion.go).
 - `global_store` unset → `UNIMPLEMENTED "User registry not
-  configured"` (grpc_server.py:2991-2992).
+  configured"` (server/go/internal/api/cancel_user_deletion.go).
 - Authorization gate: `_is_self_or_admin(actor, user_id)`
-  (grpc_server.py:2997-3001, definition at :2071-2086). Trusted-actor
+  (server/go/internal/api/cancel_user_deletion.go, definition at :2071-2086). Trusted-actor
   pattern — privilege decision uses `get_authoritative_actor(actor)`
   from `auth/auth_interceptor.py:92`, NOT `request.actor`. This is the
   post-#168 invariant: a malicious caller cannot forge `actor=
@@ -59,7 +64,7 @@ status codes.
   applier worker has already flipped the row to `completed`, the
   cancel is a no-op (`success=false`). There is no time-based check
   in the handler — the worker's pass over `get_executable_deletions`
-  (global_store.py:865-885) is the de-facto deadline.
+  (server/go/internal/globalstore/) is the de-facto deadline.
 
 ## Side effects (global WAL append; flip pending → active)
 
@@ -67,7 +72,7 @@ The Go handler appends a global-scope `user_deletion_canceled` WAL
 event and waits for the applier. The user registry and `deletion_queue`
 are no longer direct-write carve-outs.
 
-What the handler actually does (grpc_server.py:3002-3004):
+What the handler actually does (server/go/internal/api/cancel_user_deletion.go):
 1. Pre-read the pending `deletion_queue` row. If none exists, return the
    Python-compatible in-band no-op response.
 2. Append `op="user_deletion_canceled"` with `user_id` and `updated_at`.
@@ -77,7 +82,7 @@ What the handler actually does (grpc_server.py:3002-3004):
    The status flip is **conditional** on cancel succeeding; if the
    row was already gone, status is left untouched.
 3. `record_grpc_request("CancelUserDeletion", "ok"|"error", elapsed)`
-   (grpc_server.py:3005, 3008).
+   (server/go/internal/api/cancel_user_deletion.go, 3008).
 
 No audit-log write. Compliance trail is out of scope; per CLAUDE.md
 the WAL + S3 Object Lock supply the immutable record for tenant-plane
@@ -109,12 +114,12 @@ tombstone + `FAILED_PRECONDITION` from the handler) — that is a proto
 
 - `entdbserver/auth` — `GetAuthoritativeActor(ctx, payloadActor) string`
   and `IsSelfOrAdmin(ctx, userID string) bool` (port of
-  `auth/auth_interceptor.py:92` and `grpc_server.py:2071-2086`). The
+  `auth/auth_interceptor.py:92` and `server/go/internal/api/cancel_user_deletion.go`). The
   `AuthInterceptor` unary interceptor stuffs the trusted actor into
   `context.Context` from gRPC metadata.
 - `entdbserver/globalstore` — `CancelDeletion(ctx, userID string)
   (bool, error)` (port of `_sync_cancel_deletion`,
-  global_store.py:842-848) and `SetUserStatus(ctx, userID, status
+  server/go/internal/globalstore/) and `SetUserStatus(ctx, userID, status
   string) (bool, error)` (port of `_sync_set_user_status`).
 - `entdbserver/metrics` — `RecordGRPCRequest(method, outcome string,
   elapsed time.Duration)` (port of `record_grpc_request`).
@@ -125,35 +130,35 @@ tombstone + `FAILED_PRECONDITION` from the handler) — that is a proto
 
 ## Other-RPC deps (DeleteUser counterpart)
 
-- `DeleteUser` (grpc_server.py:2925-2981) — populates the
+- `DeleteUser` (server/go/internal/api/cancel_user_deletion.go) — populates the
   `deletion_queue` row that this RPC removes and flips
   `user_registry.status` to `pending_deletion`. CancelUserDeletion is
   meaningless without a prior `DeleteUser`; the contract test seeds
   state by calling `DeleteUser` first
   (test_gdpr_engine.py:668).
-- `FreezeUser` (grpc_server.py near :3014, proto:139 sibling) — also
+- `FreezeUser` (server/go/internal/api/cancel_user_deletion.go near :3014, proto:139 sibling) — also
   uses `_is_self_or_admin`; share the auth helper.
-- `ExportUserData` (grpc_server.py:3014+) — frequently called before
+- `ExportUserData` (server/go/internal/api/cancel_user_deletion.go+) — frequently called before
   `DeleteUser` for GDPR Article 20 + 17 sequencing; not a hard
   prerequisite.
 - The async deletion sweeper (`get_executable_deletions` →
-  `mark_deletion_completed`, global_store.py:865-906) races with this
+  `mark_deletion_completed`, server/go/internal/globalstore/) races with this
   RPC. The Go port MUST keep the same `WHERE status='pending'`
   guard so a partially-executed deletion cannot be cancelled.
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_gdpr_engine.py:489-495` — `cancel_deletion`
+- (legacy Python unit test, removed in Phase 4D) — `cancel_deletion`
   during grace removes the queue entry; `get_pending_deletions()` is
   empty afterwards. Pins step-1 semantics.
-- `tests/python/unit/test_gdpr_engine.py:665-674` — full handler
+- (legacy Python unit test, removed in Phase 4D) — full handler
   happy path: `DeleteUser(alice)` then `CancelUserDeletion(alice)`
   returns `success=True` and `user_registry.status == "active"`. Pins
   the handler chain (cancel → set_user_status flip).
 - `tests/python/integration/test_grpc_contract.py:676-681` — wire-
   level happy: `actor=ALICE, user_id="alice"` returns successfully
   over the gRPC channel. Pins the proto/RPC route registration.
-- `tests/python/unit/test_gdpr_engine.py:499-505` — adjacent
+- (legacy Python unit test, removed in Phase 4D) — adjacent
   `mark_deletion_completed` test pins the OTHER terminal state and
   proves `cancel_deletion` MUST NOT touch a `completed` row (the
   `WHERE status='pending'` guard is the boundary).
@@ -209,7 +214,7 @@ user in `pending_deletion` until a retry — same as Python today).
 
 - **No explicit deadline.** "Grace window" is implicit: it lasts
   until the applier sweeper flips `status='pending'` to `completed`
-  (global_store.py:898-906). There is no time-based check in the
+  (server/go/internal/globalstore/). There is no time-based check in the
   handler. Risk: in a fast-sweep deployment with `grace_days=0` an
   admin who issues `DeleteUser` then `CancelUserDeletion` ms later
   may race the sweeper and silently fail (`success=false, error=""`).

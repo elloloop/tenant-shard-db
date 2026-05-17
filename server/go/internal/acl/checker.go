@@ -46,10 +46,7 @@ type CrossTenantGrantReader interface {
 	CrossTenantGrant(ctx context.Context, sourceTenant, nodeID, foreignActor string) (Permission, bool, error)
 }
 
-// Checker answers single-node authorization questions. Mirrors the
-// per-handler _check_capability call site at
-// server/python/entdb_server/api/grpc_server.py:299-360 plus the
-// _sync_can_access core at canonical_store.py:2867-2946.
+// Checker answers single-node authorization questions.
 //
 // A Checker is built once per server and shared across handlers; it
 // holds no per-request state. All accessors are concurrency-safe to

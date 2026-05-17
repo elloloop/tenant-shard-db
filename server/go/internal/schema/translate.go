@@ -3,10 +3,10 @@ package schema
 // FieldIDByName resolves a field name to its stable field_id within the
 // node type identified by typeName (or empty / unknown name returns
 // (0, false)). This is the lookup primitive payload-translation
-// (Wave 1.6) calls on the ingress hot path.
+// (.6) calls on the ingress hot path.
 //
 // Lock-free post-Freeze; before Freeze it falls back to a linear scan
-// of NodeTypeDef.Fields. The Wave-1.6 payload package is expected to
+// of NodeTypeDef.Fields. The .6 payload package is expected to
 // run after Freeze, but the pre-freeze path keeps unit tests simple.
 func (r *Registry) FieldIDByName(typeName, fieldName string) (uint32, bool) {
 	n := r.nodesByName[typeName]

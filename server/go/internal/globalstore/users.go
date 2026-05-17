@@ -1,7 +1,6 @@
-// user_registry CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:336 (create_user) through
-// :449 (set_user_status). user_id is bare ("alice"), never prefixed
-// (`user:alice`). Translation happens at the gRPC boundary.
+// user_registry CRUD: create_user through set_user_status. user_id is
+// bare ("alice"), never prefixed (`user:alice`). Translation happens at
+// the gRPC boundary.
 
 package globalstore
 
@@ -140,8 +139,7 @@ func (g *GlobalStore) UpdateUser(ctx context.Context, userID string, upd UserUpd
 
 // SetUserStatus is a thin wrapper over UpdateUser{Status: ...}. Kept as
 // a distinct method so the gRPC layer can audit status transitions
-// without parsing a struct field. Mirrors `_sync_set_user_status`
-// (global_store.py:442).
+// without parsing a struct field.
 func (g *GlobalStore) SetUserStatus(ctx context.Context, userID, status string) (bool, error) {
 	now := g.now()
 	res, err := g.db.ExecContext(ctx,

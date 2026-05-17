@@ -12,8 +12,8 @@
 //   - No update / delete UI. Sandbox writes are CREATE-only in v1.
 //
 // If you find yourself adding tabs / autocomplete / Monaco here,
-// stop — read docs/decisions/console.md, the explicit goal is "small
-// debug tool that doesn't drift from the proto."
+// stop — read docs/adr/021-go-console-binary.md, the explicit goal
+// is "small debug tool that doesn't drift from the proto."
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'

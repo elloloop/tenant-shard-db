@@ -14,10 +14,10 @@ import (
 // op shape:
 //
 //	{
-//	  "op":              "add_group_member",
-//	  "group_id":        "<id>",
+//	  "op": "add_group_member",
+//	  "group_id": "<id>",
 //	  "member_actor_id": "<kind:id>",
-//	  "role":            "<role>", // default "member"
+//	  "role": "<role>", // default "member"
 //	}
 func (a *Applier) applyAddGroupMember(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any) error {
 	groupID := stringField(op, "group_id")

@@ -203,7 +203,7 @@ func TestPerTenantOrderUnderConcurrency(t *testing.T) {
 	}
 
 	// Verify per-tenant order: for each tenant, the values
-	// "tenant_X:0", "tenant_X:1", ... appear in increasing offset
+	// "tenant_X:0", "tenant_X:1".. appear in increasing offset
 	// order within the tenant's partition.
 	all := m.GetAllRecords("wal")
 	perTenantSeen := make(map[string][]string)

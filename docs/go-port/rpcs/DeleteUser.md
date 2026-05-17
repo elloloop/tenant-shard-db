@@ -1,8 +1,13 @@
 # DeleteUser — Go Port Spec
 
+> Implementation: `server/go/internal/api/delete_user.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. GDPR right-to-erasure. Queues a user for deletion with a
 grace period; a background worker performs the actual erasure.
-Python source of truth: `server/python/entdb_server/api/grpc_server.py:2925-2981`.
+Python source of truth: `server/go/internal/api/delete_user.go`.
 
 ## Wire contract
 
@@ -16,13 +21,13 @@ DeleteUserResponse { bool success = 1; int64 requested_at = 2;
                      int64 execute_at = 3; string status = 4; string error = 5; }
 ```
 
-`grace_days <= 0` is normalized to **30** (`grpc_server.py:2965`).
+`grace_days <= 0` is normalized to **30** (`server/go/internal/api/delete_user.go`).
 `status` values returned today: `"pending"`. Worker transitions write
 back to `global_store` rows; the gRPC reply only ever sees `"pending"`
-on the queueing path (see `_sync_queue_deletion`, `global_store.py:815-822`).
+on the queueing path (see `_sync_queue_deletion`, `server/go/internal/globalstore/`).
 
 `requested_at` / `execute_at` are unix-seconds (int64) populated by
-`global_store.queue_deletion` (`global_store.py:800-822`).
+`global_store.queue_deletion` (`server/go/internal/globalstore/`).
 
 Note: the request is **flat** (no `RequestContext`), unlike most
 ingress RPCs. `actor` is therefore the only client-supplied identity
@@ -31,20 +36,20 @@ field — see Auth.
 ## Auth (self via consent / admin / compliance; trusted-actor)
 
 1. **Trusted actor.** Handler MUST rebind `request.actor` through
-   `_trusted_actor` (`grpc_server.py:418-437`) before any authorization
+   `_trusted_actor` (`server/go/internal/api/delete_user.go`) before any authorization
    check. Untrusted client claims are dropped per the choke-point fix
    (commit `fece3fb`, applied to all GDPR RPCs in the Go port).
 2. **Self-or-admin.** `_is_self_or_admin(actor, user_id)` gates entry
-   (`grpc_server.py:2944-2948`). Two acceptable principals:
+   (`server/go/internal/api/delete_user.go`). Two acceptable principals:
    - The user themselves (`actor == "user:<user_id>"`), satisfying
      GDPR Art. 17 self-service erasure consent.
    - An admin / compliance principal (system actors with the `admin`
      role; same predicate used by `FreezeUser` and `ExportUserData`).
 3. **Argument validation.** `actor` and `user_id` empty → `INVALID_ARGUMENT`
-   (`grpc_server.py:2940-2943`). `global_store` not configured →
+   (`server/go/internal/api/delete_user.go`). `global_store` not configured →
    `UNIMPLEMENTED`.
 4. Failure mode: non-self / non-admin → `PERMISSION_DENIED` via
-   `context.abort` (pinned by `tests/python/unit/test_gdpr_engine.py:646-654`
+   `context.abort` (pinned by (legacy Python unit test, removed in Phase 4D)
    and `tests/python/integration/test_grpc_contract.py:671-676`).
 
 ## Side effects
@@ -52,7 +57,7 @@ field — see Auth.
 The handler is intentionally **lightweight**: it queues, it does not
 erase. The actual deletion pipeline runs in `gdpr_worker.py`.
 
-Synchronous path (`grpc_server.py:2950-2967`):
+Synchronous path (`server/go/internal/api/delete_user.go`):
 1. `global_store.get_user(user_id)` → `None` returns
    `success=False, error="User not found"` (no abort, OK status code).
    Pinned: `test_gdpr_engine.py:658-662`.
@@ -61,7 +66,7 @@ Synchronous path (`grpc_server.py:2950-2967`):
    `requested_at`/`execute_at` unchanged (idempotent re-queue).
    Pinned: `test_gdpr_engine.py:637-643`.
 3. `global_store.queue_deletion(user_id, grace_days)` inserts into the
-   `deletion_queue` table (`global_store.py:239-246, 815-822`).
+   `deletion_queue` table (`server/go/internal/globalstore/, 815-822`).
 4. `global_store.set_user_status(user_id, "pending_deletion")`.
 
 WAL append: **none on the queueing path today.** The Python handler
@@ -88,11 +93,11 @@ Tombstone vs. hard delete:
 Legal hold: there is **no legal-hold check in the current Python
 DeleteUser handler**. Tenant-level legal hold is enforced in
 `_check_tenant_access` for *node/edge* deletes
-(`grpc_server.py:524, 453, 755`) but not at GDPR queueing time.
+(`server/go/internal/api/delete_user.go, 453, 755`) but not at GDPR queueing time.
 The Go port SHOULD add the check explicitly: before queueing, walk
 `global_store.get_user_tenants(user_id)` and reject with
 `FAILED_PRECONDITION` if any returns `is_under_legal_hold(tenant_id)`
-true (`global_store.py:1040-1056`). Flag this in the issue — do not
+true (`server/go/internal/globalstore/`). Flag this in the issue — do not
 silently change behavior; gate on a config flag and add a contract
 test before flipping default.
 
@@ -106,13 +111,13 @@ and is anonymized in-place. No separate per-user shred is performed.
 
 | Condition                              | Code                  | Pinned by |
 |----------------------------------------|-----------------------|-----------|
-| `global_store` not configured          | `UNIMPLEMENTED`       | `grpc_server.py:2939` |
-| `actor` empty                          | `INVALID_ARGUMENT`    | `grpc_server.py:2940-2941` |
-| `user_id` empty                        | `INVALID_ARGUMENT`    | `grpc_server.py:2942-2943` |
+| `global_store` not configured          | `UNIMPLEMENTED`       | `server/go/internal/api/delete_user.go` |
+| `actor` empty                          | `INVALID_ARGUMENT`    | `server/go/internal/api/delete_user.go` |
+| `user_id` empty                        | `INVALID_ARGUMENT`    | `server/go/internal/api/delete_user.go` |
 | Caller is not self and not admin       | `PERMISSION_DENIED`   | `test_gdpr_engine.py:646-654`, `test_grpc_contract.py:671-676` |
 | User does not exist                    | `OK` + `success=false`, `error="User not found"` | `test_gdpr_engine.py:658-662` |
 | Pending entry already exists           | `OK` + `success=true`, `status="pending"`, same timestamps | `test_gdpr_engine.py:637-643` |
-| Generic exception                      | `OK` + `success=false`, `error=str(e)` | `grpc_server.py:2976-2981` |
+| Generic exception                      | `OK` + `success=false`, `error=str(e)` | `server/go/internal/api/delete_user.go` |
 
 Notes:
 - "User not found" returns OK, not `NOT_FOUND`. The Go port MUST keep
@@ -140,7 +145,7 @@ Notes:
 
 ## Other-RPC deps
 
-- **`CancelUserDeletion`** (`grpc_server.py:2983-3010`,
+- **`CancelUserDeletion`** (`server/go/internal/api/delete_user.go`,
   `proto:139`): inverse during grace window; deletes from
   `deletion_queue` and flips user back to `"active"`. MUST be
   implemented in the same milestone — pinned by
@@ -151,20 +156,20 @@ Notes:
 - **`FreezeUser`** (`proto:1039-1049`): suspends without erasure;
   shares the auth helper. Worker SHOULD skip frozen users or treat
   freeze as a soft hold (current Python: no interaction — flag).
-- `SetLegalHold` (tenant-level, `grpc_server.py:2820-2840`): produces
+- `SetLegalHold` (tenant-level, `server/go/internal/api/delete_user.go`): produces
   the precondition the new legal-hold gate would read.
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_gdpr_engine.py:625-633` — happy path,
+- (legacy Python unit test, removed in Phase 4D) — happy path,
   `status=="pending"`, user marked `pending_deletion`.
-- `tests/python/unit/test_gdpr_engine.py:636-643` — idempotency:
+- (legacy Python unit test, removed in Phase 4D) — idempotency:
   same `execute_at` returned on repeat call.
-- `tests/python/unit/test_gdpr_engine.py:646-654` — non-self /
+- (legacy Python unit test, removed in Phase 4D) — non-self /
   non-admin → `PERMISSION_DENIED` abort.
-- `tests/python/unit/test_gdpr_engine.py:657-662` — unknown user →
+- (legacy Python unit test, removed in Phase 4D) — unknown user →
   `success=False`, no abort.
-- `tests/python/unit/test_gdpr_engine.py:664-672` — Cancel after
+- (legacy Python unit test, removed in Phase 4D) — Cancel after
   Delete restores status to `"active"`.
 - `tests/python/integration/test_grpc_contract.py:665-670` —
   end-to-end happy path over real gRPC channel.
@@ -177,7 +182,7 @@ in `tests/contract/` (cross-impl).
 ## Implementation outline
 
 State machine (rows in `global_store.deletion_queue`,
-`global_store.py:239-246`):
+`server/go/internal/globalstore/`):
 
 ```
                      +-------------------+

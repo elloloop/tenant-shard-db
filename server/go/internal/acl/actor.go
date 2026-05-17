@@ -5,9 +5,8 @@ package acl
 import "strings"
 
 // ActorKind enumerates the principal categories valid as ACL grant
-// subjects. Mirrors Principal.parse at
-// server/python/entdb_server/apply/acl.py:80-106 plus the cross-tenant
-// "tenant:" addition from docs/decisions/acl.md (2026-04-13).
+// subjects. Includes the cross-tenant "tenant:" addition from
+// docs/decisions/acl.md (2026-04-13).
 //
 // Note this is a wider set than auth.Kind: the auth interceptor accepts
 // only user/system/admin as caller identities, while ACL grant subjects

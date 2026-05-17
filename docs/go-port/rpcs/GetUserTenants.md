@@ -1,17 +1,22 @@
 # GetUserTenants — Go Port Spec
 
-EPIC #407. Reference Python: `server/python/entdb_server/api/grpc_server.py:2572-2599`.
+> Implementation: `server/go/internal/api/get_user_tenants.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407. Reference Python: `server/go/internal/api/get_user_tenants.go`.
 
 ## Wire contract
 
 Proto: `proto/entdb/v1/entdb.proto:126` (rpc), `:930-933` (request), `:935-937` (response), `:902-907` (`TenantMemberInfo`).
 
 Request `GetUserTenantsRequest`:
-- `string actor = 1` — required (presence-checked at `grpc_server.py:2586-2587`). Field is informational only after commit `fece3fb` ("ignore client-claimed actor"); the trusted identity comes from the auth interceptor. Empty string => `INVALID_ARGUMENT`.
+- `string actor = 1` — required (presence-checked at `server/go/internal/api/get_user_tenants.go`). Field is informational only after commit `fece3fb` ("ignore client-claimed actor"); the trusted identity comes from the auth interceptor. Empty string => `INVALID_ARGUMENT`.
 - `string user_id = 2` — required (`:2588-2589`). Bare id, NO `user:` prefix (CLAUDE.md: `user_id` "alice" vs `tenant_principal` "user:alice"). Empty => `INVALID_ARGUMENT`.
 
 Response `GetUserTenantsResponse`:
-- `repeated TenantMemberInfo memberships = 1` — one row per tenant the user belongs to. Each row carries `tenant_id`, `user_id`, `role`, `joined_at` (epoch seconds, int64). Order: `joined_at` ascending (`global_store.py:622-628` — `ORDER BY joined_at`). Empty list when the user has no memberships AND when the handler hits the catch-all error path (`:2599`).
+- `repeated TenantMemberInfo memberships = 1` — one row per tenant the user belongs to. Each row carries `tenant_id`, `user_id`, `role`, `joined_at` (epoch seconds, int64). Order: `joined_at` ascending (`server/go/internal/globalstore/` — `ORDER BY joined_at`). Empty list when the user has no memberships AND when the handler hits the catch-all error path (`:2599`).
 
 Read-only, idempotent. No `RequestContext` field.
 
@@ -35,7 +40,7 @@ Recommended Go posture (flag as a behavior change, gate behind an env / config s
 
 - WAL: not appended. Read-only RPC; CLAUDE.md invariant #1 not engaged.
 - canonical_store / per-tenant SQLite: untouched. CLAUDE.md invariant #4 (per-tenant isolation) is structurally satisfied — this RPC reads from the **global** store, which is the sanctioned cross-tenant surface.
-- global_store: single read of `tenant_members` table — `SELECT * FROM tenant_members WHERE user_id = ? ORDER BY joined_at` (`global_store.py:622-628`), wrapped via `_run_sync` (`:620`). This produces the cross-tenant view by design.
+- global_store: single read of `tenant_members` table — `SELECT * FROM tenant_members WHERE user_id = ? ORDER BY joined_at` (`server/go/internal/globalstore/`), wrapped via `_run_sync` (`:620`). This produces the cross-tenant view by design.
 - Sharding: handler does NOT filter by `_sharding.is_mine(tenant_id)`. In multi-node deployments the global_store is logically global, so memberships across shards are visible from any node. Go port matches.
 - Quotas / rate limits: not enforced; rely on interceptor.
 - Metrics: `record_grpc_request("GetUserTenants", "ok"|"error", elapsed)` (`:2594`, `:2597`).
@@ -55,26 +60,26 @@ The catch-all behavior is unusual but pinned: the contract test only checks for 
 
 ## Shared Go package deps
 
-- `internal/globalstore` — Go port of `GlobalStore`; expose `GetUserTenants(ctx, userID string) ([]Membership, error)` returning rows ordered by `joined_at` (`global_store.py:614-628`). Underlying schema: `tenant_members(tenant_id, user_id, role, joined_at)`.
+- `internal/globalstore` — Go port of `GlobalStore`; expose `GetUserTenants(ctx, userID string) ([]Membership, error)` returning rows ordered by `joined_at` (`server/go/internal/globalstore/`). Underlying schema: `tenant_members(tenant_id, user_id, role, joined_at)`.
 - `internal/pb` — generated bindings; reuse `*pb.TenantMemberInfo` from `GetTenantMembers` port.
-- `internal/grpcutil` — shared helper `MemberDictToProto` / `MembershipToProto` mirroring `_member_dict_to_proto` (`grpc_server.py:2281-2288`); used by `GetTenantMembers`, `AddTenantMember`, `ChangeMemberRole`, `GetUserTenants`.
+- `internal/grpcutil` — shared helper `MemberDictToProto` / `MembershipToProto` mirroring `_member_dict_to_proto` (`server/go/internal/api/get_user_tenants.go`); used by `GetTenantMembers`, `AddTenantMember`, `ChangeMemberRole`, `GetUserTenants`.
 - `internal/auth` — `GetCurrentIdentity(ctx)` (analogue of `auth_interceptor.get_current_identity`) for the recommended authz gate.
 - `internal/metrics` — `RecordGRPCRequest("GetUserTenants", status, dur)`.
 - `internal/logging` — error-level on catch-all (`:2598`).
 
 ## Other-RPC deps (overlaps with ListTenants)
 
-- **`ListTenants` overlap**: `ListTenants` also calls `global_store.get_user_tenants(user_id)` (`grpc_server.py:1585`) to filter visible tenants for a regular `user:*` caller. Both RPCs MUST resolve identically in the Go port — share one implementation in `internal/globalstore.GetUserTenants` and one mapping helper. Drift between them would make `ListTenants` show tenants that `GetUserTenants` doesn't return (or vice-versa) and break SDK assumptions in `sdk/go/entdb/admin.go:91-92`.
+- **`ListTenants` overlap**: `ListTenants` also calls `global_store.get_user_tenants(user_id)` (`server/go/internal/api/get_user_tenants.go`) to filter visible tenants for a regular `user:*` caller. Both RPCs MUST resolve identically in the Go port — share one implementation in `internal/globalstore.GetUserTenants` and one mapping helper. Drift between them would make `ListTenants` show tenants that `GetUserTenants` doesn't return (or vice-versa) and break SDK assumptions in `sdk/go/entdb/admin.go:91-92`.
 - **`GetTenantMembers`**: dual view (rows-for-one-tenant vs rows-for-one-user). Same `TenantMemberInfo` shape, same `_member_dict_to_proto` helper. Port together.
 - **`gdpr_worker`**: `gdpr_worker.py:136` consumes `get_user_tenants` to compute the deletion fan-out. The Go port of GDPR depends on this method having identical semantics (joined_at ordering doesn't matter for set-based fan-out, but presence/absence does).
-- **`DeleteUser` / `RevokeAllUserAccess`**: `grpc_server.py:3034` reads memberships during user-wide revocations; same dependency.
+- **`DeleteUser` / `RevokeAllUserAccess`**: `server/go/internal/api/get_user_tenants.go` reads memberships during user-wide revocations; same dependency.
 - SDK consumer: `sdk/go/entdb/client.go:841-847` (`grpcTransport.GetUserTenants`), `sdk/go/entdb/admin.go:89-92` (`Admin.GetUserTenants`). No semantic change — the Go server must produce bytes the existing Go SDK already accepts.
 
 ## Contract tests pinning behavior (file:line)
 
 - `tests/python/integration/test_grpc_contract.py:500-505` — happy path: `actor=ALICE, user_id="alice"`, expect membership for `TENANT`. Go port must satisfy `any(m.tenant_id == TENANT for m in r.memberships)`.
 - `tests/python/integration/test_grpc_contract.py:506-510` — `actor=""`, `user_id="alice"` => mode `invalid_argument`.
-- `tests/python/unit/test_tenant_registry.py:557-582` — `TestGetUserTenantsHandler.test_get_user_tenants`: alice in two tenants `t1`, `t2`, both must come back. Pins multi-tenant return.
+- (legacy Python unit test, removed in Phase 4D) — `TestGetUserTenantsHandler.test_get_user_tenants`: alice in two tenants `t1`, `t2`, both must come back. Pins multi-tenant return.
 - `sdk/go/entdb/admin_test.go:233`, `:262-276` — `TestAdmin_GetUserTenants_HappyPath`: SDK consumer pins the `[]TenantMember` shape and round-trip through the transport.
 - `sdk/go/entdb/grpc_transport_test.go:111-112`, `:376-379` — fake server signature and request/response wiring; pins the proto contract end-to-end.
 - `sdk/go/entdb/client_test.go:174` — mock transport ensures the interface remains stable.

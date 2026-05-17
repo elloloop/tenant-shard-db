@@ -1,7 +1,7 @@
 # Go Port Spec — `globalstore` (cross-tenant SQLite)
 
 EPIC #407 component spec. Source of truth in Python:
-`server/python/entdb_server/global_store.py` (1333 lines, single class
+`server/go/internal/globalstore/` (1333 lines, single class
 `GlobalStore`). The Go reimplementation lives at
 `server/go/internal/globalstore/`.
 
@@ -249,12 +249,12 @@ and marks status=`deleted`.
 
 Existing Python tests that establish parity expectations (port to Go):
 
-- `tests/python/unit/test_user_registry.py` — user CRUD, email uniqueness, status transitions.
-- `tests/python/unit/test_tenant_registry.py` — tenant CRUD, region default.
-- `tests/python/unit/test_tenant_roles.py` — membership + role changes.
-- `tests/python/unit/test_listtenants_auth.py` — `ListTenants` RBAC; reads `get_user_tenants`.
-- `tests/python/unit/test_cross_tenant_read.py` — invariant #4 enforcement.
-- `tests/python/unit/test_tenant_key_vault.py` — encryption parity.
+- `(legacy Python unit test, removed in Phase 4D)` — user CRUD, email uniqueness, status transitions.
+- `(legacy Python unit test, removed in Phase 4D)` — tenant CRUD, region default.
+- `(legacy Python unit test, removed in Phase 4D)` — membership + role changes.
+- `(legacy Python unit test, removed in Phase 4D)` — `ListTenants` RBAC; reads `get_user_tenants`.
+- `(legacy Python unit test, removed in Phase 4D)` — invariant #4 enforcement.
+- `(legacy Python unit test, removed in Phase 4D)` — encryption parity.
 - `tests/python/integration/test_region_pinning.py` — `region` column round-trip.
 - `tests/python/integration/test_privilege_escalation.py` — actor / `user:` boundary.
 - Cross-implementation contract tests in `tests/contract/` should

@@ -1,5 +1,5 @@
 // Tests for RevokeAccess. Behavioural parity with the Python handler
-// (server/python/entdb_server/api/grpc_server.py:1828-1875) is pinned
+//  is pinned
 // by the cross-language contract suite at
 // tests/python/integration/test_grpc_contract.py:351-361 and the unit
 // tests at tests/python/unit/test_acl_v2.py:443-452. This file covers
@@ -229,4 +229,3 @@ func TestRevokeAccess_NonAdminPermissionDenied(t *testing.T) {
 		t.Fatalf("WAL: got %d records on denied path, want 0", len(recs))
 	}
 }
-

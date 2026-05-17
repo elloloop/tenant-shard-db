@@ -39,7 +39,7 @@ type Options struct {
 	// tests. nil -> time.Now().UnixMilli.
 	NowFn func() int64
 
-	// FanoutHook is an optional post-commit hook for tests / Wave-2
+	// FanoutHook is an optional post-commit hook for tests /
 	// notification wiring. Best-effort; errors do not fail the apply.
 	FanoutHook func(ctx context.Context, ev *Event, res *Result)
 
@@ -451,7 +451,7 @@ func (a *Applier) applyAccessRevoked(ctx context.Context, ev *Event, op map[stri
 
 // Replay drives the applier from a specific WAL offset for one tenant.
 // Used by the recovery harness (Tier 2 — KAFKA_WAL replay from
-// snapshot's last_stream_pos forward). For Wave 1 it shares the same
+// snapshot's last_stream_pos forward). For it shares the same
 // consumer/store wiring as Run; the caller is responsible for ensuring
 // the consumer group's stored offset is positioned correctly before
 // invoking.

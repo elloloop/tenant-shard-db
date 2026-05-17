@@ -8,13 +8,12 @@ import (
 
 // Notification stubs.
 //
-// SearchMailbox / GetMailbox / ListMailboxUsers are deprecated in the
-// Python server and return empty results (see
-// docs/go-port/rpcs/SearchMailbox.md, server/python/entdb_server/api/grpc_server.py).
-// The Go port keeps the surface for forward-compat with existing
-// gRPC handlers but does not write to or read from the deprecated
-// notifications / read_cursors tables — Wave 1 even drops the DDL for
-// them (see schema.go).
+// SearchMailbox / GetMailbox / ListMailboxUsers are deprecated and
+// return empty results (see docs/go-port/rpcs/SearchMailbox.md). The
+// Go server keeps the surface for forward-compat with existing gRPC
+// handlers but does not write to or read from the deprecated
+// notifications / read_cursors tables — the DDL for them is dropped
+// (see schema.go).
 //
 // Unimplemented mailbox writes intentionally return ErrUnimplemented so
 // any caller that accidentally exercises them surfaces a clear gRPC
@@ -22,7 +21,7 @@ import (
 
 // MailboxItem is the placeholder shape for a mailbox / notifications
 // entry. Carried only so the gRPC handler signatures compile when the
-// console schema references it. No fields are populated in Wave 1.
+// console schema references it. No fields are populated.
 type MailboxItem struct{}
 
 // SearchMailbox is a deprecated stub. Always returns nil, nil.

@@ -1,23 +1,16 @@
-// Package schema is the Go port of server/python/entdb_server/schema.
-//
-// It defines the node/edge type system, the registry singleton populated
-// at boot and frozen before serving, and the lookup primitives the
-// applier and gRPC handlers consult on every request.
+// Package schema defines the node/edge type system, the registry
+// singleton populated at boot and frozen before serving, and the
+// lookup primitives the applier and gRPC handlers consult on every
+// request.
 //
 // Spec: docs/go-port/shared/schema-registry.md.
 //
-// Cross-language contract: LoadFromJSON consumes the exact JSON shape
-// produced by Python's SchemaRegistry.to_json (via NodeTypeDef.to_dict /
-// EdgeTypeDef.to_dict), and (*Registry).Fingerprint must agree with
-// Python's _compute_fingerprint byte-for-byte over the same registry
-// contents. The single source of truth for type metadata is the proto
+// The single source of truth for type metadata is the proto
 // descriptor surface (CLAUDE.md invariant #5); JSON is the bootstrap
-// channel for environments where the Go server does not import the
-// proto module directly.
-//
-// Wave-1 scope: types + JSON loader + freeze + fingerprint + name<->id
-// translation. The proto-descriptor loader (LoadFromDescriptors) and
-// the compat package are intentionally deferred to Phase 2.
+// channel used when the Go server does not import the proto module
+// directly. The Python SDK's SchemaRegistry serialises to the same
+// JSON shape and Fingerprint() is byte-stable across implementations
+// for the same registry contents.
 package schema
 
 import (
@@ -25,9 +18,9 @@ import (
 	"fmt"
 )
 
-// FieldKind enumerates the storage-and-validation kinds a FieldDef can
-// take. Wire values mirror server/python/entdb_server/schema/types.py
-// FieldKind verbatim so the JSON contract round-trips.
+// FieldKind enumerates the storage-and-validation kinds a FieldDef
+// can take. Wire values are the strings the SDK ships in the JSON
+// schema export and the proto descriptor surface.
 type FieldKind string
 
 const (
@@ -284,15 +277,15 @@ func (n *NodeTypeDef) GetFieldByID(id uint32) *FieldDef {
 // JSON keys match Python's to_dict (which serialises from_type_id /
 // to_type_id, not the NodeTypeDef pointer).
 type EdgeTypeDef struct {
-	EdgeID        int32         `json:"edge_id"`
-	Name          string        `json:"name"`
-	FromTypeID    int32         `json:"from_type_id"`
-	ToTypeID      int32         `json:"to_type_id"`
-	Props         []FieldDef    `json:"props"`
-	UniquePerFrom bool          `json:"unique_per_from,omitempty"`
-	Deprecated    bool          `json:"deprecated,omitempty"`
-	Description   string        `json:"description,omitempty"`
-	DataPolicy    *DataPolicy   `json:"data_policy,omitempty"`
+	EdgeID        int32       `json:"edge_id"`
+	Name          string      `json:"name"`
+	FromTypeID    int32       `json:"from_type_id"`
+	ToTypeID      int32       `json:"to_type_id"`
+	Props         []FieldDef  `json:"props"`
+	UniquePerFrom bool        `json:"unique_per_from,omitempty"`
+	Deprecated    bool        `json:"deprecated,omitempty"`
+	Description   string      `json:"description,omitempty"`
+	DataPolicy    *DataPolicy `json:"data_policy,omitempty"`
 	// OnSubjectExit is always emitted (defaults to "both"); mirrors
 	// Python EdgeTypeDef.to_dict which writes the key unconditionally.
 	OnSubjectExit OnSubjectExit `json:"on_subject_exit"`

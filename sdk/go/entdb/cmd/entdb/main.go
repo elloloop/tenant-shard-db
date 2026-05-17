@@ -285,8 +285,8 @@ type serverFlags struct {
 //
 // Pure local conversion — no server contact, no protoc invocation
 // (the caller compiled the .proto already with
-// ``protoc --descriptor_set_out=...``). The output verb-matches the
-// Python ``entdb-schema snapshot`` CLI so a polyglot project can use
+// “protoc --descriptor_set_out=...“). The output verb-matches the
+// Python “entdb-schema snapshot“ CLI so a polyglot project can use
 // either side.
 func cmdSnapshot(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)

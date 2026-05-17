@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// ArchiveTenant RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// ArchiveTenant RPC.
 // Spec: docs/go-port/rpcs/ArchiveTenant.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:120 (rpc), :890-898 (messages).
-// Reference Python: server/python/entdb_server/api/grpc_server.py:2397-2440.
 //
 // Behavioural parity with Python is preserved deliberately, including the
 // known gap below. The handler:
@@ -14,7 +13,7 @@
 //   - Returns INVALID_ARGUMENT for empty actor / tenant_id (`:2411-2414`).
 //   - Resolves the trusted actor via auth.Authoritative (CLAUDE.md
 //     trusted-actor invariant — see docs/go-port/shared/auth-interceptor.md).
-//   - Wave-2 narrowing: only system: / admin: actors may archive. The
+//   - narrowing: only system: / admin: actors may archive. The
 //     Python handler additionally lets the tenant "owner" archive after a
 //     member-role lookup (`:2421-2427`); the Go port restricts this to
 //     admin-only for now. The owner branch will land alongside the WAL-
@@ -90,7 +89,7 @@ func (s *Server) ArchiveTenant(
 	// fallback) — matching the Python ContextVar fall-through.
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
-	// Wave-2 narrowing: admin-only. The Python handler also allows the
+	//  narrowing: admin-only. The Python handler also allows the
 	// tenant owner via a member-role lookup; owner-allowed archive remains
 	// a separate authz follow-up.
 	if !trusted.IsAdmin() && !trusted.IsSystem() {

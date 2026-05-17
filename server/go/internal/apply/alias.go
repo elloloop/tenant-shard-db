@@ -22,12 +22,11 @@ type (
 )
 
 // nodeAliasMap is the per-event alias table backing the "as" / "$alias"
-// reference syntax in TransactionEvent.ops. Mirrors
-// server/python/entdb_server/apply/applier.py:_node_alias_map (375).
+// reference syntax in TransactionEvent.ops.
 //
 // CRITICAL: this map is per-event (a local variable on each
-// applyEvent call). Python's instance-attribute version has a latent
-// race; the Go port pins it scoped to one apply.
+// applyEvent call) so concurrent applies of different events do not
+// share alias state.
 type nodeAliasMap map[string]string
 
 // resolveRef resolves a node-id reference, expanding "$alias" into the

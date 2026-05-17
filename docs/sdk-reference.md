@@ -1,456 +1,367 @@
 # SDK Reference
 
-Complete reference for the EntDB Python SDK.
+EntDB ships two official SDKs. Both are thin wrappers over the same gRPC contract and follow the same single-shape API (see [ADR-006](adr/006-proto-schema-definition.md)). Use the proto messages your `protoc` invocation generates — there's no parallel `NodeTypeDef` class to hand-build.
+
+This page covers both SDKs side by side. For the wire-level RPC contract, see [api-reference.md](api-reference.md).
 
 ## Installation
+
+**Python:**
 
 ```bash
 pip install entdb-sdk
 ```
 
-## Quick Start
+Requires Python 3.10+.
 
-```python
-from entdb_sdk import DbClient, NodeTypeDef, EdgeTypeDef, field
+**Go:**
 
-# Define schema
-User = NodeTypeDef(
-    type_id=1,
-    name="User",
-    fields=(
-        field(1, "email", "str", required=True),
-        field(2, "name", "str"),
-    ),
-)
-
-# Connect
-client = DbClient(
-    endpoint="localhost:50051",
-    tenant_id="my_tenant",
-    actor="user:alice",
-)
-
-# Use
-await client.connect()
-result = await client.atomic(lambda plan:
-    plan.create(User, {"email": "alice@example.com"})
-)
-await client.close()
+```bash
+go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest
 ```
 
-## Schema Definitions
+Requires Go 1.22+. Docs auto-render at [pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb).
 
-### NodeTypeDef
+## Schema
 
-Define a node type:
+EntDB types are proto messages with EntDB-specific options. The proto field number IS the on-disk `field_id` ([ADR-018](adr/018-field-id-keyed-payloads.md)).
 
-```python
-from entdb_sdk import NodeTypeDef, field
+```protobuf
+syntax = "proto3";
+import "entdb/v1/entdb_options.proto";
+package myapp;
 
-User = NodeTypeDef(
-    type_id=1,                    # Unique, stable numeric ID
-    name="User",                  # Display name (can be renamed)
-    fields=(                      # Tuple of field definitions
-        field(1, "email", "str", required=True),
-        field(2, "name", "str"),
-    ),
-    deprecated=False,             # Mark type as deprecated
-    description="User account",   # Documentation
-    default_acl=(                 # Default visibility
-        ("tenant:*", "read"),
-    ),
-)
+message User {
+  option (entdb.node) = { type_id: 1 };
+  string email = 1 [(entdb.field) = { required: true, unique: true }];
+  string name  = 2;
+}
+
+message Task {
+  option (entdb.node) = { type_id: 2 };
+  string title = 1 [(entdb.field) = { required: true }];
+  string status = 2 [(entdb.field) = { enum_values: "todo,doing,done" }];
+}
+
+message AssignedTo {
+  option (entdb.edge) = { edge_id: 100 };
+  Task from = 15;
+  User to   = 16;
+}
 ```
 
-### EdgeTypeDef
+Generate stubs with standard `protoc`; no custom EntDB codegen step.
 
-Define an edge type:
-
-```python
-from entdb_sdk import EdgeTypeDef
-
-AssignedTo = EdgeTypeDef(
-    edge_id=100,                  # Unique, stable numeric ID
-    name="AssignedTo",            # Display name
-    from_type=2,                  # Source node type_id
-    to_type=1,                    # Target node type_id
-    deprecated=False,
-    description="Task assignment",
-)
-```
-
-### field() Helper
-
-Create field definitions:
+**Python — register the proto module with the SDK at startup:**
 
 ```python
-from entdb_sdk import field
+from entdb_sdk.codegen import register_proto_schema
+import schema_pb2
 
-# Basic string field
-email = field(1, "email", "str")
-
-# Required field
-name = field(2, "name", "str", required=True)
-
-# Field with default
-status = field(3, "status", "str", default="active")
-
-# Enum field
-priority = field(4, "priority", "enum",
-    enum_values=("low", "medium", "high"),
-    default="medium"
-)
-
-# Deprecated field
-legacy = field(5, "old_field", "str", deprecated=True)
+register_proto_schema(schema_pb2)
 ```
 
-### Field Types
+**Go — generated types are used directly:**
 
-| Kind | Description | Python Type |
-|------|-------------|-------------|
-| `"str"` | UTF-8 string | `str` |
-| `"int"` | 64-bit integer | `int` |
-| `"float"` | 64-bit float | `float` |
-| `"bool"` | Boolean | `bool` |
-| `"timestamp"` | Unix ms timestamp | `int` |
-| `"enum"` | String enum | `str` |
-| `"list_str"` | String list | `List[str]` |
-| `"list_int"` | Integer list | `List[int]` |
-| `"ref"` | Node reference | `{"type_id": int, "id": str}` |
+```go
+import myschema "example.com/myapp/schema"
+// No registration step; the SDK reads the descriptor at use site.
+```
 
-## DbClient
+## Connection
 
-### Connection
+### Python — `DbClient`
 
 ```python
 from entdb_sdk import DbClient
 
-# Create client
 client = DbClient(
     endpoint="localhost:50051",   # gRPC endpoint
-    tenant_id="my_tenant",        # Tenant isolation
-    actor="user:alice",           # Identity for ACL
-    use_tls=False,                # Enable TLS
-    timeout=30.0,                 # Request timeout
+    tenant_id="my_tenant",        # tenant for data-plane ops
+    actor="user:alice",           # identity for ACL
+    use_tls=False,                # set True in production
+    timeout=30.0,                 # default per-call timeout
 )
 
-# Connect
 await client.connect()
-
-# Check connection
-if client.is_connected:
-    print("Connected!")
-
-# Close
+# ...
 await client.close()
+
+# Or as an async context manager:
+async with DbClient(endpoint=..., tenant_id=..., actor=...) as client:
+    ...
 ```
 
-### Context Manager
+### Go — `entdb.Client`
 
-```python
-async with DbClient(endpoint="...", tenant_id="...", actor="...") as client:
-    # Auto-connects and closes
-    result = await client.get("node_123")
-```
+```go
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
 
-### Atomic Transactions
-
-Execute atomic operations:
-
-```python
-# Single operation
-result = await client.atomic(lambda plan:
-    plan.create(User, {"email": "alice@example.com"})
+client, err := entdb.NewClient("localhost:50051",
+    entdb.WithTLS(tlsConfig),         // omit for dev plaintext
+    entdb.WithTimeout(30*time.Second),
 )
+if err != nil { /* ... */ }
+if err := client.Connect(ctx); err != nil { /* ... */ }
+defer client.Close()
+```
 
-# Multiple operations
+### Scope (tenant + actor pre-bound)
+
+Both SDKs offer a scope handle that pre-binds tenant and actor so you don't repeat them on every call:
+
+```python
+# Python
+scope = client.tenant("acme").actor("user:alice")
+node = await scope.get(SomeType, node_id)
+```
+
+```go
+// Go
+scope := client.Tenant("acme").Actor("user:alice")
+node, err := entdb.Get[*SomeType](ctx, scope, nodeID)
+```
+
+## Atomic transactions (Plan)
+
+A `Plan` builds one or more operations applied atomically. Use it whenever you need to create related nodes + edges in one round-trip, or when read-your-write is needed via `wait_applied`.
+
+### Python
+
+```python
 result = await client.atomic(lambda plan: (
-    plan.create(User, {"email": "alice@example.com"}, alias="alice"),
-    plan.create(Task, {"title": "Review PR"}, alias="task"),
-    plan.link(AssignedTo, "$task.id", "$alice.id"),
+    plan.create(schema_pb2.User(email="alice@example.com", name="Alice"), as_="alice"),
+    plan.create(schema_pb2.Task(title="Review PR", status="todo"), as_="task"),
+    plan.edge_create(schema_pb2.AssignedTo, "$task.id", "$alice.id"),
 ))
 
-# With idempotency key
+# With idempotency
 result = await client.atomic(
-    lambda plan: plan.create(User, {...}),
-    idempotency_key="create_user_abc123",
+    lambda plan: plan.create(schema_pb2.User(...)),
+    idempotency_key="create_alice_v1",
 )
 
-# Wait for SQLite apply
+# Block until the applier has materialized the write (read-your-write)
 result = await client.atomic(
-    lambda plan: plan.create(User, {...}),
-    wait_for_applied=True,
+    lambda plan: plan.create(schema_pb2.User(...)),
+    wait_applied=True,
 )
 ```
 
-### Read Operations
+### Go
+
+```go
+plan := client.NewPlan("acme", "user:alice")
+alice := plan.Create(&myschema.User{Email: "alice@example.com", Name: "Alice"})
+task  := plan.Create(&myschema.Task{Title: "Review PR", Status: "todo"})
+entdb.EdgeCreate[*myschema.AssignedTo](plan, task, alice)
+
+result, err := plan.Commit(ctx,
+    entdb.WithIdempotencyKey("create_alice_v1"),
+    entdb.WithWaitApplied(true),
+)
+```
+
+### Plan methods
+
+| Operation | Python | Go |
+|---|---|---|
+| Create a node | `plan.create(msg, *, as_=, acl=, storage=)` | `plan.Create(msg, opts...) string` |
+| Update a node | `plan.update(node_id, msg)` | `plan.Update(nodeID, msg)` |
+| Update with precondition (CAS) | `plan.update(id, msg, precondition=("field", value))` | `plan.UpdateIf(...)` |
+| Delete a node | `plan.delete(NodeType, node_id)` | `entdb.Delete[T](plan, nodeID)` |
+| Create an edge | `plan.edge_create(EdgeType, from_id, to_id, props={})` | `entdb.EdgeCreate[T](plan, from, to, opts...)` |
+| Delete an edge | `plan.edge_delete(EdgeType, from_id, to_id)` | `entdb.EdgeDelete[T](plan, from, to)` |
+| Commit | `await plan.commit(...)` | `plan.Commit(ctx, ...)` |
+
+`as_` (Python) / the alias returned from `plan.Create` (Go) lets later ops in the same plan reference the new node before it has a server-assigned ID. The server resolves `$alias.id` at apply time.
+
+## Reads
+
+### Get by ID
 
 ```python
-# Get single node
-node = await client.get("node_123")
-print(node.payload["email"])
+node = await scope.get(schema_pb2.User, node_id)  # returns a Node[User]
+```
 
-# Get with options
-node = await client.get(
-    "node_123",
-    include_deleted=False,
-    consistency="eventual",  # or "strong"
-)
+```go
+node, err := entdb.Get[*myschema.User](ctx, scope, nodeID)
+```
 
-# Query nodes by type
-users = await client.query(type_id=User.type_id)
-for user in users:
-    print(user.payload["name"])
+### Get by unique key
 
-# Query with filters
-active_users = await client.query(
-    type_id=User.type_id,
-    filters={"status": "active"},
+The proto field with `(entdb.field) = { unique: true }` becomes a typed key token via codegen.
+
+```python
+from schema_entdb import UserKeys
+user = await scope.get_by_key(UserKeys.email, "alice@example.com")
+```
+
+```go
+var UserEmail = entdb.UniqueKey[string]{TypeID: 1, FieldID: 1, Name: "email"}
+user, err := entdb.GetByKey[*myschema.User](ctx, scope, UserEmail, "alice@example.com")
+```
+
+### Query with filters
+
+MongoDB-style operators: `$eq` (default), `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$like`, `$between`, plus top-level `$and` / `$or`. See [ADR sdk_api](adr/) for the full operator list.
+
+```python
+results = await scope.query(
+    schema_pb2.Task,
+    filter={"status": {"$in": ["todo", "doing"]}, "priority": {"$gte": 5}},
     limit=100,
-    offset=0,
-)
-
-# Get outgoing edges
-edges = await client.edge_out(
-    node_id="task_123",
-    edge_type=AssignedTo.edge_id,
-)
-
-# Get incoming edges
-edges = await client.edge_in(
-    node_id="user_123",
-    edge_type=AssignedTo.edge_id,
 )
 ```
 
-### Mailbox Operations
-
-```python
-# Get mailbox items
-items = await client.mailbox(
-    user_id="alice",
-    limit=20,
-    offset=0,
-)
-
-# Search mailbox
-results = await client.search(
-    user_id="alice",
-    query="meeting tomorrow",
-)
-
-# Mark read
-await client.mark_read(
-    user_id="alice",
-    node_id="message_123",
-)
-
-# Get unread count
-count = await client.unread_count(user_id="alice")
+```go
+results, err := entdb.Query[*myschema.Task](ctx, scope, map[string]any{
+    "status":   map[string]any{"$in": []string{"todo", "doing"}},
+    "priority": map[string]any{"$gte": 5},
+}, entdb.WithLimit(100))
 ```
 
-## Plan Builder
-
-Build atomic transaction plans:
-
-### create()
-
-Create a new node:
+### Edges
 
 ```python
-plan.create(
-    node_type=User,                    # NodeTypeDef
-    payload={"email": "..."},          # Field values
-    alias="user1",                     # Optional alias for references
-    principals=["user:alice"],         # ACL principals
-    recipients=["user:bob"],           # Mailbox recipients
+# Outgoing edges from a node
+edges = await scope.edges_out(node_id, edge_type=100)
+# Incoming edges to a node
+edges = await scope.edges_in(node_id, edge_type=100)
+```
+
+```go
+out, _ := scope.EdgesOut(ctx, nodeID, 100)
+in_,  _ := scope.EdgesIn(ctx, nodeID, 100)
+```
+
+## ACL and sharing
+
+```python
+# Grant
+await scope.share(node_id, grantee="user:bob", caps=["CORE_CAP_READ"])
+# Grant a per-type extension capability
+await scope.share(node_id, grantee="user:bob",
+                  caps=["CORE_CAP_READ"], ext_caps=[PRExt.APPROVE])
+
+# Revoke
+await scope.revoke(node_id, grantee="user:bob")
+
+# Nodes shared with the current actor (cross-tenant included)
+nodes = await scope.shared_with_me()
+
+# Group membership (groups are nodes in the tenant)
+await scope.group_add(group_id, member_id, role="member")
+await scope.group_remove(group_id, member_id)
+```
+
+```go
+err := scope.Share(ctx, nodeID, "user:bob", []entdb.CoreCap{entdb.CoreCapRead})
+err = scope.Revoke(ctx, nodeID, "user:bob")
+nodes, err := scope.SharedWithMe(ctx)
+err = scope.GroupAdd(ctx, groupID, memberID, "member")
+err = scope.GroupRemove(ctx, groupID, memberID)
+```
+
+See [ADR-003](adr/003-acl-model.md) for the full ACL model.
+
+## Admin operations
+
+These cross tenant boundaries and require an admin / system actor (`admin:`, `system:`, or `__system__`).
+
+```python
+await client.create_user(
+    user_id="alice", email="alice@example.com", name="Alice",
+    actor="system:admin",
 )
-```
-
-### update()
-
-Update existing node:
-
-```python
-plan.update(
-    node_id="node_123",                # Or "$alias.id"
-    payload={"name": "New Name"},      # Fields to update
+await client.create_tenant(
+    tenant_id="acme", name="Acme Corp",
+    actor="system:admin",
 )
-```
-
-### delete()
-
-Delete node (soft delete):
-
-```python
-plan.delete(node_id="node_123")
-```
-
-### link()
-
-Create edge between nodes:
-
-```python
-plan.link(
-    edge_type=AssignedTo,              # EdgeTypeDef
-    from_id="$task.id",                # Source (alias or ID)
-    to_id="$user.id",                  # Target (alias or ID)
+await client.add_tenant_member(
+    tenant_id="acme", user_id="alice", role="member",
+    actor="system:admin",
 )
 ```
 
-### unlink()
-
-Delete edge:
-
-```python
-plan.unlink(edge_id="edge_123")
+```go
+admin := client.Admin()
+_, err := admin.CreateUser(ctx, "system:admin", "alice", "alice@example.com", "Alice")
+_, err  = admin.CreateTenant(ctx, "system:admin", "acme", "Acme Corp")
+err     = admin.AddTenantMember(ctx, "system:admin", "acme", "alice", "member")
 ```
 
-### set_visibility()
+See [Onboarding](onboarding.md) for the full three-RPC bootstrap and admin-actor production wiring.
 
-Update node ACL:
+## GDPR
 
 ```python
-plan.set_visibility(
-    node_id="node_123",
-    principals=["user:alice", "user:bob", "role:admin"],
-)
+# Schedule a user deletion (grace period configurable)
+await client.delete_user(user_id="alice", grace_days=30, actor="system:admin")
+# Cancel a pending deletion
+await client.cancel_user_deletion(user_id="alice", actor="system:admin")
+# Freeze (block all writes; keep reads)
+await client.freeze_user(user_id="alice", actor="system:admin")
+# Export the user's data (GDPR Article 20 portability)
+data = await client.export_user_data(user_id="alice", actor="system:admin")
 ```
 
-## Node Object
+Crypto-shred ([ADR-011](adr/011-security-and-compliance.md)) executes at the grace period expiry: the tenant key is wiped from `tenant_key_vault`, making the user's data unreadable on disk and on the S3 archive.
 
-Returned from get/query:
+## Error handling
 
-```python
-node = await client.get("node_123")
+Both SDKs surface typed errors derived from gRPC status codes:
 
-node.id           # Unique node ID
-node.type_id      # Node type ID
-node.tenant_id    # Tenant ID
-node.payload      # Dict of field values
-node.owner_actor  # Creator identity
-node.created_at   # Creation timestamp
-node.updated_at   # Last update timestamp
-node.deleted      # Soft delete flag
-node.version      # Optimistic lock version
-
-# Get field with default
-email = node.get("email")
-name = node.get("name", "Unknown")
-```
-
-## Edge Object
-
-Returned from edge queries:
+| Status code | Python class | Go type |
+|---|---|---|
+| `NOT_FOUND` | `NotFoundError` | `entdb.ErrNotFound` |
+| `ALREADY_EXISTS` | `AlreadyExistsError` | `entdb.ErrAlreadyExists` |
+| `PERMISSION_DENIED` | `PermissionDeniedError` | `entdb.ErrPermissionDenied` |
+| `INVALID_ARGUMENT` | `InvalidArgumentError` | `entdb.ErrInvalidArgument` |
+| `FAILED_PRECONDITION` | `PreconditionFailedError` | `entdb.ErrPreconditionFailed` |
+| `UNAVAILABLE` | `UnavailableError` | `entdb.ErrUnavailable` |
+| `UNAUTHENTICATED` | `UnauthenticatedError` | `entdb.ErrUnauthenticated` |
 
 ```python
-edge = edges[0]
-
-edge.id            # Unique edge ID
-edge.edge_type_id  # Edge type ID
-edge.from_id       # Source node ID
-edge.to_id         # Target node ID
-edge.tenant_id     # Tenant ID
-edge.owner_actor   # Creator identity
-edge.created_at    # Creation timestamp
-edge.payload       # Optional edge payload
-```
-
-## Validation
-
-Validate payloads before sending:
-
-```python
-from entdb_sdk import validate_payload, validate_or_raise
-from entdb_sdk.errors import ValidationError, UnknownFieldError
-
-# Check validity
-is_valid, errors = validate_payload(User, {"email": "test@example.com"})
-if not is_valid:
-    print(errors)
-
-# Raise on invalid
-try:
-    validate_or_raise(User, {"emial": "typo@example.com"})  # typo
-except UnknownFieldError as e:
-    print(f"Unknown field: {e.field_name}")
-    print(f"Did you mean: {e.suggestions}")
-except ValidationError as e:
-    print(f"Validation failed: {e.errors}")
-```
-
-## Schema Registry
-
-Manage type registrations:
-
-```python
-from entdb_sdk import SchemaRegistry
-
-registry = SchemaRegistry()
-
-# Register types
-registry.register(User)
-registry.register(Task)
-registry.register(AssignedTo)
-
-# Freeze for production use
-registry.freeze()
-
-# Get fingerprint for compatibility check
-print(registry.fingerprint)
-
-# Lookup types
-user_type = registry.get_node_type(1)
-user_type = registry.get_node_type_by_name("User")
-```
-
-## Error Handling
-
-```python
-from entdb_sdk.errors import (
-    EntDbError,          # Base error
-    ConnectionError,     # Connection failed
-    TimeoutError,        # Request timeout
-    ValidationError,     # Invalid payload
-    UnknownFieldError,   # Unknown field name
-    NotFoundError,       # Node not found
-    PermissionError,     # ACL denied
-    ConflictError,       # Optimistic lock conflict
-)
+from entdb_sdk.errors import NotFoundError, PreconditionFailedError
 
 try:
-    node = await client.get("node_123")
+    node = await scope.get(schema_pb2.User, node_id)
 except NotFoundError:
     print("Node not found")
-except PermissionError:
-    print("Access denied")
-except ConnectionError:
-    print("Connection failed")
-except EntDbError as e:
-    print(f"EntDB error: {e}")
+except PreconditionFailedError as e:
+    print(f"CAS failed: {e}")
 ```
 
-## Async Utilities
-
-```python
-import asyncio
-from entdb_sdk import DbClient
-
-async def batch_create(client, users):
-    """Create users in batches."""
-    batch_size = 100
-
-    for i in range(0, len(users), batch_size):
-        batch = users[i:i+batch_size]
-
-        result = await client.atomic(lambda plan: [
-            plan.create(User, user, alias=f"user_{j}")
-            for j, user in enumerate(batch)
-        ])
-
-        await asyncio.sleep(0.1)  # Rate limiting
-
-# Run
-asyncio.run(batch_create(client, users))
+```go
+node, err := entdb.Get[*myschema.User](ctx, scope, nodeID)
+if errors.Is(err, entdb.ErrNotFound) {
+    // ...
+}
 ```
+
+## Read-after-write
+
+Default reads return whatever the SQLite materialized view has at request time — eventually consistent. For strict read-your-write:
+
+**Python**: `wait_applied=True` on the `commit()` call blocks the response until the applier has materialized the write. Alternatively, capture the `stream_position` from the receipt and pass it on the next read.
+
+**Go**: `entdb.WithWaitApplied(true)` on `Commit`, or `entdb.WithAfterOffset(receipt.StreamPosition)` on the next read.
+
+## Connection and offset state
+
+Both SDKs internally track the highest `stream_position` they've seen on writes so subsequent reads can wait for at-least-that-offset. This is automatic; only relevant when debugging cross-SDK-instance read-after-write issues.
+
+## Console (operator tool, not an SDK)
+
+For interactive data browsing or one-off writes against a tenant, use the [EntDB Console](../sdk/go/entdb/cmd/entdb-console/) at <http://localhost:8080> in the compose stack. The console is a single Go binary with an embedded React SPA; it talks to the same gRPC API the SDKs use.
+
+## Further reading
+
+- [Onboarding](onboarding.md) — required setup for any tenant beyond the local `playground`
+- [Schema Evolution](schema-evolution.md) — adding/deprecating fields safely
+- [Durability Guarantees](durability.md) — what `wait_applied` actually waits for
+- [ADR-006](adr/006-proto-schema-definition.md) — proto is the type system end-to-end
+- [ADR-003](adr/003-acl-model.md) — typed-capability ACL
+- [ADR-016](adr/016-handlers-append-applier-writes.md) — write-path semantics
+- [api-reference.md](api-reference.md) — wire-level gRPC contract (SDK internal)

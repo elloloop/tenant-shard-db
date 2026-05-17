@@ -13,8 +13,8 @@ import (
 )
 
 // fdsFromTestPB wraps the in-package testpb file descriptor into
-// a ``FileDescriptorSet`` suitable for ``ExtractSchemaJSON``. This
-// is the same format ``protoc --descriptor_set_out=FILE`` writes.
+// a “FileDescriptorSet“ suitable for “ExtractSchemaJSON“. This
+// is the same format “protoc --descriptor_set_out=FILE“ writes.
 func fdsFromTestPB(t *testing.T) *descriptorpb.FileDescriptorSet {
 	t.Helper()
 	fp := testpb.ProductDesc.ParentFile()

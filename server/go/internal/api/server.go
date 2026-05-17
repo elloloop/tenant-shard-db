@@ -1,8 +1,7 @@
-// Package api implements the EntDB gRPC service. Phase 0 of the
-// Python → Go server port (see GitHub issue #407): every method
-// returns codes.Unimplemented so the binary can boot, register
-// against a grpc.Server, and pass `go vet` / `go test`. Methods
-// land here one at a time as RPC sub-issues are picked up.
+// Package api implements the EntDB gRPC service. Embedding
+// UnimplementedEntDBServiceServer keeps the implementation
+// forward-compatible with future RPCs added to the proto without
+// breaking the build.
 package api
 
 import (
@@ -22,11 +21,11 @@ import (
 // codes.Unimplemented by default and keeps the type
 // forward-compatible with new methods added to the proto.
 //
-// Wave-1 wiring: dependencies are injected through functional options
-// (Option) rather than globals so cmd/entdb-server/main.go can hand
-// off store + wal + globalstore handles without the api package
-// growing import cycles. Wave-2 RPC methods will reach for these via
-// the unexported fields on Server.
+// Dependencies are injected through functional options (Option)
+// rather than globals so cmd/entdb-server/main.go can hand off
+// store + wal + globalstore handles without the api package
+// growing import cycles. Handlers reach for these via the
+// unexported fields on Server.
 type Server struct {
 	pb.UnimplementedEntDBServiceServer
 
@@ -57,9 +56,8 @@ type Server struct {
 // Option is a functional-options configurator for New.
 type Option func(*Server)
 
-// WithStore wires a *store.CanonicalStore (per-tenant SQLite). Wave-2
-// read RPCs will need it; Wave-1 just stores the handle for forward
-// compatibility.
+// WithStore wires a *store.CanonicalStore (per-tenant SQLite). Read
+// RPCs reach for it through s.store.
 func WithStore(s *store.CanonicalStore) Option {
 	return func(srv *Server) { srv.store = s }
 }
@@ -69,13 +67,13 @@ func WithGlobalStore(g *globalstore.GlobalStore) Option {
 	return func(srv *Server) { srv.global = g }
 }
 
-// WithWALProducer wires the WAL producer (for ExecuteAtomic in Wave 2).
+// WithWALProducer wires the WAL producer (for ExecuteAtomic).
 func WithWALProducer(p wal.Producer) Option {
 	return func(srv *Server) { srv.producer = p }
 }
 
 // WithWALTopic configures the WAL topic name handlers append to. When
-// unset (or empty), Wave-2 write RPCs default to "entdb-wal" — the
+// unset (or empty), write RPCs default to "entdb-wal" — the
 // same default carried by cmd/entdb-server/main.go's --wal-topic flag.
 func WithWALTopic(topic string) Option {
 	return func(srv *Server) { srv.topic = topic }
@@ -95,7 +93,7 @@ func WithRegion(region string) Option {
 }
 
 // WithSchemaRegistry wires the process-wide *schema.Registry. Read-only
-// RPCs in Wave 2 (GetSchema, ExecuteAtomic schema_fingerprint check,
+// RPCs (GetSchema, ExecuteAtomic schema_fingerprint check,
 // query handlers translating field names) all dereference this handle.
 // The registry is typically Freeze()'d before the server starts serving
 // (CLAUDE.md schema invariant), so post-boot reads are lock-free.
@@ -107,7 +105,7 @@ func WithSchemaRegistry(r *schema.Registry) Option {
 // need ACL pre-checks (ShareNode, RevokeAccess, TransferOwnership)
 // reach for it via s.aclEnforcer. When unset, handlers construct an
 // ad-hoc Checker on the fly using s.store + s.global as reader sources
-// — preserves Wave-2 test fixtures that wire only the stores.
+// — preserves test fixtures that wire only the stores.
 func WithEnforcer(e *acl.Enforcer) Option {
 	return func(srv *Server) { srv.aclEnforcer = e }
 }
@@ -121,9 +119,8 @@ func WithLegalHoldOnDelete(enabled bool) Option {
 	return func(srv *Server) { srv.legalHoldOnDelete = enabled }
 }
 
-// New constructs a Server. All RPCs return Unimplemented in Wave 1;
-// dependencies wired via opts are stored for use by Wave-2 handlers as
-// they land.
+// New constructs a Server. Dependencies wired via opts are stored
+// for use by RPC handlers.
 func New(opts ...Option) *Server {
 	s := &Server{}
 	for _, o := range opts {
@@ -133,19 +130,17 @@ func New(opts ...Option) *Server {
 }
 
 // checkTenant is the per-handler tenant gate wrapper. It exists so
-// Wave-2 RPCs can write a single line at the top of their handler
-// instead of repeating the dependency-passing dance, and so the gate
-// has exactly one call shape across the server (mirrors the Python
-// `await self._check_tenant(...)` convention at
-// api/grpc_server.py:362).
+// RPCs can write a single line at the top of their handler instead
+// of repeating the dependency-passing dance, and so the gate has
+// exactly one call shape across the server.
 func (s *Server) checkTenant(ctx context.Context, tenantID string) error {
 	return tenant.CheckTenant(ctx, tenantID, s.global, s.sharding, tenant.Options{ServedRegion: s.region})
 }
 
 // walTopic returns the configured WAL topic, falling back to the
 // process-wide default ("entdb-wal", same as cmd/entdb-server/main.go's
-// --wal-topic flag default). Centralised here so every Wave-2 writer
-// reaches for the same string.
+// --wal-topic flag default). Centralised here so every writer reaches
+// for the same string.
 func (s *Server) walTopic() string {
 	if s.topic == "" {
 		return "entdb-wal"

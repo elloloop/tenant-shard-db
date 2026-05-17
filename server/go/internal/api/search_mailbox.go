@@ -1,10 +1,8 @@
-// SearchMailbox — Wave 2 deprecated stub. Mirrors the Python handler at
-// server/python/entdb_server/api/grpc_server.py:1456-1476 byte-for-byte:
-// run the tenant gate, then return SearchMailboxResponse{Results: nil,
-// HasMore: false}. The legacy per-user mailbox SQLite store was removed
-// upstream; fanout writes now land in the per-tenant `notifications`
-// table and a future FTS5-backed implementation will land behind this
-// same RPC.
+// SearchMailbox — deprecated stub. Runs the tenant gate, then returns
+// SearchMailboxResponse{Results: nil, HasMore: false}. The legacy per-
+// user mailbox SQLite store was removed upstream; fanout writes now
+// land in the per-tenant `notifications` table and a future FTS5-backed
+// implementation will land behind this same RPC.
 //
 // Spec: docs/go-port/rpcs/SearchMailbox.md (EPIC #407).
 //

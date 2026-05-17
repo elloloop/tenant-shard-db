@@ -1,15 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Package wal hosts the write-ahead-log producer/consumer
-// abstractions ported from server/python/entdb_server/wal/. The WAL
-// is the source of truth for all mutations (CLAUDE.md invariant #1);
-// SQLite is a materialized view rebuilt by replaying it.
+// abstractions. The WAL is the source of truth for all mutations
+// (CLAUDE.md invariant #1); SQLite is a materialized view rebuilt by
+// replaying it.
 //
-// Spec: docs/go-port/shared/wal-producer.md. Phase 1 of EPIC #407
-// only ships the in-memory backend (sufficient to bring up the Go
-// handlers + applier behind it and run the integration suite). Real
-// backends (Kafka, Kinesis, SQS, Pub/Sub, Service Bus, Event Hubs)
-// land in Phase 2 as their own sub-packages.
+// Spec: docs/go-port/shared/wal-producer.md. Today this package
+// ships the in-memory backend (dev/tests) plus the Kafka/Redpanda
+// backend (production); see kafka.go.
 //
 // The producer contract this package enforces:
 //
@@ -39,10 +37,8 @@ import (
 	"time"
 )
 
-// Sentinel errors. Mirrors server/python/entdb_server/wal/base.py:41
-// (WalError, WalConnectionError, WalTimeoutError,
-// WalSerializationError). Wrap with fmt.Errorf("...: %w", ErrFoo) and
-// callers check via errors.Is.
+// Sentinel errors. Wrap with fmt.Errorf("...: %w", ErrFoo) and callers
+// check via errors.Is.
 var (
 	// ErrWal is the umbrella error for WAL operations. Other sentinels
 	// in this package wrap this so errors.Is(err, ErrWal) is true for

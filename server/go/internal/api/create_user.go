@@ -1,10 +1,8 @@
-// CreateUser RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// CreateUser RPC.
 // Spec: docs/go-port/rpcs/CreateUser.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:112 (rpc), :802-814 (messages),
-// :792-800 (UserInfo). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:2099-2147 and
-// server/python/entdb_server/global_store.py:336-369.
+// :792-800 (UserInfo).
 //
 // Semantics:
 //
@@ -24,15 +22,15 @@
 //
 // Error contract:
 //
-//	UNIMPLEMENTED       — global_store not configured.
-//	INVALID_ARGUMENT    — empty actor / user_id / email / name.
-//	PERMISSION_DENIED   — trusted actor is not system:* / admin:*.
-//	ALREADY_EXISTS      — duplicate user_id (PK) or duplicate email
+//	UNIMPLEMENTED — global_store not configured.
+//	INVALID_ARGUMENT — empty actor / user_id / email / name.
+//	PERMISSION_DENIED — trusted actor is not system:* / admin:*.
+//	ALREADY_EXISTS — duplicate user_id (PK) or duplicate email
 //	                      (UNIQUE). The Go port surfaces this as a
 //	                      proper gRPC status (the globalstore layer
 //	                      already returns errs.Errorf(AlreadyExists, …)
 //	                      via its sqlite-driver sentinel detection).
-//	INTERNAL            — any other store failure.
+//	INTERNAL — any other store failure.
 
 package api
 

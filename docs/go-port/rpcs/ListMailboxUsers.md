@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/ListMailboxUsers`
 
-EPIC #407 — Python -> Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:1605-1617`.
+> Implementation: `server/go/internal/api/list_mailbox_users.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python -> Go server port. Source of truth: Go handler at
+`server/go/internal/api/list_mailbox_users.go`.
 
 **Status: deprecated stub.** The legacy per-user mailbox SQLite store has been
 removed. The handler is retained for proto compatibility and unconditionally
@@ -24,14 +29,14 @@ Proto: `proto/entdb/v1/entdb.proto:85` (rpc), `:621-629` (messages).
 | `user_ids` | 1 | `repeated string` | Always empty in current contract. Must be returned as `[]`, NOT a nil/null repeated. Pinned by `test_grpc_contract.py:286`. |
 
 Full method name on the wire: `/entdb.v1.EntDBService/ListMailboxUsers`
-(see `server/python/entdb_server/api/generated/entdb_pb2_grpc.py:99`,
+(see `server/go/internal/api/generated/entdb_pb2_grpc.go`,
 `sdk/go/entdb/internal/pb/entdb_grpc.pb.go:70`).
 
 ## Auth (trusted-actor; admin scope?)
 
 - **Authenticated.** NOT in
   `AuthInterceptor.UNAUTHENTICATED_METHODS`
-  (`server/python/entdb_server/auth/auth_interceptor.py:157-162` — that frozenset
+  (`server/go/internal/auth/interceptor.go` — that frozenset
   contains only `Health` and `grpc.health.v1.Health/Check`). The auth
   interceptor runs and a missing/invalid identity aborts before the handler
   is reached.
@@ -45,8 +50,8 @@ Full method name on the wire: `/entdb.v1.EntDBService/ListMailboxUsers`
   any metadata-derived identity for authorization (the empty-list contract
   is identity-independent today).
 - **Tenant routing.** The handler does call `_check_tenant(request.tenant_id, context)`
-  (`grpc_server.py:1616`), which performs the standard sharding-owner /
-  region-pinning checks (`grpc_server.py:362-410`). This is the only
+  (`server/go/internal/api/list_mailbox_users.go`), which performs the standard sharding-owner /
+  region-pinning checks (`server/go/internal/api/list_mailbox_users.go`). This is the only
   pre-condition gate.
 - **Rate limiting.** Goes through the standard `RateLimitInterceptor`
   (no bypass). Go port must keep this RPC inside the tenant bucket like
@@ -58,7 +63,7 @@ Full method name on the wire: `/entdb.v1.EntDBService/ListMailboxUsers`
 1. Awaits `_check_tenant(request.tenant_id, context)` — may abort with
    `UNAVAILABLE` or `FAILED_PRECONDITION` (see error contract). This call
    may read from `global_store.get_tenant()` for region pinning
-   (`grpc_server.py:401`), but is a side-effect-free read.
+   (`server/go/internal/api/list_mailbox_users.go`), but is a side-effect-free read.
 2. Returns `ListMailboxUsersResponse(user_ids=[])`.
 
 No WAL append, no SQLite read, no `canonical_store` access, no `global_store`
@@ -76,8 +81,8 @@ but this is an additive divergence, not a contract break.
 |-----------|---------|--------|
 | `OK` | Always, for any authenticated caller whose tenant routes to this node. Response is `{user_ids: []}`. | Pinned by `test_grpc_contract.py:281-287` (mode `happy`). |
 | `UNAUTHENTICATED` | Auth interceptor rejects bad/missing credentials before handler runs. | `auth_interceptor.py` — generic, not handler-specific. |
-| `UNAVAILABLE` | Tenant is owned by another node (sharding). Trailer `entdb-redirect-node` carries the owner. | `grpc_server.py:392-394`. |
-| `FAILED_PRECONDITION` | Tenant pinned to a different region than the node serves. | `grpc_server.py:405-409`. |
+| `UNAVAILABLE` | Tenant is owned by another node (sharding). Trailer `entdb-redirect-node` carries the owner. | `server/go/internal/api/list_mailbox_users.go`. |
+| `FAILED_PRECONDITION` | Tenant pinned to a different region than the node serves. | `server/go/internal/api/list_mailbox_users.go`. |
 | `RESOURCE_EXHAUSTED` | Per-tenant rate limit exceeded. | `RateLimitInterceptor` — generic. |
 | `INTERNAL` | Unhandled panic. The current Python stub has no `try/except` and would let exceptions propagate; in practice none can fire after `_check_tenant`. Go port: `defer recover()` -> `status.Errorf(codes.Internal, ...)`. | n/a |
 
@@ -94,7 +99,7 @@ Each is a package under `server/go/internal/...` unless noted.
 - `pb` (`server/go/internal/pb/entdbv1`) — generated `ListMailboxUsersRequest`,
   `ListMailboxUsersResponse`, servicer interface. Required.
 - `tenantroute` — `CheckTenant(ctx, tenantID) error` mirroring
-  `_check_tenant` (`grpc_server.py:362-410`). Must surface `UNAVAILABLE`
+  `_check_tenant` (`server/go/internal/api/list_mailbox_users.go`). Must surface `UNAVAILABLE`
   with `entdb-redirect-node` trailer and `FAILED_PRECONDITION` for
   region-pin mismatch. Shared with every tenant-scoped RPC. Spec it in
   `docs/go-port/shared/tenant-route.md` (separate ticket).
@@ -108,11 +113,11 @@ to "implement" the deprecated mailbox-user enumeration — don't).
 
 ## Other-RPC deps
 
-- `GetMailbox` (`grpc_server.py:1700+`) — companion deprecated stub, also
+- `GetMailbox` (`server/go/internal/api/list_mailbox_users.go+`) — companion deprecated stub, also
   returns empty (`test_grpc_contract.py:274-279`). Same lifecycle: ported as
   a stub, not a real implementation. This RPC's spec parallels `GetMailbox`'s
   spec; keep both consistent.
-- `SearchMailbox` (`grpc_server.py`, `test_grpc_contract.py:265-273`) — third
+- `SearchMailbox` (`server/go/internal/api/list_mailbox_users.go`, `test_grpc_contract.py:265-273`) — third
   member of the deprecated mailbox triad; same stub treatment.
 
 `ListMailboxUsers` itself is a leaf RPC (no fan-out, no internal RPC calls).
@@ -162,7 +167,7 @@ func (s *EntDBServer) ListMailboxUsers(
 
     // Deprecated stub — legacy per-user mailbox SQLite store has been removed.
     // See docs/go-port/rpcs/ListMailboxUsers.md and
-    // server/python/entdb_server/api/grpc_server.py:1610-1614.
+    // server/go/internal/api/list_mailbox_users.go.
     return &pb.ListMailboxUsersResponse{UserIds: []string{}}, nil
 }
 ```
@@ -184,7 +189,7 @@ add to any unauth-bypass list.
   desired behavior before tightening.
 - **Metrics divergence.** Adding `record_grpc_request` calls in the Go port
   is a net-positive but technically a behavioural divergence (the Python
-  handler is missing them; see `grpc_server.py:1605-1617`). Recommend
+  handler is missing them; see `server/go/internal/api/list_mailbox_users.go`). Recommend
   adding them in Go AND backfilling Python in a separate cleanup PR so the
   two implementations stay aligned.
 - **Authentication strictness.** The contract test runs without an auth

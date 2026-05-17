@@ -20,7 +20,6 @@ type SessionManager interface {
 // session. UserID is what the interceptor uses as Identity.Subject.
 //
 // Mirrors the dict returned by SessionManager.validate_session in
-// server/python/entdb_server/auth/session_manager.py:110-138.
 type SessionInfo struct {
 	UserID    string
 	CreatedAt time.Time

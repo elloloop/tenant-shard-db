@@ -84,20 +84,20 @@ func (s *Scope) RevokeAccess(ctx context.Context, nodeID string, grantee Actor) 
 	return s.client.transport.RevokeAccess(ctx, s.tenantID, s.actor.String(), nodeID, grantee.String())
 }
 
-// TransferOwnership reassigns ``nodeID``'s owner to ``newOwner``.
+// TransferOwnership reassigns “nodeID“'s owner to “newOwner“.
 // Returns false if the node was not found.
 func (s *Scope) TransferOwnership(ctx context.Context, nodeID string, newOwner Actor) (bool, error) {
 	return s.client.transport.TransferOwnership(ctx, s.tenantID, s.actor.String(), nodeID, newOwner.String())
 }
 
-// AddGroupMember adds ``member`` to the ACL group identified by
-// ``groupID`` (a node id of the group node). ``role`` is an
-// optional free-form label like ``"admin"`` or ``"member"``.
+// AddGroupMember adds “member“ to the ACL group identified by
+// “groupID“ (a node id of the group node). “role“ is an
+// optional free-form label like “"admin"“ or “"member"“.
 func (s *Scope) AddGroupMember(ctx context.Context, groupID string, member Actor, role string) error {
 	return s.client.transport.AddGroupMember(ctx, s.tenantID, s.actor.String(), groupID, member.String(), role)
 }
 
-// RemoveGroupMember removes ``member`` from the ACL group.
+// RemoveGroupMember removes “member“ from the ACL group.
 func (s *Scope) RemoveGroupMember(ctx context.Context, groupID string, member Actor) error {
 	return s.client.transport.RemoveGroupMember(ctx, s.tenantID, s.actor.String(), groupID, member.String())
 }
@@ -106,13 +106,13 @@ func (s *Scope) RemoveGroupMember(ctx context.Context, groupID string, member Ac
 // scope's actor — including cross-tenant shares routed through the
 // global shared_index.
 //
-// ``limit``/``offset`` of zero use the server defaults.
+// “limit“/“offset“ of zero use the server defaults.
 func (s *Scope) SharedWithMe(ctx context.Context, limit, offset int32) ([]*Node, error) {
 	return s.client.transport.ListSharedWithMe(ctx, s.tenantID, s.actor.String(), limit, offset)
 }
 
-// Connected returns nodes reachable from ``nodeID`` via edges of
-// ``edgeTypeID``. Server-side ACL filtering is applied.
+// Connected returns nodes reachable from “nodeID“ via edges of
+// “edgeTypeID“. Server-side ACL filtering is applied.
 func (s *Scope) Connected(ctx context.Context, nodeID string, edgeTypeID int) ([]*Node, error) {
 	return s.client.transport.GetConnectedNodes(ctx, s.tenantID, s.actor.String(), nodeID, edgeTypeID)
 }
@@ -244,7 +244,7 @@ func Query[T proto.Message](ctx context.Context, s *Scope, filter map[string]any
 //	    ctx, scope, []string{"node-1", "node-2", "node-3"})
 //
 // Order is not guaranteed; callers needing input-order alignment
-// should index by ``Node.NodeID``.
+// should index by “Node.NodeID“.
 func GetMany[T proto.Message](ctx context.Context, s *Scope, nodeIDs []string) ([]T, []string, error) {
 	witness := newZeroMessage[T]()
 	typeID, err := typeIDFromMessage(witness)

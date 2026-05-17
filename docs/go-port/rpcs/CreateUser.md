@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/CreateUser`
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2099-2147`.
+> Implementation: `server/go/internal/api/create_user.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
+`server/go/internal/api/create_user.go`.
 
 ## Wire contract
 
@@ -11,25 +16,25 @@ Proto: `proto/entdb/v1/entdb.proto:112` (rpc), `:802-814` (messages),
 `CreateUserRequest`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `actor` | 1 | `string` | UNTRUSTED wire payload. Substituted with `AuthInterceptor.get_authoritative_actor(...)` before any privilege check (`grpc_server.py:2064-2066`). Required (non-empty). |
-| `user_id` | 2 | `string` | Required. Bare id like `"alice"` — NOT `"user:alice"` (see Open questions). Becomes `user_registry.user_id` PRIMARY KEY (`global_store.py:203-209`). |
+| `actor` | 1 | `string` | UNTRUSTED wire payload. Substituted with `AuthInterceptor.get_authoritative_actor(...)` before any privilege check (`server/go/internal/api/create_user.go`). Required (non-empty). |
+| `user_id` | 2 | `string` | Required. Bare id like `"alice"` — NOT `"user:alice"` (see Open questions). Becomes `user_registry.user_id` PRIMARY KEY (`server/go/internal/globalstore/`). |
 | `email`   | 3 | `string` | Required. UNIQUE constraint at storage layer. |
 | `name`    | 4 | `string` | Required. Display name; not unique. |
 
 `CreateUserResponse`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `success` | 1 | `bool`     | `true` on insert, `false` on uniqueness collision. Validation/auth failures abort with a status code instead of returning `success=false` — the field is only false on the duplicate-key path (`grpc_server.py:2139-2147`). |
-| `user`    | 2 | `UserInfo` | Populated on success. `status` always `"active"` (`global_store.py:357-368`). `created_at`/`updated_at` are unix-seconds ints from `_now()`. |
+| `success` | 1 | `bool`     | `true` on insert, `false` on uniqueness collision. Validation/auth failures abort with a status code instead of returning `success=false` — the field is only false on the duplicate-key path (`server/go/internal/api/create_user.go`). |
+| `user`    | 2 | `UserInfo` | Populated on success. `status` always `"active"` (`server/go/internal/globalstore/`). `created_at`/`updated_at` are unix-seconds ints from `_now()`. |
 | `error`   | 3 | `string`   | Set only on the `success=false` paths. Contains the underlying SQLite error message; consumers must not parse this — use the gRPC code. |
 
 ## Auth (admin-only, trusted-actor)
 
 - **Authentication required.** RPC is NOT in `AuthInterceptor.UNAUTHENTICATED_METHODS`.
 - **Privilege: admin or system.** Handler calls `_is_admin_or_system(request.actor)`
-  (`grpc_server.py:2115`), which delegates to `get_authoritative_actor`
+  (`server/go/internal/api/create_user.go`), which delegates to `get_authoritative_actor`
   (`auth/auth_interceptor.py:92`) and accepts only trusted prefixes
-  `system:`, `admin:`, or the literal `"__system__"` (`grpc_server.py:2068`).
+  `system:`, `admin:`, or the literal `"__system__"` (`server/go/internal/api/create_user.go`).
 - **Trusted-actor invariant (CLAUDE.md "wire is UNTRUSTED").** `request.actor`
   is a payload field; it MUST NOT be used directly. The Go port must mirror
   the Python helper: read the trusted identity from the per-call context
@@ -54,7 +59,7 @@ In-order narration:
 
 1. `start := time.Now()` for metrics.
 2. If `s.globalStore == nil` → abort `UNIMPLEMENTED "User registry not configured"`
-   (`grpc_server.py:2107-2111`).
+   (`server/go/internal/api/create_user.go`).
 3. Validate `actor` non-empty → abort `INVALID_ARGUMENT "actor is required"`.
 4. Resolve trusted actor from context; reject if not `system:` / `admin:` /
    `__system__` → abort `PERMISSION_DENIED "CreateUser requires admin or system actor"`.
@@ -74,9 +79,9 @@ No `canonical_store` touch. No tenant-scoped SQLite. No quota charge.
 
 | gRPC code | Trigger | Source |
 |-----------|---------|--------|
-| `UNIMPLEMENTED` | `global_store` not configured. | `grpc_server.py:2107-2111` |
-| `INVALID_ARGUMENT` | Empty `actor`, `user_id`, `email`, or `name`. | `grpc_server.py:2113-2125`; pinned `test_user_registry.py:171-187`, `test_grpc_contract.py:443-446` |
-| `PERMISSION_DENIED` | Trusted actor is not `system:*` / `admin:*` / `__system__`. | `grpc_server.py:2115-2119`; pinned `test_user_registry.py:126-145`, `test_privilege_escalation.py:321-341`, `test_grpc_contract.py:436-441` |
+| `UNIMPLEMENTED` | `global_store` not configured. | `server/go/internal/api/create_user.go` |
+| `INVALID_ARGUMENT` | Empty `actor`, `user_id`, `email`, or `name`. | `server/go/internal/api/create_user.go`; pinned `test_user_registry.py:171-187`, `test_grpc_contract.py:443-446` |
+| `PERMISSION_DENIED` | Trusted actor is not `system:*` / `admin:*` / `__system__`. | `server/go/internal/api/create_user.go`; pinned `test_user_registry.py:126-145`, `test_privilege_escalation.py:321-341`, `test_grpc_contract.py:436-441` |
 | `ALREADY_EXISTS` | Duplicate `user_id` preflight collision. | Go port hardening for WAL-first path |
 | `INTERNAL` / `DEADLINE_EXCEEDED` | WAL append or wait-applied failure. | Go port WAL-first path |
 
@@ -91,14 +96,14 @@ because the handler must decide before appending a durable WAL event.
 - `wal` / `apply` — global `user_created` op and wait-applied path.
 - `auth` (`server/go/internal/auth`) — `TrustedActorFromContext(ctx) (string, bool)` mirroring `auth_interceptor.py:92`. Required.
 - `metrics` — `RecordGRPCRequest("CreateUser", status, dur)`.
-- `clock` — injectable `Now() time.Time` for deterministic tests; `_now()` in Python is `int(time.time())` (`global_store.py`).
+- `clock` — injectable `Now() time.Time` for deterministic tests; `_now()` in Python is `int(time.time())` (`server/go/internal/globalstore/`).
 
 NOT used and MUST NOT be imported: `canonicalstore`, `acl`, `schema`,
 `quota`, `crypto`, `audit`.
 
 ## Other-RPC deps
 
-- `GetUser` (`grpc_server.py:2149`) — read path; tests use it after `CreateUser` to verify the row exists. Port together or stub.
+- `GetUser` (`server/go/internal/api/create_user.go`) — read path; tests use it after `CreateUser` to verify the row exists. Port together or stub.
 - `UpdateUser` (`proto:826-833`) — same `global_store` table; shares the trusted-actor pattern (self-or-admin instead of admin-only). Spec lives in a sibling file.
 - `ListUsers` (`proto:114`) — pagination over the same table; admin-only. Independent of `CreateUser` but shares storage.
 - `GetUserTenants` (`proto:126`) — joins `user_registry` with `tenant_members`; depends on the row created here.
@@ -108,13 +113,13 @@ first user-registry RPC ported, before `GetUser`/`UpdateUser`/`ListUsers`.
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_user_registry.py:65-187` — full handler matrix:
+- (legacy Python unit test, removed in Phase 4D) — full handler matrix:
   - `:68-97` happy path with `actor="system:admin"`.
   - `:99-124` happy path with `actor="admin:root"`.
   - `:126-145` regular user denied (`PERMISSION_DENIED`, store not called).
   - `:147-169` duplicate email returns `success=false, error~"already exists"`.
   - `:171-187` missing `email` aborts `INVALID_ARGUMENT`.
-- `tests/python/unit/test_user_registry.py:415-431` — no `global_store` configured aborts `UNIMPLEMENTED`.
+- (legacy Python unit test, removed in Phase 4D) — no `global_store` configured aborts `UNIMPLEMENTED`.
 - `tests/python/integration/test_grpc_contract.py:428-446` — over-the-wire matrix: happy / `PERMISSION_DENIED` (`actor=ALICE`) / `INVALID_ARGUMENT` (empty `user_id`).
 - `tests/python/integration/test_privilege_escalation.py:321-341` — security regression: authenticated `user:eve` claiming `actor="system:admin"` MUST get `PERMISSION_DENIED`. Parametrized over `CLAIMED_ADMIN_ACTORS` (`:166`).
 

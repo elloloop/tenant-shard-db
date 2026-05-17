@@ -1,7 +1,6 @@
-// tenant_registry CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:453 (create_tenant) through
-// :554 (set_tenant_status / set_legal_hold). Region is part of every
-// returned row; Python defaults to "us-east-1" — we mirror that here.
+// tenant_registry CRUD: create_tenant through set_tenant_status /
+// set_legal_hold. Region is part of every returned row; we default to
+// "us-east-1" when callers don't supply one.
 
 package globalstore
 

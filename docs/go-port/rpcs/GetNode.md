@@ -1,7 +1,12 @@
 # GetNode — Go Port Spec
 
+> Implementation: `server/go/internal/api/get_node.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Single-node read by `node_id` within one tenant. Read-only.
-Python source of truth: `server/python/entdb_server/api/grpc_server.py:994-1064`.
+Python source of truth: `server/go/internal/api/get_node.go`.
 
 ## Wire contract
 
@@ -19,8 +24,8 @@ GetNodeResponse { Node node = 1; bool found = 2; }
 `Node.payload` is a `google.protobuf.Struct` keyed by **field_id strings**
 (invariant #6), e.g. `{"1": "alice@example.com", "2": "$2a$..."}`. The
 SDK does id→name translation; the server MUST NOT translate. Pinned by
-`tests/python/unit/test_payload_wire_format.py:159-189` and the wire
-test `tests/python/unit/test_grpc_wire_format.py:172-189`.
+(legacy Python unit test, removed in Phase 4D) and the wire
+test (legacy Python unit test, removed in Phase 4D).
 
 `type_id` is present on the request but the Python handler does **not**
 use it to filter the lookup — `canonical_store.get_node(tenant, node_id)`
@@ -29,27 +34,27 @@ is keyed only on `(tenant_id, node_id)`. See "Open questions".
 `after_offset` + `wait_timeout_ms` provide read-after-write consistency
 by waiting for the WAL applier to reach a stream position before reading
 (default 30s when `wait_timeout_ms == 0`). Implementation:
-`grpc_server.py:1015-1020` → `_wait_for_offset` (`:937-944`) →
+`server/go/internal/api/get_node.go` → `_wait_for_offset` (`:937-944`) →
 `canonical_store.wait_for_offset`.
 
 ## Auth
 
 1. **Trusted actor only.** `request.context.actor` is **untrusted on the
    wire**. Handler immediately rebinds via `_trusted_actor`
-   (`grpc_server.py:418-437`) which calls
+   (`server/go/internal/api/get_node.go`) which calls
    `auth.auth_interceptor.get_authoritative_actor` (a `ContextVar` set by
    `AuthInterceptor`). Payload-supplied `system:admin` from a regular
    user is downgraded to the interceptor identity — pinned by
    `tests/python/integration/test_privilege_escalation.py:186-209`.
 
-2. **Tenant residency.** `_check_tenant` (`grpc_server.py:362-410`):
+2. **Tenant residency.** `_check_tenant` (`server/go/internal/api/get_node.go`):
    - sharding registry: tenant not owned by this node → `UNAVAILABLE`
      with `entdb-redirect-node` trailer.
    - region pinning: tenant region ≠ served region →
      `FAILED_PRECONDITION` (no retry).
 
 3. **Membership / cross-tenant grant.** `_check_cross_tenant_read`
-   (`grpc_server.py:561-618`):
+   (`server/go/internal/api/get_node.go`):
    - no `global_store` → returns `"local"` (back-compat).
    - `system:*` / `__system__` → `"member"`.
    - `is_member(tenant, user_id)` → `"member"`.
@@ -58,13 +63,13 @@ by waiting for the WAL applier to reach a stream position before reading
 
 4. **Per-node ACL (cross-tenant only).** When role is `"cross_tenant"`,
    re-check the specific `node_id` against `canonical_store.can_access`
-   (`grpc_server.py:1031-1045`, `canonical_store.py:2948-2960`). Failure →
+   (`server/go/internal/api/get_node.go`, `server/go/internal/store/`). Failure →
    `PERMISSION_DENIED`.
 
 5. **Capability mapping.** `GetNode → CoreCapability.READ`. Fixed at
-   `server/python/entdb_server/auth/capability_registry.py:62`. Pinned by
-   `tests/python/unit/test_capability_registry.py:61` and
-   `tests/python/unit/test_acl_capabilities.py:247`. Note: the current
+   `server/go/internal/auth/capability_registry.go`. Pinned by
+   (legacy Python unit test, removed in Phase 4D) and
+   (legacy Python unit test, removed in Phase 4D). Note: the current
    Python `GetNode` does **not** consult `required_for_op` at the handler
    level — capability enforcement is via the membership/ACL chain above.
    Go port should preserve this exact shape (do not add a new capability
@@ -83,7 +88,7 @@ by waiting for the WAL applier to reach a stream position before reading
 
 Per-tenant SQLite isolation is preserved: every `canonical_store` call is
 scoped by `tenant_id` and uses `_get_connection(tenant_id)`
-(`canonical_store.py:2306`).
+(`server/go/internal/store/`).
 
 ## Error contract — NOT_FOUND vs PERMISSION_DENIED
 
@@ -100,7 +105,7 @@ The handler returns ordered checks; **first failure wins**:
    `tests/python/integration/test_grpc_contract.py:217-222` (mode
    `not_found`, `r.found is False`).
 4. Cross-tenant role + missing per-node grant → `PERMISSION_DENIED`
-   (`grpc_server.py:1041-1045`). Note: the row exists at this point, so
+   (`server/go/internal/api/get_node.go`). Note: the row exists at this point, so
    "node missing" cannot be distinguished from "no grant" by an attacker
    who lacks tenant membership — that is intentional.
 
@@ -145,12 +150,12 @@ proposals, replace with whatever EPIC #407 freezes.)
 
 ## Other-RPC deps
 
-- **`GetNodeByKey`** (`grpc_server.py:1066-1128`) delegates to `GetNode`
+- **`GetNodeByKey`** (`server/go/internal/api/get_node.go`) delegates to `GetNode`
   after a unique-index lookup. The Go `GetNode` must remain the single
   authoritative read entry-point so ACL/cross-tenant/redirect logic is
   not duplicated. `GetNodeByKey` should call the **internal** Go
   `GetNode` (same package, not via the gRPC stub) once both are ported.
-- **`GetNodes`** (`grpc_server.py:1215-1291`) is the batch sibling and
+- **`GetNodes`** (`server/go/internal/api/get_node.go`) is the batch sibling and
   shares `_check_cross_tenant_read` + `wait_for_offset` + the wire
   payload encoding. Port them together to keep behaviour aligned.
 
@@ -160,23 +165,23 @@ proposals, replace with whatever EPIC #407 freezes.)
   `found=True`, `node.node_id == SEED_NODE_ID`.
 - `tests/python/integration/test_grpc_contract.py:217-222` — not_found
   returns `found=False` with no abort, status OK.
-- `tests/python/unit/test_payload_wire_format.py:158-189` — id-keyed
+- (legacy Python unit test, removed in Phase 4D) — id-keyed
   payload on the wire (invariant #6).
-- `tests/python/unit/test_grpc_wire_format.py:160-189` — wire round-trip
+- (legacy Python unit test, removed in Phase 4D) — wire round-trip
   via real `grpc.aio` stub.
 - `tests/python/integration/test_privilege_escalation.py:186-209` —
   payload `actor` claim ignored; trusted identity wins;
   `PERMISSION_DENIED` for non-member.
-- `tests/python/unit/test_capability_registry.py:61, 412` —
+- `(legacy Python unit test, removed), 412` —
   `GetNode → CoreCapability.READ`.
-- `tests/python/unit/test_acl_capabilities.py:247` — capability lookup.
+- (legacy Python unit test, removed in Phase 4D) — capability lookup.
 - `tests/python/integration/test_redirect_cache.py:12-59` — sharding
   redirect via `entdb-redirect-node` trailer.
-- `tests/python/unit/test_auth.py:57, 67` — auth interceptor binds
+- `(legacy Python unit test, removed), 67` — auth interceptor binds
   trusted actor for `/entdb.EntDBService/GetNode`.
-- `tests/python/unit/test_rate_limiter.py:61-132` — per-tenant rate-limit
+- (legacy Python unit test, removed in Phase 4D) — per-tenant rate-limit
   buckets keyed on `GetNode` method name.
-- `tests/python/unit/test_metrics.py:54, 112-121` — metric labels
+- `(legacy Python unit test, removed), 112-121` — metric labels
   (`method="GetNode"`).
 
 ## Implementation outline

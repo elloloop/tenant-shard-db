@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// ShareNode RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// ShareNode RPC.
 // Spec: docs/go-port/rpcs/ShareNode.md.
-// Reference Python: server/python/entdb_server/api/grpc_server.py:1746-1826.
 // Applier branch (W1.10): server/go/internal/apply/ops_share_node.go.
 //
 // # WAL-first restoration (PLAN.md §6)
@@ -39,10 +38,10 @@
 // PermissionError / unknown-node / WAL append errors instead of
 // aborting with a status code. The ONLY hard-error paths are:
 //
-//	UNIMPLEMENTED           WAL producer / canonical store not wired.
-//	UNAVAILABLE             Tenant not served by this node (gate).
-//	FAILED_PRECONDITION     Region mismatch / tenant archived (gate).
-//	NOT_FOUND               Tenant marked deleted (gate).
+//	UNIMPLEMENTED WAL producer / canonical store not wired.
+//	UNAVAILABLE Tenant not served by this node (gate).
+//	FAILED_PRECONDITION Region mismatch / tenant archived (gate).
+//	NOT_FOUND Tenant marked deleted (gate).
 //
 // All other failures route through OK + success=false. This is a
 // deliberate contract pin — flipping to status.Errorf is a wire-

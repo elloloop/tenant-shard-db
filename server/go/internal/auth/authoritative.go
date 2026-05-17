@@ -9,10 +9,9 @@ import "context"
 // top, with the actor claimed in the request payload, and rebind the
 // local variable to the result.
 //
-// This function mirrors get_authoritative_actor in
-// server/python/entdb_server/auth/auth_interceptor.py:92-115. The
-// behavioural pin is tests/python/integration/test_privilege_escalation.py
-// (34 cases across 8 RPCs).
+// The behavioural pin is
+// tests/python/integration/test_privilege_escalation.py (34 cases
+// across 8 RPCs).
 //
 // Resolution rules, in order:
 //

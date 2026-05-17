@@ -1,5 +1,10 @@
 # GetEdgesTo — Go port spec
 
+> Implementation: `server/go/internal/api/get_edges_to.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC: #407. Inverse fan-in counterpart of `GetEdgesFrom`. Returns edges whose
 `to_node_id` matches the requested node, scoped to a single tenant. Read-only,
 non-mutating, no WAL append.
@@ -25,13 +30,13 @@ non-mutating, no WAL append.
 ## Auth
 
 - Capability: `CoreCapability.READ`, registered in
-  `server/python/entdb_server/auth/capability_registry.py:67`
+  `server/go/internal/auth/capability_registry.go`
   (`DEFAULT_OP_REQUIREMENTS["GetEdgesTo"] = READ`).
 - Tenant ownership: handler calls `_check_tenant(tenant_id, ctx)`
-  (`api/grpc_server.py:1428`). Rejects with `UNAVAILABLE` + trailing
+  (`api/server/go/internal/api/get_edges_to.go`). Rejects with `UNAVAILABLE` + trailing
   metadata `entdb-redirect-node` if the shard does not own the tenant
-  (`grpc_server.py:362–395`); rejects with `FAILED_PRECONDITION` on
-  region-pin mismatch (`grpc_server.py:400–410`).
+  (`server/go/internal/api/get_edges_to.go–395`); rejects with `FAILED_PRECONDITION` on
+  region-pin mismatch (`server/go/internal/api/get_edges_to.go–410`).
 - Trusted actor: per CLAUDE.md invariant and PR #168, the handler MUST
   use `_trusted_actor(request.context.actor)` (the
   `AuthInterceptor`-attached identity) for any future per-edge ACL
@@ -47,23 +52,23 @@ non-mutating, no WAL append.
   write. Does NOT bypass the WAL invariant (CLAUDE.md §1) because no
   state changes.
 - Metrics: `record_grpc_request("GetEdgesTo", "ok"|"error", elapsed)`
-  (`grpc_server.py:1449,1452`).
+  (`server/go/internal/api/get_edges_to.go,1452`).
 - Logging: `logger.error("GetEdgesTo failed: ...", exc_info=True)` on
-  exception path (`grpc_server.py:1453`).
+  exception path (`server/go/internal/api/get_edges_to.go`).
 - Cross-tenant fan-in: NOT a concern at the storage layer. Each tenant
-  has its own SQLite (`canonical_store.py:1068` PRIMARY KEY includes
-  `tenant_id`; `idx_edges_to` at `canonical_store.py:1076`). Edges are
+  has its own SQLite (`server/go/internal/store/` PRIMARY KEY includes
+  `tenant_id`; `idx_edges_to` at `server/go/internal/store/`). Edges are
   per-tenant rows; an edge "spanning tenants" is structurally
   impossible — both endpoints share the row's `tenant_id`. The query
   filters `WHERE tenant_id = ? AND to_node_id = ?`
-  (`canonical_store.py:2673,2679`), so fan-in cannot leak across tenant
+  (`server/go/internal/store/,2679`), so fan-in cannot leak across tenant
   boundaries even if a caller forges a `node_id` that exists in another
   tenant.
 
 ## Error contract
 
 Python today returns `GetEdgesResponse(edges=[])` on ANY internal
-exception (`grpc_server.py:1454`) — i.e., it swallows errors and emits
+exception (`server/go/internal/api/get_edges_to.go`) — i.e., it swallows errors and emits
 an empty result. The Go port SHOULD preserve this swallow-and-empty
 behaviour for parity, with the following pinned aborts BEFORE the
 try-block reaches the store:
@@ -85,7 +90,7 @@ this empty-on-error policy is debated (see Open questions).
   interceptor `ContextVar` equivalent; same helper as GetEdgesFrom.
 - `internal/canonical` — `GetEdgesTo(ctx, tenantID, nodeID,
   edgeTypeID *int32) ([]Edge, error)` SQLite read; query identical to
-  `_sync_get_edges_to` (`canonical_store.py:2662–2693`).
+  `_sync_get_edges_to` (`server/go/internal/store/–2693`).
 - `internal/proto/convert` — `EdgeToProto(Edge) *pb.Edge` (shared with
   GetEdgesFrom; converts `props map[string]any` → `*structpb.Struct`).
   Reuse `_dict_to_struct` equivalent.
@@ -96,7 +101,7 @@ this empty-on-error policy is debated (see Open questions).
 ## Other-RPC deps (overlap with GetEdgesFrom)
 
 `GetEdgesTo` is the symmetric twin of `GetEdgesFrom`
-(`grpc_server.py:1384`). Shared code surface:
+(`server/go/internal/api/get_edges_to.go`). Shared code surface:
 
 - Same request/response proto messages (`GetEdgesRequest`,
   `GetEdgesResponse`).
@@ -107,7 +112,7 @@ this empty-on-error policy is debated (see Open questions).
   `has_more = len(edges) > limit`).
 - Differs only in the SQL predicate: `from_node_id = ?` vs
   `to_node_id = ?` and uses index `idx_edges_to`
-  (`canonical_store.py:1076`) instead of the `from`-side index.
+  (`server/go/internal/store/`) instead of the `from`-side index.
 
 Recommended: implement a single private `getEdgesByEndpoint(direction
 {from|to}, ...)` helper in the Go server, called by both RPCs, and
@@ -118,7 +123,7 @@ land both in the same PR (CLAUDE.md cross-reference: SDK-side
 
 - `tests/python/integration/test_grpc_contract.py:248–254` — happy
   path: empty seed ⇒ `r.edges == []` (response is success, not error).
-- `tests/python/unit/test_canonical_store.py:331–370` — store-level:
+- `(legacy Python unit test, removed)–370` — store-level:
   two edges to one target ⇒ length 2.
 - `tests/python/integration/test_crud_comprehensive.py:317–325` —
   store-level fan-in count.
@@ -193,7 +198,7 @@ WHERE tenant_id = ? AND to_node_id = ? AND edge_type_id = ?;
 SELECT ... FROM edges WHERE tenant_id = ? AND to_node_id = ?;
 ```
 
-Use `idx_edges_to(tenant_id, to_node_id)` (`canonical_store.py:1076`).
+Use `idx_edges_to(tenant_id, to_node_id)` (`server/go/internal/store/`).
 
 Run on a dedicated read-side worker pool (mirror Python's `_run_sync`
 thread-pool semantics; CLAUDE.md §3 forbids `ThreadPoolExecutor`-style

@@ -2,18 +2,16 @@
 
 // Shared helpers for the api package. These were previously duplicated
 // across the per-RPC handler files (e.g. get_user.go, list_users.go,
-// add_tenant_member.go, change_member_role.go) by parallel Wave 2
-// PRs that landed on main without seeing each other. Consolidating
-// them here keeps `go vet ./internal/api/...` clean and ensures every
-// caller sees identical semantics.
+// add_tenant_member.go, change_member_role.go) by parallel PRs that
+// landed on main without seeing each other. Consolidating them here
+// keeps `go vet ./internal/api/...` clean and ensures every caller
+// sees identical semantics.
 //
 // Conventions:
 //   - Helpers that are pure Server methods (need s.global, s.sharding,
 //     etc.) live as methods on *Server.
 //   - Helpers that are pure wire-shape transforms live as free
-//     functions, mirror their Python counterparts in
-//     server/python/entdb_server/api/grpc_server.py, and are nil-safe
-//     where the Python equivalent is.
+//     functions and are nil-safe.
 
 package api
 
@@ -40,14 +38,12 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
-// userToProto maps a globalstore.User row to its proto wire form,
-// mirroring `_user_dict_to_proto` in the Python handler
-// (server/python/entdb_server/api/grpc_server.py:2088-2097). NULL
-// columns land as Go zero values via globalstore.User's plain-string
-// fields, which marshal to the proto's empty-string defaults -- the
-// same shape Python emits when it stringifies a None. A nil row
-// yields a zero-value UserInfo so callers never panic on missing data
-// (preserves the list_users.go pre-merge behaviour).
+// userToProto maps a globalstore.User row to its proto wire form.
+// NULL columns land as Go zero values via globalstore.User's
+// plain-string fields, which marshal to the proto's empty-string
+// defaults. A nil row yields a zero-value UserInfo so callers never
+// panic on missing data (preserves the list_users.go pre-merge
+// behaviour).
 func userToProto(u *globalstore.User) *pb.UserInfo {
 	if u == nil {
 		return &pb.UserInfo{}
@@ -90,8 +86,7 @@ func (s *Server) lookupMemberRole(ctx context.Context, tenantID, userID string) 
 }
 
 // readRole captures the outcome of the cross-tenant read-membership
-// check. Mirrors the Python sentinels at `_check_cross_tenant_read`
-// (server/python/entdb_server/api/grpc_server.py:561-618).
+// check. Mirrors the Python `_check_cross_tenant_read` sentinels.
 //
 // Consolidated from per-handler duplicates (get_node.go's readRole and
 // get_nodes.go's crossTenantRole — same semantics, different names).
@@ -113,18 +108,16 @@ const (
 )
 
 // checkCrossTenantRead returns the caller's read role within tenantID.
-// Mirrors Python `_check_cross_tenant_read` at
-// server/python/entdb_server/api/grpc_server.py:561-618.
 //
 // Resolution order:
 //
-//  1. global_store == nil  => roleLocal (back-compat path).
+//  1. global_store == nil => roleLocal (back-compat path).
 //  2. system / admin actor => roleMember (bypass).
-//  3. zero actor           => PERMISSION_DENIED (defensive).
-//  4. user IsMember        => roleMember.
+//  3. zero actor => PERMISSION_DENIED (defensive).
+//  4. user IsMember => roleMember.
 //  5. any non-deny, non-expired node_access grant (group-aware via
 //     ResolveActorGroups) => roleCrossTenant.
-//  6. otherwise            => PERMISSION_DENIED.
+//  6. otherwise => PERMISSION_DENIED.
 //
 // Consolidated from get_node.go (admin/zero handling) and get_nodes.go
 // (group-aware grant resolution). Picks the union: broader scope on
@@ -225,7 +218,7 @@ func edgePropsToStruct(propsJSON string) *structpb.Struct {
 // callers that operate on heterogeneous node sets (GetNodes,
 // GetConnectedNodes) pass "" and accept the schema-less passthrough.
 //
-// Consolidated from three Wave-2 duplicates (get_nodes.go,
+// Consolidated from three duplicates (get_nodes.go,
 // get_connected_nodes.go, query_nodes.go). Picks the method form +
 // payload.PayloadToStruct path so the schema-aware QueryNodes call
 // site is preserved.
@@ -257,7 +250,7 @@ func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, err
 }
 
 // decodeIDKeyedPayload parses a raw JSON object whose keys are
-// stringified field_ids ({"1": ...}) into the uint32-keyed map the
+// stringified field_ids ({"1":, ...}) into the uint32-keyed map the
 // payload package consumes. Empty / null JSON yields an empty map.
 // Non-digit keys are dropped silently (CLAUDE.md invariant #6 — the
 // applier-side guard prevents new ones; we can't fix legacy rows on
@@ -409,7 +402,7 @@ func (s *Server) aclCheck(ctx context.Context, req acl.CheckRequest) error {
 // uuid.uuid4().hex pattern Python uses at grpc_server.py:797 and
 // elsewhere — only uniqueness is contractually pinned.
 //
-// Consolidated from three Wave-2 duplicates
+// Consolidated from three duplicates
 // (remove_group_member.go, set_legal_hold.go, transfer_ownership.go).
 // Picks the (string, error) signature; set_legal_hold's call site
 // (previously string-only with a time-based fallback) now propagates

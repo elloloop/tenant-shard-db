@@ -1,16 +1,32 @@
-# ADR-006: Proto-Based Schema Definition
+# ADR-006: Proto is the type system end-to-end
 
 ## Status: Accepted
 
 ## Context
 
-Applications need to define their data model (node types, edge types, fields). The schema definition must be strictly typed, multi-language, and catch errors at compile time.
+Applications need to define their data model (node types, edge
+types, fields). The schema definition must be strictly typed,
+multi-language, and catch errors at compile time. Beyond definition,
+the same schema drives the wire format, the on-disk format, the
+SDK type-safety guarantees, and the server's schema registry.
 
 ## Decision
 
-### Proto as the single source of truth
+### Proto is the single source of truth for the type system
 
-Application schemas are defined in `.proto` files using custom EntDB options. The `entdb generate` command produces typed code for Python, Go, and future languages.
+Application schemas are defined in `.proto` files using custom
+EntDB options (`(entdb.node)`, `(entdb.edge)`, `(entdb.field)`).
+Standard `protoc-gen-go` / `protoc-gen-go-grpc` / `protoc-gen-python`
+generate typed stubs into language-specific packages. EntDB ships
+no custom alternative to these — no hand-rolled enum reimplementer,
+no parallel "schema-class" generator, no proto-message replacement.
+
+The proto file is the **only** authoritative description of a type.
+Wire format (gRPC), storage format (id-keyed JSON, see
+[ADR-018](018-field-id-keyed-payloads.md)), SDK type signatures
+(`User`, `Task`, etc.), server schema registry entries, and the
+`entdb-schema` compatibility check **all derive from one proto
+descriptor**.
 
 ### Node types as proto messages
 
@@ -75,7 +91,7 @@ Convention: fields 15/16 are the edge from/to type references. Fields 1-14 are e
 Pass 1 — protoc (structural):
   Type references, enum types, field numbers, syntax
 
-Pass 2 — entdb lint (semantic):
+Pass 2 — entdb-schema check (semantic):
   type_id / edge_id uniqueness and non-zero
   Fields 15/16 on edges reference entdb.node messages
   data_policy classification on all types
@@ -86,30 +102,55 @@ Pass 2 — entdb lint (semantic):
   No breaking changes vs snapshot
 ```
 
-### CLI
+### Tooling
+
+Standard protoc plus one EntDB-specific tool:
 
 ```bash
-entdb generate schema.proto --python schema.py --go types.go
-entdb lint schema.proto
-entdb check schema.proto --baseline .entdb/snapshot.json
-entdb init schema.proto
+# Generate typed stubs — standard protoc, no custom EntDB step.
+protoc --python_out=. --go_out=. schema.proto
+
+# EntDB-specific: snapshot the schema for CI baseline + diff.
+entdb-schema snapshot --from-server localhost:50051 > .schema-snapshot.json
+entdb-schema check --baseline .schema-snapshot.json --from-file .schema-snapshot.json
+entdb-schema diff --old .schema-snapshot.json --new /tmp/new.json
+entdb-schema validate --from-file .schema-snapshot.json
 ```
+
+The `entdb-schema` binary lives at
+`server/go/cmd/entdb-schema/`. See
+`docs/guides/schema-lockdown.md` for the full CI-integration guide.
 
 ### Generated code
 
-Python:
+The standard `*_pb2.py` (Python) and `*.pb.go` (Go) outputs from
+`protoc` are the only generated code. EntDB ships no extra
+"NodeTypeDef" Python class or "entdb.NodeTypeDef" Go struct to
+hand-build — the proto message is the type.
+
+**Python — register the proto module with the SDK:**
+
 ```python
-# Auto-generated — do not edit
-from entdb_sdk import NodeTypeDef, EdgeTypeDef, AclDefaults, field
-Task = NodeTypeDef(type_id=2, name="Task", ...)
-HasComment = EdgeTypeDef(edge_id=1, from_type=2, to_type=3, propagate_share=True)
+import my_schema_pb2
+from entdb_sdk import register_proto_schema
+
+register_proto_schema(my_schema_pb2)
+# Now Task, User, etc. are usable directly:
+plan.create(my_schema_pb2.Task(title="Review PR", status="todo"))
 ```
 
-Go:
+**Go — use the generated proto types directly:**
+
 ```go
-var Task = entdb.NodeTypeDef{TypeID: 2, Name: "Task", ...}
-var HasComment = entdb.EdgeTypeDef{EdgeID: 1, FromType: 2, ToType: 3, PropagateShare: true}
+import myschema "example.com/myapp/schema"
+
+plan := client.NewPlan(tenantID, actor)
+plan.Create(&myschema.Task{Title: "Review PR", Status: "todo"})
 ```
+
+Field numbers in the proto file (e.g. `string title = 1;`) ARE the
+EntDB `field_id`s on disk and on the wire — see
+[ADR-018](018-field-id-keyed-payloads.md).
 
 ### What the schema declares per node/edge type
 
@@ -124,9 +165,20 @@ Behavior:        propagate_share (edges), required, searchable, indexed (fields)
 
 ## Consequences
 
-- Proto is a build-time dependency (protoc or grpc_tools.protoc)
-- Custom options require entdb/schema.proto shipped with the SDK
-- Fields 15/16 convention needs documentation (not enforced by protoc itself)
-- Two-pass validation catches what protoc cannot
-- Schema changes require regeneration of typed code
-- Breaking changes blocked by CI (entdb check)
+- Proto is a build-time dependency (`protoc` plus the
+  `proto/entdb/v1/entdb_options.proto` extension file shipped with
+  the SDK).
+- Custom options live in `entdb_options.proto`. Apps `import` it
+  and apply the options to their own messages.
+- Fields 15/16 convention on edge types is documentation-only
+  (not enforced by `protoc`); `entdb-schema validate` enforces it
+  semantically.
+- Schema changes require running `protoc` again — the SDK reads
+  proto descriptors at runtime via `register_proto_schema()`
+  (Python) or generated code (Go).
+- Breaking changes blocked by CI (`entdb-schema check` against
+  the committed `.schema-snapshot.json` baseline; see
+  `docs/guides/schema-lockdown.md`).
+- The server's own schema registry is populated by the same
+  proto descriptors (loaded from `.schema-snapshot.json` at boot
+  via `server/go/internal/schema/loader.go`).

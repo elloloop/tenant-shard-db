@@ -1,445 +1,178 @@
-# API Reference
+# API Reference (wire-level)
 
 > ## ⚠ Internal transport — use an SDK
 >
-> The gRPC and HTTP surfaces below are **internal transports** used by the official SDKs. They are not stable public contracts; the wire format may change between releases, and the SDKs enforce non-obvious invariants (field IDs, actor strings, ACL encoding, idempotency keys, schema fingerprints) that hand-rolled clients will get wrong.
+> The gRPC surface below is an **internal transport** used by the official SDKs. It is not a stable public contract; the wire format may change between releases, and the SDKs enforce non-obvious invariants (field IDs, actor strings, ACL encoding, idempotency keys, schema fingerprints, capability ids) that hand-rolled clients will get wrong.
 >
 > Use one of the sanctioned SDKs:
 >
-> - **Go:** [`github.com/elloloop/tenant-shard-db/sdk/go/entdb`](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb)
-> - **Python:** `pip install entdb-sdk`
+> - **Go:** `github.com/elloloop/tenant-shard-db/sdk/go/entdb` ([pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb))
+> - **Python:** `pip install entdb-sdk` ([PyPI](https://pypi.org/project/entdb-sdk/))
 >
-> The reference below is for SDK maintainers and operators debugging the wire — not for application code.
+> This reference is for SDK maintainers and operators debugging the wire — not for application code. For application-level docs, see [sdk-reference.md](sdk-reference.md).
 
-EntDB exposes both gRPC and HTTP APIs.
+## No HTTP API
 
-## gRPC API
+**The Go server (v1.12+) is gRPC-only.** There is no `/v1/atomic`, no `/v1/nodes/:id`, no `/health` HTTP endpoint, no REST gateway. The historical Python server had partial HTTP support; that surface was retired in EPIC #407 Phase 4D and not reintroduced.
 
-### Service Definition
+If you need an HTTP-style interface for browser tooling, the [EntDB Console](../sdk/go/entdb/cmd/entdb-console/) provides a Connect-RPC bridge over HTTP. The console is curated — it exposes a deliberately small subset for browser access, not the full RPC surface.
 
-```protobuf
-service EntDBService {
-  // Execute atomic transaction
-  rpc ExecuteAtomic(ExecuteAtomicRequest) returns (ExecuteAtomicResponse);
+## gRPC contract
 
-  // Get single node
-  rpc GetNode(GetNodeRequest) returns (GetNodeResponse);
+The canonical contract lives in [`proto/entdb/v1/entdb.proto`](../proto/entdb/v1/entdb.proto). 44 RPCs total. To browse:
 
-  // Query nodes by type
-  rpc QueryNodes(QueryNodesRequest) returns (QueryNodesResponse);
+```bash
+# Reflection (works in dev when no auth/TLS gate blocks it)
+grpcurl -plaintext localhost:50051 list
+grpcurl -plaintext localhost:50051 list entdb.v1.EntDBService
+grpcurl -plaintext localhost:50051 describe entdb.v1.EntDBService
 
-  // Get edges from/to node
-  rpc GetEdges(GetEdgesRequest) returns (GetEdgesResponse);
-
-  // Search mailbox
-  rpc SearchMailbox(SearchMailboxRequest) returns (SearchMailboxResponse);
-
-  // Health check
-  rpc Health(HealthRequest) returns (HealthResponse);
-
-  // Get schema
-  rpc GetSchema(GetSchemaRequest) returns (GetSchemaResponse);
-}
+# Or compile the proto and inspect
+protoc --descriptor_set_out=/tmp/entdb.bin proto/entdb/v1/entdb.proto
+buf curl --schema proto/entdb/v1/entdb.proto --reflect ...
 ```
 
-### ExecuteAtomic
+## Service / RPC families
 
-Execute atomic transaction:
+The 44 RPCs cluster into the following groups. Source-of-truth for shapes is the proto file; the spec docs in [`docs/go-port/rpcs/`](go-port/rpcs/) carry per-RPC design notes (some still cite the retired Python source — see ADR-019).
 
-```protobuf
-message ExecuteAtomicRequest {
-  string tenant_id = 1;
-  string actor = 2;
-  string idempotency_key = 3;
-  repeated Operation operations = 4;
-}
+**Data plane (per-tenant):**
 
-message Operation {
-  oneof operation {
-    CreateNode create_node = 1;
-    UpdateNode update_node = 2;
-    DeleteNode delete_node = 3;
-    CreateEdge create_edge = 4;
-    DeleteEdge delete_edge = 5;
-    SetVisibility set_visibility = 6;
-  }
-}
+- `ExecuteAtomic` — the only mutating RPC for tenant data. Builds one or more ops in a single WAL event.
+- `GetNode`, `GetNodes`, `GetNodeByKey`, `QueryNodes`, `SearchNodes`
+- `GetEdgesFrom`, `GetEdgesTo`, `GetConnectedNodes`
+- `GetMailbox`, `SearchMailbox`, `ListMailboxUsers`
+- `GetReceiptStatus`, `WaitForOffset` — read-after-write helpers
 
-message ExecuteAtomicResponse {
-  repeated OperationResult results = 1;
-  string wal_position = 2;
-}
-```
+**ACL / sharing:**
 
-### GetNode
+- `ShareNode`, `RevokeAccess`, `ListSharedWithMe`
+- `AddGroupMember`, `RemoveGroupMember`
+- `TransferOwnership`, `DelegateAccess`
 
-Get single node by ID:
+**Schema:**
 
-```protobuf
-message GetNodeRequest {
-  string tenant_id = 1;
-  string actor = 2;
-  string node_id = 3;
-  bool include_deleted = 4;
-}
+- `GetSchema` — read-only; returns the server's registered schema fingerprint + types.
 
-message GetNodeResponse {
-  Node node = 1;
-}
+**Health:**
 
-message Node {
-  string id = 1;
-  int32 type_id = 2;
-  string tenant_id = 3;
-  bytes payload_json = 4;
-  string owner_actor = 5;
-  int64 created_at = 6;
-  int64 updated_at = 7;
-  bool deleted = 8;
-  int64 version = 9;
-}
-```
+- `Health` (EntDB-specific) — version + applier status
+- `grpc.health.v1.Health/Check` — standard gRPC health protocol; both bypass auth
 
-### QueryNodes
+**Admin / control plane (cross-tenant):**
 
-Query nodes by type with filters:
+- `CreateUser`, `UpdateUser`, `GetUser`, `ListUsers`, `DeleteUser`, `FreezeUser`, `CancelUserDeletion`
+- `CreateTenant`, `GetTenant`, `ArchiveTenant`, `ListTenants`
+- `AddTenantMember`, `RemoveTenantMember`, `GetTenantMembers`, `GetUserTenants`, `ChangeMemberRole`
+- `GetTenantQuota`
+- `TransferUserContent`, `RevokeAllUserAccess`, `ExportUserData`
+- `SetLegalHold`
 
-```protobuf
-message QueryNodesRequest {
-  string tenant_id = 1;
-  string actor = 2;
-  int32 type_id = 3;
-  bytes filters_json = 4;
-  int32 limit = 5;
-  int32 offset = 6;
-}
+See [Onboarding](onboarding.md) for the typical admin-RPC flow.
 
-message QueryNodesResponse {
-  repeated Node nodes = 1;
-  int32 total_count = 2;
-}
-```
+## Wire conventions
 
-## HTTP API
+### Field IDs, not field names
 
-### Base URL
+Per [ADR-018](adr/018-field-id-keyed-payloads.md), payloads on the wire and on disk are keyed by **stringified `field_id`s** (`"1"`, `"2"`, ...), not by names. The SDKs do name↔id translation client-side from the proto descriptor (where `fd.Number()` IS the EntDB `field_id` per ADR-006).
 
 ```
-http://localhost:8080/v1
+WIRE:        {"1": "alice@example.com", "2": "Alice"}
+APP CODE:    {"email": "alice@example.com", "name": "Alice"}
 ```
+
+Schemaless ingress (server doesn't know the type's schema): only digit-string keys are accepted; name-keyed entries return `INVALID_ARGUMENT`.
+
+### Idempotency
+
+Every `ExecuteAtomic` request carries an `idempotency_key`. Replaying the same key returns the same result without re-applying. Keyed on `(tenant_id, idempotency_key)`.
 
 ### Authentication
 
-All requests require tenant and actor headers:
+Per [ADR-011](adr/011-security-and-compliance.md), the gRPC interceptor accepts three credential carriers in fixed priority order:
 
-```http
-X-Tenant-ID: my_tenant
-X-Actor: user:alice
-```
+1. OAuth/OIDC bearer: `authorization: Bearer <jwt>` header
+2. API key: `x-api-key: <secret>` header
+3. Session: `x-session-token: <token>` header
 
-Or query parameters:
+Plus mTLS client cert when configured (`-require-client-cert=true`); the subject DN / SAN flows into the request context and bridges to the trusted-actor identity.
 
-```
-?tenant_id=my_tenant&actor=user:alice
-```
+`Health` and `grpc.health.v1.Health/Check` bypass authentication.
 
-### Endpoints
+### Actor / trusted-actor pattern
 
-#### POST /v1/atomic
+The wire `actor` field on every RPC is **untrusted**. The trusted identity comes from the verified credential (above). The wire field is rebound at the handler via `auth.Authoritative(ctx, claimed)` — see [ADR-016 trusted-actor section](adr/016-handlers-append-applier-writes.md).
 
-Execute atomic transaction.
+Actor prefixes:
 
-**Request:**
-```json
-{
-  "tenant_id": "my_tenant",
-  "actor": "user:alice",
-  "idempotency_key": "create_user_123",
-  "operations": [
-    {
-      "op": "create_node",
-      "alias": "user1",
-      "type_id": 1,
-      "payload": {
-        "email": "alice@example.com",
-        "name": "Alice"
-      },
-      "principals": ["user:alice", "tenant:*"]
-    }
-  ]
-}
-```
+- `user:<id>` — a real authenticated user
+- `system:<service>` — internal service identity; bypasses tenant-membership checks
+- `admin:<id>` — operator/admin identity; same bypass as `system:`
+- `__system__` — bootstrap/replay actor used by the applier; never legitimate on the wire
+- `group:<id>` — only valid in ACL grant subjects, never as a caller
 
-**Response:**
-```json
-{
-  "results": [
-    {
-      "node_id": "nd_abc123",
-      "alias": "user1"
-    }
-  ],
-  "wal_position": "0:12345"
-}
-```
+### gRPC status codes
 
-#### GET /v1/nodes/:id
+| Status | When |
+|---|---|
+| `OK` | Success |
+| `INVALID_ARGUMENT` | Malformed request, schema mismatch, name-keyed payload on schemaless type |
+| `NOT_FOUND` | Node, tenant, user not found |
+| `ALREADY_EXISTS` | Duplicate `tenant_id`, duplicate unique-field value, etc. |
+| `PERMISSION_DENIED` | ACL check failed; actor not a tenant member; admin gate failed |
+| `FAILED_PRECONDITION` | CAS precondition mismatched (`UpdateNode` with `precondition`) |
+| `UNAUTHENTICATED` | Auth header missing/invalid |
+| `UNAVAILABLE` | Server starting up, WAL unreachable, tenant pinned to a different region (see redirect trailer) |
+| `RESOURCE_EXHAUSTED` | Quota / rate limit (when implemented; see ADR-011 status table) |
+| `INTERNAL` | Server bug or unexpected backend error |
 
-Get single node.
+### Cross-region redirect
 
-**Request:**
-```
-GET /v1/nodes/nd_abc123?tenant_id=my_tenant&actor=user:alice
-```
+When a tenant is pinned to a region the current server doesn't serve, the RPC returns `UNAVAILABLE` with a trailer `entdb-redirect-node: <host:port>`. SDKs handle this automatically; hand-rolled clients have to follow it.
 
-**Response:**
-```json
-{
-  "id": "nd_abc123",
-  "type_id": 1,
-  "tenant_id": "my_tenant",
-  "payload": {
-    "email": "alice@example.com",
-    "name": "Alice"
-  },
-  "owner_actor": "user:alice",
-  "created_at": 1705312000000,
-  "updated_at": 1705312000000,
-  "deleted": false,
-  "version": 1
-}
-```
+## Payload encoding
 
-#### GET /v1/nodes
-
-Query nodes by type.
-
-**Request:**
-```
-GET /v1/nodes?tenant_id=my_tenant&actor=user:alice&type_id=1&limit=10&offset=0
-```
-
-**Response:**
-```json
-{
-  "nodes": [
-    {"id": "nd_abc123", "type_id": 1, ...},
-    {"id": "nd_def456", "type_id": 1, ...}
-  ],
-  "total_count": 42
-}
-```
-
-#### GET /v1/nodes/:id/edges/out
-
-Get outgoing edges from node.
-
-**Request:**
-```
-GET /v1/nodes/nd_abc123/edges/out?tenant_id=my_tenant&actor=user:alice&edge_type=100
-```
-
-**Response:**
-```json
-{
-  "edges": [
-    {
-      "id": "ed_xyz789",
-      "edge_type_id": 100,
-      "from_id": "nd_abc123",
-      "to_id": "nd_def456"
-    }
-  ]
-}
-```
-
-#### GET /v1/nodes/:id/edges/in
-
-Get incoming edges to node.
-
-#### GET /v1/mailbox
-
-Get user mailbox items.
-
-**Request:**
-```
-GET /v1/mailbox?tenant_id=my_tenant&user_id=alice&limit=20&offset=0
-```
-
-**Response:**
-```json
-{
-  "items": [
-    {
-      "node_id": "nd_msg001",
-      "node_type_id": 3,
-      "preview_text": "Meeting tomorrow at 3pm",
-      "is_read": false,
-      "created_at": 1705312000000
-    }
-  ],
-  "unread_count": 5
-}
-```
-
-#### GET /v1/mailbox/search
-
-Search mailbox with FTS.
-
-**Request:**
-```
-GET /v1/mailbox/search?tenant_id=my_tenant&user_id=alice&query=meeting
-```
-
-**Response:**
-```json
-{
-  "results": [
-    {
-      "node_id": "nd_msg001",
-      "preview_text": "Meeting tomorrow at 3pm",
-      "score": 0.95
-    }
-  ]
-}
-```
-
-#### POST /v1/mailbox/mark_read
-
-Mark mailbox item as read.
-
-**Request:**
-```json
-{
-  "tenant_id": "my_tenant",
-  "user_id": "alice",
-  "node_id": "nd_msg001"
-}
-```
-
-#### GET /v1/schema
-
-Get current schema.
-
-**Response:**
-```json
-{
-  "fingerprint": "sha256:abc123...",
-  "node_types": [
-    {
-      "type_id": 1,
-      "name": "User",
-      "fields": [
-        {"field_id": 1, "name": "email", "kind": "string", "required": true}
-      ]
-    }
-  ],
-  "edge_types": [
-    {
-      "edge_id": 100,
-      "name": "AssignedTo",
-      "from_type": 2,
-      "to_type": 1
-    }
-  ]
-}
-```
-
-#### GET /health
-
-Health check.
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "components": {
-    "wal": "connected",
-    "sqlite": "ok",
-    "s3": "ok"
-  },
-  "applier_lag_ms": 50,
-  "version": "1.0.0"
-}
-```
-
-### Error Responses
-
-All errors follow this format:
+The `data` (create) and `patch` (update) fields of operations carry a `google.protobuf.Struct` keyed by stringified field IDs:
 
 ```json
 {
-  "error": {
-    "code": "NOT_FOUND",
-    "message": "Node not found: nd_abc123",
-    "details": {
-      "node_id": "nd_abc123"
-    }
+  "create_node": {
+    "type_id": 1,
+    "data": {
+      "1": "alice@example.com",
+      "2": "Alice"
+    },
+    "as_": "alice",
+    "acl": [ ... ]
   }
 }
 ```
 
-Error codes:
+Special kind coercions on ingress (server-side, when the schema is known):
 
-| Code | HTTP Status | Description |
-|------|-------------|-------------|
-| `INVALID_REQUEST` | 400 | Malformed request |
-| `VALIDATION_ERROR` | 400 | Payload validation failed |
-| `UNAUTHORIZED` | 401 | Missing authentication |
-| `FORBIDDEN` | 403 | ACL denied access |
-| `NOT_FOUND` | 404 | Resource not found |
-| `CONFLICT` | 409 | Optimistic lock conflict |
-| `INTERNAL_ERROR` | 500 | Server error |
-| `SERVICE_UNAVAILABLE` | 503 | WAL unavailable |
+- **bytes**: wire carries a base64 string; server decodes to `[]byte`.
+- **timestamp / int64**: wire carries `float64` (structpb's only number type); server coerces to `int64`.
+- **enum**: wire carries the enum value as a string (not the proto integer); kept as string in storage.
+- **json**: nested `Struct` values are unwrapped to native maps once; never recurses.
 
-### Rate Limiting
+On egress, the wire shape is symmetric: `[]byte` re-encoded as base64, `int64` written as `float64` (structpb), enums as strings.
 
-Headers in response:
+## Schema RPC
 
-```http
-X-RateLimit-Limit: 1000
-X-RateLimit-Remaining: 999
-X-RateLimit-Reset: 1705312060
-```
+`GetSchema` returns the **server's** registered schema (loaded at boot from `.schema-snapshot.json`). It's read-only — there is no `RegisterSchema` RPC. Clients use the schema for client-side validation; the SDKs maintain their own local registry via `register_proto_schema(my_pb2)` (Python) or generated code (Go).
 
-When rate limited:
+## Where to find each handler
 
-```http
-HTTP/1.1 429 Too Many Requests
-Retry-After: 60
-```
+- gRPC handlers: `server/go/internal/api/<rpc_snake_case>.go`
+- Per-RPC design notes: `docs/go-port/rpcs/<RPC>.md` (some still cite the retired Python source — those citations are historical)
+- WAL op type definitions: `server/go/internal/wal/event.go`
+- Applier dispatch: `server/go/internal/apply/applier.go`
 
-### Pagination
+## Related
 
-List endpoints support pagination:
-
-```
-?limit=20&offset=0
-```
-
-Response includes total count:
-
-```json
-{
-  "items": [...],
-  "total_count": 150
-}
-```
-
-### Filtering
-
-Query nodes with filters:
-
-```
-GET /v1/nodes?type_id=1&filter.status=active&filter.created_at.gte=1705000000000
-```
-
-Filter operators:
-- `eq` (default): Exact match
-- `neq`: Not equal
-- `gt`: Greater than
-- `gte`: Greater than or equal
-- `lt`: Less than
-- `lte`: Less than or equal
-- `in`: In list (comma-separated)
-- `like`: SQL LIKE pattern
+- [`proto/entdb/v1/entdb.proto`](../proto/entdb/v1/entdb.proto) — wire contract (source of truth)
+- [`proto/entdb/v1/entdb_options.proto`](../proto/entdb/v1/entdb_options.proto) — EntDB-specific proto options for schema declaration
+- [sdk-reference.md](sdk-reference.md) — application-level SDK API
+- [ADR-006](adr/006-proto-schema-definition.md) — proto-as-type-system
+- [ADR-016](adr/016-handlers-append-applier-writes.md) — write-path contract
+- [ADR-018](adr/018-field-id-keyed-payloads.md) — payload key contract on wire and disk

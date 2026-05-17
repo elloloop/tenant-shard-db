@@ -1,7 +1,14 @@
 # EntDB — Agent Instructions
 
+> **Scope of this file (per [ADR-019](docs/adr/019-decision-records-home.md)).**
+> CLAUDE.md is agent execution rules only: workflow, release process,
+> directory map, testing commands, code-style hints, pointers to where
+> things live. Design decisions live in `docs/adr/` and are referenced
+> here by number, never restated. When CLAUDE.md and an ADR disagree,
+> the ADR wins.
+
 > Server is Go-only as of EPIC #407 Phase 4D; the historical Python server has
-> been deleted. See `docs/decisions/python-server-retired.md` for the
+> been deleted. See [ADR-017](docs/adr/017-python-server-retired.md) for the
 > retirement evidence ladder (contract parity, e2e parity, perf, release-image
 > swap).
 
@@ -23,40 +30,38 @@ Do NOT push code that you haven't verified locally. Do NOT rely on GitHub CI to 
 ### Releases
 
 Tagging `vX.Y.Z` on `main` triggers `.github/workflows/release.yml` which:
-1. Builds + pushes the Go server Docker image to `ghcr.io/elloloop/tenant-shard-db:vX.Y.Z` (same image name as before; Go binary inside).
+1. Builds + pushes the Go server Docker image. **Note the tag normalization**: the git tag is `vX.Y.Z`, but `docker/metadata-action` strips the leading `v`, so the image is pulled as `ghcr.io/elloloop/tenant-shard-db:X.Y.Z` (also `:X.Y`, `:X`, `:latest`, `:sha-<7>`). Multi-arch (linux/amd64 + linux/arm64).
 2. Publishes Python SDK to PyPI (`pip install entdb-sdk==X.Y.Z`).
 3. Publishes Go SDK by tagging `sdk/go/entdb/vX.Y.Z` and warming the Go module proxy. Consumers install with `go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@vX.Y.Z`. Docs auto-render at `pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb`.
 
 Go modules don't need a registry — the Go proxy pulls directly from git tags. Sub-module tags MUST be prefixed `sdk/go/entdb/vX.Y.Z` (the release workflow creates them automatically).
 
-## Architecture Invariants (MUST NOT violate)
+## Architecture decisions
 
-### 1. All writes go through the WAL
-EntDB is event-sourced. The WAL (Kafka/Redpanda, in-memory for tests) is the **source of truth**. SQLite is a materialized view rebuilt by replaying the WAL.
+CLAUDE.md does not embed design decisions — they live in `docs/adr/`
+per [ADR-019](docs/adr/019-decision-records-home.md). The current
+in-force ADRs are listed in `docs/adr/`; read them when you need
+design context.
 
-**Every mutation** — including admin ops, GDPR, transfers, revocations — MUST be appended to the WAL via `wal.Append` and applied by the `Applier` in `server/go/internal/apply/`. Direct SQLite writes from handlers bypass the event log and will be **silently lost** on rebuild.
+Quick orientation (one-liners, not normative — the ADR is normative):
 
-```
-CORRECT:   handler → wal.Append(event) → Applier.Apply() → store (SQLite)
-WRONG:     handler → store.WriteSomething() (direct)
-```
-
-If you need a new operation type, add it to the `Event`/`Op` types in `server/go/internal/wal/event.go` and handle it in `server/go/internal/apply/applier.go`.
-
-### 2. The WAL is the audit log
-S3 Object Lock (COMPLIANCE mode) layered over the Kafka/Redpanda backend in `server/go/internal/wal/kafka.go` provides tamper-evident, immutable audit trails. Do NOT build separate audit log tables with hash chains — they're redundant and weaker than S3 Object Lock.
-
-### 3. Single consumer goroutine for the applier
-The applier runs as a single consumer goroutine per server (Python-parity ordering guarantee). A per-tenant worker pool is deferred — do NOT add ad-hoc per-tenant goroutines that fan out applies, as it breaks per-tenant offset ordering and rebuild determinism. gRPC handlers themselves are goroutine-per-request (Go-native); the invariant is only about the apply path.
-
-### 4. Per-tenant SQLite isolation
-Each tenant has its own SQLite file (via `modernc.org/sqlite`, managed by `server/go/internal/store/pool.go`). Never read/write across tenant boundaries in a single SQLite transaction. Cross-tenant operations go through `server/go/internal/globalstore/` (which has its own SQLite).
-
-### 5. Proto is the type system
-Standard `protoc-gen-go` / `protoc-gen-go-grpc` generates typed stubs into `server/go/internal/pb/`. Do NOT build custom codegen that reimplements what protobuf provides (enums, typed fields, message classes). Use `register_proto_schema()` in the SDK to register proto types with the SDK registry.
-
-### 6. Field IDs, not field names, on disk
-Payloads are stored keyed by `field_id` (e.g. `{"1": "value"}`), not by name. Translation happens at the gRPC boundary only (`server/go/internal/payload/`). This makes field renames free.
+- [ADR-001](docs/adr/001-storage-architecture.md) — per-tenant SQLite as the tenant data boundary (physical layout owned by ADR-014)
+- [ADR-003](docs/adr/003-acl-model.md) — ACL model: typed capabilities (CoreCapability + per-type extensions), inheritance, cross-tenant grants
+- [ADR-005](docs/adr/005-event-sourcing-wal.md) — event sourcing via single WAL topic, swappable backends (memory + kafka shipped; #518 ports the rest)
+- [ADR-006](docs/adr/006-proto-schema-definition.md) — proto is the type system end-to-end
+- [ADR-011](docs/adr/011-security-and-compliance.md) — security + compliance: SQLCipher encryption-at-rest, KMS-backed key vault, crypto-shred GDPR erasure, TLS 1.3 + mTLS (all shipped in v1.13.0)
+- [ADR-014](docs/adr/014-physical-storage-layout.md) — physical file layout: per-tenant, global, mailbox, public; scale, mobility, public.db semantics
+- [ADR-015](docs/adr/015-wal-and-s3-object-lock-as-audit-log.md) — WAL + S3 Object Lock is the audit log
+- [ADR-016](docs/adr/016-handlers-append-applier-writes.md) — handlers append to the WAL; only the applier writes SQLite
+- [ADR-017](docs/adr/017-python-server-retired.md) — Python server retired in EPIC #407 Phase 4D
+- [ADR-018](docs/adr/018-field-id-keyed-payloads.md) — payloads keyed by `field_id` on wire and disk; proto field number IS the `field_id`
+- [ADR-019](docs/adr/019-decision-records-home.md) — `docs/adr/` is the only home for design decisions; CLAUDE.md is execution-only
+- [ADR-020](docs/adr/020-immutable-storage-mode.md) — `storage_mode` (TENANT / USER_MAILBOX / PUBLIC) is immutable; no built-in publish/move primitive
+- [ADR-021](docs/adr/021-go-console-binary.md) — single `entdb-console` Go binary with embedded React SPA (replaced the FastAPI console + playground)
+- [ADR-022](docs/adr/022-fts5-full-text-search.md) — SQLite FTS5 backs `(entdb.field).searchable = true`
+- [ADR-023](docs/adr/023-declarative-query-indexes.md) — non-unique expression indexes declared via `(entdb.field).indexed = true`
+- [ADR-024](docs/adr/024-three-layer-rate-limit-model.md) — three-layer rate-limit model; Phase 1 (monthly quotas) is the implementation start
+- [ADR-025](docs/adr/025-single-shape-sdk-api.md) — single-shape SDK API (proto messages everywhere, typed unique-key tokens via codegen, expression-index uniqueness)
 
 ## Project Structure
 
@@ -114,7 +119,7 @@ uvx ruff@0.15.7 format --check .                        # format
 ## Key Patterns
 
 - Store methods accept `context.Context` as the first argument; the per-tenant SQLite pool is keyed by `tenant_id` (`server/go/internal/store/pool.go`); writes go through `BatchTxn` (`server/go/internal/store/txn.go`) so the applier can commit a multi-op event atomically.
-- The schema registry (`server/go/internal/schema/`) holds node/edge type definitions — register via the schema RPCs; the SDK mirrors them through `register_proto_schema()`.
+- The schema registry (`server/go/internal/schema/`) holds node/edge type definitions; it's populated at server boot from `.schema-snapshot.json` (loaded via `server/go/internal/schema/loader.go`). The SDK maintains its own client-side registry via `register_proto_schema(my_pb2)`. There is no `RegisterSchema` RPC. Read-only `GetSchema` exposes the server's current registry.
 - GDPR: `user_id` (e.g. `"alice"`) vs `tenant_principal` (e.g. `"user:alice"`) — translate at the gRPC boundary, never deeper.
 - ACL grants use the `Permission` enum, not raw strings.
 - Actors use `Actor.user("bob")` / `Actor.group("admins")`, not `"user:bob"` strings.

@@ -1,5 +1,5 @@
 // Tests for AddTenantMember. Behavioural parity with the Python handler
-// (server/python/entdb_server/api/grpc_server.py:2442-2490) is pinned by
+//  is pinned by
 // the cross-language contract suite at
 // tests/python/integration/test_grpc_contract.py:511-530 and the unit
 // tests at tests/python/unit/test_tenant_registry.py:404-449. This file

@@ -1,14 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Package acl is the Go port of server/python/entdb_server/apply/acl.py
-// plus server/python/entdb_server/auth/capability_registry.py.
+// Package acl implements the typed-capability ACL model.
 //
 // Two parallel models live here:
 //
 //   - Permission: the legacy 7-value enum still on the wire
-//     (READ/COMMENT/WRITE/SHARE/DELETE/ADMIN/DENY). Source of truth:
-//     server/python/entdb_server/apply/acl.py:32-42 and the
-//     PERMISSION_HIERARCHY table at acl.py:190-210.
+//     (READ/COMMENT/WRITE/SHARE/DELETE/ADMIN/DENY).
 //   - CoreCapability + ExtCapID: the typed capability model frozen in
 //     docs/decisions/acl.md (2026-04-13). New writes carry typed caps;
 //     legacy strings are mechanically derived for old grants.
@@ -89,13 +86,12 @@ func ParsePermission(s string) (Permission, bool) {
 	}
 }
 
-// permissionHierarchy mirrors AclManager.PERMISSION_HIERARCHY at
-// server/python/entdb_server/apply/acl.py:190-210. A grant of perm P
-// satisfies a request for required Q iff Q in permissionHierarchy[P].
+// permissionHierarchy captures the implication closure: a grant of
+// perm P satisfies a request for required Q iff Q is in
+// permissionHierarchy[P].
 //
 // PermDeny grants nothing — the table is intentionally empty for it,
-// and the AclManager.check_permission two-pass treats DENY specially
-// (acl.py:243-264).
+// and Check handles DENY as a separate veto pass.
 var permissionHierarchy = map[Permission]map[Permission]struct{}{
 	PermRead: {
 		PermRead: {},

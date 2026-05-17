@@ -1,9 +1,14 @@
 # RPC Port Spec — `entdb.v1.EntDBService/ShareNode`
 
-EPIC #407 — Python -> Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:1746-1826`. Storage method:
-`server/python/entdb_server/apply/canonical_store.py:2962-3051` (sync +
-async wrappers). Cross-tenant index: `apply/applier.py:1689-1726`.
+> Implementation: `server/go/internal/api/share_node.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python -> Go server port. Source of truth: Go handler at
+`server/go/internal/api/share_node.go`. Storage method:
+`server/go/internal/store/` (sync +
+async wrappers). Cross-tenant index: `apply/server/go/internal/apply/applier.go`.
 
 ## Wire contract
 
@@ -12,19 +17,19 @@ Proto: `proto/entdb/v1/entdb.proto:94` (rpc), `:720-744` (messages).
 `ShareNodeRequest`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `context` | 1 | `RequestContext` | `tenant_id` + `actor`. Server overrides `actor` with the trusted identity (`grpc_server.py:1763`). |
+| `context` | 1 | `RequestContext` | `tenant_id` + `actor`. Server overrides `actor` with the trusted identity (`server/go/internal/api/share_node.go`). |
 | `node_id` | 2 | `string` | Target node. Treated as opaque; existence is **not** pre-validated, the auth check carries the existence signal (`PERMISSION_DENIED` if missing-or-no-grant). |
 | `actor_id` | 3 | `string` | Recipient principal. Format `user:<id>` / `group:<id>` / `service:<id>` / `tenant:<id>`. Bare `<id>` MUST be normalised to `user:<id>` server-side (`entdb.proto:723-725`). |
-| `permission` | 4 | `string` | DEPRECATED string ("read"/"write"/"admin"/"deny"). Persisted verbatim for legacy readers. Default `"read"` when empty (`grpc_server.py:1772`). |
-| `actor_type` | 5 | `string` | "user" / "group" / "service". Defaults to `"user"` (`grpc_server.py:1800`). |
-| `expires_at` | 6 | `int64` | Epoch-ms. `0` means "never" (treated as `nil`/`NULL`). Past values are persisted but filtered at read time (pinned by `tests/python/unit/test_acl_capabilities.py:151-162`). |
+| `permission` | 4 | `string` | DEPRECATED string ("read"/"write"/"admin"/"deny"). Persisted verbatim for legacy readers. Default `"read"` when empty (`server/go/internal/api/share_node.go`). |
+| `actor_type` | 5 | `string` | "user" / "group" / "service". Defaults to `"user"` (`server/go/internal/api/share_node.go`). |
+| `expires_at` | 6 | `int64` | Epoch-ms. `0` means "never" (treated as `nil`/`NULL`). Past values are persisted but filtered at read time (pinned by (legacy Python unit test, removed in Phase 4D)). |
 | `type_id` | 7 | `int32` | Node-type-id of target; `0` means "any". Pinned by `test_acl_capabilities.py:60-82`. |
 | `core_caps` | 8 | `repeated CoreCapability` | Typed grant — authoritative when set. **This is the `Permission` enum referenced by CLAUDE.md invariant #5.** Use `pb.CoreCapability` enum values, not raw ints. |
 | `ext_cap_ids` | 9 | `repeated int32` | Extension capability IDs (per-schema). |
 
 `ShareNodeResponse`: `{ bool success = 1; string error = 2; }` — deliberately
 **not** `google.rpc.Status`; the handler returns `success=false, error=<msg>`
-on `PermissionError` instead of aborting (`grpc_server.py:1791-1793`). Go
+on `PermissionError` instead of aborting (`server/go/internal/api/share_node.go`). Go
 port MUST preserve this — flipping to `status.Errorf` is a contract break.
 
 Back-fill rule (in `canonical_store._sync_share_node` at `:2978-2985`): when
@@ -33,10 +38,10 @@ Pinned by `test_acl_capabilities.py:101-117` (`"write"` -> READ+COMMENT+EDIT).
 
 ## Auth
 
-1. `_check_tenant(tenant_id)` (`grpc_server.py:362-410`) — sharding ownership +
+1. `_check_tenant(tenant_id)` (`server/go/internal/api/share_node.go`) — sharding ownership +
    region pinning. On wrong owner: `UNAVAILABLE` + `entdb-redirect-node`
    trailer. On region mismatch: `FAILED_PRECONDITION`.
-2. `_trusted_actor(request.context.actor)` (`grpc_server.py:418-437`) — replaces
+2. `_trusted_actor(request.context.actor)` (`server/go/internal/api/share_node.go`) — replaces
    the wire actor with `AuthInterceptor`'s authoritative identity. **The
    request-supplied actor is UNTRUSTED** (CLAUDE.md invariant). Privilege
    escalation regression pinned by commit `fece3fb`.
@@ -44,19 +49,19 @@ Pinned by `test_acl_capabilities.py:101-117` (`"write"` -> READ+COMMENT+EDIT).
    owner/admin/member; viewer/guest -> `PERMISSION_DENIED`; archived tenant
    -> `FAILED_PRECONDITION`; deleted -> `NOT_FOUND`.
 4. `_check_capability(tenant, actor, node_id, type_id, "ShareNode")`
-   (`grpc_server.py:299-360`) — sharing requires `CoreCapability.ADMIN` on
+   (`server/go/internal/api/share_node.go`) — sharing requires `CoreCapability.ADMIN` on
    the target node. System actors (`system:*`, `__system__`) and tenant
    owners short-circuit. Mapping pinned by
-   `tests/python/unit/test_capability_registry.py:66`.
+   (legacy Python unit test, removed in Phase 4D).
 
 A grant whose `permission == "deny"` with empty caps blocks the grantor too
-(`grpc_server.py:341-347`); preserve this.
+(`server/go/internal/api/share_node.go`); preserve this.
 
 ## Side effects
 
 **CLAUDE.md invariant #1 violation in Python — FIX in Go port.** The current
 handler writes directly to SQLite via `canonical_store.share_node()`
-(`grpc_server.py:1794-1805`) with **no `wal.append()` call**. This means a
+(`server/go/internal/api/share_node.go`) with **no `wal.append()` call**. This means a
 materialized-view rebuild from the WAL silently loses every share grant.
 
 Go port MUST:
@@ -64,33 +69,33 @@ Go port MUST:
 1. Build a `TransactionEvent` with a single op `{op: "share_node", node_id,
    actor_id, actor_type, permission, expires_at, type_id, core_caps,
    ext_cap_ids, granted_by: trusted_actor}`. Use the same envelope as
-   `ExecuteAtomic` (`grpc_server.py:790`).
+   `ExecuteAtomic` (`server/go/internal/api/share_node.go`).
 2. `wal.Append(ctx, event)` — get back `stream_pos`.
 3. Wait for the applier (or apply inline in tests) to materialise into
    `node_access`. Add a new `op_type == "share_node"` branch in
-   `apply/applier.go` mirroring `_sync_share_node` (`canonical_store.py:2962`).
+   `apply/applier.go` mirroring `_sync_share_node` (`server/go/internal/store/`).
 4. After commit, the applier calls `_update_shared_index_on_share`
-   (`applier.py:1689-1726`): writes `GlobalStore.shared_index` so the
+   (`server/go/internal/apply/applier.go`): writes `GlobalStore.shared_index` so the
    recipient's `ListSharedWithMe` returns the share. Group `actor_id`s are
    expanded to per-member rows. Cross-tenant: when `actor_id == "tenant:<X>"`
    or recipient lives in another tenant, the row goes into the **global**
    shared_index DB (one DB per cluster, not per tenant).
 5. Mailbox fanout: ShareNode does NOT currently fan a notification into the
    recipient's mailbox SQLite. The `MailboxFanoutConfig` path
-   (`applier.py:295-1367`) only triggers on `create_node`. **Open question
+   (`server/go/internal/apply/applier.go`) only triggers on `create_node`. **Open question
    below** — confirm whether the Go port should add a mailbox row on share.
 
 There is no idempotency-key dedupe today (the handler doesn't even read
 `request.idempotency_key` — none on the proto). Re-issuing the same
 ShareNode produces an `INSERT OR REPLACE` that updates `granted_at`
-(`canonical_store.py:2989`). Preserve this.
+(`server/go/internal/store/`). Preserve this.
 
 ## Error contract
 
 | gRPC code | Trigger |
 |-----------|---------|
 | `OK` + `success=true` | Grant persisted. |
-| `OK` + `success=false, error=...` | `PermissionError` from `_check_capability` (`grpc_server.py:1791-1793`) **or** any unexpected exception (`:1823-1826`). Go port: same — wrap the catch-all and return `success=false`. |
+| `OK` + `success=false, error=...` | `PermissionError` from `_check_capability` (`server/go/internal/api/share_node.go`) **or** any unexpected exception (`:1823-1826`). Go port: same — wrap the catch-all and return `success=false`. |
 | `UNAVAILABLE` (abort) | Tenant not served by this node. Trailer `entdb-redirect-node` carries owner. |
 | `FAILED_PRECONDITION` (abort) | Tenant region pinning mismatch, or tenant `archived`. |
 | `PERMISSION_DENIED` (abort) | Caller is not a tenant member, or is a viewer/guest (write op). |
@@ -117,9 +122,9 @@ Each lives under `server/go/internal/...` unless noted.
   fix the invariant violation.
 - `apply` — applier with new `share_node` op handler. Required.
 - `store` (canonical) — `ShareNode(...)` writing `node_access` row. Required.
-  The current Python signature is the target shape (`canonical_store.py:3008-3021`).
+  The current Python signature is the target shape (`server/go/internal/store/`).
 - `globalstore` — `AddShared(userID, srcTenant, nodeID, permission)` (mirrors
-  `applier.py:1709-1721`). Required for `ListSharedWithMe` to see the share.
+  `server/go/internal/apply/applier.go`). Required for `ListSharedWithMe` to see the share.
 - `groups` (or part of `store`) — `GetGroupMembers(tenantID, groupID)` for
   group-actor expansion.
 - `metrics` — `RecordGRPCRequest("ShareNode", "ok"|"denied"|"error", dur)`.
@@ -131,7 +136,7 @@ NOT used and MUST NOT be imported: `crypto`, `audit`, `quota`, `mailbox`
 
 ## Other-RPC deps
 
-- **`RevokeAccess`** (`grpc_server.py:1828-...`) — inverse op; shares the
+- **`RevokeAccess`** (`server/go/internal/api/share_node.go-...`) — inverse op; shares the
   `node_access` table and `_update_shared_index_on_revoke` helper. Port as a
   pair to keep `acl` package internally consistent.
 - **`ListSharedWithMe`** — reader of `GlobalStore.shared_index`. Cannot
@@ -141,7 +146,7 @@ NOT used and MUST NOT be imported: `crypto`, `audit`, `quota`, `mailbox`
   race — Go port should keep both behaviours consistent.
 - `AddGroupMember` / `RemoveGroupMember` — feed group expansion in `_update_shared_index_on_share`.
 - `ExecuteAtomic` — the WAL envelope shape this RPC must adopt comes from
-  here (`grpc_server.py:790`).
+  here (`server/go/internal/api/share_node.go`).
 - `GetReceiptStatus` — once ShareNode goes through the WAL it gets an
   `idempotency_key`; receipt-status queries become meaningful. Add an
   `idempotency_key` field to a v2 `ShareNodeRequest` (out of scope; track).
@@ -151,18 +156,18 @@ NOT used and MUST NOT be imported: `crypto`, `audit`, `quota`, `mailbox`
 - `tests/python/integration/test_grpc_contract.py:327-338` — happy path: admin
   shares with `user:bob` using legacy `permission="read"`, expects
   `success=true`. **Go port must pass this verbatim.**
-- `tests/python/unit/test_capability_registry.py:66` — `("ShareNode", CoreCapability.ADMIN)`.
-- `tests/python/unit/test_acl_capabilities.py:60-82` — typed `core_caps` persist verbatim.
-- `tests/python/unit/test_acl_capabilities.py:84-98` — typed `ext_cap_ids` persist verbatim.
-- `tests/python/unit/test_acl_capabilities.py:101-117` — legacy `"write"` derives `[READ, COMMENT, EDIT]`.
-- `tests/python/unit/test_acl_capabilities.py:120-148` — back-fill via `migrate_permissions_to_capabilities`.
-- `tests/python/unit/test_acl_capabilities.py:151-162` — past `expires_at` filtered at read.
-- `tests/python/unit/test_acl_capabilities.py:165-174` — round-trip with revoke.
-- `tests/python/unit/test_shared_index.py:193-208` — `share_node` writes one `shared_index` row per recipient (group expansion covered separately).
-- `tests/python/unit/test_acl_v2.py:116`, `:315` — sync-path coverage of typed grants.
-- `tests/python/unit/test_admin_operations.py:355-392`, `:718` — share + admin-op interaction.
-- `tests/python/unit/test_cross_tenant_read.py:75-105` — share with a `tenant:<X>` recipient lands in cross-tenant index.
-- `tests/python/unit/test_sdk_hierarchical.py:241-242` — SDK -> RPC kwargs shape.
+- (legacy Python unit test, removed in Phase 4D) — `("ShareNode", CoreCapability.ADMIN)`.
+- (legacy Python unit test, removed in Phase 4D) — typed `core_caps` persist verbatim.
+- (legacy Python unit test, removed in Phase 4D) — typed `ext_cap_ids` persist verbatim.
+- (legacy Python unit test, removed in Phase 4D) — legacy `"write"` derives `[READ, COMMENT, EDIT]`.
+- (legacy Python unit test, removed in Phase 4D) — back-fill via `migrate_permissions_to_capabilities`.
+- (legacy Python unit test, removed in Phase 4D) — past `expires_at` filtered at read.
+- (legacy Python unit test, removed in Phase 4D) — round-trip with revoke.
+- (legacy Python unit test, removed in Phase 4D) — `share_node` writes one `shared_index` row per recipient (group expansion covered separately).
+- (legacy Python unit test, removed in Phase 4D), `:315` — sync-path coverage of typed grants.
+- (legacy Python unit test, removed in Phase 4D), `:718` — share + admin-op interaction.
+- (legacy Python unit test, removed in Phase 4D) — share with a `tenant:<X>` recipient lands in cross-tenant index.
+- (legacy Python unit test, removed in Phase 4D) — SDK -> RPC kwargs shape.
 
 ## Implementation outline
 
@@ -212,7 +217,7 @@ applier `stream_pos` so callers can `WaitForOffset`/`GetReceiptStatus`.
   knob. Confirm with #407 owner.
 - **Mailbox fanout on share.** Prompt assumes a "mailbox-of-recipient side
   effect". Code search shows no current fanout for ShareNode — only
-  `create_node` triggers `_fanout_node` (`applier.py:1361-1367`). Decide:
+  `create_node` triggers `_fanout_node` (`server/go/internal/apply/applier.go`). Decide:
   (a) port as-is (no mailbox row), or (b) add a `share_received` notification
   op as part of the Go port. Recommended: file follow-up; do not silently
   expand scope.

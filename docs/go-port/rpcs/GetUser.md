@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/GetUser`
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2149-2182`.
+> Implementation: `server/go/internal/api/get_user.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
+`server/go/internal/api/get_user.go`.
 
 ## Wire contract
 
@@ -17,7 +22,7 @@ Proto: `proto/entdb/v1/entdb.proto:113` (rpc), `:816-824` (request/response),
 `GetUserResponse`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `found` | 1 | `bool` | False when the user_id is not in `user_registry` AND in the catch-all error branch (`grpc_server.py:2179-2182` — internal errors are swallowed and reported as `found=false`). |
+| `found` | 1 | `bool` | False when the user_id is not in `user_registry` AND in the catch-all error branch (`server/go/internal/api/get_user.go` — internal errors are swallowed and reported as `found=false`). |
 | `user`  | 2 | `UserInfo` | Populated only when `found=true`. `UserInfo{user_id, email, name, status, created_at, updated_at}`; `created_at`/`updated_at` are `int64` unix seconds. |
 
 This is a unary RPC. No streaming, no `RequestContext`, no `tenant_id` —
@@ -26,7 +31,7 @@ GetUser is global, not per-tenant.
 ## Auth (self only? admin? trusted-actor)
 
 - **Authenticated, but unrestricted.** The handler enforces no role/permission
-  beyond "actor is non-empty". Docstring at `grpc_server.py:2154`: *"Available
+  beyond "actor is non-empty". Docstring at `server/go/internal/api/get_user.go`: *"Available
   to any authenticated actor."* Pinned by `test_user_registry.py:193-245` and
   `test_grpc_contract.py:396-416`.
 - **Wire `actor` is UNTRUSTED.** Per CLAUDE.md and commit `fece3fb` the Go
@@ -40,7 +45,7 @@ GetUser is global, not per-tenant.
   may read any user's profile. If EPIC #407 wants to tighten this to
   "self-or-admin", that is a NEW behavior and needs its own ticket — do NOT
   smuggle it into the port.
-- Trusted-actor self-check helper exists at `grpc_server.py:2080-2086`
+- Trusted-actor self-check helper exists at `server/go/internal/api/get_user.go`
   (`_is_self_or_admin`) but is intentionally NOT called from `GetUser`.
 
 ## Side effects (read on global_store)
@@ -52,12 +57,12 @@ RPC mutates nothing.
 In-order narration of the Python handler:
 
 1. `start := time.perf_counter()` for histogram timing.
-2. Guard: if `self.global_store is None` → `context.abort(UNIMPLEMENTED, "User registry not configured")` (`grpc_server.py:2157-2161`). Pinned by `test_user_registry.py:433-444`.
+2. Guard: if `self.global_store is None` → `context.abort(UNIMPLEMENTED, "User registry not configured")` (`server/go/internal/api/get_user.go`). Pinned by `test_user_registry.py:433-444`.
 3. Validate `request.actor != ""` → else `INVALID_ARGUMENT` (`:2163`).
 4. Validate `request.user_id != ""` → else `INVALID_ARGUMENT` (`:2165`).
-5. `user := global_store.get_user(user_id)` — single SQLite SELECT against the global DB: `SELECT * FROM user_registry WHERE user_id = ?` (`global_store.py:371-384`). Async wrapper around a thread-pool sync call.
+5. `user := global_store.get_user(user_id)` — single SQLite SELECT against the global DB: `SELECT * FROM user_registry WHERE user_id = ?` (`server/go/internal/globalstore/`). Async wrapper around a thread-pool sync call.
 6. If `user is None`: record `("GetUser","ok",elapsed)`; return `GetUserResponse{found:false}`.
-7. Else: record `("GetUser","ok",elapsed)`; return `GetUserResponse{found:true, user: _user_dict_to_proto(user)}` (`grpc_server.py:2088-…`).
+7. Else: record `("GetUser","ok",elapsed)`; return `GetUserResponse{found:true, user: _user_dict_to_proto(user)}` (`server/go/internal/api/get_user.go-…`).
 8. Catch-all `except Exception`: log + record `("GetUser","error",elapsed)`; return `found:false` (`:2179-2182`). The Go port should preserve "swallow into found=false" only for genuinely unexpected errors; abort-driven control flow (`UNIMPLEMENTED`/`INVALID_ARGUMENT`) must propagate.
 
 NO touch to: `canonical_store`, `wal`, `applier`, `acl`, `capability_registry`,
@@ -74,7 +79,7 @@ Go handler is a smell.
 | `UNIMPLEMENTED` | server started without a global store backing | `test_user_registry.py:433-444` |
 | `UNAUTHENTICATED` | missing/invalid credentials — emitted by the auth interceptor, NOT by this handler | `auth_interceptor.py:186+` |
 | `PERMISSION_DENIED` | **never emitted by this handler.** Reading another user's profile is allowed; do NOT introduce a self/admin gate during the port. | — |
-| `OK` + `found=false` (swallow) | uncaught internal error | `grpc_server.py:2179-2182` (no test pin; preserve to avoid leaking stack frames). The Go port should additionally `log.Error` with the original error. |
+| `OK` + `found=false` (swallow) | uncaught internal error | `server/go/internal/api/get_user.go` (no test pin; preserve to avoid leaking stack frames). The Go port should additionally `log.Error` with the original error. |
 
 Note the deliberate asymmetry: missing user is `OK + found=false` (treated as
 a successful absence, like `GetNode` per `docs/go-port/rpcs/GetNodes.md`), not
@@ -86,7 +91,7 @@ a successful absence, like `GetNode` per `docs/go-port/rpcs/GetNodes.md`), not
 Each is a new package under `server/go/internal/...`.
 
 - `pb` (`server/go/internal/pb/entdbv1`) — generated `GetUserRequest`, `GetUserResponse`, `UserInfo`, servicer interface. Required.
-- `globalstore` — `GetUser(ctx, userID string) (*User, error)` returning `(nil, nil)` on miss to mirror Python `None`. Mirrors `global_store.py:371-384`. Required.
+- `globalstore` — `GetUser(ctx, userID string) (*User, error)` returning `(nil, nil)` on miss to mirror Python `None`. Mirrors `server/go/internal/globalstore/`. Required.
 - `metrics` — `RecordGRPCRequest(method, status string, dur time.Duration)` (mirrors `metrics.py`). Required.
 - `auth` — exposes `AuthoritativeActor(ctx) (string, error)` reading from incoming metadata. The handler does not USE the resolved actor for an authorization decision, but the interceptor must still run; the package is a transitive dep via the server bootstrap, not a direct import in `getuser.go`.
 - `errs` — helpers like `errs.InvalidArgument(field string)` and `errs.Unimplemented(msg string)` for consistent `status.Error` construction. Required.
@@ -96,7 +101,7 @@ NOT used: `wal`, `apply`, `canonicalstore`, `acl`, `capability`, `schema`,
 
 ## Other-RPC deps
 
-- `CreateUser` (`grpc_server.py:2095-2147`) — populates the `user_registry` row that GetUser reads. The Go port for `CreateUser` MUST land before or with this RPC, otherwise the happy-path contract test cannot seed `alice`.
+- `CreateUser` (`server/go/internal/api/get_user.go`) — populates the `user_registry` row that GetUser reads. The Go port for `CreateUser` MUST land before or with this RPC, otherwise the happy-path contract test cannot seed `alice`.
 - `UpdateUser` (`:2184-…`) — mutates the row that GetUser returns. Not a hard dep, but the port order should keep them adjacent.
 - `ListUsers` (`:2230-…`) — shares `_user_dict_to_proto` and the same SQL table. Co-port to share the helper.
 - `GetUserTenants` (`:2572-2599`) — separate cross-table join (`tenant_memberships`); explicitly NOT this RPC. Avoid conflating.
@@ -108,10 +113,10 @@ NOT used: `wal`, `apply`, `canonicalstore`, `acl`, `capability`, `schema`,
 - `tests/python/integration/test_grpc_contract.py:401-406` — not_found: `user_id="ghost"` → `found=false`, no abort.
 - `tests/python/integration/test_grpc_contract.py:407-411` — invalid_argument: empty `actor` aborts.
 - `tests/python/integration/test_grpc_contract.py:412-416` — invalid_argument: empty `user_id` aborts.
-- `tests/python/unit/test_user_registry.py:196-217` — happy unit (mock global_store): `_user_dict_to_proto` mapping correctness.
-- `tests/python/unit/test_user_registry.py:219-231` — missing user → `found=false`.
-- `tests/python/unit/test_user_registry.py:233-245` — empty actor → `context.abort` called with `"actor"` in the message.
-- `tests/python/unit/test_user_registry.py:433-444` — `global_store=None` → `UNIMPLEMENTED` "not configured".
+- (legacy Python unit test, removed in Phase 4D) — happy unit (mock global_store): `_user_dict_to_proto` mapping correctness.
+- (legacy Python unit test, removed in Phase 4D) — missing user → `found=false`.
+- (legacy Python unit test, removed in Phase 4D) — empty actor → `context.abort` called with `"actor"` in the message.
+- (legacy Python unit test, removed in Phase 4D) — `global_store=None` → `UNIMPLEMENTED` "not configured".
 - (No PERMISSION_DENIED pin exists, by design.)
 
 ## Implementation outline
@@ -149,7 +154,7 @@ func (s *EntDBServer) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.
 }
 ```
 
-`userToProto` mirrors `_user_dict_to_proto` (`grpc_server.py:2088-…`):
+`userToProto` mirrors `_user_dict_to_proto` (`server/go/internal/api/get_user.go-…`):
 copy `user_id`, `email`, `name`, `status`, `created_at`, `updated_at`;
 default each to its zero value when the column is NULL.
 

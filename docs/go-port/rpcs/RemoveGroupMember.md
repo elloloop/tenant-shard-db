@@ -1,8 +1,13 @@
 # RemoveGroupMember — Go port spec
 
+> Implementation: `server/go/internal/api/remove_group_member.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Mirror of Python `EntDBServicer.RemoveGroupMember`
-(`server/python/entdb_server/api/grpc_server.py:1986-2028`). Inverse
-of `AddGroupMember` (`grpc_server.py:1946-1984`): removes an actor
+(`server/go/internal/api/remove_group_member.go`). Inverse
+of `AddGroupMember` (`server/go/internal/api/remove_group_member.go`): removes an actor
 from an ACL group on per-tenant SQLite, then cascades into the
 cross-tenant `shared_index` so `ListSharedWithMe(member)` stops
 surfacing nodes whose only path was the group.
@@ -20,22 +25,22 @@ surfacing nodes whose only path was the group.
   - `string group_id = 2` — free-form (e.g. `"group:eng"`).
   - `string member_actor_id = 3` — actor being removed.
   - `string role = 4` — proto-only; **ignored on Remove** (Add
-    reads it, `grpc_server.py:1962`). Accept + discard.
+    reads it, `server/go/internal/api/remove_group_member.go`). Accept + discard.
 - `GroupMemberResponse` (`proto/entdb/v1/entdb.proto:775-778`):
   - `bool success` — mirrors `found` from
     `canonical_store.remove_group_member`: `true` iff a row was
-    deleted (`grpc_server.py:2024`,
-    `apply/canonical_store.py:3539-3544`). **Add/Remove asymmetry**:
+    deleted (`server/go/internal/api/remove_group_member.go`,
+    `apply/server/go/internal/store/`). **Add/Remove asymmetry**:
     Add returns `success=true` on no exception; Remove returns
     `success=false` with empty `error` when the pair did not exist.
   - `string error` — populated only on exception
-    (`grpc_server.py:2028`).
+    (`server/go/internal/api/remove_group_member.go`).
 
 ## Auth
 
 - **Tenant / region.** First call is
   `await self._check_tenant(request.context.tenant_id, context)`
-  (`grpc_server.py:1994`, helper `:362-410`). Standard redirect
+  (`server/go/internal/api/remove_group_member.go`, helper `:362-410`). Standard redirect
   semantics: `UNAVAILABLE` + `entdb-redirect-node` trailer on shard
   miss, `FAILED_PRECONDITION` on region mismatch. Reproduce trailer
   key exactly — Go SDK redirect cache reads it.
@@ -43,7 +48,7 @@ surfacing nodes whose only path was the group.
   `RemoveGroupMember` to a `CoreCapability`; handler accepts any
   caller passing `_check_tenant`. Known parity gap (Open question 6).
 - **Trusted actor.** `request.context.actor` is advisory only.
-  Python’s `_trusted_actor()` (`grpc_server.py:418-437`) is NOT
+  Python’s `_trusted_actor()` (`server/go/internal/api/remove_group_member.go`) is NOT
   invoked here. Go port: rebind to trusted actor (auth interceptor
   metadata) for observability; never use `context.actor` for any
   authz (privilege-escalation invariant, commit `fece3fb`).
@@ -53,7 +58,7 @@ surfacing nodes whose only path was the group.
 - **WAL append: NONE today.** Violates CLAUDE.md invariant 1.
   Handler writes directly to per-tenant SQLite via
   `canonical_store.remove_group_member`
-  (`apply/canonical_store.py:3546-3558`; `_sync` does
+  (`apply/server/go/internal/store/`; `_sync` does
   `DELETE FROM group_users WHERE group_id=? AND member_actor_id=?`,
   `:3539-3544`). On rebuild the removal is silently lost. Same
   defect on Add. Go port matches for v1 byte-parity; file blocker
@@ -63,7 +68,7 @@ surfacing nodes whose only path was the group.
 - **ACL recompute.** No explicit recompute. `_sync_can_access` /
   `_sync_resolve_actor_groups` read `group_users` live; removal
   takes effect at the next read
-  (`tests/python/unit/test_acl_v2_extended.py:172-181`).
+  ((legacy Python unit test, removed in Phase 4D)).
 - **Cascade — does removed member’s grants get revoked?**
   1. **Direct grants** (`acl_grants` rows where
      `grantee == member_actor_id`) — NOT touched. Use
@@ -75,15 +80,15 @@ surfacing nodes whose only path was the group.
      `ListSharedWithMe(member)` no longer surfaces those nodes:
      - Read group access via
        `canonical_store.list_node_access_for_group(tenant_id,
-       group_id)` BEFORE the delete (`grpc_server.py:1998-2008`) —
+       group_id)` BEFORE the delete (`server/go/internal/api/remove_group_member.go`) —
        ordering is load-bearing; reading after observes the already
        removed membership edge.
      - On `found=True`, iterate and call
        `global_store.remove_shared(member_actor_id, tenant_id,
-       node_id)` (`grpc_server.py:2014-2020`).
+       node_id)` (`server/go/internal/api/remove_group_member.go`).
      - Best-effort: cascade failures logged at WARNING and
        swallowed; RPC returns `success=found`
-       (`grpc_server.py:2021-2022`). Skipped entirely when
+       (`server/go/internal/api/remove_group_member.go`). Skipped entirely when
        `found=False` or `global_store is None` or pre-read failed.
   3. Effect: if the removed member ALSO has a direct grant on the
      same node, the cascade wrongly deletes their `shared_index`
@@ -93,7 +98,7 @@ surfacing nodes whose only path was the group.
 
 Python swallows everything below `_check_tenant`: logs and returns
 `GroupMemberResponse(success=False, error=str(e))`
-(`grpc_server.py:2025-2028`). `_check_tenant` aborts propagate as
+(`server/go/internal/api/remove_group_member.go`). `_check_tenant` aborts propagate as
 gRPC status. Go port:
 
 - Tenant not on this node → `codes.Unavailable` + trailer
@@ -102,8 +107,8 @@ gRPC status. Go port:
   message.
 - Member not in group → NOT an error;
   `GroupMemberResponse{Success: false, Error: ""}`
-  (`tests/python/unit/test_acl_v2.py:590-591`,
-  `apply/canonical_store.py:3544`).
+  ((legacy Python unit test, removed in Phase 4D),
+  `apply/server/go/internal/store/`).
 - Empty `group_id` / `member_actor_id` → not validated; deletes
   nothing, returns `success=false`. Do NOT add `InvalidArgument`.
 - Cascade failure → log + swallow + return `success=found`.
@@ -119,7 +124,7 @@ gRPC status. Go port:
   `docs/go-port/shared/canonicalstore.md`):
   - `RemoveGroupMember(ctx, tenantID, groupID, memberActorID
     string) (found bool, err error)` — mirror
-    `_sync_remove_group_member` (`canonical_store.py:3533-3544`).
+    `_sync_remove_group_member` (`server/go/internal/store/`).
   - `ListNodeAccessForGroup(ctx, tenantID, groupID string)
     ([]GroupAccessEntry, error)` — `{node_id, permission}` rows;
     REQUIRED BEFORE the delete (ordering invariant).
@@ -129,19 +134,19 @@ gRPC status. Go port:
 - `shared/auth.CheckTenant`, `TrustedActorFromCtx`.
 - `shared/sharding.IsMine`, `Owner` (redirect trailer).
 - `shared/observability.RecordGRPCRequest("RemoveGroupMember",
-  "ok"|"error", elapsed)` (`grpc_server.py:2023,2026`).
+  "ok"|"error", elapsed)` (`server/go/internal/api/remove_group_member.go,2026`).
 
 ## Other-RPC deps
 
-- `AddGroupMember` (`grpc_server.py:1946-1984`) — symmetric
+- `AddGroupMember` (`server/go/internal/api/remove_group_member.go`) — symmetric
   inverse; share helpers. Different cascade direction
   (`global_store.add_shared` vs `remove_shared`). Land in same PR.
 - `RevokeAccess` / `RevokeAllUserAccess` — remove direct grants;
   RemoveGroupMember does not. Keep boundary in contract tests.
-- `ListSharedWithMe` (`grpc_server.py:1860-1944`) — consumer of
+- `ListSharedWithMe` (`server/go/internal/api/remove_group_member.go`) — consumer of
   the `shared_index` projection cleaned up here; use in the
   cascade contract test.
-- `_check_tenant` helper (`grpc_server.py:362-410`) — reuse the
+- `_check_tenant` helper (`server/go/internal/api/remove_group_member.go`) — reuse the
   Go port from `GetEdgesFrom.md`.
 
 ## Contract tests pinning behavior (file:line)
@@ -150,15 +155,15 @@ gRPC status. Go port:
   happy path after Add. Contract intentionally NOT pinning
   `success=true` (`check: lambda _r: True`) due to shared tenant
   fixture; Go port may tighten.
-- `tests/python/unit/test_acl_v2.py:584-588` — remove existing
+- (legacy Python unit test, removed in Phase 4D) — remove existing
   member: `_sync_resolve_actor_groups` no longer contains group.
-- `tests/python/unit/test_acl_v2.py:590-591` — remove
+- (legacy Python unit test, removed in Phase 4D) — remove
   non-existent returns `False` → wire `success=false`.
-- `tests/python/unit/test_acl_v2_extended.py:172-181` —
+- (legacy Python unit test, removed in Phase 4D) —
   `test_group_removal_cascades_access`: removing user from a
   group immediately removes their effective ACL access (read-path
   recompute, not write-time).
-- `tests/python/unit/test_shared_index.py:311-338` —
+- (legacy Python unit test, removed in Phase 4D) —
   `test_remove_group_member_cascades_shared_index`: pins cascade
   ordering and per-member isolation (Bob empties, Carol keeps).
 - `sdk/go/entdb/transport_extras_test.go:319-345` — pins request

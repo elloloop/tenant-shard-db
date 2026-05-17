@@ -1,7 +1,12 @@
 # GetNodes — Go Port Spec
 
+> Implementation: `server/go/internal/api/get_nodes.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. Batch sibling of `GetNode`. Reference Python handler:
-`server/python/entdb_server/api/grpc_server.py:1215-1291`. Proto:
+`server/go/internal/api/get_nodes.go`. Proto:
 `proto/entdb/v1/entdb.proto:58, 409-422`.
 
 ## Wire contract
@@ -10,16 +15,16 @@ Request `entdb.v1.GetNodesRequest` (proto:409):
 - `RequestContext context` (tenant_id, actor — actor is UNTRUSTED)
 - `int32 type_id` — present in proto but **not consulted** by the handler;
   Python iterates `node_ids` and trusts whatever `type_id` is on disk
-  (grpc_server.py:1253-1257). Go port must preserve this (do NOT add a
+  (server/go/internal/api/get_nodes.go). Go port must preserve this (do NOT add a
   type_id filter — would break callers).
 - `repeated string node_ids` — IDs to fetch. Empty list is legal and
   returns empty response.
 - `string after_offset`, `int32 wait_timeout_ms` — read-after-write
-  fence; default 30s when unset (grpc_server.py:1236-1240).
+  fence; default 30s when unset (server/go/internal/api/get_nodes.go).
 
 Response `GetNodesResponse` (proto:419):
 - `repeated Node nodes` — found AND access-allowed nodes. Order is
-  **insertion order from the for-loop** (grpc_server.py:1253), which
+  **insertion order from the for-loop** (server/go/internal/api/get_nodes.go), which
   follows request `node_ids` order **minus** missing/denied entries.
   Effectively: nodes are emitted in request order, but indexes are NOT
   parallel to `node_ids` (denied/missing are absent, not nil-padded).
@@ -36,33 +41,33 @@ Batch semantics summary:
 
 ## Auth
 
-- Tenant existence: `_check_tenant` (grpc_server.py:1227, 362).
+- Tenant existence: `_check_tenant` (server/go/internal/api/get_nodes.go, 362).
 - Trusted actor: `_trusted_actor(request.context.actor)` — actor from
   payload is OVERWRITTEN with `AuthInterceptor.get_authoritative_actor`
-  (grpc_server.py:1228, 418, 586-588). This is the privilege-escalation
+  (server/go/internal/api/get_nodes.go, 418, 586-588). This is the privilege-escalation
   fix; the Go port must read the trusted identity from the gRPC
   context/metadata via the AuthInterceptor equivalent and ignore the
   request-payload actor for any auth decision. See
   `tests/python/integration/test_privilege_escalation.py:213-228`.
 - Tenant membership / cross-tenant: `_check_cross_tenant_read`
-  (grpc_server.py:1229, 561-618). Returns `"local"` (no global_store),
+  (server/go/internal/api/get_nodes.go, 561-618). Returns `"local"` (no global_store),
   `"member"`, `"cross_tenant"`, or aborts `PERMISSION_DENIED`.
 - Per-node ACL (cross-tenant only): when role is `cross_tenant`, each
   individual node is checked via `canonical_store.can_access(tenant,
-  node_id, actor_ids)` (grpc_server.py:1262-1271). Members bypass
+  node_id, actor_ids)` (server/go/internal/api/get_nodes.go). Members bypass
   per-node ACL entirely. Denied nodes are folded into `missing_ids`,
   NOT surfaced as PERMISSION_DENIED — this is a deliberate
   information-leak guard: a cross-tenant actor cannot probe whether a
   node exists vs whether they lack access.
-- Capability: `READ` (`tests/python/unit/test_capability_registry.py:62`).
+- Capability: `READ` ((legacy Python unit test, removed in Phase 4D)).
 
 ## Side effects
 
 None on the happy path. Read-only. Metric `record_grpc_request("GetNodes",
-"ok"|"error", elapsed)` (grpc_server.py:1286, 1289). No WAL append, no
+"ok"|"error", elapsed)` (server/go/internal/api/get_nodes.go, 1289). No WAL append, no
 SQLite write, no audit row. The `after_offset` fence may block up to
 `wait_timeout_ms` (default 30s) waiting for the applier to catch up
-(grpc_server.py:937, `_wait_for_offset`).
+(server/go/internal/api/get_nodes.go, `_wait_for_offset`).
 
 ## Error contract
 
@@ -75,8 +80,8 @@ SQLite write, no audit row. The `after_offset` fence may block up to
 | Some node_ids exist but cross-tenant actor lacks ACL | placed in `missing_ids`; call returns OK | match — must NOT distinguish from not-found |
 | All node_ids missing | OK, `nodes=[]`, `missing_ids=<all>` | match |
 | Empty `node_ids` | OK, both lists empty | match |
-| `after_offset` not reached within timeout | currently swallowed by outer `except` and degrades to "all missing" (grpc_server.py:1288-1291) | **see Open Questions** |
-| Internal error (SQLite, panic) | bare `except`: log + return `nodes=[], missing_ids=<all request ids>` with status OK (grpc_server.py:1288-1291). Effectively swallows errors as "everything missing" | preserve for parity in v1; flag for review (this masks data-loss bugs) |
+| `after_offset` not reached within timeout | currently swallowed by outer `except` and degrades to "all missing" (server/go/internal/api/get_nodes.go) | **see Open Questions** |
+| Internal error (SQLite, panic) | bare `except`: log + return `nodes=[], missing_ids=<all request ids>` with status OK (server/go/internal/api/get_nodes.go). Effectively swallows errors as "everything missing" | preserve for parity in v1; flag for review (this masks data-loss bugs) |
 
 Partial-failure mode is the key invariant: **GetNodes never returns a
 non-OK gRPC status for per-id failures.** Auth and tenant-existence
@@ -93,7 +98,7 @@ errors are batch-level and abort the whole call.
   `Store.ResolveActorGroups(tenantID, actor)`.
 - `internal/applier` — `WaitForOffset(tenantID, offset, timeout)`.
 - `internal/wire` — `nodeToProto` (the `payload`/`acl` conversion that
-  Python does at grpc_server.py:1273-1283; field-IDs preserved on disk
+  Python does at server/go/internal/api/get_nodes.go; field-IDs preserved on disk
   per CLAUDE.md invariant 6).
 - `internal/metrics` — `RecordGRPCRequest`.
 - Standard `google.golang.org/grpc/status`, `codes`.
@@ -101,7 +106,7 @@ errors are batch-level and abort the whole call.
 ## Other-RPC deps
 
 - Shares helpers with `GetNode` (rpcs/GetNode.md), `QueryNodes`,
-  `GetNodeByKey` (which delegates to `GetNode`, grpc_server.py:1122).
+  `GetNodeByKey` (which delegates to `GetNode`, server/go/internal/api/get_nodes.go).
 - Same auth path as every read RPC; spec the helpers in
   `docs/go-port/shared/auth.md` and `docs/go-port/shared/tenant.md`
   rather than re-deriving here.
@@ -110,12 +115,12 @@ errors are batch-level and abort the whole call.
 
 ## Contract tests pinning behavior
 
-- `tests/python/unit/test_payload_wire_format.py:192-215` — id-keyed
+- (legacy Python unit test, removed in Phase 4D) — id-keyed
   payload on the wire (field-IDs, not names).
-- `tests/python/unit/test_cross_tenant_read.py:10` (file header) and
+- (legacy Python unit test, removed in Phase 4D) (file header) and
   cross-tenant filter cases at lines 254-407 — covers
   `cross_tenant` per-node filtering that GetNodes inherits.
-- `tests/python/unit/test_capability_registry.py:62` — RPC mapped to
+- (legacy Python unit test, removed in Phase 4D) — RPC mapped to
   `CoreCapability.READ`.
 - `tests/python/integration/test_grpc_contract.py:223-233` — happy-path
   with one hit + one miss returns at least the hit; missing IDs
@@ -201,7 +206,7 @@ Notes on performance & limits:
 ## Open questions / risks
 
 1. **`after_offset` timeout swallowed**: the bare `except` at
-   grpc_server.py:1288 turns an applier-fence timeout into "all ids
+   server/go/internal/api/get_nodes.go turns an applier-fence timeout into "all ids
    missing" with status OK. Should the Go port match (parity) or
    surface `DEADLINE_EXCEEDED`? Recommend: match for v1, file
    follow-up issue.

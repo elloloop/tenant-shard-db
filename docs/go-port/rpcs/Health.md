@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/Health`
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:1500-1535`.
+> Implementation: `server/go/internal/api/health.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
+`server/go/internal/api/health.go`.
 
 ## Wire contract
 
@@ -14,16 +19,16 @@ no tenant_id. The probe is server-global, not per-tenant.
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
 | `healthy` | 1 | `bool` | True iff `wal == "healthy"` AND `storage == "healthy"` (other component keys are informational, do NOT gate `healthy`). |
-| `version` | 2 | `string` | Server semver. Python returns hard-coded `"1.0.0"` (see `grpc_server.py:1530`). Go port should read from build-stamped var (`-ldflags -X main.version=...`); contract test only requires non-empty (`test_grpc_contract.py:201`). |
+| `version` | 2 | `string` | Server semver. Python returns hard-coded `"1.0.0"` (see `server/go/internal/api/health.go`). Go port should read from build-stamped var (`-ldflags -X main.version=...`); contract test only requires non-empty (`test_grpc_contract.py:201`). |
 | `components` | 3 | `map<string,string>` | Always contains `wal` and `storage`. Adds `node_id` and `assigned_tenants` only when sharding is multi-node. |
 
 ## Auth
 
 - **No authentication required.** `/entdb.EntDBService/Health` is in
   `AuthInterceptor.UNAUTHENTICATED_METHODS` (`auth/auth_interceptor.py:157-162`).
-  Pinned by `tests/python/unit/test_enhanced_auth.py:648-661`.
+  Pinned by (legacy Python unit test, removed in Phase 4D).
 - **No rate-limit.** Bypassed by `RateLimitInterceptor`
-  (`tests/python/unit/test_rate_limiter.py:127-144`).
+  ((legacy Python unit test, removed in Phase 4D)).
 - **No `Permission` check.** Handler does not consult `acl` or
   `capability_registry`.
 - **Trusted-actor invariant: N/A.** Request carries no actor field, so the
@@ -37,7 +42,7 @@ no tenant_id. The probe is server-global, not per-tenant.
 1. `start := time.Now()` for metrics timing.
 2. Probe `wal.IsConnected()` (or treat as healthy if backend lacks the method —
    matches Python `hasattr(self.wal, "is_connected")` shim at
-   `grpc_server.py:1512`). Catch any error → `components["wal"] = "unknown"`.
+   `server/go/internal/api/health.go`). Catch any error → `components["wal"] = "unknown"`.
 3. Set `components["storage"] = "healthy"` unconditionally. (Python does not
    actually probe SQLite; Go port should preserve this — adding a real probe
    would be a behavior change; track as future work.)
@@ -57,8 +62,8 @@ charge, no schema lookup.
 
 | gRPC code | Trigger |
 |-----------|---------|
-| `OK` | Always, in practice. Even when `wal.IsConnected()` panics, Python catches and returns `OK` with `components["wal"]="unknown"` (`grpc_server.py:1514-1515`). |
-| `INTERNAL` | Only if a non-recoverable panic escapes the inner `try` (Python re-raises at `grpc_server.py:1535`). Go port: `defer recover() → status.Errorf(codes.Internal, ...)` and increment `record_grpc_request("Health","error",…)`. |
+| `OK` | Always, in practice. Even when `wal.IsConnected()` panics, Python catches and returns `OK` with `components["wal"]="unknown"` (`server/go/internal/api/health.go`). |
+| `INTERNAL` | Only if a non-recoverable panic escapes the inner `try` (Python re-raises at `server/go/internal/api/health.go`). Go port: `defer recover() → status.Errorf(codes.Internal, ...)` and increment `record_grpc_request("Health","error",…)`. |
 | `UNAVAILABLE` | Server not started — surfaced by transport, never by the handler. |
 
 The handler MUST NOT abort with `UNAUTHENTICATED`, `PERMISSION_DENIED`, or
@@ -87,16 +92,16 @@ Note: this is a **separate** RPC from `grpc.health.v1.Health/Check`, the
 standard probe protocol used by Docker `HEALTHCHECK` and k8s. The Go port
 must register both:
 - `entdb.v1.EntDBService/Health` (this spec)
-- `grpc.health.v1.Health` (use `google.golang.org/grpc/health` package + `health.NewServer()`, set status `SERVING` for `""` — mirrors `grpc_server.py:3283-3296`, pinned by `tests/python/unit/test_health_check.py:34-72`).
+- `grpc.health.v1.Health` (use `google.golang.org/grpc/health` package + `health.NewServer()`, set status `SERVING` for `""` — mirrors `server/go/internal/api/health.go`, pinned by (legacy Python unit test, removed in Phase 4D)).
 
 ## Contract tests pinning behavior
 
 - `tests/python/integration/test_grpc_contract.py:195-202` — happy-path: empty request, `healthy=true`, non-empty `version`. Runs over a real gRPC channel. **The Go server must pass this test verbatim once the Python stubs are swapped for the Go binary.**
-- `tests/python/unit/test_cron_fixes.py:116-147` — multi-node Health stays healthy: `node_id` / `assigned_tenants` info-keys don't drag `healthy` to false. Regression guard.
-- `tests/python/unit/test_enhanced_auth.py:648-661` — auth interceptor lets `/entdb.EntDBService/Health` through with no metadata.
-- `tests/python/unit/test_rate_limiter.py:127-144` — rate limiter bypasses Health even when tenant bucket is empty.
-- `tests/python/unit/test_health_check.py:34-72` — standard `grpc.health.v1.Health/Check` is wired and returns `SERVING`.
-- `tests/python/unit/test_auth.py:47`, `test_jwt_auth.py:360` — additional bypass pins for the JWT auth path.
+- (legacy Python unit test, removed in Phase 4D) — multi-node Health stays healthy: `node_id` / `assigned_tenants` info-keys don't drag `healthy` to false. Regression guard.
+- (legacy Python unit test, removed in Phase 4D) — auth interceptor lets `/entdb.EntDBService/Health` through with no metadata.
+- (legacy Python unit test, removed in Phase 4D) — rate limiter bypasses Health even when tenant bucket is empty.
+- (legacy Python unit test, removed in Phase 4D) — standard `grpc.health.v1.Health/Check` is wired and returns `SERVING`.
+- (legacy Python unit test, removed in Phase 4D), `test_jwt_auth.py:360` — additional bypass pins for the JWT auth path.
 - `tests/python/e2e/test_full_flow.py:404-411` — HTTP `/health` returns `{"status":"healthy"}` (separate gateway, out-of-scope for this RPC).
 
 ## Implementation outline (Go handler)

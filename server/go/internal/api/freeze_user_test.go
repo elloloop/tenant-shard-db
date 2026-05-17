@@ -3,7 +3,7 @@
 // docs/go-port/rpcs/FreezeUser.md ("Contract tests pinning behavior")
 // reduce in the Go port to:
 //
-//   - admin happy path        (sets status to "frozen", success=true);
+//   - admin happy path (sets status to "frozen", success=true);
 //   - frozen user's mutating RPC → PERMISSION_DENIED via interceptor
 //     (the load-bearing test for the freeze gate, mirroring
 //     test_freeze_user_rejects_writes at test_gdpr_engine.py:734-751);

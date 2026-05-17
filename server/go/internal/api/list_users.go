@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // ListUsers is a global-plane read of the user_registry table. It mirrors
-// the Python handler at server/python/entdb_server/api/grpc_server.py:2231-2265
+// the Python handler
 // (port spec: docs/go-port/rpcs/ListUsers.md).
 //
 // Parity warts preserved verbatim (file follow-up tickets, do NOT "fix"
@@ -39,13 +39,13 @@ import (
 //
 // Contract pins (Python source-of-truth → Go parity):
 //
-//   - global_store == nil  -> codes.Unimplemented "User registry not configured"
+//   - global_store == nil -> codes.Unimplemented "User registry not configured"
 //     (grpc_server.py:2239-2243).
-//   - request.actor == ""  -> codes.InvalidArgument "actor is required"
+//   - request.actor == "" -> codes.InvalidArgument "actor is required"
 //     (grpc_server.py:2245-2246, test_grpc_contract.py:423-427).
-//   - empty status         -> coerce to "active"   (grpc_server.py:2248).
-//   - zero limit           -> coerce to 100         (grpc_server.py:2249).
-//   - any internal error   -> codes.OK with users=[] (grpc_server.py:2262-2265).
+//   - empty status -> coerce to "active" (grpc_server.py:2248).
+//   - zero limit -> coerce to 100 (grpc_server.py:2249).
+//   - any internal error -> codes.OK with users=[] (grpc_server.py:2262-2265).
 func (s *Server) ListUsers(
 	ctx context.Context,
 	req *pb.ListUsersRequest,

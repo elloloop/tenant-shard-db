@@ -1,10 +1,15 @@
 # FreezeUser — Go Port Spec
 
+> Implementation: `server/go/internal/api/freeze_user.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
 EPIC #407. GDPR Article 18 ("restrict processing"): toggle a user
 between `active` and `frozen`. Freeze blocks user-initiated mutations
 but preserves all data (vs `DeleteUser` which tombstones, vs
 `RevokeAllUserAccess` which removes ACL grants). Python handler:
-`server/python/entdb_server/api/grpc_server.py:3072-3104`. Proto:
+`server/go/internal/api/freeze_user.go`. Proto:
 `proto/entdb/v1/entdb.proto:138, 1039-1050`.
 
 ## Wire contract
@@ -12,7 +17,7 @@ but preserves all data (vs `DeleteUser` which tombstones, vs
 Request `entdb.v1.FreezeUserRequest` (proto:1039-1044):
 - `string actor` — UNTRUSTED; see Auth. Trusted id from gRPC metadata.
 - `string user_id` — bare user id (`"alice"`), NOT a principal
-  (`"user:alice"`). Handler compares both forms (grpc_server.py:2086).
+  (`"user:alice"`). Handler compares both forms (server/go/internal/api/freeze_user.go).
 - `bool enabled` — `true` → status `frozen`; `false` → `active`.
 
 Response `FreezeUserResponse` (proto:1046-1050):
@@ -33,7 +38,7 @@ unconditionally, returns `True` iff a row matched (global_store.py:
 ## Auth (compliance / admin; trusted-actor)
 
 - Identity: handler calls `_is_self_or_admin(request.actor,
-  request.user_id)` (grpc_server.py:3086, 2071-2086) which **discards
+  request.user_id)` (server/go/internal/api/freeze_user.go, 2071-2086) which **discards
   the payload actor** and uses
   `auth_interceptor.get_authoritative_actor(actor)` (line 2083). Go
   port MUST read trusted identity from gRPC context metadata, never
@@ -47,7 +52,7 @@ unconditionally, returns `True` iff a row matched (global_store.py:
     `<user_id>`)
 - Pre-checks (in order, each `await context.abort` on failure):
   1. `self.global_store` must be configured →
-     `UNIMPLEMENTED "User registry not configured"` (grpc_server.py:
+     `UNIMPLEMENTED "User registry not configured"` (server/go/internal/api/freeze_user.go:
      3080-3081).
   2. `request.actor` non-empty → `INVALID_ARGUMENT "actor is required"`
      (3082-3083).
@@ -57,7 +62,7 @@ unconditionally, returns `True` iff a row matched (global_store.py:
      the user themselves or an admin actor"` (3086-3090).
 
 There is **no tenant scope** on this RPC — freeze is a global-store
-operation, mirroring `DeleteUser` (grpc_server.py:2925-2981). Do not
+operation, mirroring `DeleteUser` (server/go/internal/api/freeze_user.go). Do not
 add `_check_tenant_access` on the port.
 
 ## Side effects (WAL append; flag in global_store; subsequent auth checks reject mutating ops)
@@ -77,9 +82,9 @@ Applier: `UPDATE user_registry SET status=?, updated_at=? WHERE
 user_id=?`; `rowcount > 0` → `success`. Wait for receipt APPLIED
 before returning.
 
-The freeze flag is `user_registry.status` (global_store.py:207).
+The freeze flag is `user_registry.status` (server/go/internal/globalstore/).
 Consulted on every mutating RPC by `_check_tenant_access(...,
-require_write=True)` (grpc_server.py:548-557): if status is `frozen`
+require_write=True)` (server/go/internal/api/freeze_user.go): if status is `frozen`
 or `pending_deletion`, abort `PERMISSION_DENIED "User '<id>' is
 frozen and cannot write"`. Reads pass `require_write=False` — see
 `test_frozen_user_can_still_read` (test_gdpr_engine.py:754-767).
@@ -117,9 +122,9 @@ emit no metric (raised before record).
 ## Shared Go package deps (auth interceptor must consult freeze flag)
 
 - `internal/auth` — `AuthInterceptor.AuthoritativeActor(ctx)`,
-  `IsSelfOrAdmin(actor, userID)` mirroring grpc_server.py:2071-2086.
+  `IsSelfOrAdmin(actor, userID)` mirroring server/go/internal/api/freeze_user.go.
   **Critical:** the auth interceptor’s write-path check (the Go
-  equivalent of `_check_tenant_access` at grpc_server.py:548-557)
+  equivalent of `_check_tenant_access` at server/go/internal/api/freeze_user.go)
   MUST consult `GlobalStore.GetUser(userID).Status` and reject
   `frozen` / `pending_deletion` for any mutating RPC. This is the
   load-bearing enforcement; FreezeUser only sets the bit.
@@ -139,14 +144,14 @@ emit no metric (raised before record).
 
 ## Other-RPC deps (DeleteUser, RevokeAllUserAccess)
 
-- **DeleteUser** (grpc_server.py:2925-2981, proto:136, 1010-1024)
+- **DeleteUser** (server/go/internal/api/freeze_user.go, proto:136, 1010-1024)
   calls `set_user_status(user_id, "pending_deletion")` (line 2967).
   `pending_deletion` is treated identically to `frozen` by the auth
   gate (line 552). FreezeUser MUST NOT clobber `pending_deletion →
   active` — Python does not guard this. Go port: reject
   `enabled=false` when current status is `pending_deletion`; require
   `CancelUserDeletion`.
-- **CancelUserDeletion** (grpc_server.py:2989-3017, proto:139) is
+- **CancelUserDeletion** (server/go/internal/api/freeze_user.go, proto:139) is
   the inverse for `pending_deletion → active` (line 3004). Same
   global-store path; same WAL violation; same fix.
 - **RevokeAllUserAccess** (proto:133, 994-1006) removes ACL grants
@@ -159,16 +164,16 @@ emit no metric (raised before record).
 
 ## Contract tests pinning behavior (file:line)
 
-- `tests/python/unit/test_gdpr_engine.py:707-717`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_freeze_user_handler`) — freeze sets status `frozen` and
   `resp.status == "frozen"`.
-- `tests/python/unit/test_gdpr_engine.py:720-731`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_unfreeze_user_handler`) — toggle to `active`; idempotent.
-- `tests/python/unit/test_gdpr_engine.py:734-751`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_freeze_user_rejects_writes`) — frozen user’s
   `_check_tenant_access(require_write=True)` aborts
   `PERMISSION_DENIED`. **Load-bearing test for the freeze gate.**
-- `tests/python/unit/test_gdpr_engine.py:754-767`
+- (legacy Python unit test, removed in Phase 4D)
   (`test_frozen_user_can_still_read`) —
   `_check_tenant_access(require_write=False)` returns the role.
 - `tests/python/integration/test_privilege_escalation.py` — covers

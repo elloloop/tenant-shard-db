@@ -1,9 +1,8 @@
-// GetNodeByKey RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// GetNodeByKey RPC.
 // Spec: docs/go-port/rpcs/GetNodeByKey.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:144 (rpc), :1087-1120
 // (request/response). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:1066-1128.
 //
 // Semantics (preserved from the Python handler):
 //
@@ -85,7 +84,7 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 		return nil, err
 	}
 
-	// 2. Defensive: store not configured. Mirrors the Wave-1 wiring
+	// 2. Defensive: store not configured. Mirrors the wiring
 	//    expectation — production always has a store, but test harnesses
 	//    that exercise just the tenant gate path must not panic.
 	if s.store == nil {

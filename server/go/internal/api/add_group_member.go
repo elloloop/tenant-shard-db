@@ -2,7 +2,6 @@
 
 // AddGroupMember implements entdb.v1.EntDBService/AddGroupMember.
 //
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:1946-1984.
 // Port spec: docs/go-port/rpcs/AddGroupMember.md.
 //
 // # WAL-first restoration
@@ -42,15 +41,15 @@
 //
 // # Error contract
 //
-//	UNIMPLEMENTED       WAL producer not configured.
+//	UNIMPLEMENTED WAL producer not configured.
 //	NOT_FOUND / FAILED_PRECONDITION
 //	                    tenant missing/disabled (via checkTenant).
-//	INVALID_ARGUMENT    tenant_id / group_id / member_actor_id empty.
-//	PERMISSION_DENIED   trusted actor is neither admin/system nor
+//	INVALID_ARGUMENT tenant_id / group_id / member_actor_id empty.
+//	PERMISSION_DENIED trusted actor is neither admin/system nor
 //	                    owner/admin member of tenant_id.
-//	OK + success=false  WAL append failed (matches Python in-band
+//	OK + success=false WAL append failed (matches Python in-band
 //	                    error shape: gRPC OK, response.Error set).
-//	OK + success=true   WAL append accepted; apply happens
+//	OK + success=true WAL append accepted; apply happens
 //	                    asynchronously (caller fences via
 //	                    WaitForOffset on subsequent reads).
 

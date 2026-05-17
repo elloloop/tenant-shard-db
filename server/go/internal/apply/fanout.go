@@ -14,9 +14,8 @@ import "context"
 // notifications are best-effort and the canonical write already
 // succeeded. The Go port preserves this trade-off.
 //
-// Wave 1 keeps notifications a stub (server/python/entdb_server has
-// already deprecated the per-user mailbox tables; see
-// store/notifications.go). The hook exists so Wave-2 RPCs that grow
+// Today fanout is a stub: the per-user mailbox tables are deprecated
+// (see store/notifications.go). The hook exists so RPCs that grow
 // real notification semantics have a single place to plug in.
 func (a *Applier) fanout(ctx context.Context, ev *Event, res *Result) {
 	if a.fanoutHook != nil {

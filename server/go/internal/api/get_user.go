@@ -1,9 +1,8 @@
-// GetUser RPC — Wave 2 of the Python -> Go server port (EPIC #407).
+// GetUser RPC.
 // Spec: docs/go-port/rpcs/GetUser.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:113 (rpc), :816-824
 // (request/response), :793-800 (UserInfo). Reference Python handler:
-// server/python/entdb_server/api/grpc_server.py:2149-2182.
 //
 // Semantics (preserved from the Python handler):
 //

@@ -120,8 +120,8 @@ const (
 // TenantQuota is the decoded snapshot returned by the GetTenantQuota RPC.
 // It mirrors the three-layer rate-limit model (monthly quota, per-tenant
 // token bucket, per-user token bucket) defined in
-// docs/decisions/quotas.md so callers can render a full quota dashboard
-// from a single round-trip.
+// docs/adr/024-three-layer-rate-limit-model.md so callers can render a
+// full quota dashboard from a single round-trip.
 //
 // Numeric fields use int64 to match the proto (and to give dashboards
 // headroom for high-volume tiers). A zero value for any *Limit field
@@ -147,8 +147,8 @@ type TenantQuota struct {
 // StorageMode selects the physical SQLite file a node lives in.
 //
 // Storage mode is chosen at creation time and is IMMUTABLE. It cannot
-// be changed by Update. See docs/decisions/storage.md for the full
-// rationale.
+// be changed by Update. See docs/adr/020-immutable-storage-mode.md
+// for the full rationale.
 type StorageMode int
 
 const (

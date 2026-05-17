@@ -14,11 +14,11 @@ import (
 // op shape:
 //
 //	{
-//	  "op":           "revoke_access",
-//	  "node_id":      "<id>",
-//	  "actor_id":     "<id>",
-//	  "user_id":      "<id>",        // optional cross-tenant grantee
-//	  "source_tenant":"<id>",        // optional cross-tenant src
+//	  "op": "revoke_access",
+//	  "node_id": "<id>",
+//	  "actor_id": "<id>",
+//	  "user_id": "<id>", // optional cross-tenant grantee
+//	  "source_tenant":"<id>", // optional cross-tenant src
 //	}
 func (a *Applier) applyRevokeAccess(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, res *Result) error {
 	nodeID := stringField(op, "node_id")

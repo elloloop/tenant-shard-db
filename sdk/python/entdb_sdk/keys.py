@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 """Typed unique-key tokens and storage descriptors for SDK v0.3.
 
-These primitives are part of the 2026-04-14 single-shape SDK API
-decision in ``docs/decisions/sdk_api.md``. The user-facing contract is:
+These primitives are part of the single-shape SDK API decision in
+``docs/adr/025-single-shape-sdk-api.md`` (ADR-025). The user-facing
+contract is:
 
 - Unique fields are declared at the proto field site via
   ``(entdb.field).unique = true``.

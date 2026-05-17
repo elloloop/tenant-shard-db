@@ -34,9 +34,9 @@ const (
 
 	// Node-level
 	ChangeKindNodeAdded
-	ChangeKindNodeRemoved      // BREAKING — WAL events referencing the type become unreplayable
-	ChangeKindNodeRenamed      // non-breaking — type_id is the on-disk key
-	ChangeKindTypeIDChanged    // BREAKING — same name, different type_id == new type
+	ChangeKindNodeRemoved         // BREAKING — WAL events referencing the type become unreplayable
+	ChangeKindNodeRenamed         // non-breaking — type_id is the on-disk key
+	ChangeKindTypeIDChanged       // BREAKING — same name, different type_id == new type
 	ChangeKindSubjectFieldChanged // BREAKING — GDPR routing changes
 	ChangeKindDataPolicyTightened // non-breaking — encryption tier strengthens
 	ChangeKindDataPolicyLoosened  // BREAKING — historical data leaks downward
@@ -134,25 +134,25 @@ func (k ChangeKind) MarshalJSON() ([]byte, error) {
 // A nil entry means non-breaking. Reviewers: flipping a classification
 // here is the audit trail.
 var breakingKinds = map[ChangeKind]bool{
-	ChangeKindNodeRemoved:              true,
-	ChangeKindTypeIDChanged:            true,
-	ChangeKindSubjectFieldChanged:      true,
-	ChangeKindDataPolicyLoosened:       true,
-	ChangeKindFieldRemoved:             true,
-	ChangeKindFieldIDChanged:           true,
-	ChangeKindFieldKindChanged:         true,
-	ChangeKindFieldRequiredTightened:   true,
-	ChangeKindFieldUniqueAdded:         true,
-	ChangeKindFieldRefTypeChanged:      true,
-	ChangeKindEnumValueRemoved:         true,
-	ChangeKindEnumValueReordered:       true,
-	ChangeKindCompositeUniqueAdded:     true,
-	ChangeKindCompositeUniqueChanged:   true,
-	ChangeKindEdgeRemoved:              true,
-	ChangeKindEdgeFromTypeChanged:      true,
-	ChangeKindEdgeToTypeChanged:        true,
-	ChangeKindEdgeUniquePerFromAdded:   true,
-	ChangeKindOnSubjectExitChanged:     true,
+	ChangeKindNodeRemoved:            true,
+	ChangeKindTypeIDChanged:          true,
+	ChangeKindSubjectFieldChanged:    true,
+	ChangeKindDataPolicyLoosened:     true,
+	ChangeKindFieldRemoved:           true,
+	ChangeKindFieldIDChanged:         true,
+	ChangeKindFieldKindChanged:       true,
+	ChangeKindFieldRequiredTightened: true,
+	ChangeKindFieldUniqueAdded:       true,
+	ChangeKindFieldRefTypeChanged:    true,
+	ChangeKindEnumValueRemoved:       true,
+	ChangeKindEnumValueReordered:     true,
+	ChangeKindCompositeUniqueAdded:   true,
+	ChangeKindCompositeUniqueChanged: true,
+	ChangeKindEdgeRemoved:            true,
+	ChangeKindEdgeFromTypeChanged:    true,
+	ChangeKindEdgeToTypeChanged:      true,
+	ChangeKindEdgeUniquePerFromAdded: true,
+	ChangeKindOnSubjectExitChanged:   true,
 }
 
 // IsBreaking reports whether the kind is classified as a breaking

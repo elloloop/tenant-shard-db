@@ -1,14 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// DeleteUser RPC — Wave 2 of the Python → Go server port (EPIC #407).
+// DeleteUser RPC.
 // Spec: docs/go-port/rpcs/DeleteUser.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:136 (rpc), :1010-1025
-// (messages). Reference Python:
-// server/python/entdb_server/api/grpc_server.py:2925-2981 (handler) and
-// server/python/entdb_server/global_store.py:800-822 (queue_deletion).
+// (messages).
 //
-// Semantics (preserved byte-for-byte from the Python handler unless noted):
+// Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
 //     codes.Unimplemented "User registry not configured" (parity with

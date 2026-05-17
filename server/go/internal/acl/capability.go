@@ -4,8 +4,7 @@ package acl
 
 // CoreCapability is the typed-capability enum frozen in
 // docs/decisions/acl.md (2026-04-13). Wire-stable: integer values MUST
-// match entdb.v1.CoreCapability and the Python CoreCapability IntEnum
-// at server/python/entdb_server/auth/capability_registry.py:42-55.
+// match entdb.v1.CoreCapability.
 type CoreCapability uint8
 
 const (

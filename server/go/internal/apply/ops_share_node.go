@@ -17,17 +17,17 @@ import (
 // op shape:
 //
 //	{
-//	  "op":          "share_node",
-//	  "node_id":     "<id>",
-//	  "actor_id":    "<id>",
-//	  "actor_type":  "user|group",     // default "user"
-//	  "permission":  "read|write|...", // legacy enum string
-//	  "type_id":     <int>,            // optional, for typed-cap scoping
-//	  "core_caps":   [<int>, ...],     // typed core caps
-//	  "ext_cap_ids": [<int>, ...],     // typed extension caps
-//	  "expires_at":  <ms>,             // 0 == never
-//	  "user_id":     "<id>",           // optional cross-tenant grantee
-//	  "source_tenant": "<id>",         // optional cross-tenant src
+//	  "op": "share_node",
+//	  "node_id": "<id>",
+//	  "actor_id": "<id>",
+//	  "actor_type": "user|group", // default "user"
+//	  "permission": "read|write|...", // legacy enum string
+//	  "type_id": <int>, // optional, for typed-cap scoping
+//	  "core_caps": [<int>, ...], // typed core caps
+//	  "ext_cap_ids": [<int>, ...], // typed extension caps
+//	  "expires_at": <ms>, // 0 == never
+//	  "user_id": "<id>", // optional cross-tenant grantee
+//	  "source_tenant": "<id>", // optional cross-tenant src
 //	}
 func (a *Applier) applyShareNode(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, res *Result) error {
 	nodeID := stringField(op, "node_id")

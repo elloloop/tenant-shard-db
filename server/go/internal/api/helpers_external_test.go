@@ -115,7 +115,7 @@ func withTrustedUser(ctx context.Context, subject string) context.Context {
 
 // nodeIDs flattens a []*pb.Node to its node_id slice, preserving
 // order. Shared diagnostic helper used by the get_nodes and
-// search_nodes assertion blocks (consolidated in the round-3 Wave-2
+// search_nodes assertion blocks (consolidated in the round-3
 // dedupe — the two parallel PRs each declared a private copy).
 func nodeIDs(ns []*pb.Node) []string {
 	out := make([]string, 0, len(ns))

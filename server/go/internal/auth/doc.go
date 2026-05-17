@@ -1,5 +1,5 @@
 // Package auth is the gRPC authentication / trusted-actor chokepoint for
-// the Go server. Ported from server/python/entdb_server/auth/, EPIC #407.
+// the Go server.
 //
 // CLAUDE.md invariant: request.actor / request.context.actor on the wire
 // is UNTRUSTED. The verified caller identity is established by the
@@ -12,16 +12,17 @@
 //
 // Layout:
 //
-//	actor.go          Actor type + Kind enum + prefix constructors.
-//	identity.go       Identity struct + context.Context plumbing.
-//	authoritative.go  Authoritative() -- the SINGLE trusted-actor chokepoint.
-//	interceptor.go    Unary + Stream gRPC interceptors; Health bypass list.
-//	oauth.go          In-memory OAuthValidator (HS256 / RS256).
-//	apikey.go         In-memory APIKeyManager.
-//	session.go        In-memory SessionManager.
-//	errors.go         UNAUTHENTICATED / PERMISSION_DENIED wrappers.
+//	actor.go Actor type + Kind enum + prefix constructors.
+//	identity.go Identity struct + context.Context plumbing.
+//	authoritative.go Authoritative() -- the SINGLE trusted-actor chokepoint.
+//	interceptor.go Unary + Stream gRPC interceptors; Health bypass list.
+//	oauth.go In-memory OAuthValidator (HS256 / RS256).
+//	apikey.go In-memory APIKeyManager.
+//	session.go In-memory SessionManager.
+//	errors.go UNAUTHENTICATED / PERMISSION_DENIED wrappers.
 //
-// Wave 1 ships only the in-memory validators; production OAuth (real
-// JWKS rotation, network discovery), Redis-backed sessions, and the
-// quota interceptor are deferred to Phase 2.
+// Production OAuth (real JWKS rotation, network discovery), Redis-backed
+// sessions, and the quota interceptor are tracked separately; this
+// package ships the in-memory validators plus the trusted-actor
+// plumbing.
 package auth

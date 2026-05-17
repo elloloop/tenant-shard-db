@@ -30,7 +30,7 @@ Example::
 
         product = await scope.get_by_key(ProductKeys.sku, "WIDGET-1")
 
-See ``docs/decisions/sdk_api.md`` for the design rationale.
+See ``docs/adr/025-single-shape-sdk-api.md`` for the design rationale.
 """
 
 from ._redirect_cache import (

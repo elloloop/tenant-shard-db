@@ -8,7 +8,7 @@ and `foo_entdb.go` next to the standard `protoc-gen-python` /
 `protoc-gen-go` outputs. The generated tokens are the only way to
 perform a `get_by_key` lookup in the EntDB SDK, which is how the SDK
 eliminates stringly-typed key references. See
-[`docs/decisions/sdk_api.md`](../../docs/decisions/sdk_api.md) for the
+[ADR-025](../../docs/adr/025-single-shape-sdk-api.md) for the
 authoritative SDK surface ADR.
 
 ## Build
@@ -115,5 +115,5 @@ The test suite covers:
 
 ## References
 
-- [`docs/decisions/sdk_api.md`](../../docs/decisions/sdk_api.md) —
-  SDK v0.3 single-shape API ADR (authoritative)
+- [ADR-025](../../docs/adr/025-single-shape-sdk-api.md) — single-
+  shape SDK API ADR (authoritative)

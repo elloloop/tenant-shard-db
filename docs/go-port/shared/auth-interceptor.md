@@ -1,7 +1,7 @@
 # Shared Port Spec — Auth Interceptor + Trusted-Actor Pattern
 
 EPIC #407 — Python → Go server port. Source of truth:
-`server/python/entdb_server/auth/auth_interceptor.py` (the gRPC interceptor
+`server/go/internal/auth/interceptor.go` (the gRPC interceptor
 and `get_authoritative_actor` helper). Behavioural pin:
 `tests/python/integration/test_privilege_escalation.py` (34 cases).
 

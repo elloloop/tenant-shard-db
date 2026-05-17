@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// RemoveGroupMember implements entdb.v1.EntDBService/RemoveGroupMember
-// (EPIC #407, Wave 2).
+// RemoveGroupMember implements entdb.v1.EntDBService/RemoveGroupMember.
 //
 // Spec: docs/go-port/rpcs/RemoveGroupMember.md.
-// Source-of-truth Python: server/python/entdb_server/api/grpc_server.py:1986-2028.
 //
 // # Behavioural pins
 //
@@ -80,7 +78,7 @@ const removeGroupMemberMethod = "RemoveGroupMember"
 
 // removeGroupMemberWALTopic is the WAL topic this handler appends to.
 // Hard-coded to the `entdb-wal` default (cmd/entdb-server/main.go:32);
-// the api.Server does not currently take a topic option (Wave-2 scope
+// the api.Server does not currently take a topic option ( scope
 // freeze). When the topic becomes configurable, swap this for a field
 // on Server populated by a WithWALTopic option.
 const removeGroupMemberWALTopic = "entdb-wal"
@@ -241,4 +239,4 @@ func (s *Server) RemoveGroupMember(
 }
 
 // newIdempotencyKey lives in helpers.go (consolidated in the round-3
-// Wave-2 dedupe).
+// dedupe).

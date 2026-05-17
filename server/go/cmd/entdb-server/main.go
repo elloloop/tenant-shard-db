@@ -1,8 +1,7 @@
-// Command entdb-server is the Go reimplementation of the EntDB
-// gRPC server (tracking issue #407). Wave-1 wiring binds a gRPC
-// server, opens the per-tenant SQLite + globalstore handles, and
-// starts the WAL applier in a background goroutine before accepting
-// writes.
+// Command entdb-server is the canonical EntDB gRPC server. It binds
+// a gRPC server, opens the per-tenant SQLite + globalstore handles,
+// and starts the WAL applier in a background goroutine before
+// accepting writes.
 package main
 
 import (
@@ -53,10 +52,9 @@ func main() {
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
-	// Kafka/Redpanda-specific knobs. Defaults match
-	// server/python/entdb_server/wal/kafka.py + config.py (KAFKA_BROKERS
-	// etc.) so the cross-impl e2e stack can swap targets without
-	// re-jiggering compose env-vars.
+	// Kafka/Redpanda-specific knobs. Defaults match the legacy
+	// KAFKA_BROKERS env-var convention so the cross-impl e2e stack
+	// can swap targets without re-jiggering compose env-vars.
 	walBrokers := flag.String("wal-brokers", "localhost:9092", "comma-separated Kafka bootstrap brokers (used when --wal-backend=kafka)")
 	archiveEnabled := flag.Bool("archive-enabled", false, "enable S3 Object Lock WAL archive sidecar (requires --wal-backend=kafka)")
 	archiveBucket := flag.String("archive-bucket", "", "S3 bucket for immutable WAL archives")
@@ -76,7 +74,7 @@ func main() {
 	// --seed-profile selects the fixture shape applied to --seed-tenant.
 	//   - "none" (default): no seeding (legacy --seed-tenant without
 	//     --seed-profile defaults to "contract" for backwards
-	//     compatibility with the Wave-4 harness).
+	//     compatibility with the harness).
 	//   - "contract": User/Task/AssignedTo schema + alice/bob users +
 	//     seed node + seed-1 receipt. Matches the cross-impl contract
 	//     suite (tests/python/integration/test_grpc_contract.py).
@@ -91,7 +89,7 @@ func main() {
 	}
 
 	// Resolve --seed-profile. Empty profile + non-empty --seed-tenant
-	// defaults to "contract" so the pre-Wave-6 harness invocation
+	// defaults to "contract" so the pre- harness invocation
 	// (--seed-tenant=acme without --seed-profile) keeps working.
 	profile := *seedProfile
 	if profile == "" {

@@ -7,10 +7,9 @@ explicitly via three admin RPCs before any data-plane RPC will succeed.
 This is a deliberate change from pre-v1.12 behavior — the old Python
 server implicitly registered tenants on first write, which was a
 multi-tenant abuse vector and made auditability impossible. The Go
-server (v1.12+, see [`docs/decisions/python-server-retired.md`][retired])
-requires explicit onboarding.
+server (v1.12+, see [ADR-017][retired]) requires explicit onboarding.
 
-[retired]: decisions/python-server-retired.md
+[retired]: adr/017-python-server-retired.md
 
 ## The three admin RPCs
 

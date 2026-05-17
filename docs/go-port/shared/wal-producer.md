@@ -9,12 +9,12 @@ must reproduce the Python producer's durability + ordering contract
 exactly, otherwise replay determinism breaks.
 
 Reference Python sources (port targets):
-- `server/python/entdb_server/wal/base.py` — protocol + types
+- `server/go/internal/wal/` — protocol + types
 - `server/python/entdb_server/wal/{memory,kafka,kinesis,sqs,pubsub,servicebus,eventhubs}.py`
-- `server/python/entdb_server/apply/applier.py:204` — `TransactionEvent`
-- `server/python/entdb_server/api/grpc_server.py:778` — handler-side `wal.append` call site
+- `server/go/internal/apply/applier.go` — `TransactionEvent`
+- `server/go/internal/api/` — handler-side `wal.append` call site
 - `tests/python/integration/test_wal_replay_determinism.py` — bedrock contract
-- `tests/python/unit/test_wal_memory.py`, `test_wal_backends.py`, `test_wal_backends_config.py`
+- `(legacy Python unit test, removed in Phase 4D)`, `test_wal_backends.py`, `test_wal_backends_config.py`
 
 ## TransactionEvent shape
 
@@ -209,7 +209,7 @@ Notes:
 
 Mirror the Python suites:
 
-- `internal/wal/memory_test.go` — port `tests/python/unit/test_wal_memory.py`:
+- `internal/wal/memory_test.go` — port `(legacy Python unit test, removed in Phase 4D)`:
   append/subscribe roundtrip, partition determinism by key, offset
   monotonicity, num_partitions validation, `wait_for_records`.
 - `internal/wal/contract_test.go` — port `tests/python/unit/test_wal_backends.go`:

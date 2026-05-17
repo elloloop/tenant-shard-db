@@ -9,7 +9,7 @@ import (
 // schemaDDL mirrors canonical_store.py:1037-1200 _create_schema. Every
 // table is IF NOT EXISTS so that running initSchema twice is a no-op.
 //
-// Tables omitted from the Wave 1 cut (kept in Python today):
+// Tables omitted from the cut (kept in Python today):
 //
 //   - notifications, read_cursors: stubs only (notifications.go)
 //   - audit_log: superseded by S3 Object Lock (CLAUDE.md invariant #2)
@@ -132,7 +132,7 @@ INSERT OR IGNORE INTO schema_version (version, applied_at)
 // Mirrors canonical_store.py:_create_schema (1037-1200) minus the
 // deprecated/ legacy tables (audit_log, notifications, read_cursors,
 // type_metadata) — those are either superseded (CLAUDE.md invariant #2)
-// or out-of-scope for Wave 1.
+// or out-of-scope.
 func initSchema(ctx context.Context, db *sql.DB) error {
 	if _, err := db.ExecContext(ctx, schemaDDL); err != nil {
 		return fmt.Errorf("store: create schema: %w", err)

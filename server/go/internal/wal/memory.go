@@ -11,13 +11,12 @@ import (
 	"time"
 )
 
-// DefaultNumPartitions matches server/python/entdb_server/wal/memory.py:74
-// (num_partitions=4). Cross-impl contract tests rely on identical
-// partitioning, so do not change without updating the Python default.
+// DefaultNumPartitions is the default partition count for the in-memory
+// WAL stream. Contract tests rely on a stable default — do not change
+// without updating those tests.
 const DefaultNumPartitions = 4
 
 // InMemory is the in-memory implementation of Producer + Consumer.
-// Mirrors server/python/entdb_server/wal/memory.py:49 (InMemoryWalStream).
 //
 // Guarantees:
 //

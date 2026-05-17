@@ -24,7 +24,6 @@ type APIKeyManager interface {
 // interceptor and any future scope-gated RPC.
 //
 // Mirrors the dict returned by ApiKeyManager.validate_key in
-// server/python/entdb_server/auth/api_key_manager.py:124-158.
 type APIKeyInfo struct {
 	KeyID  string
 	Name   string

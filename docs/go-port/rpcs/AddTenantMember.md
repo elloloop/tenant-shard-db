@@ -1,7 +1,12 @@
 # RPC Port Spec — `entdb.v1.EntDBService/AddTenantMember`
 
-EPIC #407 — Python → Go server port. Source of truth: Python handler at
-`server/python/entdb_server/api/grpc_server.py:2442-2490`.
+> Implementation: `server/go/internal/api/add_tenant_member.go`. The Python-source citations
+> below are historical (Python server was retired in EPIC #407 Phase 4D,
+> commit `8d07f5f`). See ADR-016 for the write-path contract this RPC
+> follows.
+
+EPIC #407 — Python → Go server port. Source of truth: Go handler at
+`server/go/internal/api/add_tenant_member.go`.
 
 ## Wire contract (role enum)
 
@@ -11,13 +16,13 @@ Proto: `proto/entdb/v1/entdb.proto:123` (rpc), `:909-919` (messages).
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
 | `actor` | 1 | `string` | Wire-claimed actor, e.g. `"user:alice"` / `"system:admin"`. **UNTRUSTED** — replaced by interceptor identity (see Auth). |
-| `tenant_id` | 2 | `string` | Required; non-empty (`grpc_server.py:2458-2459`). |
-| `user_id` | 3 | `string` | Required; non-empty. The user being added (`grpc_server.py:2460-2461`). |
-| `role` | 4 | `string` | Optional. Defaults to `"member"` when empty (`grpc_server.py:2476`). |
+| `tenant_id` | 2 | `string` | Required; non-empty (`server/go/internal/api/add_tenant_member.go`). |
+| `user_id` | 3 | `string` | Required; non-empty. The user being added (`server/go/internal/api/add_tenant_member.go`). |
+| `role` | 4 | `string` | Optional. Defaults to `"member"` when empty (`server/go/internal/api/add_tenant_member.go`). |
 
 `TenantMemberResponse`: `bool success = 1; string error = 2;` Aborts MUST set
 gRPC status; happy returns `success=true`. Soft failures (duplicate) return
-`success=false, error=<msg>` with gRPC `OK` (`grpc_server.py:2484-2486`).
+`success=false, error=<msg>` with gRPC `OK` (`server/go/internal/api/add_tenant_member.go`).
 
 **Role is a free-form string, NOT a proto enum.** Recognised values per
 authorization checks: `"owner"`, `"admin"`, `"member"`. The server does not
@@ -25,22 +30,22 @@ validate `role` against a closed set on insert — `add_member` writes whatever
 string the caller supplies. The Go port MUST preserve this leniency to keep
 contract tests green; harden via a separate ticket if desired (track as Open
 question below). Storage column: `tenant_members.role TEXT NOT NULL DEFAULT
-'member'` (`global_store.py:220-226`).
+'member'` (`server/go/internal/globalstore/`).
 
 ## Auth (tenant admin only; trusted-actor)
 
 - **Authentication**: required. NOT in `AuthInterceptor.UNAUTHENTICATED_METHODS`.
 - **Trusted-actor invariant** (CLAUDE.md §"trusted-actor"): handler immediately
   rebinds `trusted_actor = self._trusted_actor(request.actor)` on entry
-  (`grpc_server.py:2466`). Every downstream check uses `trusted_actor`, never
+  (`server/go/internal/api/add_tenant_member.go`). Every downstream check uses `trusted_actor`, never
   `request.actor`. Go port MUST mirror this — direct use of `req.Actor` for an
   authorization branch is a bug.
 - **Authorization**: caller is allowed iff EITHER
   - `_is_admin_or_system(trusted_actor)` returns true (actor prefix
     `system:` / `admin:` / equal to `__system__`, see
-    `grpc_server.py:2053-2069`), OR
+    `server/go/internal/api/add_tenant_member.go`), OR
   - the caller's `tenant_members.role` for `request.tenant_id` is `"owner"` or
-    `"admin"` (`grpc_server.py:2468-2474`).
+    `"admin"` (`server/go/internal/api/add_tenant_member.go`).
 - **Wire-actor escalation must fail**: regression pinned by commit
   `fece3fb` ("Fix privilege escalation: ignore client-claimed actor"). A user
   sending `actor="system:admin"` with their own bearer token MUST be denied.
@@ -56,25 +61,25 @@ question below). Storage column: `tenant_members.role TEXT NOT NULL DEFAULT
 
 **Global-store materialization:**
 1. `INSERT INTO tenant_members (tenant_id, user_id, role, joined_at) VALUES
-   (?, ?, ?, ?)` with `joined_at = now()` (`global_store.py:571-580`).
+   (?, ?, ?, ?)` with `joined_at = now()` (`server/go/internal/globalstore/`).
 2. PRIMARY KEY `(tenant_id, user_id)` enforces uniqueness; incompatible
    duplicate materialization is memoized as an `ALREADY_EXISTS`
    idempotency failure rather than halting the WAL consumer.
 
 **Mailbox / notification: NONE.** No fanout, no `notifications` table write,
 no `mailbox` write (legacy mailbox is removed; see
-`grpc_server.py:1461-1465`). The added member is silent — discovery is via
+`server/go/internal/api/add_tenant_member.go`). The added member is silent — discovery is via
 `GetUserTenants`. If product wants a "you were added" notification, file a
 new ticket; Go port MUST stay silent for parity.
 
 **Metric**: `record_grpc_request("AddTenantMember", "ok"|"error", elapsed)`
-on every exit branch (`grpc_server.py:2479,2483,2488`).
+on every exit branch (`server/go/internal/api/add_tenant_member.go,2483,2488`).
 
 ## Error contract (duplicate; unknown user)
 
 | gRPC code | Trigger | Source |
 |-----------|---------|--------|
-| `UNIMPLEMENTED` | `global_store` not configured (tenant registry disabled). | `grpc_server.py:2450-2454` |
+| `UNIMPLEMENTED` | `global_store` not configured (tenant registry disabled). | `server/go/internal/api/add_tenant_member.go` |
 | `INVALID_ARGUMENT` | `actor`, `tenant_id`, or `user_id` empty. | `:2456-2461` |
 | `PERMISSION_DENIED` | Caller is not system/admin AND not `owner`/`admin` member of `tenant_id`. Includes the case where the caller has no membership at all (`_get_member_role` returns `None`). | `:2468-2474` |
 | `OK` + `success=false, error="Member already exists in this tenant"` | UNIQUE constraint violation on `(tenant_id, user_id)`. Soft failure, NOT a gRPC error. | `:2482-2487` |
@@ -114,11 +119,11 @@ NOT used and MUST NOT be imported here: `canonicalstore`, `schema`, `acl`,
 
 Three handlers form one cohesive unit and SHOULD be ported in a single PR:
 
-- `RemoveTenantMember` (`grpc_server.py:2492-2541`) — same auth model with
+- `RemoveTenantMember` (`server/go/internal/api/add_tenant_member.go`) — same auth model with
   added "last-owner cannot leave" guard (`:2527-2532`). Reuses
   `globalstore.GetMembers` + `RemoveMember`.
-- `ChangeMemberRole` (`grpc_server.py:2601+`) — same auth model, calls
-  `globalstore.ChangeRole` (`global_store.py:630-644`). Same role-string
+- `ChangeMemberRole` (`server/go/internal/api/add_tenant_member.go+`) — same auth model, calls
+  `globalstore.ChangeRole` (`server/go/internal/globalstore/`). Same role-string
   leniency.
 - `GetTenantMembers` / `GetUserTenants` — read-only siblings; auth model is
   weaker (any member can read). Out of scope for this spec.
@@ -128,7 +133,7 @@ Three handlers form one cohesive unit and SHOULD be ported in a single PR:
   or a `system:` actor.
 
 Shared helper `_get_member_role(tenant_id, user_id) -> str | None`
-(`grpc_server.py:2290-2296`) lives on the servicer and is reused by all three
+(`server/go/internal/api/add_tenant_member.go`) lives on the servicer and is reused by all three
 write handlers — port once into `globalstore` (`MemberRole(ctx, tenantID,
 userID) (string, bool, error)`).
 
@@ -140,11 +145,11 @@ userID) (string, bool, error)`).
   `INVALID_ARGUMENT`.
 - `tests/python/integration/test_grpc_contract.py:524-530` — `actor=BOB`
   (regular member) → `PERMISSION_DENIED`.
-- `tests/python/unit/test_tenant_registry.py:404-419` — owner can add member;
+- (legacy Python unit test, removed in Phase 4D) — owner can add member;
   resulting `get_members` returns 2 rows.
-- `tests/python/unit/test_tenant_registry.py:421-434` — admin can add member
+- (legacy Python unit test, removed in Phase 4D) — admin can add member
   (default role `"member"` when empty).
-- `tests/python/unit/test_tenant_registry.py:436-449` — regular member is
+- (legacy Python unit test, removed in Phase 4D) — regular member is
   denied with `PERMISSION_DENIED`.
 - `sdk/go/entdb/admin_test.go:188-197` — Go SDK happy-path against fake
   server; the real Go handler must satisfy the same wire shape.

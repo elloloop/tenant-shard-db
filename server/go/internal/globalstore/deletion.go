@@ -1,5 +1,4 @@
 // deletion_queue CRUD. Mirrors the Python helpers at
-// server/python/entdb_server/global_store.py:800 (queue_deletion)
 // through :908 (mark_deletion_completed). Used by the GDPR worker.
 
 package globalstore

@@ -18,7 +18,7 @@ import (
 // least the requested WAL stream position into the per-tenant SQLite
 // view, or the per-RPC deadline elapses, or the context is cancelled.
 //
-// Spec: docs/go-port/rpcs/WaitForOffset.md (EPIC #407, Wave 2). The Go
+// Spec: docs/go-port/rpcs/WaitForOffset.md. The Go
 // port uses the store-level sync.Cond watcher implemented in W1.8
 // (store/offset.go) so the handler parks on a single select and does not
 // burn a goroutine on a busy-loop.

@@ -60,4 +60,3 @@ func (g Grant) EffectiveCoreCaps() []CoreCapability {
 	}
 	return LegacyToCoreCaps(g.Permission)
 }
-
