@@ -22,8 +22,12 @@
 //	                 Google/Microsoft/Okta presets (RS256 / ES256).
 //	apikey.go argon2id hashing + in-memory APIKeyManager.
 //	apikey_persistent.go PersistentAPIKeyManager (durable, rotatable).
-//	session.go In-memory SessionManager.
-//	errors.go UNAUTHENTICATED / PERMISSION_DENIED wrappers.
+//	session.go SessionManager: per-session TTL, per-user
+//	                concurrent-session cap, request-checked
+//	                revocation list, over a pluggable SessionStore
+//	                (in-memory default; Redis seam documented).
+//	errors.go UNAUTHENTICATED / PERMISSION_DENIED /
+//	                RESOURCE_EXHAUSTED wrappers.
 //
 // Production OAuth/OIDC ships here (JWKSValidator: network JWKS fetch +
 // caching + key rotation, OIDC discovery, Google/Microsoft/Okta
@@ -39,9 +43,12 @@
 // the new key, flip clients over, then revoke the old key_id). It is
 // wired into cmd/entdb-server behind the --api-key-auth flag.
 //
-// Redis-backed sessions and the quota interceptor are tracked
-// separately (#88); this package ships the production OAuth validators
-// and the argon2id API-key managers (in-memory + persistent), plus the
-// trusted-actor plumbing, with an in-memory session manager for tests
-// and dev.
+// Session management is production-shaped: the SessionStore interface
+// in session.go is the seam for sharing the session table and
+// revocation list across replicas (Redis, or a stateless signed-token
+// scheme). The default in-process store is correct for single-node and
+// tests. The quota interceptor is tracked separately; this package
+// ships the production OAuth validators, the argon2id API-key managers
+// (in-memory + persistent), and the production session manager, plus
+// the trusted-actor plumbing.
 package auth

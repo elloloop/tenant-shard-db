@@ -134,7 +134,12 @@ func (i *Interceptor) authenticate(ctx context.Context) (context.Context, error)
 		return WithIdentity(ctx, id), nil
 	}
 
-	// 3. Session token.
+	// 3. Session token. Sessions.Validate is called on EVERY request,
+	//    so the revocation list (MemorySessionManager.Revoke /
+	//    RevokeUser, or any SessionStore-backed implementation) takes
+	//    effect on the next request -- revocation is not deferred to
+	//    lazy TTL expiry. The per-user concurrent-session cap is
+	//    enforced at session-creation time, not here.
 	if tok := firstHeader(md, headerSessionToken); tok != "" && i.Sessions != nil {
 		info, err := i.Sessions.Validate(ctx, tok)
 		if err != nil {

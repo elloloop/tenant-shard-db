@@ -27,3 +27,15 @@ func unauthenticatedf(format string, a ...any) error {
 func permissionDeniedf(format string, a ...any) error {
 	return errs.Errorf(codes.PermissionDenied, format, a...)
 }
+
+// resourceExhaustedf wraps a formatted message in
+// codes.ResourceExhausted. Used when a credential operation is
+// rejected because a configured limit is hit rather than because the
+// credential is bad -- specifically the per-user concurrent-session
+// cap in session.go. ResourceExhausted (not PermissionDenied) signals
+// to the caller that the request itself is fine but a quota-style
+// limit blocked it, so it can surface "you have too many active
+// sessions" rather than "access denied".
+func resourceExhaustedf(format string, a ...any) error {
+	return errs.Errorf(codes.ResourceExhausted, format, a...)
+}
