@@ -210,6 +210,24 @@ func Delete[T proto.Message](p *Plan, nodeID string) {
 //	    []entdb.Filter{{Field: "expires_at", Op: entdb.FilterLt, Value: now}},
 //	    1000,
 //	)
+//
+// Schema-less servers (issue #545): a server started without a schema
+// cannot resolve a field NAME to a payload field id. Pass the numeric
+// payload field id as the [Filter].Field string instead — exactly the
+// schema-optional escape hatch QueryWhere already accepts for numeric
+// filter keys. The SDK forwards Field verbatim; the server treats a
+// digit-only key as a raw field id with no schema lookup:
+//
+//	// "expires_at" is proto field 4 on the caller's own schema.
+//	entdb.DeleteWhere[*auth.WebAuthnChallenge](plan,
+//	    []entdb.Filter{{Field: "4", Op: entdb.FilterLt, Value: now}},
+//	    1000,
+//	)
+//
+// Against a schema-configured server both forms work; against a
+// schema-less server only the numeric-id form does (a name key
+// returns INVALID_ARGUMENT: "cannot translate filter key … without a
+// schema").
 func DeleteWhere[T proto.Message](p *Plan, where []Filter, limit int) {
 	p.ensureNotCommitted()
 	msg := newZeroMessage[T]()

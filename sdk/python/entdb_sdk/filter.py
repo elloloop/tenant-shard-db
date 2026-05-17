@@ -46,13 +46,23 @@ class FilterOp(str, Enum):
 
 @dataclass(frozen=True)
 class Filter:
-    """One AND-ed predicate passed to :meth:`DbClient.query`.
+    """One AND-ed predicate passed to :meth:`DbClient.query` and
+    :meth:`Plan.delete_where`.
 
     ``field`` is the proto field name (the gRPC boundary resolves it
     to a payload field id). ``op`` selects the comparison operator.
     ``value`` is bound as a SQLite parameter and accepts the same
     scalar types as the existing equality filter (str, int, float,
     bool, ``None``).
+
+    Schema-less escape hatch (issue #545): ``field`` may instead be
+    the digit-only numeric payload field id (e.g. ``"4"``). The SDK
+    forwards ``field`` verbatim on the wire; a server started without
+    a schema treats a digit-only key as a raw field id and skips
+    name resolution. This is the only way to filter against a
+    schema-less server — passing a field NAME there raises
+    ``INVALID_ARGUMENT`` ("cannot translate filter key … without a
+    schema"). A schema-configured server accepts either form.
     """
 
     field: str

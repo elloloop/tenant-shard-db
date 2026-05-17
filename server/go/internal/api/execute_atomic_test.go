@@ -1366,3 +1366,202 @@ func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 		t.Fatalf("predicate field_id: got %v want 2 (name->id resolved)", pm["field_id"])
 	}
 }
+
+// TestExecuteAtomic_DeleteWhereSchemalessNumericFieldID is the issue
+// #545 contract: a schema-less server (nil registry) MUST accept a
+// DeleteWhere whose FieldFilter.field is a digit-only numeric field id
+// and sweep exactly the matching nodes — the same schema-optional
+// escape hatch QueryNodes already gives numeric-string filter keys.
+// No client schema registry is required.
+func TestExecuteAtomic_DeleteWhereSchemalessNumericFieldID(t *testing.T) {
+	t.Parallel()
+	f := newSchemalessXAFixture(t)
+	f.runApplier(t)
+	ctx := context.Background()
+
+	// Seed three nodes of an unregistered type via the raw store
+	// (schema-less: payloads are id-keyed). field_id 4 == "expires_at"
+	// on the caller's own (server-unknown) schema.
+	for _, tc := range []struct {
+		id  string
+		exp int64
+	}{
+		{"sweep-a", 10},
+		{"sweep-b", 20},
+		{"keep-c", 9999},
+	} {
+		if _, err := f.store.CreateNodeRaw(ctx, xaTenant, store.NodeInput{
+			NodeID:     tc.id,
+			TypeID:     525,
+			OwnerActor: xaActorStr,
+			Payload:    map[string]any{"4": tc.exp},
+		}); err != nil {
+			t.Fatalf("CreateNodeRaw %s: %v", tc.id, err)
+		}
+	}
+
+	// Sweep everything with field 4 (expires_at) < 100 by NUMERIC
+	// field id — no schema on the server, no registry on the client.
+	resp, err := f.srv.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-schemaless-num",
+		WaitApplied:    true,
+		WaitTimeoutMs:  2000,
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: 525,
+				Where: []*pb.FieldFilter{
+					{Field: "4", Op: pb.FilterOp_LT, Value: newValue(t, int64(100))},
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("schemaless numeric DeleteWhere: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("Success=false (error=%q code=%q) — schemaless numeric DeleteWhere must work",
+			resp.GetError(), resp.GetErrorCode())
+	}
+	f.waitForIdempKey(t, "dw-schemaless-num")
+
+	for _, id := range []string{"sweep-a", "sweep-b"} {
+		if _, err := f.store.GetNode(ctx, xaTenant, id); err == nil {
+			t.Fatalf("node %q should have been swept by the schemaless numeric predicate", id)
+		}
+	}
+	if _, err := f.store.GetNode(ctx, xaTenant, "keep-c"); err != nil {
+		t.Fatalf("keep-c must survive (exp 9999 not < 100): %v", err)
+	}
+
+	// The WAL carries the id-keyed predicate verbatim — field "4"
+	// parsed straight to field_id 4 with no schema involved.
+	recs := f.wal.GetAllRecords(xaTopic)
+	var ev wal.Event
+	if err := json.Unmarshal(recs[len(recs)-1].Value, &ev); err != nil {
+		t.Fatalf("decode sweep event: %v", err)
+	}
+	where, ok := ev.Ops[0]["where"].([]any)
+	if !ok || len(where) != 1 {
+		t.Fatalf("where: got %#v want one predicate", ev.Ops[0]["where"])
+	}
+	pm, _ := where[0].(map[string]any)
+	if fid, _ := pm["field_id"].(float64); int(fid) != 4 {
+		t.Fatalf("predicate field_id: got %v want 4 (numeric key, no schema)", pm["field_id"])
+	}
+}
+
+// TestExecuteAtomic_DeleteWhereSchemalessNameKeyRejected pins the
+// other half of the #545 contract: on a schema-less server a non-digit
+// field NAME is genuinely unresolvable, so DeleteWhere must return a
+// clear INVALID_ARGUMENT with the SAME wording family the QueryNodes /
+// payload.FilterNamesToIDs schema-less path uses. The numeric escape
+// hatch is the only schema-less route; a name key is not silently
+// accepted.
+func TestExecuteAtomic_DeleteWhereSchemalessNameKeyRejected(t *testing.T) {
+	t.Parallel()
+	f := newSchemalessXAFixture(t)
+
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-schemaless-name",
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: 525,
+				Where: []*pb.FieldFilter{
+					{Field: "expires_at", Op: pb.FilterOp_LT, Value: newValue(t, int64(100))},
+				},
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatal("schemaless DeleteWhere with a name key must error")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("code=%v want InvalidArgument", st.Code())
+	}
+	// Exact wording family shared with QueryNodes /
+	// payload.FilterNamesToIDs (translate.go:222-223).
+	if !strings.Contains(st.Message(), "cannot translate filter key") ||
+		!strings.Contains(st.Message(), "without a schema") {
+		t.Fatalf("message %q: want the shared "+
+			`"cannot translate filter key %%q without a schema" wording`, st.Message())
+	}
+}
+
+// TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves pins that
+// the #545 schema-optional change did NOT regress schema mode: with a
+// registry configured, a field NAME still resolves to its field_id and
+// an unknown type_id is still INVALID_ARGUMENT.
+func TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t) // registry has User(type 1): email=1, name=2
+	f.runApplier(t)
+	ctx := context.Background()
+
+	seed, err := f.srv.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-schema-seed",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "s-1",
+				Data: newStruct(t, map[string]any{"email": "x@x", "name": "drop"}),
+			}}},
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "s-2",
+				Data: newStruct(t, map[string]any{"email": "y@y", "name": "stay"}),
+			}}},
+		},
+	})
+	if err != nil || !seed.GetSuccess() {
+		t.Fatalf("seed: err=%v resp=%+v", err, seed)
+	}
+	f.waitForIdempKey(t, "dw-schema-seed")
+
+	resp, err := f.srv.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-schema-sweep",
+		WaitApplied:    true,
+		WaitTimeoutMs:  2000,
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: 1,
+				Where: []*pb.FieldFilter{
+					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "drop")},
+				},
+			}},
+		}},
+	})
+	if err != nil || !resp.GetSuccess() {
+		t.Fatalf("schema-mode name sweep: err=%v resp=%+v", err, resp)
+	}
+	f.waitForIdempKey(t, "dw-schema-sweep")
+	if _, err := f.store.GetNode(ctx, xaTenant, "s-1"); err == nil {
+		t.Fatal("s-1 (name=drop) should have been swept in schema mode")
+	}
+	if _, err := f.store.GetNode(ctx, xaTenant, "s-2"); err != nil {
+		t.Fatalf("s-2 (name=stay) must survive: %v", err)
+	}
+
+	// Unknown type_id in schema mode is still INVALID_ARGUMENT.
+	_, err = f.srv.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-schema-unknown",
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: 9999,
+				Where: []*pb.FieldFilter{
+					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "drop")},
+				},
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatal("unknown type_id in schema mode must error")
+	}
+	st, _ := status.FromError(err)
+	if st.Code() != codes.InvalidArgument {
+		t.Fatalf("code=%v want InvalidArgument for unknown type_id", st.Code())
+	}
+}

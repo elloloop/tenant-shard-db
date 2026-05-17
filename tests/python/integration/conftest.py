@@ -161,8 +161,17 @@ ALICE = "user:alice"
 SEED_NODE_ID = "seeded-node"
 
 
-async def _start_go_server(tmp_path_factory) -> AsyncIterator[int]:
-    """Go subprocess harness — yields the bound port."""
+async def _start_go_server(tmp_path_factory, *, profile: str = "contract") -> AsyncIterator[int]:
+    """Go subprocess harness — yields the bound port.
+
+    ``profile`` selects the ``--seed-profile``. The default
+    ``"contract"`` (registry configured + seeded ``acme`` tenant) is
+    what every existing fixture relies on. ``"none"`` boots the server
+    schema-less (nil registry, no seeded tenant) — used by the issue
+    #545 schema-less DeleteWhere regression; a schema-less server
+    auto-opens a tenant on first write so no ``--seed-tenant`` is
+    passed.
+    """
     binary = _build_go_binary()
     data_dir = tmp_path_factory.mktemp("entdb-go-data")
     log_path = tmp_path_factory.mktemp("entdb-go-logs") / "server.log"
@@ -184,10 +193,10 @@ async def _start_go_server(tmp_path_factory) -> AsyncIterator[int]:
             "--wal-backend",
             "memory",
             "--seed-profile",
-            "contract",
-            "--seed-tenant",
-            TENANT,
+            profile,
         ]
+        if profile != "none":
+            cmd += ["--seed-tenant", TENANT]
         log_fh = open(log_path, "ab", buffering=0)  # noqa: SIM115 - lifetime tied to subprocess
         proc = subprocess.Popen(
             cmd,
@@ -251,3 +260,29 @@ async def live_server(tmp_path_factory):
 def grpc_endpoint(live_server) -> str:
     """``"127.0.0.1:<port>"`` form of :func:`live_server`."""
     return f"127.0.0.1:{live_server}"
+
+
+@pytest.fixture
+async def schemaless_live_server(tmp_path_factory):
+    """A live server booted schema-less (``--seed-profile none``).
+
+    Used by the issue #545 regression: a schema-less server cannot
+    resolve a field NAME, so DeleteWhere must be driven by the numeric
+    payload field id. No tenant is seeded — the applier auto-opens a
+    tenant on first write.
+    """
+    agen = _start_go_server(tmp_path_factory, profile="none")
+    port = await agen.__anext__()
+    try:
+        yield port
+    finally:
+        try:
+            await agen.__anext__()
+        except StopAsyncIteration:
+            pass
+
+
+@pytest.fixture
+def schemaless_grpc_endpoint(schemaless_live_server) -> str:
+    """``"127.0.0.1:<port>"`` form of :func:`schemaless_live_server`."""
+    return f"127.0.0.1:{schemaless_live_server}"

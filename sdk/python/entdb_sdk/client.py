@@ -579,6 +579,17 @@ class Plan:
         #501), so the same six comparison operators are available and
         AND-ed together.
 
+        Schema-less servers (issue #545): a server started without a
+        schema cannot resolve a field NAME to a payload field id.
+        Pass the numeric payload field id as ``Filter.field`` (e.g.
+        ``Filter(field="4", op=FilterOp.LT, value=now)``) — the SDK
+        forwards it verbatim and the schema-less server treats a
+        digit-only key as a raw field id with no schema lookup. This
+        is the same schema-optional escape hatch ``query(where=)``
+        already accepts for numeric filter keys. Against a
+        schema-less server a field NAME raises ``INVALID_ARGUMENT``
+        ("cannot translate filter key … without a schema").
+
         Args:
             node_type: The proto message *class* (e.g.
                 ``schema_pb2.WebAuthnChallenge``) whose descriptor
