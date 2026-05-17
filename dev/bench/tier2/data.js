@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779026406578,
+  "lastUpdate": 1779026921813,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2052,6 +2052,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0012791506414984088",
             "extra": "mean: 5.830655976332157 msec\nrounds: 169"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8eb78e3309b3f0f483508c0784bf6b02822d2b0b",
+          "message": "perf(store): split per-tenant read connections from the write connection (#536)\n\nPer-tenant *sql.DB used SetMaxOpenConns(1), so every same-tenant query\n(reads included) serialized onto a single connection. 50 parallel\nGetNode calls for one tenant ran strictly one at a time regardless of\nWAL mode (issue #137 / canonical-store.md open question 5). Design and\nblocking conditions: ADR-026.\n\nOpen a second, read-only pooled handle per tenant (mode=ro +\nPRAGMA query_only, SetMaxOpenConns(N)) and route the pure SELECT\nmethods (GetNode, QueryNodes, ACL/visibility/edges/fts/offset/\nidempotency reads) to it. The write/DDL handle is unchanged: still\nSetMaxOpenConns(1) + writeMu + BEGIN IMMEDIATE, so ADR-016\n(applier-only writes, single-writer) and write serialization are\npreserved verbatim. The read handle is opened SQLITE_OPEN_READONLY so\nit physically cannot write — concurrent readers cannot race\nINSERT-OR-REPLACE because they cannot write at all.\n\nThe split is ON BY DEFAULT (--read-pool-size=8): it is opt-OUT, not\nopt-in. Set --read-pool-size=0/1 to disable and revert to the single\nshared connection (exact pre-#137 behaviour). The split also requires\nWAL mode; with the rollback journal it falls back to the single write\nhandle regardless of pool size.\n\nADR-026 condition 1 (root-cause read-after-write fix). The split\nremoved an implicit connection-serialisation that was masking a\npre-existing latent race: UpdateAppliedOffsetTx broadcast offsetCond\n(waking WaitForOffset(N) waiters) BEFORE BatchTxn.Commit. With the\nsplit on, a woken reader runs on an independent read connection and its\nWAL snapshot can exclude the still-uncommitted write — the client reads\nits own confirmed write back as stale / Found=false. This is the\ndefault Python-SDK after_offset read-your-write path. Fix: the\napplied_offsets row is still written inside the applier's BatchTxn\n(atomic with the data), but the in-memory tracker bump + offsetCond\nbroadcast is deferred to AFTER the SQL COMMIT (offset.go stashes a\npending notify on the BatchTxn; txn.go BatchTxn.Commit publishes it via\nnotifyOffset post-COMMIT; Rollback / no-op commit publish nothing). The\nnon-txn / global apply path (UpdateAppliedOffset, used by\napply/global.go) already commits the offset row before notifying and is\npreserved. This also closes the pre-existing latent bug.\n\nADR-026 condition 2 (regression test).\nTestReadSplitWaitForOffsetObservesAppliedWrite drives a create_node\nthrough the real WAL->applier path with the split on (ReadPoolSize=8),\nfences a re-routed GetNode via WaitForOffset under concurrent apply,\nand asserts the write is observed. A test-only preCommitHook seam\n(export_test.go; nil in production) makes the broadcast->commit window\ndeterministic. Verified: fails on the pre-fix code (WaitForOffset\nreturns but the read-pool GetNode returns NotFound), passes with the\ncondition-1 fix.\n\nADR-026 condition 3 (narrative). Flag help text and code comments\n(pool.go, canonical.go, main.go) corrected: the split is on by default\n/ opt-out, and read-your-writes via bare WaitForOffset is weakened by\nthe split and then re-fixed by condition 1 — not \"preserved\".\n\nCorrectness: the applier reads its own uncommitted writes exclusively\nthrough tx.Conn() (the BEGIN IMMEDIATE write connection) — no store\nSELECT method observes in-flight writes. Handler-side ACL pre-flight\nand WaitForOffset reads see committed state because, with condition 1,\nthe offset broadcast fires only after COMMIT makes the data visible on\nevery connection including the read pool.\n\nBenchmark (Apple M-series, same-tenant parallel GetNode):\n  serialized-readpool=1   ~10.4 us/op\n  split-readpool=8         ~3.7 us/op   (~2.7x throughput)\n\nAdds BenchmarkSameTenantParallelReads plus concurrent read/write\ncorrectness tests (race-clean). Full Go suite (+ -race on store/apply),\nGo SDK, Python integration (101), and Docker e2e (22) all green.\n\nCloses #137",
+          "timestamp": "2026-05-17T15:06:09+01:00",
+          "tree_id": "b958e907dc11867c4cfc30da417c5023b826754a",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/8eb78e3309b3f0f483508c0784bf6b02822d2b0b"
+        },
+        "date": 1779026920844,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2353.6917225211128,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027957882582134902",
+            "extra": "mean: 424.8644758493983 usec\nrounds: 1118"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1671.608829341507,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007274644302337773",
+            "extra": "mean: 598.2260816329426 usec\nrounds: 1078"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 826.7313562463875,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005366502392962183",
+            "extra": "mean: 1.2095827652410633 msec\nrounds: 771"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 739.8390138272251,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001375372295657596",
+            "extra": "mean: 1.3516454002972198 msec\nrounds: 677"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1197.572011613373,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017808065381038636",
+            "extra": "mean: 835.0228548284097 usec\nrounds: 1481"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1104.8473685586885,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023680518138003174",
+            "extra": "mean: 905.1023955503777 usec\nrounds: 1393"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1198.9910920102138,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018521585050859113",
+            "extra": "mean: 834.0345534372673 usec\nrounds: 1469"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1567.7919959618707,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00048790942643183653",
+            "extra": "mean: 637.839715074244 usec\nrounds: 1267"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1453.3736590212877,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002780479326228729",
+            "extra": "mean: 688.0543030299635 usec\nrounds: 429"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1267.2589349975083,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000043353274242434375",
+            "extra": "mean: 789.10471442205 usec\nrounds: 1040"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1923.4690824223385,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000034078100843867675",
+            "extra": "mean: 519.8939817325479 usec\nrounds: 1697"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 159.7319291638046,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010012970554464007",
+            "extra": "mean: 6.260489090909952 msec\nrounds: 154"
           }
         ]
       }
