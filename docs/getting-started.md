@@ -199,6 +199,14 @@ func main() {
 
 The `$task.id` / `$alice.id` syntax (Python) and `plan.Create(...)` returning an alias-style token (Go) let a single plan reference nodes it creates in the same call — the server resolves aliases before persisting.
 
+> **Bulk cleanup:** to delete every node matching a predicate in one
+> round-trip (the TTL-sweeper pattern), use `plan.delete_where(...)` /
+> `entdb.DeleteWhere[...]` instead of a query-then-delete loop. On a
+> schema-less server, filter by the numeric payload field id (same
+> rule as `QueryNodes` filters) — see [Plan methods](sdk-reference.md#plan-methods)
+> and [Schema lockdown → `delete_where` on schema-less deployments](guides/schema-lockdown.md#delete_where-and-querynodes-on-schema-less-deployments)
+> ([#545](https://github.com/elloloop/tenant-shard-db/issues/545)).
+
 ## 6. Inspect the data
 
 - **EntDB Console** (<http://localhost:8080>): browse tenants, nodes, edges; run sandbox writes against `playground`.

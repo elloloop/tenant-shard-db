@@ -407,6 +407,91 @@ production use; capture yours via `entdb-schema snapshot --from-server`
 pointed at your actual server (with your full registry registered, not
 just the contract-test seed).
 
+## `delete_where` and `QueryNodes` on schema-less deployments
+
+Some deployments run `entdb-server` **without** a registered schema —
+no `.schema-snapshot.json`, no `--seed-profile`, the registry empty by
+design (a thin keyed-blob store, or an early bootstrap stage before the
+schema is locked). That mode is fully supported for predicate
+operations, with one rule you must know.
+
+EntDB payloads are keyed on the wire and on disk by numeric
+`field_id`, never by name ([ADR-018](../adr/018-field-id-keyed-payloads.md)).
+The SDKs translate a human field *name* to its `field_id` from the
+proto descriptor before the call. The **server** only needs to do that
+translation for predicate *filters* — and it can only do it if it has a
+schema. So the rule is symmetric across the two predicate surfaces:
+
+- A filter **field name** (e.g. `"expires_at"`) requires a registered
+  schema. Against a schema-less server it returns
+  `INVALID_ARGUMENT: "cannot translate filter key … without a schema"`.
+- A **digit-only numeric payload field id** (e.g. `"4"`) works
+  schema-less: the server treats a digit-only key as a raw `field_id`
+  and skips the lookup entirely.
+
+This is the **same schema-optional escape hatch `QueryNodes` filters
+already accept** — `delete_where` (the single-RPC predicate sweeper,
+[issue #504](https://github.com/elloloop/tenant-shard-db/issues/504))
+deliberately reuses the exact `FieldFilter` / `FilterOp` types, so the
+behaviour is identical to `query(where=)` / `QueryWhere`. The
+schema-less numeric-field-id requirement for `delete_where` is tracked
+in [issue #545](https://github.com/elloloop/tenant-shard-db/issues/545).
+
+Against a schema-**configured** server both forms work; against a
+schema-**less** server only the numeric-id form does. Pick the proto
+field number from your own schema (the field number IS the `field_id`,
+[ADR-006](../adr/006-proto-schema-definition.md) /
+[ADR-018](../adr/018-field-id-keyed-payloads.md)) — e.g. if
+`expires_at` is field `4` in your `.proto`, pass `"4"`.
+
+### Go
+
+```go
+// Schema-configured server: a field name is fine.
+entdb.DeleteWhere[*auth.WebAuthnChallenge](plan,
+    []entdb.Filter{{Field: "expires_at", Op: entdb.FilterLt, Value: nowMs}},
+    1000)
+
+// Schema-LESS server: pass the numeric field id ("expires_at" is
+// proto field 4 in the caller's own schema). A name key here would
+// fail with INVALID_ARGUMENT: "cannot translate filter key … without
+// a schema". QueryWhere filters take the exact same numeric key.
+entdb.DeleteWhere[*auth.WebAuthnChallenge](plan,
+    []entdb.Filter{{Field: "4", Op: entdb.FilterLt, Value: nowMs}},
+    1000)
+```
+
+### Python
+
+```python
+from entdb_sdk import Filter, FilterOp
+
+# Schema-configured server: a field name is fine.
+plan.delete_where(
+    schema_pb2.WebAuthnChallenge,
+    [Filter(field="expires_at", op=FilterOp.LT, value=now_ms)],
+    limit=1000,
+)
+
+# Schema-LESS server: pass the numeric field id ("expires_at" is
+# proto field 4 in the caller's own schema). A name key here raises
+# INVALID_ARGUMENT: "cannot translate filter key … without a schema".
+# The same numeric key works for query(where=) / QueryNodes filters.
+plan.delete_where(
+    schema_pb2.WebAuthnChallenge,
+    [Filter(field="4", op=FilterOp.LT, value=now_ms)],
+    limit=1000,
+)
+```
+
+`limit` is best-effort (Postgres `DELETE … LIMIT` semantics): the
+server caps it to a hard ceiling so a runaway predicate cannot pin a
+tenant's single applier goroutine. Drain a large backlog by sweeping
+in a loop until a sweep deletes nothing. The full SDK signature and
+narrative live in [sdk-reference.md → Plan methods](../sdk-reference.md#plan-methods);
+the wire-level op shape is in [api-reference.md → `ExecuteAtomic`
+operations](../api-reference.md#executeatomic-operations).
+
 ## Caveats and follow-ups
 
 - **`--from-descriptors` is reserved.** Loading the registry from a
@@ -426,6 +511,10 @@ just the contract-test seed).
 
 - Issue #488 — design and rationale (acceptance criteria, alternative
   shapes, performance budget).
+- Issues [#504](https://github.com/elloloop/tenant-shard-db/issues/504)
+  / [#545](https://github.com/elloloop/tenant-shard-db/issues/545) —
+  the `delete_where` sweeper and its schema-less numeric-field-id
+  requirement (see [above](#delete_where-and-querynodes-on-schema-less-deployments)).
 - `docs/schema-evolution.md` — the rules `entdb-schema` enforces.
 - `docs/go-port/shared/schema-registry.md` — the registry's runtime
   contract that the snapshot captures.

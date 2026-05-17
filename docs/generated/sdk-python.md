@@ -4,7 +4,7 @@
 
 # Python SDK Reference (generated)
 
-Extracted from `sdk/python/entdb_sdk` — `__all__` and `DbClient` public methods. Narrative + Go side-by-side lives in [sdk-reference.md](../sdk-reference.md).
+Extracted from `sdk/python/entdb_sdk` — `__all__` plus the public methods of `DbClient` (connection entrypoint) and `Plan` (chained-write builder). Narrative + Go side-by-side lives in [sdk-reference.md](../sdk-reference.md).
 
 ## Public API surface (`from entdb_sdk import ...`)
 
@@ -102,3 +102,15 @@ Extracted from `sdk/python/entdb_sdk` — `__all__` and `DbClient` public method
 | `async transfer_user_content(tenant_id, from_user, to_user, *, actor=..., timeout=...)` | Reassign ownership of all nodes from from_user to to_user. |
 | `async update_user(user_id, *, name=..., email=..., status=..., actor=..., timeout=...)` | Update user fields. |
 | `async wait_for_offset(tenant_id, stream_position, timeout_ms=..., *, trace_id=..., timeout=...)` | Wait for a stream position to be applied. |
+
+## `Plan` methods
+
+| Method | Description |
+|---|---|
+| `async commit(wait_applied=..., *, timeout=...)` | Commit the transaction. |
+| `create(msg, *, acl=..., storage=..., as_=..., fanout_to=..., id_=...)` | Create a node from a proto message. |
+| `delete(node_type, node_id)` | Delete a node. |
+| `delete_where(node_type, where, *, limit=...)` | Delete every node of a type matching a predicate, in one op. |
+| `edge_create(edge_type, from_id, to_id, *, props=...)` | Create an edge. |
+| `edge_delete(edge_type, from_id, to_id)` | Delete an edge. |
+| `update(node_id, msg, *, precondition=...)` | Update a node from a proto message. |

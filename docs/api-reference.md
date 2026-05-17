@@ -38,7 +38,7 @@ The 44 RPCs cluster into the following groups. Source-of-truth for shapes is the
 
 **Data plane (per-tenant):**
 
-- `ExecuteAtomic` — the only mutating RPC for tenant data. Builds one or more ops in a single WAL event.
+- `ExecuteAtomic` — the only mutating RPC for tenant data. Builds one or more ops in a single WAL event. Op union includes the `delete_where` predicate sweeper (see [`ExecuteAtomic` operations](#executeatomic-operations)).
 - `GetNode`, `GetNodes`, `GetNodeByKey`, `QueryNodes`, `SearchNodes`
 - `GetEdgesFrom`, `GetEdgesTo`, `GetConnectedNodes`
 - `GetMailbox`, `SearchMailbox`, `ListMailboxUsers`
@@ -156,6 +156,21 @@ Special kind coercions on ingress (server-side, when the schema is known):
 - **json**: nested `Struct` values are unwrapped to native maps once; never recurses.
 
 On egress, the wire shape is symmetric: `[]byte` re-encoded as base64, `int64` written as `float64` (structpb), enums as strings.
+
+## `ExecuteAtomic` operations
+
+`ExecuteAtomic` carries `repeated Operation operations`; each `Operation` is a `oneof op` over the six op messages. These are wire contract but are **not** standalone RPCs — the machine-extracted inventory of all six is in [`docs/generated/api-reference.md`](generated/api-reference.md).
+
+| `op` field | Message | Purpose |
+|---|---|---|
+| `create_node` | `CreateNodeOp` | Insert a node. |
+| `update_node` | `UpdateNodeOp` | Patch a node, optionally with a CAS precondition. |
+| `delete_node` | `DeleteNodeOp` | Delete a single node by id. |
+| `create_edge` | `CreateEdgeOp` | Insert an edge. |
+| `delete_edge` | `DeleteEdgeOp` | Delete an edge. |
+| `delete_where` | `DeleteWhereOp` | Predicate sweeper: delete every node of a type matching all `where` filters, best-effort capped by `limit`, in one op (issue [#504](https://github.com/elloloop/tenant-shard-db/issues/504)). |
+
+`DeleteWhereOp.where` reuses the same `FieldFilter` / `FilterOp` shape as `QueryNodesRequest.filters`, so no new wire concept is introduced. As with `QueryNodes` filters, the filter `field` is normally a payload `field_id` resolved client-side from a name; against a **schema-less server** only digit-string keys translate (a name key returns `INVALID_ARGUMENT` — see [Field IDs, not field names](#field-ids-not-field-names) and the [schema-lockdown guide](guides/schema-lockdown.md#delete_where-and-querynodes-on-schema-less-deployments), issue [#545](https://github.com/elloloop/tenant-shard-db/issues/545)). `limit <= 0` selects the server default cap; the server clamps to a hard ceiling so a runaway predicate cannot pin the single applier goroutine for a tenant. Deleted ids are not returned (v1 scope, #504) — callers needing the ids keep using the `QueryNodes` + `DeleteNodeOp` loop.
 
 ## Schema RPC
 

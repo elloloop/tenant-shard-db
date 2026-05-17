@@ -170,11 +170,31 @@ result, err := plan.Commit(ctx,
 | Update a node | `plan.update(node_id, msg)` | `plan.Update(nodeID, msg)` |
 | Update with precondition (CAS) | `plan.update(id, msg, precondition=("field", value))` | `plan.UpdateIf(...)` |
 | Delete a node | `plan.delete(NodeType, node_id)` | `entdb.Delete[T](plan, nodeID)` |
+| Delete by predicate (sweeper) | `plan.delete_where(NodeType, where, *, limit=0)` | `entdb.DeleteWhere[T](plan, where, limit)` |
 | Create an edge | `plan.edge_create(EdgeType, from_id, to_id, props={})` | `entdb.EdgeCreate[T](plan, from, to, opts...)` |
 | Delete an edge | `plan.edge_delete(EdgeType, from_id, to_id)` | `entdb.EdgeDelete[T](plan, from, to)` |
 | Commit | `await plan.commit(...)` | `plan.Commit(ctx, ...)` |
 
 `as_` (Python) / the alias returned from `plan.Create` (Go) lets later ops in the same plan reference the new node before it has a server-assigned ID. The server resolves `$alias.id` at apply time.
+
+#### `delete_where` — single-RPC predicate sweeper
+
+`delete_where` (issue [#504](https://github.com/elloloop/tenant-shard-db/issues/504)) deletes every node of a type matching an AND-ed list of `Filter` predicates in **one** `ExecuteAtomic` op, collapsing the TTL-sweeper "query for ids, then delete each" loop into a single round-trip. At least one filter is required — an unconditional bulk delete is rejected. `limit` is best-effort (Postgres `DELETE … LIMIT` semantics): `0` selects the server default, which the server clamps to its own ceiling so a runaway predicate cannot pin a tenant's single applier; drain a backlog by sweeping in a loop until a sweep deletes nothing.
+
+```python
+plan.delete_where(
+    schema_pb2.WebAuthnChallenge,
+    [Filter(field="expires_at", op=FilterOp.LT, value=now_ms)],
+    limit=1000,
+)
+```
+
+```go
+entdb.DeleteWhere[*myschema.WebAuthnChallenge](plan,
+    []entdb.Filter{{Field: "expires_at", Op: entdb.FilterLt, Value: nowMs}}, 1000)
+```
+
+The predicate is resolved exactly like `query(where=)` — server-side, from payload `field_id`s. **Schema-less servers** (issue [#545](https://github.com/elloloop/tenant-shard-db/issues/545)): a server started without a registered schema cannot translate a field *name* to a `field_id`. Pass the numeric payload field id as the filter field (e.g. `Filter(field="4", ...)` / `{Field: "4", ...}`); the SDK forwards a digit-only key verbatim and the server treats it as a raw `field_id` with no schema lookup — the same schema-optional escape hatch `QueryNodes` filters already accept. Against a schema-less server a *name* key returns `INVALID_ARGUMENT` (`"cannot translate filter key … without a schema"`). See [Schema lockdown → `delete_where` on schema-less deployments](guides/schema-lockdown.md#delete_where-and-querynodes-on-schema-less-deployments).
 
 ## Reads
 

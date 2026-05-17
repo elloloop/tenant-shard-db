@@ -118,7 +118,64 @@ def extract_rpcs(proto_text: str) -> list[Rpc]:
     return rpcs
 
 
-def render_api_reference(rpcs: list[Rpc]) -> str:
+@dataclass
+class Op:
+    """A member of the ``Operation`` oneof (an ``ExecuteAtomic`` op).
+
+    These are part of the wire contract but are *not* RPCs — they ride
+    inside ``ExecuteAtomicRequest.operations``. The RPC-only walk never
+    listed them, so ``delete_where`` (the #545 schema-less sweeper)
+    was absent from the generated reference. Extracting the oneof
+    closes that blind spot symmetrically with the ``Plan`` one.
+    """
+
+    field: str  # oneof field name, e.g. "delete_where"
+    message: str  # message type, e.g. "DeleteWhereOp"
+    doc: str  # leading // comment on the message definition
+
+
+def extract_operations(proto_text: str) -> list[Op]:
+    """Parse the ``Operation`` oneof and each op message's doc comment."""
+    lines = proto_text.splitlines()
+
+    # 1. The oneof members: field name -> message type.
+    members: list[tuple[str, str]] = []
+    in_op_msg = False
+    in_oneof = False
+    member_re = re.compile(r"(\w+)\s+(\w+)\s*=\s*\d+\s*;")
+    for raw in lines:
+        s = raw.strip()
+        if s.startswith("message Operation"):
+            in_op_msg = True
+            continue
+        if in_op_msg and s.startswith("oneof "):
+            in_oneof = True
+            continue
+        if in_op_msg and in_oneof:
+            if s.startswith("}"):
+                break
+            m = member_re.search(s)
+            if m:
+                members.append((m.group(2), m.group(1)))
+
+    # 2. Each member message's leading // doc comment.
+    doc_for: dict[str, str] = {}
+    pending: list[str] = []
+    for raw in lines:
+        s = raw.strip()
+        if s.startswith("//"):
+            pending.append(s)
+            continue
+        m = re.match(r"message\s+(\w+)\s*\{", s)
+        if m:
+            doc_for[m.group(1)] = _strip_comment(pending)
+        if s:
+            pending.clear()
+
+    return [Op(field=field, message=msg, doc=doc_for.get(msg, "")) for field, msg in members]
+
+
+def render_api_reference(rpcs: list[Rpc], ops: list[Op]) -> str:
     lines = [
         GENERATED_BANNER,
         "# API Reference — gRPC contract (generated)",
@@ -137,6 +194,21 @@ def render_api_reference(rpcs: list[Rpc]) -> str:
     for r in sorted(rpcs, key=lambda x: x.name):
         doc = r.doc.replace("|", "\\|") or "—"
         lines.append(f"| `{r.name}` | `{r.request}` | `{r.response}` | {doc} |")
+    lines += [
+        "",
+        "## `ExecuteAtomic` operations",
+        "",
+        "The `ExecuteAtomic` RPC carries a list of `Operation`s "
+        "(the `oneof op`). Each op below is a member of that union — "
+        "they are wire contract, not standalone RPCs. `delete_where` "
+        "is the single-RPC predicate sweeper (issues #504, #545).",
+        "",
+        "| Op | Message | Description |",
+        "|---|---|---|",
+    ]
+    for o in sorted(ops, key=lambda x: x.field):
+        doc = o.doc.replace("|", "\\|") or "—"
+        lines.append(f"| `{o.field}` | `{o.message}` | {doc} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -199,20 +271,27 @@ def _public_exports(init_text: str) -> list[str]:
     return []
 
 
-def extract_python(client_text: str, init_text: str) -> tuple[list[str], list[PySymbol]]:
-    """Return (public __all__ names, DbClient public methods)."""
-    exports = _public_exports(init_text)
-    tree = ast.parse(client_text)
-    methods: list[PySymbol] = []
+# Public client-surface classes whose methods are part of the
+# contract. ``DbClient`` is the connection/entrypoint; ``Plan`` is the
+# chained-write builder (``plan.create(...).delete_where(...).commit()``)
+# whose methods — including ``delete_where``, the #545 schema-less
+# sweeper — are public API but are NOT ``DbClient`` methods, so the
+# original ``DbClient``-only walk never saw them (a coverage blind
+# spot). Both classes live in client.py and both are in ``__all__``.
+_CLIENT_SURFACE_CLASSES = ("DbClient", "Plan")
+
+
+def _class_methods(tree: ast.AST, class_name: str) -> list[PySymbol]:
+    out: list[PySymbol] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.ClassDef) and node.name == "DbClient":
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
             for item in node.body:
                 if isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef):
                     if item.name.startswith("_"):
                         continue
                     is_async = isinstance(item, ast.AsyncFunctionDef)
                     sig = f"{'async ' if is_async else ''}{item.name}({_format_args(item)})"
-                    methods.append(
+                    out.append(
                         PySymbol(
                             name=item.name,
                             kind="method",
@@ -220,32 +299,49 @@ def extract_python(client_text: str, init_text: str) -> tuple[list[str], list[Py
                             doc=_ast_first_doc(item),
                         )
                     )
-    return exports, methods
+    return out
 
 
-def render_python(exports: list[str], methods: list[PySymbol]) -> str:
+def extract_python(client_text: str, init_text: str) -> tuple[list[str], dict[str, list[PySymbol]]]:
+    """Return (public ``__all__`` names, {class -> public methods}).
+
+    Methods are collected for every class in
+    :data:`_CLIENT_SURFACE_CLASSES` so the builder API (``Plan``) is
+    documented and guarded the same way as ``DbClient`` — otherwise a
+    ``Plan``-only method like ``delete_where`` (#545) is invisible to
+    both the generator and the coverage guard.
+    """
+    exports = _public_exports(init_text)
+    tree = ast.parse(client_text)
+    methods_by_class = {name: _class_methods(tree, name) for name in _CLIENT_SURFACE_CLASSES}
+    return exports, methods_by_class
+
+
+def render_python(exports: list[str], methods_by_class: dict[str, list[PySymbol]]) -> str:
     lines = [
         GENERATED_BANNER,
         "# Python SDK Reference (generated)",
         "",
-        "Extracted from `sdk/python/entdb_sdk` — `__all__` and "
-        "`DbClient` public methods. Narrative + Go side-by-side lives "
-        "in [sdk-reference.md](../sdk-reference.md).",
+        "Extracted from `sdk/python/entdb_sdk` — `__all__` plus the "
+        "public methods of `DbClient` (connection entrypoint) and "
+        "`Plan` (chained-write builder). Narrative + Go side-by-side "
+        "lives in [sdk-reference.md](../sdk-reference.md).",
         "",
         "## Public API surface (`from entdb_sdk import ...`)",
         "",
     ]
     lines += [f"- `{name}`" for name in sorted(exports)]
-    lines += [
-        "",
-        "## `DbClient` methods",
-        "",
-        "| Method | Description |",
-        "|---|---|",
-    ]
-    for m in sorted(methods, key=lambda x: x.name):
-        doc = (m.doc or "—").replace("|", "\\|")
-        lines.append(f"| `{m.signature}` | {doc} |")
+    for class_name in _CLIENT_SURFACE_CLASSES:
+        lines += [
+            "",
+            f"## `{class_name}` methods",
+            "",
+            "| Method | Description |",
+            "|---|---|",
+        ]
+        for m in sorted(methods_by_class.get(class_name, []), key=lambda x: x.name):
+            doc = (m.doc or "—").replace("|", "\\|")
+            lines.append(f"| `{m.signature}` | {doc} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -304,12 +400,13 @@ def build_all() -> dict[str, str]:
     init_text = PYTHON_SDK_INIT.read_text()
 
     rpcs = extract_rpcs(proto_text)
-    exports, methods = extract_python(client_text, init_text)
+    ops = extract_operations(proto_text)
+    exports, methods_by_class = extract_python(client_text, init_text)
     godoc = extract_go()
 
     return {
-        "api-reference.md": render_api_reference(rpcs),
-        "sdk-python.md": render_python(exports, methods),
+        "api-reference.md": render_api_reference(rpcs, ops),
+        "sdk-python.md": render_python(exports, methods_by_class),
         "sdk-go.md": render_go(godoc),
     }
 
