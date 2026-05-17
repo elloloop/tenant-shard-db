@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015416346,
+  "lastUpdate": 1779015457759,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -1188,6 +1188,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0012695036609685008",
             "extra": "mean: 6.63293221621561 msec\nrounds: 148"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "079e789bda56ed748e4e0af1b2d96806de5507ae",
+          "message": "docs: auto-generate API/SDK reference, tested examples, CI coverage guard (#537)\n\nRestructures documentation so it cannot drift from code (issue #40),\nre-scoped for the post Python-server reality (ADR-017): generate from\nthe proto contract + both SDK surfaces, not the deleted Python server.\n\n- scripts/generate_api_docs.py: extracts the 44-RPC gRPC contract from\n  proto/entdb/v1/entdb.proto, the entdb_sdk public surface + DbClient\n  methods via AST, and the Go SDK surface via 'go doc -all', writing\n  docs/generated/{api-reference,sdk-python,sdk-go}.md. Has a --check\n  mode so stale generated docs fail CI.\n- scripts/check_docs_coverage.py: fails if any public RPC or SDK symbol\n  is undocumented, and if the generated files are stale. Reuses the\n  generator's extractors so the two can't disagree on the surface.\n- examples/: four runnable, CI-tested examples (quickstart, ACL\n  sharing, graph edges, read-after-write) plus a shared harness that\n  boots the Go entdb-server with the contract seed profile. Each file\n  is both a standalone script and a pytest case; example_schema.proto\n  mirrors the server's contract registry so the high-level SDK works.\n- CI wiring: new docs-coverage job in ci.yml regenerates docs, fails\n  on staleness, runs the coverage guard, and executes the example\n  suite end-to-end against the Go server on PRs; docs.yml regenerates\n  the reference from source before the Astro build.\n\nDeferred (issue Layer 3, blocked on the Refraction-UI npm package):\nmoving Astro page content into docs/*.md thin wrappers.",
+          "timestamp": "2026-05-17T11:49:42+01:00",
+          "tree_id": "f5c627a76c365f58d1d7ee77e217cad504a3e20f",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/079e789bda56ed748e4e0af1b2d96806de5507ae"
+        },
+        "date": 1779015456926,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3298.470616859764,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029464435716400017",
+            "extra": "mean: 303.17080737012225 usec\nrounds: 1194"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2178.8305773814,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000038340768069395705",
+            "extra": "mean: 458.9617983064279 usec\nrounds: 1299"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1101.737291218274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008581805110534234",
+            "extra": "mean: 907.6573952527508 usec\nrounds: 969"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 843.5352640037833,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008270286236549025",
+            "extra": "mean: 1.1854868938775214 msec\nrounds: 735"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1948.4480067107436,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007102025643044752",
+            "extra": "mean: 513.2289886904099 usec\nrounds: 1680"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1929.1052055300627,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009199337610933583",
+            "extra": "mean: 518.3750461785876 usec\nrounds: 1884"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1989.3338000804554,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007111728560194329",
+            "extra": "mean: 502.68084720601263 usec\nrounds: 1754"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1997.746985028451,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004145840308953087",
+            "extra": "mean: 500.5638889680309 usec\nrounds: 1405"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1651.6923226089712,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000071599911503395",
+            "extra": "mean: 605.4396368570785 usec\nrounds: 369"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1420.3016753973716,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000724996487016432",
+            "extra": "mean: 704.0757730009861 usec\nrounds: 1163"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2541.089854136154,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005440159309113384",
+            "extra": "mean: 393.5319321244353 usec\nrounds: 1930"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 151.60318878403254,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006912393908496358",
+            "extra": "mean: 6.596167323528778 msec\nrounds: 136"
           }
         ]
       }
