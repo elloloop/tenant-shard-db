@@ -1,8 +1,12 @@
 # ADR-027: Parallel WAL apply across distinct tenants
 
-**Status:** Accepted — implementation (PR #541, issue #140 / PERF-4) is
-**gated on the blocking conditions in §Conditions** and MUST NOT merge
-until they are met.
+**Status:** Accepted — implemented (PR #541, issue #140 / PERF-4); the
+conditions in §Conditions are met. **Landed dark:** ships
+**serial by default** (`--apply-concurrency=1`); parallel apply is an
+explicit operator opt-in, enabled only after a staging soak and
+resolution of the multi-replica / consumer-group-rebalance open
+question (see §Open question). The applier code path is unchanged
+behaviour at the default.
 **Decided:** 2026-05-17
 **Tags:** apply, wal, concurrency, performance, consistency
 **Amends:** [ADR-016](016-handlers-append-applier-writes.md) — the
@@ -16,8 +20,9 @@ flag in `server/go/cmd/entdb-server/main.go`. Tracked by PR #541.
 
 Within a single WAL poll batch, the applier MAY apply records in
 **parallel across distinct tenant route keys**, bounded by
-`--apply-concurrency` (default `GOMAXPROCS`; `1` reproduces the old
-strictly-serial loop). `routeKey = scope + "\x00" + tenant_id`, so all
+`--apply-concurrency` (**default `1` = strictly-serial, the unchanged
+legacy behaviour**; operators opt into parallelism by setting it
+higher, e.g. `GOMAXPROCS`). `routeKey = scope + "\x00" + tenant_id`, so all
 records for one tenant — and all global-scope records — each collapse
 to a single key and a single worker.
 
@@ -86,14 +91,15 @@ This is acceptable because, per
 view with no external consumer reading it mid-halt. Recorded here as a
 deliberate, accepted behavioural change (not a footnote).
 
-## Conditions (blocking — PR #541 does not merge until all are met)
+## Conditions (met before merge)
 
 1. **This ADR** recording the ADR-016 amendment, the four invariants,
    and the accepted consequence. (Done.)
-2. **Wire `--apply-concurrency`** in `cmd/entdb-server/main.go`
-   (default `GOMAXPROCS`, `1` = serial) so operators have a
-   no-redeploy kill-switch for a consistency-sensitive default-on
-   change. Today it is only an `Options` field.
+2. **Wire `--apply-concurrency`** in `cmd/entdb-server/main.go` with
+   **default `1` (serial — dark landing)**; operators explicitly opt
+   into parallelism (`GOMAXPROCS` or a chosen N) after a staging soak.
+   This is both the rollout posture and the no-redeploy kill-switch
+   for a consistency-sensitive change.
 3. **Add a same-partition multi-tenant poison test**: two tenants that
    hash to the *same* WAL partition with a poison from tenant B
    sandwiched between tenant A records, asserting contiguous-prefix

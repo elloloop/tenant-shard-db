@@ -1,8 +1,11 @@
 # ADR-026: Per-tenant read/write SQLite connection split
 
-**Status:** Accepted — implementation (PR #536, issue #137 / PERF-1) is
-**gated on the blocking conditions in §Conditions** and MUST NOT merge
-until they are met.
+**Status:** Accepted — implemented (PR #536, issue #137 / PERF-1); the
+conditions in §Conditions are met. **Landed dark:** the split ships
+**off by default** (`--read-pool-size=1`); enabling it in production is
+an explicit operator opt-in, gated on idle-tenant eviction
+(canonical-store open-question 2). The root-cause broadcast-ordering
+fix (condition 1) is unconditional and always active.
 **Decided:** 2026-05-17
 **Tags:** store, concurrency, performance, sqlite, read-after-write
 **Implementation:** `server/go/internal/store/{pool,canonical}.go`;
@@ -92,19 +95,24 @@ read-your-write path. CI is green only because write RPCs
 in the *same* `BatchTxn` as the data, and every integration/e2e test
 uses that protected write path; the exposed read path has no test.
 
-## Conditions (blocking — PR #536 does not merge until all are met)
+## Conditions (met before merge)
 
 1. **Move `offsetCond.Broadcast()` to after `BatchTxn.Commit()`**
-   (root-cause fix; also fixes the pre-existing latent bug). Until this
-   lands, default `--read-pool-size` to `1` (split off).
+   (root-cause fix; also fixes the pre-existing latent bug).
+   Unconditional and always active regardless of `--read-pool-size`.
 2. **Add a regression test**: a write driven through the WAL→applier
    path, fenced by `after_offset`/`WaitForOffset`, asserting the
    re-routed `GetNode` observes the write under concurrent apply. It
    must fail on the pre-fix branch and pass after condition 1.
-3. **Correct the narrative.** The split ships **on by default**
-   (`--read-pool-size=8`; it is opt-*out*, not opt-in as the PR
-   states). Read-your-writes via bare `WaitForOffset` is *weakened and
-   then re-fixed by condition 1* — not "preserved".
+3. **Accurate rollout posture.** The split ships **off by default**
+   (`--read-pool-size=1`) — a deliberate dark landing. Read-after-write
+   correctness is fixed by condition 1, but the resource envelope
+   (extra FDs + page cache per tenant, no idle-tenant eviction —
+   canonical-store OQ-2) is unresolved, so the split is an explicit
+   operator opt-in pending that work. Flag help and PR narrative state
+   off-by-default / opt-in, and that read-your-writes via
+   `WaitForOffset` is *weakened then re-fixed by condition 1* — not
+   "preserved".
 
 ## Alternatives considered
 
