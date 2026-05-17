@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779018727205,
+  "lastUpdate": 1779018750254,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -1404,6 +1404,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0009032262781547598",
             "extra": "mean: 5.582965701753058 msec\nrounds: 171"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "90039ce7cac04962bf6bd3e4ac7e9cde83f9bc1e",
+          "message": "Production session management: per-user cap, request-checked revocation, pluggable store (#529)\n\nMemorySessionManager had TTL, revocation and lazy expiry but explicitly\nlacked a per-user concurrent-session cap and a revocation list checked\non every request, and wasn't production-shaped.\n\nAdds:\n\n- Per-user concurrent-session cap (configurable; 0 = unlimited).\n  Reject-new on overflow with a ResourceExhausted error rather than\n  evicting the oldest session -- silent oldest-eviction would let\n  anyone who can mint sessions push a legitimate user off their own\n  login with no signal. Expired/revoked sessions are pruned during the\n  count so stale rows never permanently consume a user's quota.\n\n- Revocation list consulted on EVERY Validate (before the session\n  lookup and independent of TTL), so Revoke / RevokeUser take effect\n  on the next request. Revocation deliberately outlives the session\n  row: a token revoked then lazily evicted on expiry stays rejected as\n  revoked on replay, not downgraded to \"invalid\".\n\n- RevokeUser for \"log out everywhere\" / forced sign-out.\n\n- Pluggable SessionStore interface owning the session table and the\n  revocation set. In-memory implementation is the default; the\n  interface is the seam for a Redis adapter (or stateless signed\n  tokens) for multi-replica deployments -- mapping documented on the\n  interface. NewSessionManager is the full constructor;\n  NewMemorySessionManager kept for the existing unlimited/in-memory\n  call sites.\n\nAdds resourceExhaustedf error wrapper. Interceptor session-path\ncomment updated to record the per-request revocation guarantee; doc.go\nupdated. No behaviour change for existing callers\n(NewMemorySessionManager == unlimited cap + default store).\n\nTests: cap enforcement (reject-new, per-user isolation, revoke frees a\nslot, expired doesn't count, unlimited), immediate revocation on next\nrequest, revocation outliving the entry, RevokeUser, and a counting\nstore proving all persistence flows through the SessionStore seam.\n\nAdvances Epic #85.\n\nCloses #88",
+          "timestamp": "2026-05-17T12:50:07+01:00",
+          "tree_id": "3ef1972c2c167c6c81668bda7cb7759018be2a78",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/90039ce7cac04962bf6bd3e4ac7e9cde83f9bc1e"
+        },
+        "date": 1779018749788,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2291.833100981483,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000043653669998410576",
+            "extra": "mean: 436.3319473707521 usec\nrounds: 1102"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1618.2233963492142,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000621532443601949",
+            "extra": "mean: 617.9616499526861 usec\nrounds: 1057"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 816.4462567565675,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005403626452065891",
+            "extra": "mean: 1.2248203623011538 msec\nrounds: 748"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 723.468065176822,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012909671018230612",
+            "extra": "mean: 1.3822310176961177 msec\nrounds: 678"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1183.4388126591127,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017914860475232019",
+            "extra": "mean: 844.9951018194704 usec\nrounds: 1375"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1096.2484407288164,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023631416472570397",
+            "extra": "mean: 912.2019816376408 usec\nrounds: 1307"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1195.6853574298311,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018030900267698808",
+            "extra": "mean: 836.3404250007177 usec\nrounds: 1400"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1592.0634499061944,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005039573041418725",
+            "extra": "mean: 628.1156696731658 usec\nrounds: 1220"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1498.1633228802161,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028744862823734834",
+            "extra": "mean: 667.4839683550002 usec\nrounds: 474"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1307.7405724577536,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004638134646482079",
+            "extra": "mean: 764.6776593622164 usec\nrounds: 1095"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1900.640433168291,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000036524609617516005",
+            "extra": "mean: 526.1384439417824 usec\nrounds: 1766"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 164.59568473506968,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0013951163944286183",
+            "extra": "mean: 6.075493422622728 msec\nrounds: 168"
           }
         ]
       }
