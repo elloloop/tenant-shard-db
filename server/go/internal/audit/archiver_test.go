@@ -11,9 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -123,6 +128,100 @@ func TestRunOnceDoesNotCommitWhenArchiveWriteFails(t *testing.T) {
 	if len(consumer.commits) != 0 {
 		t.Fatalf("commits=%d, want 0", len(consumer.commits))
 	}
+}
+
+func TestArchiveLagMetricDrainsOnSuccessAndStaysOnFailure(t *testing.T) {
+	ctx := context.Background()
+
+	// Success path: a polled record archives + commits, so the
+	// per-partition lag gauge returns to 0.
+	okConsumer := &fakeArchiveConsumer{
+		records: []wal.Record{archiveTestRecord(t, "tenant-1", "idem-ok", 3, 11)},
+	}
+	okArchiver, err := NewArchiver(Options{
+		Consumer: okConsumer,
+		Store:    &fakeObjectLockStore{},
+		Topic:    "entdb-wal",
+		GroupID:  "archive",
+	})
+	if err != nil {
+		t.Fatalf("NewArchiver: %v", err)
+	}
+	if _, err := okArchiver.RunOnce(ctx); err != nil {
+		t.Fatalf("RunOnce (ok): %v", err)
+	}
+	if got := archiveLagValue(t, "entdb-wal", "3"); got != 0 {
+		t.Fatalf("archive lag after success = %v, want 0", got)
+	}
+	if n := metricCounter(t, "entdb_archive_writes_total"); n < 1 {
+		t.Fatalf("entdb_archive_writes_total = %v, want >= 1", n)
+	}
+
+	// Failure path: S3 unavailable. The record is polled but never
+	// committed, so the lag gauge stays elevated for that partition —
+	// this is the operator alert signal in ADR-015.
+	failConsumer := &fakeArchiveConsumer{
+		records: []wal.Record{archiveTestRecord(t, "tenant-1", "idem-fail", 4, 99)},
+	}
+	failArchiver, err := NewArchiver(Options{
+		Consumer: failConsumer,
+		Store:    &fakeObjectLockStore{putErr: errors.New("s3 unavailable")},
+		Topic:    "entdb-wal",
+		GroupID:  "archive",
+	})
+	if err != nil {
+		t.Fatalf("NewArchiver: %v", err)
+	}
+	if _, err := failArchiver.RunOnce(ctx); err == nil {
+		t.Fatal("RunOnce (fail) error = nil, want put failure")
+	}
+	if got := archiveLagValue(t, "entdb-wal", "4"); got != 1 {
+		t.Fatalf("archive lag after S3 failure = %v, want 1", got)
+	}
+}
+
+func archiveLagValue(t *testing.T, topic, partition string) float64 {
+	t.Helper()
+	for _, c := range metrics.ArchiveCollectors() {
+		gv, ok := c.(*prometheus.GaugeVec)
+		if !ok {
+			continue
+		}
+		g, err := gv.GetMetricWithLabelValues(topic, partition)
+		if err != nil {
+			t.Fatalf("GetMetricWithLabelValues(%q,%q): %v", topic, partition, err)
+		}
+		return testutil.ToFloat64(g)
+	}
+	t.Fatalf("entdb_archive_lag_events gauge not found in ArchiveCollectors")
+	return 0
+}
+
+func metricCounter(t *testing.T, name string) float64 {
+	t.Helper()
+	for _, c := range metrics.ArchiveCollectors() {
+		ctr, ok := c.(prometheus.Counter)
+		if !ok {
+			continue
+		}
+		if containsName(ctr, name) {
+			return testutil.ToFloat64(ctr)
+		}
+	}
+	t.Fatalf("counter %q not found in ArchiveCollectors", name)
+	return 0
+}
+
+func containsName(c prometheus.Collector, name string) bool {
+	ch := make(chan *prometheus.Desc, 4)
+	c.Describe(ch)
+	close(ch)
+	for d := range ch {
+		if d != nil && strings.Contains(d.String(), name) {
+			return true
+		}
+	}
+	return false
 }
 
 func archiveTestRecord(t *testing.T, tenantID, idem string, partition int32, offset int64) wal.Record {
