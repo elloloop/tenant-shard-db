@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779018837798,
+  "lastUpdate": 1779023165194,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -1728,6 +1728,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0009106711636464809",
             "extra": "mean: 5.743824286584208 msec\nrounds: 164"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "52b019f8ad2f432767926cdd5f63c877f7fbb68a",
+          "message": "feat(wal): port the 5 remaining cloud-native WAL backends (#539)\n\nADR-005 enumerates 7 swappable WAL backends; only in-memory and\nKafka/Redpanda were ported in Phase 4D. EPIC #518 tracks the rest.\nThis ports the remaining 5 from the retired Python source, each\nsatisfying the existing wal.Producer + wal.Consumer interface so\nbackend selection stays a deployment-config change, not a code change.\n\nBackends (all fully implemented + unit-tested with fakes, no live\ncloud calls):\n\n- Kinesis: PutRecord with explicit hash key for per-shard (per-tenant)\n  order; shard-iterator walk with ExpiredIteratorException recovery\n  from in-memory checkpoint; lossless sequence number carried in a\n  reserved record header (StreamPos.Offset is a best-effort int64\n  since Kinesis sequence numbers exceed int64).\n- SQS FIFO: MessageGroupId = tenant for per-tenant order;\n  MessageDeduplicationId from the WAL idempotency key for server-side\n  dedupe; DeleteMessage on Commit.\n- Pub/Sub: ordering-key delivery for per-tenant order; synchronous\n  apiv1 Pull/Publish/Acknowledge (bounded, unlike the streaming\n  Receive callback); ack id carried on the record so Commit is\n  stateless.\n- Service Bus: session id = tenant for per-tenant order; CompleteMessage\n  on Commit; sequence-number -> handle map in the adapter.\n- Event Hubs: partition-key hashing for per-tenant order; per-partition\n  fan-out poll resuming after an in-memory checkpoint.\n\nShared concerns (idempotency cache, header transport for backends\nwithout a native header map, AWS/gRPC error classification to the WAL\nsentinels) live in cloud_common.go. Each backend preserves the\nordering/offset and ErrConnection/ErrTimeout/ErrSerialization/ErrWal\ncontract documented on the interface and exercised against the\nKafka/in-memory backends.\n\nWired into cmd/entdb-server with backend-specific CLI flags following\nthe existing --wal-* pattern; -wal-backend now accepts\nkinesis|pubsub|sqs|servicebus|eventhubs.\n\nCloses #518",
+          "timestamp": "2026-05-17T14:03:29+01:00",
+          "tree_id": "16ae3540f8888ef9c0ac1883fc23d2b5e63a2171",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/52b019f8ad2f432767926cdd5f63c877f7fbb68a"
+        },
+        "date": 1779023164864,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2329.3598226897407,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028109878545953463",
+            "extra": "mean: 429.30250202619516 usec\nrounds: 1233"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1671.4144020681424,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005608685604172712",
+            "extra": "mean: 598.2956702793989 usec\nrounds: 1107"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 799.892966128238,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00043446624214404825",
+            "extra": "mean: 1.25016726280311 msec\nrounds: 742"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 723.270146097242,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021074738112935497",
+            "extra": "mean: 1.3826092579598224 msec\nrounds: 628"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1176.0252182417898,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018211683151979682",
+            "extra": "mean: 850.3219016808538 usec\nrounds: 1251"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1082.1254502006539,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0024524193025292746",
+            "extra": "mean: 924.1072740822927 usec\nrounds: 1609"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1235.7560457993131,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0015710181046698158",
+            "extra": "mean: 809.2212078583673 usec\nrounds: 1400"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1587.565863764221,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004873955170377759",
+            "extra": "mean: 629.8951261328683 usec\nrounds: 1324"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1419.4578853892876,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000044516522501388996",
+            "extra": "mean: 704.4943075051143 usec\nrounds: 413"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1244.3799920280483,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004529162209710187",
+            "extra": "mean: 803.6130493951723 usec\nrounds: 1073"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1874.151038253024,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006937964776858762",
+            "extra": "mean: 533.5749251736629 usec\nrounds: 1577"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 165.11205653677274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00117550392153346",
+            "extra": "mean: 6.056492911390067 msec\nrounds: 158"
           }
         ]
       }
