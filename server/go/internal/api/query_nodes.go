@@ -124,6 +124,8 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	if limit <= 0 {
 		limit = defaultQueryLimit
 	}
+	// SEC-4 (#135): cap oversized page requests before building protos.
+	limit = clampPageSize(limit)
 
 	nodes, err := s.store.QueryNodes(ctx, store.QueryNodesArgs{
 		TenantID:   tenantID,

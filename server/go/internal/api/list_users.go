@@ -13,8 +13,11 @@
 //   - Silent error swallow: an internal globalstore error returns
 //     codes.OK with users=[]. Mirrors grpc_server.py:2262-2265 so
 //     contract tests pass.
-//   - No upper cap on limit; negative limit flows through as "unlimited"
-//     (SQLite treats LIMIT -1 as no limit). Mirrors grpc_server.py:2249.
+//   - SEC-4 (#135): the historic "No upper cap on limit; negative limit
+//     flows through as unlimited (SQLite LIMIT -1)" wart is closed. Any
+//     non-positive limit now coerces to the 100 default (was: only ==0),
+//     and a positive limit above MaxPageSize is clamped to MaxPageSize
+//     before it reaches globalstore. The unbounded-scan path is gone.
 //
 // Trusted-actor invariant (CLAUDE.md, commit fece3fb): we still bind the
 // authoritative actor from ctx via auth.Authoritative even though no
@@ -75,9 +78,14 @@ func (s *Server) ListUsers(
 		statusFilter = "active"
 	}
 	limit := int(req.GetLimit())
-	if limit == 0 {
+	if limit <= 0 {
+		// SEC-4 (#135): widened from ==0 to <=0 so a negative limit
+		// (SQLite treats LIMIT -1 as unbounded) can no longer trigger
+		// a full-table scan of the user registry.
 		limit = 100
 	}
+	// SEC-4 (#135): cap oversized page requests before building protos.
+	limit = clampPageSize(limit)
 	offset := int(req.GetOffset())
 
 	rows, err := s.global.ListUsers(ctx, statusFilter, limit, offset)

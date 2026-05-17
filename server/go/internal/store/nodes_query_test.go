@@ -6,6 +6,7 @@ package store_test
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"testing"
 
@@ -174,6 +175,47 @@ func TestQueryNodes_UnindexedFieldStillWorks(t *testing.T) {
 	want := []string{"b", "c"}
 	if g := ids(got); len(g) != 2 || g[0] != want[0] || g[1] != want[1] {
 		t.Fatalf("got %v, want %v", g, want)
+	}
+}
+
+// TestQueryNodes_OversizedLimitClampedToMax pins the SEC-4 (#135)
+// defence-in-depth clamp at the store layer: an in-process caller that
+// bypasses the gRPC handlers and passes an absurd Limit still cannot
+// make the SQLite layer materialise an unbounded result set. Seed
+// 1001 rows so the 1000 ceiling is observable (1001 would come back if
+// the clamp regressed; 1000 is the cap).
+func TestQueryNodes_OversizedLimitClampedToMax(t *testing.T) {
+	cs := newStore(t)
+	ctx := context.Background()
+	if err := cs.OpenTenant(ctx, "t1"); err != nil {
+		t.Fatalf("OpenTenant: %v", err)
+	}
+	const seeded = 1001
+	for i := 0; i < seeded; i++ {
+		if _, err := cs.CreateNodeRaw(ctx, "t1", store.NodeInput{
+			NodeID:     fmt.Sprintf("n%04d", i),
+			TypeID:     1,
+			OwnerActor: "u",
+			Payload:    map[string]any{"1": "x"},
+		}); err != nil {
+			t.Fatalf("CreateNodeRaw n%04d: %v", i, err)
+		}
+	}
+
+	got, err := cs.QueryNodes(ctx, store.QueryNodesArgs{
+		TenantID: "t1",
+		TypeID:   1,
+		Limit:    10_000_000, // absurd request — must be clamped
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	// Mirrors api.MaxPageSize (1000). The store keeps its own literal
+	// because the store package must not import api.
+	const wantMax = 1000
+	if len(got) != wantMax {
+		t.Fatalf("oversized Limit not clamped: got %d rows, want %d (%d seeded)",
+			len(got), wantMax, seeded)
 	}
 }
 

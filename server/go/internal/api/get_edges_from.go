@@ -105,6 +105,9 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	if limit <= 0 {
 		limit = defaultEdgesLimit
 	}
+	// SEC-4 (#135): cap oversized page requests so the response slice
+	// can't be inflated past MaxPageSize protos.
+	limit = clampPageSize(limit)
 	hasMore := len(edges) > limit
 	if hasMore {
 		edges = edges[:limit]
