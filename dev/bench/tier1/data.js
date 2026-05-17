@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779037887591,
+  "lastUpdate": 1779041685817,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2484,6 +2484,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0010510458669694695",
             "extra": "mean: 6.609840279719055 msec\nrounds: 143"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "349de12d11cd8fc7040c23bdf5a181eaa43e333f",
+          "message": "docs: document DeleteWhere + schema-less numeric-field-id requirement (#545) (#547)\n\nDocs-only change. No server or SDK behaviour is modified.\n\nDeleteWhere (the single-RPC predicate sweeper shipped in v1.14.0 via\n#504) and its schema-less numeric-field-id requirement (#545) were\nabsent from the user-facing docs; #546 only added code docstrings.\n\nRegenerated reference (docs/generated/):\n- Re-ran scripts/generate_api_docs.py — the reference was stale across\n  v1.14.0–v1.16.0. sdk-go.md now carries DeleteWhere (the Go free\n  function) plus the rest of the post-v1.14 Go SDK surface.\n\nClosed a #40 coverage-guard blind spot:\n- DeleteWhere is not a top-level RPC (it is an Operation-oneof member\n  on ExecuteAtomic) and delete_where is a Plan builder method, not a\n  DbClient method. The generator extracted only RPCs + DbClient\n  methods, and the guard enforced only those — so delete_where could\n  go undocumented undetected. The generator now also extracts the\n  Operation oneof and Plan public methods; the guard enforces both.\n  Verified the guard fails if delete_where regresses out of either\n  generated doc. Guard passes: 44 RPCs + 6 ExecuteAtomic ops, 46\n  public symbols + 50 DbClient/Plan methods.\n\nHand-written narrative:\n- docs/guides/schema-lockdown.md — primary home: dedicated section on\n  delete_where / QueryNodes filters in schema-less deployments, with\n  Go and Python numeric-field-id examples.\n- docs/api-reference.md — ExecuteAtomic operations table incl. the\n  schema-less caveat.\n- docs/sdk-reference.md — delete_where row + sweeper subsection in\n  Plan methods.\n- docs/getting-started.md — concise bulk-cleanup pointer.",
+          "timestamp": "2026-05-17T19:13:09+01:00",
+          "tree_id": "f5c2ea5386a02d4be778e3120267e0c6dc7f4151",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/349de12d11cd8fc7040c23bdf5a181eaa43e333f"
+        },
+        "date": 1779041685356,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 4318.232464209115,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000021492276664788644",
+            "extra": "mean: 231.5762313141588 usec\nrounds: 1552"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2884.0947314272703,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003272508371055134",
+            "extra": "mean: 346.7292489054698 usec\nrounds: 1599"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1498.9014004693388,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006589179524762517",
+            "extra": "mean: 667.1552909930421 usec\nrounds: 1299"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 1072.2901534153743,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005993335836621713",
+            "extra": "mean: 932.5834027430715 usec\nrounds: 802"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 2805.189291966366,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003855323759736751",
+            "extra": "mean: 356.4821820986724 usec\nrounds: 972"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 2711.668753192825,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005174938598340217",
+            "extra": "mean: 368.77660622174477 usec\nrounds: 2443"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2717.9197717027596,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006126035512493332",
+            "extra": "mean: 367.92844675231396 usec\nrounds: 2263"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 376.33776859894516,
+            "unit": "iter/sec",
+            "range": "stddev: 0.02096798758602176",
+            "extra": "mean: 2.6571874614734132 msec\nrounds: 1181"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 382.3351292668751,
+            "unit": "iter/sec",
+            "range": "stddev: 0.019355378344745145",
+            "extra": "mean: 2.6155064587381576 msec\nrounds: 412"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 622.8233488326401,
+            "unit": "iter/sec",
+            "range": "stddev: 0.012689594252253642",
+            "extra": "mean: 1.6055917008800382 msec\nrounds: 1023"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 3411.865410744044,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000470193808348981",
+            "extra": "mean: 293.0947970136737 usec\nrounds: 2478"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 209.68918928465698,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00022089616360975063",
+            "extra": "mean: 4.768963070587684 msec\nrounds: 170"
           }
         ]
       }
