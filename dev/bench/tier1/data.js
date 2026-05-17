@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015097403,
+  "lastUpdate": 1779015199252,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -540,6 +540,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0008848818695277273",
             "extra": "mean: 6.726382064746401 msec\nrounds: 139"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d2151d75d4de332401c01953e6d7d31f3ef93296",
+          "message": "Sanitize internal error responses (SEC-5, #136) (#533)\n\nHandlers wrapped underlying store/DB/driver errors with %v into\nclient-visible codes.Internal statuses, e.g.\n\n    errs.Errorf(codes.Internal, \"get user: %v\", err)\n\nwhich shipped raw SQLite driver text, table names, internal package\ncontext and the caller's own id back to the client. That lets an\nattacker fingerprint the schema/driver and confirm record existence,\ndefeating the generic 404 on GetUser.\n\nAdd an errs.Internal / errs.InternalNoCtx chokepoint: it logs the full\nop label + underlying error server-side via slog at ERROR level and\nreturns a fixed generic \"internal error\" message to the client. The\ngRPC code stays codes.Internal so SDK retry/observability behaviour is\nunchanged. Typed sentinels (NotFound / AlreadyExists / InvalidArgument\n/ PermissionDenied / FailedPrecondition / ...) and their contractful\nmessages are left untouched - only Internal/Unknown wrapped errors are\nsanitized.\n\nRoute all 32 internal-wrap call sites (31 errs.Errorf(codes.Internal)\nplus one status.Errorf(codes.Internal) in the freeze gate) through the\nsanitizer.\n\nTests: a handler-level regression (CreateUser against a closed\nglobalstore) proves the SQLite/driver detail is logged but never\nreaches the client, plus focused unit tests of the chokepoint itself.",
+          "timestamp": "2026-05-17T11:48:31+01:00",
+          "tree_id": "05e57bd8da22d67a5e825e546f323155aef2e405",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/d2151d75d4de332401c01953e6d7d31f3ef93296"
+        },
+        "date": 1779015198930,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3017.628892622742,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000031847515351755115",
+            "extra": "mean: 331.38601053453596 usec\nrounds: 1234"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2032.403892251721,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000038279427125570424",
+            "extra": "mean: 492.02818584060566 usec\nrounds: 1130"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 972.4153301570971,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009907616069859928",
+            "extra": "mean: 1.028367168829441 msec\nrounds: 770"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 808.4968714083843,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008609502583480525",
+            "extra": "mean: 1.2368631659118499 msec\nrounds: 663"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1891.148072048006,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008776706624440467",
+            "extra": "mean: 528.7793244645602 usec\nrounds: 1541"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1890.9661470344395,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008096817753684498",
+            "extra": "mean: 528.8301969700927 usec\nrounds: 1320"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1955.323517963405,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007831640855194581",
+            "extra": "mean: 511.42431971644476 usec\nrounds: 1689"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2001.6752857133158,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005656409755010502",
+            "extra": "mean: 499.58152910083044 usec\nrounds: 1512"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1730.9519432626746,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005506976041386185",
+            "extra": "mean: 577.7167898232333 usec\nrounds: 452"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1447.1684439666312,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006820874584793064",
+            "extra": "mean: 691.0045642365167 usec\nrounds: 1152"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2489.5576995679858,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000031095198916439526",
+            "extra": "mean: 401.67777600556536 usec\nrounds: 1692"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 138.2483604821771,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001691386496436843",
+            "extra": "mean: 7.233358837039659 msec\nrounds: 135"
           }
         ]
       }
