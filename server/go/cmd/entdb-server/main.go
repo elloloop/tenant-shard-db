@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -61,6 +62,21 @@ func main() {
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka | kinesis | pubsub | sqs | servicebus | eventhubs")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
+	// --apply-concurrency controls cross-tenant parallel WAL apply
+	// (#140 / PERF-4, ADR-027). Within a single poll batch the applier
+	// may apply records for DISTINCT tenant route keys in parallel;
+	// records for one tenant are always serial in offset order and
+	// offsets commit strictly in batch order, so this knob never
+	// weakens per-tenant ordering, the single-writer-per-tenant
+	// invariant (ADR-016), or the gap-free contiguous-prefix commit.
+	// LANDED DARK (ADR-027): default 1 = strictly serial, the unchanged
+	// pre-#140 behaviour. Operators opt into parallelism after a
+	// staging soak by setting 0 (-> runtime.GOMAXPROCS) or an explicit
+	// N>1. This is both the rollout posture and the no-redeploy
+	// kill-switch.
+	applyConcurrency := flag.Int("apply-concurrency", 1,
+		"max distinct tenants applied in parallel per WAL poll batch "+
+			"(1 = strictly serial / pre-#140, the default; 0 = runtime.GOMAXPROCS; N>1 = opt-in parallel)")
 	// Kafka/Redpanda-specific knobs. Defaults match the legacy
 	// KAFKA_BROKERS env-var convention so the cross-impl e2e stack
 	// can swap targets without re-jiggering compose env-vars.
@@ -334,14 +350,24 @@ func main() {
 	}
 
 	applier, err := apply.New(apply.Options{
-		Store:    canonical,
-		Global:   global,
-		Consumer: walImpl,
-		Topic:    *walTopic,
-		GroupID:  *walGroup,
+		Store:               canonical,
+		Global:              global,
+		Consumer:            walImpl,
+		Topic:               *walTopic,
+		GroupID:             *walGroup,
+		MaxApplyConcurrency: *applyConcurrency,
 	})
 	if err != nil {
 		log.Fatalf("entdb-server: applier: %v", err)
+	}
+	effectiveApplyConc := *applyConcurrency
+	if effectiveApplyConc <= 0 {
+		effectiveApplyConc = runtime.GOMAXPROCS(0)
+	}
+	if effectiveApplyConc == 1 {
+		log.Printf("entdb-server: WAL apply concurrency = 1 (strictly serial; pre-#140 behaviour)")
+	} else {
+		log.Printf("entdb-server: WAL apply concurrency = %d (cross-tenant parallel apply, ADR-027)", effectiveApplyConc)
 	}
 
 	// Run the applier before the gRPC server starts accepting writes.
