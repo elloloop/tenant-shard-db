@@ -38,6 +38,10 @@ SPDX-License-Identifier: MIT
 
 SPDX-License-Identifier: MIT
 
+SPDX-License-Identifier: MIT
+
+SPDX-License-Identifier: MIT
+
 VARIABLES
 
 var ErrPreconditionFailed = errors.New("entdb: precondition failed")
@@ -62,6 +66,50 @@ func Delete[T proto.Message](p *Plan, nodeID string)
 
     Passing a non-pointer or non-proto T is a compile-time error; passing a T
     with no “(entdb.node)“ option panics at call time.
+
+func DeleteWhere[T proto.Message](p *Plan, where []Filter, limit int)
+    DeleteWhere accumulates a single-RPC predicate-based sweeper op (GitHub
+    issue #504). It deletes every node of type T whose payload matches ALL of
+    the AND-ed Filter predicates, capped best-effort by limit, in one round trip
+    — collapsing the QueryWhere + Delete loop the TTL-sweeper pattern otherwise
+    needs.
+
+    Like Delete, DeleteWhere is a free function (Go has no generic methods)
+    and T is a compile-time type witness: the SDK reads "(entdb.node).type_id"
+    from T's descriptor without a message instance. The Filter field names
+    are resolved to payload field ids server-side, exactly like QueryWhere,
+    so no client registry is needed for the predicate.
+
+    limit is best-effort (Postgres DELETE … LIMIT semantics): at most limit
+    nodes are deleted by this op. Pass 0 for the server default; the server
+    clamps to its own hard ceiling so a runaway predicate cannot pin the single
+    applier goroutine for a tenant. To drain a large backlog, sweep in a loop
+    until a sweep deletes nothing.
+
+    At least one filter is required — an unconditional bulk delete is rejected
+    server-side. Passing T with no "(entdb.node)" option panics at call time.
+
+        entdb.DeleteWhere[*auth.WebAuthnChallenge](plan,
+            []entdb.Filter{{Field: "expires_at", Op: entdb.FilterLt, Value: now}},
+            1000,
+        )
+
+    Schema-less servers (issue #545): a server started without a schema cannot
+    resolve a field NAME to a payload field id. Pass the numeric payload field
+    id as the Filter.Field string instead — exactly the schema-optional escape
+    hatch QueryWhere already accepts for numeric filter keys. The SDK forwards
+    Field verbatim; the server treats a digit-only key as a raw field id with no
+    schema lookup:
+
+        // "expires_at" is proto field 4 on the caller's own schema.
+        entdb.DeleteWhere[*auth.WebAuthnChallenge](plan,
+            []entdb.Filter{{Field: "4", Op: entdb.FilterLt, Value: now}},
+            1000,
+        )
+
+    Against a schema-configured server both forms work; against a schema-less
+    server only the numeric-id form does (a name key returns INVALID_ARGUMENT:
+    "cannot translate filter key … without a schema").
 
 func EdgeCreate[T proto.Message](p *Plan, from, to string)
     EdgeCreate accumulates a create-edge operation.
@@ -160,6 +208,20 @@ func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts .
     searched.
 
         results, err := entdb.Search[*shop.Product](ctx, scope, "widget")
+
+func WithAfterOffset(ctx context.Context, streamPosition string) context.Context
+    WithAfterOffset returns a context that pins the next read to the given
+    WAL stream position, overriding automatic offset tracking for that call.
+    Equivalent to passing an explicit “after_offset“ string in the Python SDK.
+
+        ctx = entdb.WithAfterOffset(ctx, receipt.StreamPosition)
+        p, err := entdb.Get[*shop.Product](ctx, scope, "node-42")
+
+func WithoutOffsetTracking(ctx context.Context) context.Context
+    WithoutOffsetTracking returns a context that opts the next read out of
+    automatic offset tracking — no “after_offset“ is sent even if the client has
+    written for this tenant. Equivalent to passing “after_offset=None“ in the
+    Python SDK.
 
 
 TYPES
@@ -358,6 +420,17 @@ func WithNodeResolver(r NodeResolver) ClientOption
 
     If both WithNodeResolver and WithBaseDomain are supplied, the last one wins.
 
+func WithRetryBudget(d time.Duration) ClientOption
+    WithRetryBudget caps the total wall-clock time the SDK spends retrying
+    a single failed RPC, including the exponential-backoff sleeps between
+    attempts. Once the elapsed time since the first attempt would exceed
+    the budget, the last error is returned even if retry attempts (per
+    WithMaxRetries) remain.
+
+    This bounds tail latency under an outage: without it, a high maxRetries
+    combined with exponential backoff can block a caller for minutes.
+    A non-positive duration restores the 30s default.
+
 func WithSecure() ClientOption
     WithSecure enables TLS for the gRPC connection.
 
@@ -485,6 +558,16 @@ func (c *DbClient) Admin() *Admin
     Admin returns a typed handle for the cross-tenant admin RPCs. See Admin for
     the full surface.
 
+func (c *DbClient) ClearOffsets()
+    ClearOffsets drops every tracked per-tenant write offset, so the
+    next read no longer pins to a past write. Mirrors the Python SDK's
+    “DbClient.clear_offsets()“ — useful in tests and when a caller deliberately
+    wants to stop enforcing read-after-write.
+
+    Automatic offset tracking otherwise needs zero application code: every
+    Commit records “receipt.stream_position“ for its tenant and every subsequent
+    read auto-attaches it as “after_offset“.
+
 func (c *DbClient) Close() error
     Close tears down the gRPC connection.
 
@@ -525,6 +608,14 @@ func (c *DbClient) Tenant(tenantID string) *TenantScope
 
         scope := client.Tenant("acme").Actor(entdb.UserActor("bob"))
         product, err := entdb.Get[*shop.Product](ctx, scope, "node-42")
+
+func (c *DbClient) Transport() Transport
+    Transport returns the underlying Transport this client uses.
+
+    It is a read-only accessor intended for advanced consumers (e.g. custom
+    tooling or tests) that need to reach the transport without resorting to
+    reflection and unsafe. The returned value must be treated as read-only;
+    mutating transport state out from under the client is unsupported.
 
 func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error)
     WaitForOffset blocks server-side until the WAL applier has reached
@@ -577,11 +668,18 @@ type Filter struct {
 	Op    FilterOp
 	Value any
 }
-    Filter is one AND-ed predicate passed to QueryWhere. Field is the proto
-    field name (the gRPC boundary resolves it to a payload field_id). Op selects
-    the comparison operator. Value is bound as a SQLite parameter and supports
-    the JSON-marshallable scalars SQLite understands (string, int, int64,
-    float64, bool, nil).
+    Filter is one AND-ed predicate passed to QueryWhere (and DeleteWhere).
+    Field is the proto field name (the gRPC boundary resolves it to a payload
+    field_id). Op selects the comparison operator. Value is bound as a SQLite
+    parameter and supports the JSON-marshallable scalars SQLite understands
+    (string, int, int64, float64, bool, nil).
+
+    Schema-less escape hatch (issue #545): Field may instead be the digit-only
+    numeric payload field id (e.g. "4"). The SDK forwards Field unchanged;
+    a server with no schema treats a digit-only key as a raw field id and skips
+    name resolution. This is the only way to filter against a schema-less server
+    — a field NAME there returns INVALID_ARGUMENT ("cannot translate filter key
+    … without a schema"). A schema-configured server accepts either form.
 
     Multiple filters on the same field are permitted — a half-open range is
     expressed as two filters:
@@ -711,6 +809,18 @@ type Operation struct {
 	//
 	// Only valid on OpUpdateNode. Ignored for other op types.
 	Precondition *Precondition `json:"precondition,omitempty"`
+
+	// Where carries the AND-ed predicate for OpDeleteWhere (GitHub
+	// issue #504). Field names are resolved to payload field ids at
+	// the SDK boundary, exactly like QueryWhere. Only valid on
+	// OpDeleteWhere; ignored for other op types.
+	Where []Filter `json:"where,omitempty"`
+
+	// Limit is the best-effort cap on the number of nodes deleted by
+	// an OpDeleteWhere op (Postgres DELETE … LIMIT semantics). Zero
+	// selects the server default; the server clamps to its own hard
+	// ceiling. Ignored for other op types.
+	Limit int `json:"limit,omitempty"`
 }
     Operation represents a single mutation in a Plan.
 
@@ -728,6 +838,11 @@ const (
 	OpDeleteNode
 	OpCreateEdge
 	OpDeleteEdge
+	// OpDeleteWhere is the single-RPC predicate-based sweeper
+	// (GitHub issue #504): delete every node of a type matching an
+	// AND-ed [Filter] predicate in one round trip, instead of a
+	// QueryWhere + Delete loop.
+	OpDeleteWhere
 )
 type Permission string
     Permission represents an ACL permission level.

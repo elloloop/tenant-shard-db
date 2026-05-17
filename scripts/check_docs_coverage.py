@@ -3,11 +3,15 @@
 
 Re-scoped post Python-server retirement (ADR-017). The check is:
 
-  1. Every RPC in proto/entdb/v1/entdb.proto appears in
+  1. Every RPC *and* every Operation-oneof member (the
+     `ExecuteAtomic` ops, e.g. ``delete_where``) in
+     proto/entdb/v1/entdb.proto appears in
      docs/generated/api-reference.md.
   2. Every name in entdb_sdk.__all__ appears in
      docs/generated/sdk-python.md.
-  3. Every public DbClient method appears in
+  3. Every public method of the client-surface classes
+     (``DbClient`` and the ``Plan`` chained-write builder, which
+     owns ``delete_where``) appears in
      docs/generated/sdk-python.md.
   4. The generated files are not stale (delegates to
      generate_api_docs.py --check) so coverage can't be faked by
@@ -40,6 +44,7 @@ from generate_api_docs import (  # type: ignore[import-not-found]
     PYTHON_CLIENT,
     PYTHON_SDK_INIT,
     REPO_ROOT,
+    extract_operations,
     extract_python,
     extract_rpcs,
 )
@@ -78,28 +83,55 @@ def check_generated_fresh() -> bool:
 
 
 def check_rpc_coverage() -> bool:
-    rpcs = extract_rpcs(PROTO_PATH.read_text())
+    proto_text = PROTO_PATH.read_text()
+    rpcs = extract_rpcs(proto_text)
+    ops = extract_operations(proto_text)
     doc = (OUT_DIR / "api-reference.md").read_text()
-    missing = [r.name for r in rpcs if f"`{r.name}`" not in doc]
-    if missing:
+
+    missing_rpcs = [r.name for r in rpcs if f"`{r.name}`" not in doc]
+    # Operation oneof members (e.g. ``delete_where``) are wire
+    # contract too — they ride inside ExecuteAtomic. Enforcing them
+    # closes the blind spot that hid ``delete_where`` (#545) from the
+    # generated reference.
+    missing_ops = [o.field for o in ops if f"`{o.field}`" not in doc]
+
+    ok = True
+    if missing_rpcs:
         _fail(
-            f"{len(missing)} RPC(s) in entdb.proto not in "
-            f"docs/generated/api-reference.md: {', '.join(sorted(missing))}"
+            f"{len(missing_rpcs)} RPC(s) in entdb.proto not in "
+            f"docs/generated/api-reference.md: {', '.join(sorted(missing_rpcs))}"
         )
-        return False
-    print(f"OK: {len(rpcs)} RPCs documented.")
-    return True
+        ok = False
+    if missing_ops:
+        _fail(
+            f"{len(missing_ops)} ExecuteAtomic op(s) in entdb.proto "
+            f"not in docs/generated/api-reference.md: "
+            f"{', '.join(sorted(missing_ops))}"
+        )
+        ok = False
+    if ok:
+        print(f"OK: {len(rpcs)} RPCs + {len(ops)} ExecuteAtomic ops documented.")
+    return ok
 
 
 def check_python_coverage() -> bool:
-    exports, methods = extract_python(PYTHON_CLIENT.read_text(), PYTHON_SDK_INIT.read_text())
+    exports, methods_by_class = extract_python(
+        PYTHON_CLIENT.read_text(), PYTHON_SDK_INIT.read_text()
+    )
     doc = (OUT_DIR / "sdk-python.md").read_text()
 
     missing_exports = [e for e in exports if f"`{e}`" not in doc]
     # Methods are documented as ``async name(...)`` / ``name(...)`` —
     # match on the bare name in backticks-with-paren to avoid false
     # positives on substrings (e.g. ``get`` inside ``get_by_key``).
-    missing_methods = [m.name for m in methods if f"{m.name}(" not in doc]
+    # Both DbClient *and* Plan (the chained-write builder, which owns
+    # ``delete_where`` — the #545 schema-less sweeper) are enforced so
+    # a builder method can't silently fall out of the docs surface.
+    missing_methods: list[str] = []
+    total_methods = 0
+    for class_name, methods in methods_by_class.items():
+        total_methods += len(methods)
+        missing_methods += [f"{class_name}.{m.name}" for m in methods if f"{m.name}(" not in doc]
 
     ok = True
     if missing_exports:
@@ -111,13 +143,16 @@ def check_python_coverage() -> bool:
         ok = False
     if missing_methods:
         _fail(
-            f"{len(missing_methods)} DbClient method(s) undocumented "
-            f"in docs/generated/sdk-python.md: "
+            f"{len(missing_methods)} client-surface method(s) "
+            f"(DbClient/Plan) undocumented in "
+            f"docs/generated/sdk-python.md: "
             f"{', '.join(sorted(missing_methods))}"
         )
         ok = False
     if ok:
-        print(f"OK: {len(exports)} public symbols + {len(methods)} DbClient methods documented.")
+        print(
+            f"OK: {len(exports)} public symbols + {total_methods} DbClient/Plan methods documented."
+        )
     return ok
 
 

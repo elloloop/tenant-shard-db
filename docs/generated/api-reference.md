@@ -54,3 +54,16 @@ Source: [`proto/entdb/v1/entdb.proto`](../../proto/entdb/v1/entdb.proto). **44 R
 | `TransferUserContent` | `TransferUserContentRequest` | `TransferUserContentResponse` | Admin operations (Issue #90, ADR-003) |
 | `UpdateUser` | `UpdateUserRequest` | `UpdateUserResponse` | — |
 | `WaitForOffset` | `WaitForOffsetRequest` | `WaitForOffsetResponse` | Wait for a specific stream position to be applied |
+
+## `ExecuteAtomic` operations
+
+The `ExecuteAtomic` RPC carries a list of `Operation`s (the `oneof op`). Each op below is a member of that union — they are wire contract, not standalone RPCs. `delete_where` is the single-RPC predicate sweeper (issues #504, #545).
+
+| Op | Message | Description |
+|---|---|---|
+| `create_edge` | `CreateEdgeOp` | — |
+| `create_node` | `CreateNodeOp` | — |
+| `delete_edge` | `DeleteEdgeOp` | — |
+| `delete_node` | `DeleteNodeOp` | — |
+| `delete_where` | `DeleteWhereOp` | DeleteWhereOp is a single-RPC predicate-based sweeper: it deletes every node of ``type_id`` whose payload matches ALL of the ``where`` predicates, inside one ``ExecuteAtomic`` op. It collapses the standard "QueryNodes to find ids, then ExecuteAtomic to delete them" loop into a single round trip — the TTL-sweeper pattern. See GitHub issue #504. The ``where`` predicates reuse the exact ``FieldFilter`` / ``FilterOp`` types shipped for ``QueryNodes`` (issue #501), so no new wire concept is introduced — Eq/Ne/Lt/Le/Gt/Ge are supported and AND-ed together. Limit semantics are BEST-EFFORT (Postgres ``DELETE … LIMIT`` style): at most ``limit`` matching nodes are deleted in this op; the rest remain for a subsequent sweep. This matches sweeper semantics — a caller polls until a sweep deletes zero rows. The server caps ``limit`` to a server-side maximum so a runaway predicate cannot pin the single applier goroutine for one tenant (CLAUDE.md single-applier invariant). ``limit <= 0`` means "use the server default cap". Out of scope for v1 (issue #504): the deleted ids are NOT returned in the response — callers that need the ids keep using the QueryNodes + DeleteNodeOp loop. |
+| `update_node` | `UpdateNodeOp` | — |
