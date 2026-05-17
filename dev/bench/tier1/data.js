@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779014986325,
+  "lastUpdate": 1779015097403,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -432,6 +432,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00013454688164339355",
             "extra": "mean: 6.418116285714299 msec\nrounds: 140"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "39733193a9313dbd066e1889d00f25c24b9003c5",
+          "message": "Clamp paginated reads to a max page size (SEC-4 #135) (#530)\n\nSeveral read RPCs applied only a default-when-zero limit with no upper\nceiling. A client passing limit=10_000_000 to QueryNodes, SearchNodes,\nListUsers, GetEdgesFrom or GetEdgesTo would make the server materialise\nthat many protos in memory — an amplification DoS. ListUsers was the\nworst: it documented \"No upper cap on limit\" and a negative limit fell\nthrough to SQLite as LIMIT -1 (full-table scan).\n\nAdd a single server-wide MaxPageSize ceiling (1000, matching the value\nGetConnectedNodes and ListSharedWithMe already enforce) and clamp at\nhandler entry for all five uncapped read RPCs, after the existing\n'<=0 => default' coercion so small/default page sizes are unaffected.\nWiden the ListUsers zero-coercion to <=0 so a negative limit can no\nlonger trigger an unbounded scan. Add a defence-in-depth clamp at the\nstore layer (store.QueryNodes) for any future in-process caller that\nbypasses the handler.\n\nTests: unit coverage of the clamp helper and the shared-ceiling\ninvariant; handler-level tests asserting a 10M limit returns exactly\nMaxPageSize for QueryNodes and ListUsers, that small/unset limits are\nuntouched, and that a negative ListUsers limit coerces to the default;\na store-layer test pinning the defence-in-depth clamp.\n\nCloses #135",
+          "timestamp": "2026-05-17T11:48:19+01:00",
+          "tree_id": "b514b3995788192d040ca77f903f8a854a5acbca",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/39733193a9313dbd066e1889d00f25c24b9003c5"
+        },
+        "date": 1779015097090,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3367.761732386273,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027776506774894865",
+            "extra": "mean: 296.93312041153115 usec\nrounds: 1362"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2186.153061940984,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003711457974190007",
+            "extra": "mean: 457.4245131363979 usec\nrounds: 1218"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1093.4708890353897,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009067648148214105",
+            "extra": "mean: 914.5190878214914 usec\nrounds: 854"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 815.4849101434397,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007827938035551332",
+            "extra": "mean: 1.2262642601493448 msec\nrounds: 665"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1922.9134800633892,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008004541920219739",
+            "extra": "mean: 520.0441987473273 usec\nrounds: 1756"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1948.8514438644706,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007550850052340615",
+            "extra": "mean: 513.1227437310728 usec\nrounds: 1635"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1982.6164736087005,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007089500382773929",
+            "extra": "mean: 504.3839861674453 usec\nrounds: 1735"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1984.4697266003013,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005894407705014131",
+            "extra": "mean: 503.91295296459487 usec\nrounds: 1552"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1828.575285434014,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008093864368628689",
+            "extra": "mean: 546.8738465218014 usec\nrounds: 417"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1558.7025740768047,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007098695122825479",
+            "extra": "mean: 641.5592151006003 usec\nrounds: 1139"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2564.106424022328,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002914240376766695",
+            "extra": "mean: 389.99941290708773 usec\nrounds: 1906"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 148.6683317085263,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008848818695277273",
+            "extra": "mean: 6.726382064746401 msec\nrounds: 139"
           }
         ]
       }
