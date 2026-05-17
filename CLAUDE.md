@@ -62,6 +62,8 @@ Quick orientation (one-liners, not normative — the ADR is normative):
 - [ADR-023](docs/adr/023-declarative-query-indexes.md) — non-unique expression indexes declared via `(entdb.field).indexed = true`
 - [ADR-024](docs/adr/024-three-layer-rate-limit-model.md) — three-layer rate-limit model; Phase 1 (monthly quotas) is the implementation start
 - [ADR-025](docs/adr/025-single-shape-sdk-api.md) — single-shape SDK API (proto messages everywhere, typed unique-key tokens via codegen, expression-index uniqueness)
+- [ADR-026](docs/adr/026-per-tenant-read-write-connection-split.md) — per-tenant read/write SQLite connection split (Accepted; implementation #536 gated on the broadcast-ordering fix — see ADR)
+- [ADR-027](docs/adr/027-parallel-wal-apply-across-tenants.md) — parallel WAL apply across distinct tenants; amends ADR-016's no-fan-out clause (Accepted; implementation #541 gated on conditions — see ADR)
 
 ## Project Structure
 
