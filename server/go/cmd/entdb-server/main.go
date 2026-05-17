@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -18,6 +19,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
@@ -36,6 +38,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":50051", "gRPC bind address (host:port)")
+	metricsAddr := flag.String("metrics-addr", "", "Prometheus scrape bind address (host:port); empty disables the /metrics endpoint")
 	dataDir := flag.String("data-dir", "", "directory for per-tenant SQLite + global.db")
 	tlsCert := flag.String("tls-cert", "", "server TLS certificate PEM file")
 	tlsKey := flag.String("tls-key", "", "server TLS private key PEM file")
@@ -66,6 +69,7 @@ func main() {
 	archiveGroup := flag.String("archive-group", "entdb-wal-archive", "WAL consumer group id for the archive sidecar")
 	archiveRetentionDays := flag.Int("archive-retention-days", 2557, "S3 Object Lock COMPLIANCE retention window in days")
 	archiveKMSKeyID := flag.String("archive-kms-key-id", "", "optional AWS KMS key id for archive object SSE-KMS")
+	archiveS3PathStyle := flag.Bool("archive-s3-path-style", false, "use S3 path-style addressing for the archive bucket (required for MinIO and other non-AWS S3 endpoints)")
 	archiveBatchSize := flag.Int("archive-batch-size", 128, "maximum WAL records per archive poll")
 	archiveBatchBytes := flag.Int("archive-batch-bytes", 10<<20, "approximate maximum uncompressed bytes per archive object")
 	archivePollTimeout := flag.Duration("archive-poll-timeout", time.Second, "how long the archive sidecar polls for WAL records")
@@ -221,8 +225,13 @@ func main() {
 		if err != nil {
 			log.Fatalf("entdb-server: load AWS config for archive: %v", err)
 		}
+		s3Client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+			if *archiveS3PathStyle {
+				o.UsePathStyle = true
+			}
+		})
 		archiveStore := audit.NewS3ObjectLockStore(
-			s3.NewFromConfig(awsCfg),
+			s3Client,
 			strings.TrimSpace(*archiveBucket),
 			strings.TrimSpace(*archiveKMSKeyID),
 		)
@@ -372,6 +381,31 @@ func main() {
 		log.Fatalf("entdb-server: listen %s: %v", *addr, err)
 	}
 
+	// Prometheus scrape endpoint. Off by default; production / e2e set
+	// --metrics-addr so dashboards and alert rules (entdb_archive_lag_events,
+	// entdb_grpc_*) have a target. Served on a plain HTTP listener
+	// separate from the gRPC port — scrape traffic is in-cluster.
+	var metricsSrv *http.Server
+	if strings.TrimSpace(*metricsAddr) != "" {
+		mux := http.NewServeMux()
+		mux.Handle("/metrics", promhttp.Handler())
+		metricsSrv = &http.Server{
+			Addr:              strings.TrimSpace(*metricsAddr),
+			Handler:           mux,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		metricsLis, err := net.Listen("tcp", metricsSrv.Addr)
+		if err != nil {
+			log.Fatalf("entdb-server: metrics listen %s: %v", metricsSrv.Addr, err)
+		}
+		go func() {
+			if err := metricsSrv.Serve(metricsLis); err != nil && err != http.ErrServerClosed {
+				log.Printf("entdb-server: metrics endpoint exited: %v", err)
+			}
+		}()
+		log.Printf("entdb-server: Prometheus metrics on %s/metrics", metricsSrv.Addr)
+	}
+
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 	if tlsReloader != nil {
@@ -398,6 +432,11 @@ func main() {
 		log.Printf("entdb-server: shutting down")
 		applier.Stop()
 		cancel()
+		if metricsSrv != nil {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = metricsSrv.Shutdown(shutdownCtx)
+			shutdownCancel()
+		}
 		srv.GracefulStop()
 	}()
 

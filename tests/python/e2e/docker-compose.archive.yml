@@ -1,0 +1,142 @@
+# =============================================================================
+# EntDB Archive E2E Environment — WAL -> S3 Object Lock round-trip
+# =============================================================================
+#
+# Dedicated, opt-in stack for EPIC #511's S3 Object Lock archive
+# (ADR-015). Kept separate from docker-compose.e2e.yml so the fast
+# 22-case suite stays free of the MinIO + archive-sidecar cost; this
+# stack is the only one that boots an Object-Lock bucket.
+#
+# Topology:
+#   - redpanda     : Kafka-compatible WAL backend (same image/flags as
+#                     the main e2e stack so broker behaviour matches).
+#   - minio        : S3-compatible store. Object Lock requires the
+#                     bucket to be created WITH versioning+lock at
+#                     creation time, done by the minio-init sidecar.
+#   - minio-init   : one-shot `mc` job that creates the bucket with
+#                     Object Lock and a COMPLIANCE default retention.
+#   - server       : entdb-server with -archive-enabled pointed at
+#                     MinIO (path-style, env-provided AWS creds) and
+#                     -metrics-addr so the test can scrape the
+#                     entdb_archive_lag_events gauge.
+#   - archive-tests: pytest runner driving the SDK + an S3/HTTP probe.
+#
+# Usage:
+#   tests/python/e2e/run-archive-e2e.sh
+#
+# =============================================================================
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v23.3.5
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://redpanda:9092
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: entdb
+      MINIO_ROOT_PASSWORD: entdb-secret
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+
+  # One-shot: create the archive bucket WITH Object Lock enabled and a
+  # COMPLIANCE default-retention rule. Object Lock can only be turned on
+  # at bucket-creation time, so this MUST run before the server boots
+  # (the archiver verifies GetObjectLockConfiguration at startup and
+  # refuses to run otherwise — ADR-015 defense in depth).
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2024-09-22T00-33-43Z
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        until mc alias set m http://minio:9000 entdb entdb-secret; do
+          echo "waiting for minio..."; sleep 2;
+        done
+        mc mb --with-lock --ignore-existing m/entdb-wal-archive
+        mc retention set --default COMPLIANCE 1d m/entdb-wal-archive
+        echo "minio-init: bucket entdb-wal-archive ready with Object Lock COMPLIANCE"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  server:
+    build:
+      context: ../../..
+      dockerfile: Dockerfile
+      target: server
+    image: entdb-server-go:test
+    environment:
+      AWS_ACCESS_KEY_ID: entdb
+      AWS_SECRET_ACCESS_KEY: entdb-secret
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL_S3: http://minio:9000
+    command:
+      - "-addr=:50051"
+      - "-metrics-addr=:9090"
+      - "-data-dir=/var/lib/entdb"
+      - "-wal-backend=kafka"
+      - "-wal-brokers=redpanda:9092"
+      - "-wal-topic=entdb-wal-archive-e2e"
+      - "-wal-group=entdb-applier-archive-e2e"
+      - "-seed-profile=e2e"
+      - "-seed-tenant=e2e-test"
+      - "-archive-enabled=true"
+      - "-archive-bucket=entdb-wal-archive"
+      - "-archive-region=us-east-1"
+      - "-archive-group=entdb-wal-archive-sidecar"
+      - "-archive-retention-days=1"
+      - "-archive-batch-size=8"
+      - "-archive-batch-bytes=65536"
+      - "-archive-poll-timeout=1s"
+      - "-archive-retry-backoff=2s"
+      - "-archive-s3-path-style=true"
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  archive-tests:
+    build:
+      context: ../../..
+      dockerfile: tests/python/e2e/Dockerfile.archive
+    environment:
+      - ENTDB_HOST=server
+      - ENTDB_PORT=50051
+      - ENTDB_METRICS_URL=http://server:9090/metrics
+      - ENTDB_TENANT=e2e-test
+      - ENTDB_SERVER_TARGET=go
+      - ENTDB_S3_ENDPOINT=http://minio:9000
+      - ENTDB_S3_BUCKET=entdb-wal-archive
+      - AWS_ACCESS_KEY_ID=entdb
+      - AWS_SECRET_ACCESS_KEY=entdb-secret
+      - AWS_DEFAULT_REGION=us-east-1
+      - COMPOSE_PROJECT_NAME=e2e-archive
+    depends_on:
+      - server
+
+networks:
+  default:
+    name: entdb-e2e-archive-network

@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -154,6 +155,7 @@ func (a *Archiver) Run(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
+			metrics.IncArchiveErrors()
 			slog.WarnContext(ctx, "audit: archive retrying", "error", err)
 			if err := sleepContext(ctx, a.retryBackoff); err != nil {
 				return err
@@ -176,7 +178,34 @@ func (a *Archiver) RunOnce(ctx context.Context) (int, error) {
 	return a.archiveAndCommit(ctx, records)
 }
 
+// partitionKey identifies a WAL partition for the lag gauge.
+type partitionKey struct {
+	topic     string
+	partition int32
+}
+
+func (a *Archiver) partitionKeyFor(rec wal.Record) partitionKey {
+	topic := rec.Position.Topic
+	if topic == "" {
+		topic = a.topic
+	}
+	return partitionKey{topic: topic, partition: rec.Position.Partition}
+}
+
+// archiveAndCommit archives the polled records and publishes per-partition
+// lag. Lag = records polled from a partition but not yet durably written
+// to S3 Object Lock + committed. A successful round-trip drives lag to 0
+// for that partition; a put/commit failure leaves the unarchived tail as
+// lag, which is the operator alert signal in ADR-015.
 func (a *Archiver) archiveAndCommit(ctx context.Context, records []wal.Record) (int, error) {
+	pending := map[partitionKey]int{}
+	for _, rec := range records {
+		pending[a.partitionKeyFor(rec)]++
+	}
+	for pk, n := range pending {
+		metrics.SetArchiveLag(pk.topic, strconv.FormatInt(int64(pk.partition), 10), float64(n))
+	}
+
 	total := 0
 	for _, batch := range a.archiveBatches(records) {
 		obj, err := a.buildObject(ctx, batch)
@@ -190,9 +219,13 @@ func (a *Archiver) archiveAndCommit(ctx context.Context, records []wal.Record) (
 			if err := a.consumer.Commit(ctx, a.groupID, rec); err != nil {
 				return total, fmt.Errorf("audit: commit archive offset: %w", err)
 			}
+			pk := a.partitionKeyFor(rec)
+			pending[pk]--
+			metrics.SetArchiveLag(pk.topic, strconv.FormatInt(int64(pk.partition), 10), float64(pending[pk]))
 			total++
 		}
 	}
+	metrics.AddArchiveWrites(total)
 	return total, nil
 }
 
