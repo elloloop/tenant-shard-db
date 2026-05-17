@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015503267,
+  "lastUpdate": 1779018727205,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -1296,6 +1296,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0003204837484175513",
             "extra": "mean: 5.422832497004548 msec\nrounds: 167"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "aaca588b836b6a71efb1095e388477d8d258ce87",
+          "message": "auth: argon2id API-key hashing with persistent, rotatable keys (#542)\n\nMemoryAPIKeyManager hashed keys with SHA-256 and was in-memory only:\nno persistence, no rotation/multiple-active-keys migration window, and\nnot wired into entdb-server.\n\n- Hash API keys with argon2id (golang.org/x/crypto/argon2) in a\n  PHC-format string with a per-key random salt. Verification derives\n  the key and compares it with subtle.ConstantTimeCompare, so the\n  constant-time guarantee is preserved. PHC params are embedded per\n  hash so the defaults can be raised later without invalidating old\n  keys.\n- Add an api_keys table to global.db (hash, scopes, status, created_at,\n  expires_at, revoked_at) with CRUD: Put/Get/List/ListActive/Revoke/\n  Delete. Table is CREATE TABLE IF NOT EXISTS so existing global.db\n  files upgrade non-destructively.\n- Add PersistentAPIKeyManager: durable, scopeable, revocable, and\n  rotatable. Multiple keys can be active at once for a documented\n  migration window — issue the new key, flip clients over, then revoke\n  the old key_id; ListActiveAPIKeys returns every still-valid key so\n  the cutover never sees a gap. The manager depends on an APIKeyStore\n  interface so auth never imports globalstore.\n- Wire an --api-key-auth flag in entdb-server that installs the\n  API-key interceptor backed by global.db (opt-in; default off, so the\n  contract/e2e harnesses are unaffected). A globalStoreAPIKeys adapter\n  in main bridges the two packages without a cross-import.\n\nTests: argon2 round-trip + malformed-hash rejection, salt randomness,\npersistence round-trip + reopen durability, rotation overlap (memory,\npersistent, and end-to-end through global.db), scope enforcement,\nrevocation idempotency, expiry, and store-failure handling.\n\nCloses #87",
+          "timestamp": "2026-05-17T12:49:54+01:00",
+          "tree_id": "dcbd74ecaaab817ca5b0259f4572a7f8c5e23d4f",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/aaca588b836b6a71efb1095e388477d8d258ce87"
+        },
+        "date": 1779018726887,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2379.410978172554,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002781862571129625",
+            "extra": "mean: 420.2720795917418 usec\nrounds: 980"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1713.0003092314926,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000386136160497295",
+            "extra": "mean: 583.7710563220111 usec\nrounds: 870"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 823.7308930660491,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005365301325542573",
+            "extra": "mean: 1.2139887048279214 msec\nrounds: 725"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 733.9860522458076,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012850986695768225",
+            "extra": "mean: 1.3624237094700349 msec\nrounds: 623"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1195.3258360548086,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017735456293127626",
+            "extra": "mean: 836.5919733656185 usec\nrounds: 1239"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1117.2623196416441,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002276660104316685",
+            "extra": "mean: 895.0449526667512 usec\nrounds: 1331"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1228.7730551839725,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0015828373791584103",
+            "extra": "mean: 813.8199285711711 usec\nrounds: 1260"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1622.1046489249863,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011565721930628092",
+            "extra": "mean: 616.4830368143805 usec\nrounds: 1331"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1444.0251520834431,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004241140243831156",
+            "extra": "mean: 692.5087132708163 usec\nrounds: 422"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1256.606189348061,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007316762276751219",
+            "extra": "mean: 795.7942659177967 usec\nrounds: 1068"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1941.4047111629918,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026133812987548886",
+            "extra": "mean: 515.0909515414503 usec\nrounds: 1589"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 179.1162714264927,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009032262781547598",
+            "extra": "mean: 5.582965701753058 msec\nrounds: 171"
           }
         ]
       }
