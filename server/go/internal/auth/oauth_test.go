@@ -4,6 +4,8 @@ package auth
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
@@ -60,6 +62,68 @@ func TestMemoryOAuthValidator_RS256_Valid(t *testing.T) {
 	}
 	if claims["sub"] != "bob" {
 		t.Errorf("sub = %v, want bob", claims["sub"])
+	}
+}
+
+func TestMemoryOAuthValidator_ES256_Valid(t *testing.T) {
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey: %v", err)
+	}
+	v := NewMemoryOAuthValidator("https://issuer.test", "entdb-test")
+	v.AddKey("kid-ec", JWKKey{Alg: "ES256", ES256Public: &priv.PublicKey})
+
+	tok, err := SignES256ForTest(priv, "kid-ec", map[string]any{
+		"sub": "carol",
+		"iss": "https://issuer.test",
+		"aud": "entdb-test",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign: %v", err)
+	}
+	claims, err := v.Validate(context.Background(), tok)
+	if err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if claims["sub"] != "carol" {
+		t.Errorf("sub = %v, want carol", claims["sub"])
+	}
+}
+
+func TestMemoryOAuthValidator_ES256_RejectsTamperedSig(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	other, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	v := NewMemoryOAuthValidator("iss", "aud")
+	// Register the wrong public key so a correctly-formed ES256 sig
+	// fails verification.
+	v.AddKey("k", JWKKey{Alg: "ES256", ES256Public: &other.PublicKey})
+	tok, _ := SignES256ForTest(priv, "k", map[string]any{
+		"sub": "carol",
+		"iss": "iss",
+		"aud": "aud",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	_, err := v.Validate(context.Background(), tok)
+	if err == nil || errs.Code(err) != codes.Unauthenticated {
+		t.Fatalf("expected UNAUTHENTICATED, got err=%v code=%v", err, errs.Code(err))
+	}
+}
+
+func TestMemoryOAuthValidator_ES256_RejectsAlgConfusion(t *testing.T) {
+	priv, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	v := NewMemoryOAuthValidator("iss", "aud")
+	// Key registered as ES256; token claims HS256 -> reject before any
+	// signature math.
+	v.AddKey("k", JWKKey{Alg: "ES256", ES256Public: &priv.PublicKey})
+	tok, _ := SignHS256ForTest([]byte("anything"), "k", map[string]any{
+		"sub": "carol",
+		"iss": "iss",
+		"aud": "aud",
+		"exp": time.Now().Add(time.Hour).Unix(),
+	})
+	if _, err := v.Validate(context.Background(), tok); err == nil {
+		t.Fatal("expected algorithm-confusion rejection (ES256 key, HS256 token)")
 	}
 }
 

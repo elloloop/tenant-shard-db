@@ -5,13 +5,17 @@ package auth
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/hmac"
+	cryptorand "crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"sync"
 	"time"
@@ -27,26 +31,30 @@ import (
 //   - Verify signature, expiry, issuer, and audience.
 //   - Return an error wrapping codes.Unauthenticated on any failure.
 //
-// Today only the in-memory implementation below is shipped. Real JWKS
-// rotation, network discovery, and ES256 are tracked separately -- see
-// docs/go-port/shared/auth-interceptor.md "Open questions / risks"
-// items "JWKS rotation thundering herd" and "sub collisions across
-// providers".
+// Two implementations ship:
+//
+//   - MemoryOAuthValidator (this file) -- a static kid -> key map used by
+//     tests and the no-auth dev server. HS256 / RS256 / ES256.
+//   - JWKSValidator (jwks.go) -- production OIDC: real JWKS fetched over
+//     the network with caching and key rotation, OIDC discovery, and
+//     Google / Microsoft / Okta presets. RS256 / ES256.
+//
+// The algorithm-confusion guards (a JWKS RSA/EC key may never verify an
+// HS* token, and vice versa) are enforced by both.
 type OAuthValidator interface {
 	Validate(ctx context.Context, token string) (map[string]any, error)
 }
 
 // JWKKey is one entry in an in-memory JWKS used by the in-memory
-// validator. Exactly one of HS256Secret or RS256Public is populated; the
-// validator picks the algorithm based on the JWT header.
+// validator. Exactly one of HS256Secret / RS256Public / ES256Public is
+// populated; the validator picks the algorithm based on the JWT header.
 //
 // This is deliberately simpler than the JWK spec -- no kty, no crv, no
 // PEM parsing -- because the in-memory validator is only used by tests
 // and dev-mode servers. Production OAuth (real JWKS fetched over the
-// network) is Phase 2.
+// network) lives in jwks.go.
 type JWKKey struct {
-	// Alg is "HS256" or "RS256". ES256 is tracked separately for a
-	// follow-up.
+	// Alg is "HS256", "RS256", or "ES256".
 	Alg string
 	// HS256Secret is the shared secret for HS256 verification.
 	// Populated iff Alg == "HS256".
@@ -54,6 +62,9 @@ type JWKKey struct {
 	// RS256Public is the RSA public key for RS256 verification.
 	// Populated iff Alg == "RS256".
 	RS256Public *rsa.PublicKey
+	// ES256Public is the ECDSA P-256 public key for ES256
+	// verification. Populated iff Alg == "ES256".
+	ES256Public *ecdsa.PublicKey
 }
 
 // MemoryOAuthValidator is the in-memory OAuthValidator used by tests
@@ -61,9 +72,8 @@ type JWKKey struct {
 // and a static map of kid -> JWKKey. Concurrent reads are safe; writes
 // (AddKey) take a write lock.
 //
-// It supports HS256 and RS256. ES256 is deferred to Phase 2 with the
-// rest of the production OAuth surface -- see
-// docs/go-port/shared/auth-interceptor.md "Open questions / risks".
+// It supports HS256, RS256, and ES256. Production OIDC (network JWKS,
+// discovery, provider presets) lives in JWKSValidator (jwks.go).
 type MemoryOAuthValidator struct {
 	issuer   string
 	audience string
@@ -106,40 +116,17 @@ func (v *MemoryOAuthValidator) now() time.Time {
 // unsupported algorithm, unknown kid, bad signature, expired, wrong
 // issuer/audience) it returns an error that wraps
 // codes.Unauthenticated.
-//
-// Mirrors OAuthValidator.validate_token in
 func (v *MemoryOAuthValidator) Validate(_ context.Context, token string) (map[string]any, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return nil, unauthenticatedf("malformed JWT: expected 3 segments, got %d", len(parts))
-	}
-	headerB, err := decodeSegment(parts[0])
+	hdr, claims, signed, sigB, err := parseJWT(token)
 	if err != nil {
-		return nil, unauthenticatedf("malformed JWT header: %v", err)
-	}
-	payloadB, err := decodeSegment(parts[1])
-	if err != nil {
-		return nil, unauthenticatedf("malformed JWT payload: %v", err)
-	}
-	sigB, err := decodeSegment(parts[2])
-	if err != nil {
-		return nil, unauthenticatedf("malformed JWT signature: %v", err)
-	}
-
-	var hdr struct {
-		Alg string `json:"alg"`
-		Kid string `json:"kid"`
-		Typ string `json:"typ"`
-	}
-	if err := json.Unmarshal(headerB, &hdr); err != nil {
-		return nil, unauthenticatedf("malformed JWT header: %v", err)
+		return nil, err
 	}
 	if hdr.Kid == "" {
 		return nil, unauthenticatedf("JWT missing 'kid' header")
 	}
-	if hdr.Alg != "HS256" && hdr.Alg != "RS256" {
+	if hdr.Alg != "HS256" && hdr.Alg != "RS256" && hdr.Alg != "ES256" {
 		// Reject "none" explicitly along with everything else we
-		// don't understand. ES256 is deferred to Phase 2.
+		// don't understand.
 		return nil, unauthenticatedf("unsupported JWT algorithm: %q", hdr.Alg)
 	}
 
@@ -157,7 +144,6 @@ func (v *MemoryOAuthValidator) Validate(_ context.Context, token string) (map[st
 		return nil, unauthenticatedf("algorithm mismatch: token=%s, key=%s", hdr.Alg, key.Alg)
 	}
 
-	signed := []byte(parts[0] + "." + parts[1])
 	switch hdr.Alg {
 	case "HS256":
 		if !verifyHS256(key.HS256Secret, signed, sigB) {
@@ -170,37 +156,85 @@ func (v *MemoryOAuthValidator) Validate(_ context.Context, token string) (map[st
 		if err := verifyRS256(key.RS256Public, signed, sigB); err != nil {
 			return nil, unauthenticatedf("invalid JWT signature: %v", err)
 		}
+	case "ES256":
+		if key.ES256Public == nil {
+			return nil, unauthenticatedf("kid %q has no ES256 public key", hdr.Kid)
+		}
+		if err := verifyES256(key.ES256Public, signed, sigB); err != nil {
+			return nil, unauthenticatedf("invalid JWT signature: %v", err)
+		}
 	}
 
-	var claims map[string]any
-	if err := json.Unmarshal(payloadB, &claims); err != nil {
-		return nil, unauthenticatedf("malformed JWT claims: %v", err)
+	if err := verifyStandardClaims(claims, v.now(), v.issuer, v.audience); err != nil {
+		return nil, err
 	}
+	return claims, nil
+}
 
-	now := v.now()
+// jwtHeader is the decoded JOSE header. typ is parsed but unused -- some
+// IdPs omit it and the spec makes it optional.
+type jwtHeader struct {
+	Alg string `json:"alg"`
+	Kid string `json:"kid"`
+	Typ string `json:"typ"`
+}
+
+// parseJWT splits a compact-serialisation JWT, base64url-decodes the
+// three segments, and unmarshals the header + claims. It performs NO
+// signature or claim verification -- callers do that. signed is the
+// exact bytes the signature covers (header.payload).
+func parseJWT(token string) (hdr jwtHeader, claims map[string]any, signed, sig []byte, err error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return hdr, nil, nil, nil, unauthenticatedf("malformed JWT: expected 3 segments, got %d", len(parts))
+	}
+	headerB, e := decodeSegment(parts[0])
+	if e != nil {
+		return hdr, nil, nil, nil, unauthenticatedf("malformed JWT header: %v", e)
+	}
+	payloadB, e := decodeSegment(parts[1])
+	if e != nil {
+		return hdr, nil, nil, nil, unauthenticatedf("malformed JWT payload: %v", e)
+	}
+	sigB, e := decodeSegment(parts[2])
+	if e != nil {
+		return hdr, nil, nil, nil, unauthenticatedf("malformed JWT signature: %v", e)
+	}
+	if e := json.Unmarshal(headerB, &hdr); e != nil {
+		return hdr, nil, nil, nil, unauthenticatedf("malformed JWT header: %v", e)
+	}
+	if e := json.Unmarshal(payloadB, &claims); e != nil {
+		return hdr, nil, nil, nil, unauthenticatedf("malformed JWT claims: %v", e)
+	}
+	return hdr, claims, []byte(parts[0] + "." + parts[1]), sigB, nil
+}
+
+// verifyStandardClaims enforces exp / nbf / iss / aud. Empty wantIssuer
+// or wantAudience skips that check (dev mode). now is the validator's
+// clock so tests can pin it.
+func verifyStandardClaims(claims map[string]any, now time.Time, wantIssuer, wantAudience string) error {
 	if exp, ok := numericClaim(claims, "exp"); ok {
 		if now.Unix() >= exp {
-			return nil, unauthenticatedf("token has expired")
+			return unauthenticatedf("token has expired")
 		}
 	}
 	if nbf, ok := numericClaim(claims, "nbf"); ok {
 		if now.Unix() < nbf {
-			return nil, unauthenticatedf("token not yet valid")
+			return unauthenticatedf("token not yet valid")
 		}
 	}
-	if v.issuer != "" {
+	if wantIssuer != "" {
 		iss, _ := claims["iss"].(string)
-		if iss != v.issuer {
-			return nil, unauthenticatedf("invalid issuer: got %q, want %q", iss, v.issuer)
+		if iss != wantIssuer {
+			return unauthenticatedf("invalid issuer: got %q, want %q", iss, wantIssuer)
 		}
 	}
-	if v.audience != "" {
-		if !audienceMatches(claims["aud"], v.audience) {
-			return nil, unauthenticatedf("invalid audience: want %q", v.audience)
+	if wantAudience != "" {
+		if !audienceMatches(claims["aud"], wantAudience) {
+			return unauthenticatedf("invalid audience: want %q", wantAudience)
 		}
 	}
-
-	return claims, nil
+	return nil
 }
 
 // audienceMatches accepts either a string aud or a list-of-strings aud,
@@ -263,6 +297,30 @@ func verifyRS256(pub *rsa.PublicKey, signed, sig []byte) error {
 	return nil
 }
 
+// verifyES256 verifies an ES256 (ECDSA on P-256 with SHA-256) signature.
+//
+// The JWS ES256 signature is the fixed-width R || S concatenation (RFC
+// 7518 sec 3.4), each 32 bytes for P-256 -- NOT the ASN.1 DER form that
+// ecdsa.VerifyASN1 expects. We split it and verify with ecdsa.Verify.
+// A signature of the wrong length is rejected outright; this also slams
+// the door on the curve-confusion family of attacks.
+func verifyES256(pub *ecdsa.PublicKey, signed, sig []byte) error {
+	if pub.Curve != elliptic.P256() {
+		return errors.New("ES256 key is not on the P-256 curve")
+	}
+	const keyBytes = 32 // P-256 field size
+	if len(sig) != 2*keyBytes {
+		return fmt.Errorf("ES256 signature is %d bytes, want %d (R||S)", len(sig), 2*keyBytes)
+	}
+	r := new(big.Int).SetBytes(sig[:keyBytes])
+	s := new(big.Int).SetBytes(sig[keyBytes:])
+	h := sha256.Sum256(signed)
+	if !ecdsa.Verify(pub, h[:], r, s) {
+		return errors.New("ecdsa verify failed")
+	}
+	return nil
+}
+
 // SignHS256ForTest is a tiny helper that produces a compact-serialisation
 // HS256 JWT given the raw header and claims. It exists so the package's
 // own unit tests can mint tokens without pulling in a third-party JWT
@@ -309,5 +367,33 @@ func SignRS256ForTest(priv *rsa.PrivateKey, kid string, claims map[string]any) (
 	if err != nil {
 		return "", fmt.Errorf("sign rs256: %w", err)
 	}
+	return signed + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+}
+
+// SignES256ForTest mints an ES256 JWT (ECDSA P-256, SHA-256) with the
+// JWS-mandated fixed-width R||S signature. Tests / dev only -- production
+// code MUST NOT call it.
+func SignES256ForTest(priv *ecdsa.PrivateKey, kid string, claims map[string]any) (string, error) {
+	hdr := map[string]any{"alg": "ES256", "kid": kid, "typ": "JWT"}
+	hdrB, err := json.Marshal(hdr)
+	if err != nil {
+		return "", fmt.Errorf("marshal header: %w", err)
+	}
+	payloadB, err := json.Marshal(claims)
+	if err != nil {
+		return "", fmt.Errorf("marshal claims: %w", err)
+	}
+	encHdr := base64.RawURLEncoding.EncodeToString(hdrB)
+	encPayload := base64.RawURLEncoding.EncodeToString(payloadB)
+	signed := encHdr + "." + encPayload
+	h := sha256.Sum256([]byte(signed))
+	r, s, err := ecdsa.Sign(cryptorand.Reader, priv, h[:])
+	if err != nil {
+		return "", fmt.Errorf("sign es256: %w", err)
+	}
+	const keyBytes = 32
+	sig := make([]byte, 2*keyBytes)
+	r.FillBytes(sig[:keyBytes])
+	s.FillBytes(sig[keyBytes:])
 	return signed + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
