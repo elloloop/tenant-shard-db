@@ -57,13 +57,35 @@ func main() {
 	gdprWorkerEnabled := flag.Bool("gdpr-worker-enabled", true, "run GDPR deletion_queue worker that performs due deletes and crypto-shred")
 	gdprWorkerInterval := flag.Duration("gdpr-worker-interval", time.Minute, "how often the GDPR worker scans for due deletions")
 	cryptoShredDeleteFiles := flag.Bool("crypto-shred-delete-files", false, "delete tenant .db/-wal/-shm files after key shred")
-	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka")
+	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka | kinesis | pubsub | sqs | servicebus | eventhubs")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
 	// Kafka/Redpanda-specific knobs. Defaults match the legacy
 	// KAFKA_BROKERS env-var convention so the cross-impl e2e stack
 	// can swap targets without re-jiggering compose env-vars.
 	walBrokers := flag.String("wal-brokers", "localhost:9092", "comma-separated Kafka bootstrap brokers (used when --wal-backend=kafka)")
+	// Cloud-native backend knobs (ADR-005 / EPIC #518). Each backend
+	// follows the existing Kafka pattern: backend-specific flags,
+	// shared --wal-topic / --wal-group. Unset flags are only an error
+	// if the matching --wal-backend is selected.
+	//
+	// AWS Kinesis.
+	walKinesisStream := flag.String("wal-kinesis-stream", "", "Kinesis stream name (used when --wal-backend=kinesis; defaults to --wal-topic)")
+	walAWSRegion := flag.String("wal-aws-region", "", "AWS region for Kinesis/SQS backends")
+	walAWSEndpoint := flag.String("wal-aws-endpoint", "", "override AWS endpoint URL (LocalStack/testing) for Kinesis/SQS backends")
+	walKinesisIterator := flag.String("wal-kinesis-iterator", "TRIM_HORIZON", "Kinesis shard iterator type: TRIM_HORIZON | LATEST")
+	// AWS SQS (FIFO).
+	walSQSQueueURL := flag.String("wal-sqs-queue-url", "", "SQS FIFO queue URL (used when --wal-backend=sqs; must end in .fifo)")
+	// GCP Pub/Sub.
+	walPubSubProject := flag.String("wal-pubsub-project", "", "GCP project id (used when --wal-backend=pubsub)")
+	walPubSubTopic := flag.String("wal-pubsub-topic", "", "Pub/Sub topic id (used when --wal-backend=pubsub; defaults to --wal-topic)")
+	walPubSubSub := flag.String("wal-pubsub-subscription", "", "Pub/Sub subscription id (used when --wal-backend=pubsub; defaults to --wal-group)")
+	walPubSubEndpoint := flag.String("wal-pubsub-endpoint", "", "override Pub/Sub endpoint (emulator/testing)")
+	// Azure Service Bus / Event Hubs.
+	walAzureConnStr := flag.String("wal-azure-connection-string", "", "Azure Service Bus / Event Hubs namespace connection string")
+	walServiceBusQueue := flag.String("wal-servicebus-queue", "", "Azure Service Bus session-enabled queue name (used when --wal-backend=servicebus; defaults to --wal-topic)")
+	walEventHubsName := flag.String("wal-eventhubs-name", "", "Azure Event Hub name (used when --wal-backend=eventhubs; defaults to --wal-topic)")
+	walEventHubsGroup := flag.String("wal-eventhubs-consumer-group", "", "Azure Event Hubs consumer group (used when --wal-backend=eventhubs; defaults to $Default)")
 	archiveEnabled := flag.Bool("archive-enabled", false, "enable S3 Object Lock WAL archive sidecar (requires --wal-backend=kafka)")
 	archiveBucket := flag.String("archive-bucket", "", "S3 bucket for immutable WAL archives")
 	archiveRegion := flag.String("archive-region", "", "AWS region for --archive-bucket")
@@ -188,8 +210,10 @@ func main() {
 
 	// WAL backend wiring. memory: in-process, lost on restart (dev /
 	// short-running tests). kafka: Kafka/Redpanda; production-grade,
-	// survives docker compose restart, exact-parity with Python's
-	// wal/kafka.py.
+	// survives docker compose restart. The cloud-native backends
+	// (kinesis/pubsub/sqs/servicebus/eventhubs) are the EPIC #518 ports
+	// — same wal.Producer + wal.Consumer interface, selected by config,
+	// not code (ADR-005).
 	var walImpl interface {
 		wal.Producer
 		wal.Consumer
@@ -203,8 +227,57 @@ func main() {
 			log.Fatalf("entdb-server: --wal-backend=kafka requires --wal-brokers")
 		}
 		walImpl = wal.NewKafka(wal.DefaultKafkaConfig(brokers))
+	case "kinesis":
+		if strings.TrimSpace(*walAWSRegion) == "" {
+			log.Fatalf("entdb-server: --wal-backend=kinesis requires --wal-aws-region")
+		}
+		stream := firstNonEmpty(*walKinesisStream, *walTopic)
+		kcfg := wal.DefaultKinesisConfig(stream, strings.TrimSpace(*walAWSRegion))
+		kcfg.EndpointURL = strings.TrimSpace(*walAWSEndpoint)
+		if strings.TrimSpace(*walKinesisIterator) != "" {
+			kcfg.IteratorType = strings.TrimSpace(*walKinesisIterator)
+		}
+		walImpl = wal.NewKinesis(kcfg)
+	case "sqs":
+		if strings.TrimSpace(*walSQSQueueURL) == "" {
+			log.Fatalf("entdb-server: --wal-backend=sqs requires --wal-sqs-queue-url")
+		}
+		if strings.TrimSpace(*walAWSRegion) == "" {
+			log.Fatalf("entdb-server: --wal-backend=sqs requires --wal-aws-region")
+		}
+		scfg := wal.DefaultSqsConfig(strings.TrimSpace(*walSQSQueueURL), strings.TrimSpace(*walAWSRegion))
+		scfg.EndpointURL = strings.TrimSpace(*walAWSEndpoint)
+		walImpl = wal.NewSqs(scfg)
+	case "pubsub":
+		if strings.TrimSpace(*walPubSubProject) == "" {
+			log.Fatalf("entdb-server: --wal-backend=pubsub requires --wal-pubsub-project")
+		}
+		pcfg := wal.DefaultPubSubConfig(
+			strings.TrimSpace(*walPubSubProject),
+			firstNonEmpty(*walPubSubTopic, *walTopic),
+			firstNonEmpty(*walPubSubSub, *walGroup),
+		)
+		pcfg.Endpoint = strings.TrimSpace(*walPubSubEndpoint)
+		walImpl = wal.NewPubSub(pcfg)
+	case "servicebus":
+		if strings.TrimSpace(*walAzureConnStr) == "" {
+			log.Fatalf("entdb-server: --wal-backend=servicebus requires --wal-azure-connection-string")
+		}
+		walImpl = wal.NewServiceBus(wal.DefaultServiceBusConfig(
+			strings.TrimSpace(*walAzureConnStr),
+			firstNonEmpty(*walServiceBusQueue, *walTopic),
+		))
+	case "eventhubs":
+		if strings.TrimSpace(*walAzureConnStr) == "" {
+			log.Fatalf("entdb-server: --wal-backend=eventhubs requires --wal-azure-connection-string")
+		}
+		walImpl = wal.NewEventHubs(wal.DefaultEventHubsConfig(
+			strings.TrimSpace(*walAzureConnStr),
+			firstNonEmpty(*walEventHubsName, *walTopic),
+			strings.TrimSpace(*walEventHubsGroup),
+		))
 	default:
-		log.Fatalf("entdb-server: unsupported wal backend %q (want memory|kafka)", *walBackend)
+		log.Fatalf("entdb-server: unsupported wal backend %q (want memory|kafka|kinesis|pubsub|sqs|servicebus|eventhubs)", *walBackend)
 	}
 	if err := walImpl.Connect(ctx); err != nil {
 		log.Fatalf("entdb-server: wal connect: %v", err)
@@ -566,6 +639,19 @@ func (a globalStoreAPIKeys) ListActiveAPIKeys(ctx context.Context, now int64) ([
 		})
 	}
 	return out, nil
+}
+
+// firstNonEmpty returns the first argument whose trimmed form is
+// non-empty, or "" if all are blank. Used to default a cloud backend's
+// stream/topic/subscription to the shared --wal-topic / --wal-group
+// when its dedicated flag is unset.
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
 }
 
 func effectiveKMSProvider(provider string) string {
