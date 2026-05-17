@@ -16,13 +16,19 @@
 //	identity.go Identity struct + context.Context plumbing.
 //	authoritative.go Authoritative() -- the SINGLE trusted-actor chokepoint.
 //	interceptor.go Unary + Stream gRPC interceptors; Health bypass list.
-//	oauth.go In-memory OAuthValidator (HS256 / RS256).
+//	oauth.go In-memory OAuthValidator (HS256 / RS256 / ES256).
+//	jwks.go Production JWKSValidator: network JWKS fetch +
+//	                 caching + key rotation, OIDC discovery,
+//	                 Google/Microsoft/Okta presets (RS256 / ES256).
 //	apikey.go In-memory APIKeyManager.
 //	session.go In-memory SessionManager.
 //	errors.go UNAUTHENTICATED / PERMISSION_DENIED wrappers.
 //
-// Production OAuth (real JWKS rotation, network discovery), Redis-backed
-// sessions, and the quota interceptor are tracked separately; this
-// package ships the in-memory validators plus the trusted-actor
-// plumbing.
+// Production OAuth/OIDC ships here (JWKSValidator), wired into the
+// server via the -oauth-issuer / -jwks-url / -oauth-audience /
+// -oauth-provider flags on cmd/entdb-server. Redis-backed sessions, the
+// production API-key store, and the quota interceptor are tracked
+// separately (#87/#88); this package ships the OAuth validators plus the
+// trusted-actor plumbing, with in-memory API-key/session managers for
+// tests and dev.
 package auth

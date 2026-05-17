@@ -43,6 +43,10 @@ func main() {
 	tlsMinVersion := flag.String("tls-min-version", "1.3", "minimum TLS version: 1.3 | 1.2")
 	requireTLS := flag.Bool("require-tls", false, "refuse to start unless TLS is configured")
 	requireClientCert := flag.Bool("require-client-cert", false, "require and verify client certificates (mTLS; requires --tls-ca)")
+	oauthProvider := flag.String("oauth-provider", "", "OIDC provider preset: google | microsoft | okta (microsoft/okta also need --oauth-issuer)")
+	oauthIssuer := flag.String("oauth-issuer", "", "OIDC issuer URL; expected JWT 'iss' and the discovery base when --jwks-url is unset")
+	oauthJWKSURL := flag.String("jwks-url", "", "explicit JWKS endpoint; when set, OIDC discovery is skipped")
+	oauthAudience := flag.String("oauth-audience", "", "expected JWT 'aud' (your OAuth client/app id); empty disables the audience check (dev only)")
 	kmsProvider := flag.String("kms-provider", "", "encryption master-key provider: file | aws | gcp | azure | vault")
 	kmsKeyID := flag.String("kms-key-id", "", "master-key provider identifier; file provider accepts path or env:NAME")
 	encryptionRequired := flag.Bool("encryption-required", false, "require encrypted global.db and tenant SQLite files")
@@ -329,6 +333,35 @@ func main() {
 		log.Printf("entdb-server: TLS enabled (min-version=%s client-auth=%s)", *tlsMinVersion, clientAuthMode(*tlsCA, *requireClientCert))
 	} else {
 		log.Printf("entdb-server: WARNING: TLS disabled; plaintext gRPC listener is for local/dev use only")
+	}
+
+	// Production OAuth/OIDC. When any -oauth-* flag is set we build a
+	// network-backed JWKSValidator (real JWKS fetch + caching + key
+	// rotation, OIDC discovery, provider presets) and install the auth
+	// interceptor. The interceptor reads gRPC metadata, so it is wired
+	// independently of TLS. API-key / session managers stay nil here
+	// (in-memory dev managers and their flags are tracked under
+	// sibling issues #87/#88); a nil backend simply means that
+	// credential type is not accepted.
+	oc := oauthConfig{
+		provider: *oauthProvider,
+		issuer:   *oauthIssuer,
+		jwksURL:  *oauthJWKSURL,
+		audience: *oauthAudience,
+	}
+	if oc.enabled() {
+		validator, err := buildOAuthValidator(ctx, oc)
+		if err != nil {
+			log.Fatalf("entdb-server: OAuth config: %v", err)
+		}
+		authInterceptor := auth.NewInterceptor(validator, nil, nil)
+		grpcServerOpts = append(grpcServerOpts,
+			grpc.ChainUnaryInterceptor(authInterceptor.Unary()),
+			grpc.ChainStreamInterceptor(authInterceptor.Stream()),
+		)
+		log.Printf("entdb-server: OAuth/OIDC authentication enabled (%s)", oauthSummary(oc, validator))
+	} else {
+		log.Printf("entdb-server: WARNING: OAuth/OIDC authentication disabled; no -oauth-* flags set (local/dev only — production MUST set --oauth-issuer)")
 	}
 
 	srv := grpc.NewServer(grpcServerOpts...)
