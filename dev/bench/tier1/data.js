@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015332025,
+  "lastUpdate": 1779015353679,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -972,6 +972,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.002057399702420599",
             "extra": "mean: 8.247960799998179 msec\nrounds: 110"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a18313e374aeab1ba5b1b172c4cd552ef6091b7",
+          "message": "Add production OIDC: network JWKS, discovery, ES256, server flags (#535)\n\nThe shipped MemoryOAuthValidator is in-memory/dev only and was never\nwired into the running server, so there was no production-grade OAuth\npath: no network JWKS fetch, no key rotation, no OIDC discovery, no\nES256, and no flags to turn auth on.\n\nAdd a network-backed JWKSValidator that fetches a JWKS document over\nHTTP, caches it in-process, and lazily refreshes on a kid miss (key\nrotation) with refreshes coalesced through a single-flight latch so a\nburst on an unknown kid triggers exactly one fetch. It performs OIDC\ndiscovery (<issuer>/.well-known/openid-configuration) when no explicit\nJWKS URL is given, verifies the discovered issuer matches, and warms\nthe cache at boot so a misconfigured issuer fails fast instead of\nsilently rejecting every request. Provider preset for Google;\nMicrosoft/Okta are recognised but tenant/org-specific so they require\nan explicit issuer and resolve via discovery.\n\nAdd ES256 (ECDSA P-256) verification alongside HS256/RS256, including\nthe JWS fixed-width R||S signature handling and a P-256 curve check.\nThe existing algorithm-confusion guards are preserved and extended:\nthe JWKS path rejects HS256 outright (a symmetric token at an\nasymmetric endpoint is the classic confusion attack) and the JWKS\nentry pins each kid's algorithm.\n\nWire it into entdb-server via -oauth-provider / -oauth-issuer /\n-jwks-url / -oauth-audience; the auth interceptor installs whenever any\n-oauth-* flag is set, independent of TLS. API-key/session managers stay\nnil here (tracked under sibling issues), and the no-flag path is\nunchanged so existing dev/test boots are unaffected.\n\nTests: JWKS RS256/ES256 verify, cache hit across requests, key\nrotation refetch, single-flight coalescing under concurrency, alg=none\nand HS256-at-JWKS rejection, expiry/issuer/audience enforcement, OIDC\ndiscovery + issuer-mismatch rejection, fail-closed boot, provider\npresets, and ES256 + alg-confusion cases for MemoryOAuthValidator.",
+          "timestamp": "2026-05-17T11:49:19+01:00",
+          "tree_id": "c01dc84ac9b372d1c3d052ea300a34896f35d7c5",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/3a18313e374aeab1ba5b1b172c4cd552ef6091b7"
+        },
+        "date": 1779015353367,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3355.5698861279966,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024824441880595907",
+            "extra": "mean: 298.0119723132643 usec\nrounds: 939"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2184.7529413479015,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003837875886108691",
+            "extra": "mean: 457.71765817284665 usec\nrounds: 1217"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1109.1595406617555,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008159802782319956",
+            "extra": "mean: 901.5835534384639 usec\nrounds: 945"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 834.1175593726169,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007332500025380248",
+            "extra": "mean: 1.1988717762423704 msec\nrounds: 724"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1939.9398654438717,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007366396083653916",
+            "extra": "mean: 515.4798959560497 usec\nrounds: 1730"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1943.0015557660904,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000889603230277353",
+            "extra": "mean: 514.6676270188152 usec\nrounds: 1177"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1983.4247097295167,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007172146475659294",
+            "extra": "mean: 504.1784520958054 usec\nrounds: 1670"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2053.6993883647897,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003809611126839022",
+            "extra": "mean: 486.92618095203636 usec\nrounds: 1155"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1925.0481104509681,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004616167612625349",
+            "extra": "mean: 519.4675367182052 usec\nrounds: 531"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1624.3164708414895,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004803044858873841",
+            "extra": "mean: 615.6435755908715 usec\nrounds: 1270"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2644.6377438056484,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002840082973123863",
+            "extra": "mean: 378.12362102984827 usec\nrounds: 1921"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 166.1781612712345,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010105913810836392",
+            "extra": "mean: 6.017637891466429 msec\nrounds: 129"
           }
         ]
       }
