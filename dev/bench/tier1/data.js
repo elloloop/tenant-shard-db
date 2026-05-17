@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779023687024,
+  "lastUpdate": 1779026370682,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -1944,6 +1944,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0000980597184259813",
             "extra": "mean: 5.275949690607513 msec\nrounds: 181"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "102ec1cc0068cdc0e37abcd96c1e725441090dda",
+          "message": "docs: ADR-026 (read/write conn split) + ADR-027 (parallel WAL apply) (#544)\n\n* docs: ADR-026 (read/write conn split) + ADR-027 (parallel WAL apply)\n\nRecords the design decisions and blocking conditions from the deep\nreview of PR #536 (#137) and PR #541 (#140). ADR-027 amends ADR-016's\nno-fan-out-within-the-consumer clause. Neither implementation merges\nuntil the conditions in each ADR are met. Adds the two index pointers\nto CLAUDE.md per the ADR-019 convention.\n\n* docs: ADR-026/027 reflect dark-landing decision\n\nBoth perf changes land disabled by default: read/write split off\n(--read-pool-size=1) pending idle-tenant eviction; parallel apply\nserial (--apply-concurrency=1) pending staging soak + the\nmulti-replica rebalance open question. Conditions are met; the ADRs\nand CLAUDE.md pointers now state the actual rollout posture instead of\n'gated, do not merge'.",
+          "timestamp": "2026-05-17T14:57:40+01:00",
+          "tree_id": "13b1f20f1d1f0256102d6ea38cc3ad58c62f1754",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/102ec1cc0068cdc0e37abcd96c1e725441090dda"
+        },
+        "date": 1779026370163,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3003.9194333963965,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029741972100500633",
+            "extra": "mean: 332.8984089527811 usec\nrounds: 1318"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2023.1381140987135,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000045496018254616385",
+            "extra": "mean: 494.28162765125376 usec\nrounds: 1273"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 932.9923840370531,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010796134885454579",
+            "extra": "mean: 1.071820110334669 msec\nrounds: 716"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 796.5251151827805,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007973386982851418",
+            "extra": "mean: 1.2554531940534326 msec\nrounds: 639"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1851.725222940096,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008967853074323081",
+            "extra": "mean: 540.0369275157572 usec\nrounds: 1421"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1843.8821732977322,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009985045803815974",
+            "extra": "mean: 542.3340029431098 usec\nrounds: 1359"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1908.6168667400825,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008179714289610591",
+            "extra": "mean: 523.9396221558075 usec\nrounds: 1670"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1950.0073222421925,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003890008505165065",
+            "extra": "mean: 512.8185871887712 usec\nrounds: 1405"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1680.950615645499,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000050833960289030646",
+            "extra": "mean: 594.9014746135131 usec\nrounds: 453"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1452.131692757898,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004915023619903207",
+            "extra": "mean: 688.6427759873442 usec\nrounds: 1241"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2478.194512564193,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000037970034716027325",
+            "extra": "mean: 403.51957642150455 usec\nrounds: 1917"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 143.49490269092996,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001477183834764813",
+            "extra": "mean: 6.968888659089687 msec\nrounds: 132"
           }
         ]
       }
