@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779028141844,
+  "lastUpdate": 1779037887591,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2376,6 +2376,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00020190272373644619",
             "extra": "mean: 6.324767760273876 msec\nrounds: 146"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c95c5658c7182d13dfb2219173570a9683d76e62",
+          "message": "fix: DeleteWhere usable in schemaless mode via numeric field id (#546)\n\nA server started without a schema cannot resolve a FieldFilter.field\nNAME to a payload field id, so entdb.DeleteWhere failed with\n\"VALIDATION_ERROR: payload: cannot translate filter key ... without a\nschema\". The pre-v1.14.0 QueryNodes path already worked schemaless\nbecause callers pass the numeric field id as the filter key; DeleteWhere\nhad no documented or tested escape hatch.\n\nThe DeleteWhere handler is in fact already schema-optional, exactly like\nQueryNodes: when the registry is nil it skips the registry block and\nroutes through fieldFiltersToStoreFilters -> payload.FilterNamesToIDs,\nwhose schemaless branch resolves digit-only keys and returns a clear\nINVALID_ARGUMENT for genuine name keys. Both SDKs already forward\nFilter.Field verbatim, so Filter{Field: \"4\"} reaches the wire\nunchanged. The real gap was that this contract was undocumented and\nunpinned, so callers did not know the numeric-id route was supported and\nnothing guarded it against regression.\n\n- server: spell out the schema-optional contract on the DeleteWhere\n  handler so it is not \"fixed\" into a hard reject that would diverge\n  from QueryNodes.\n- Go + Python SDKs: document the numeric-field-id escape hatch on\n  DeleteWhere and Filter; no API change (the field already suffices,\n  consistent with ADR-025's single-shape API).\n- tests: server unit tests for schemaless numeric (works) / schemaless\n  name (clear INVALID_ARGUMENT) / schema-mode unchanged; Go + Python SDK\n  tests proving the numeric id travels verbatim; live schemaless\n  integration coverage in tests/python/integration/test_delete_where.py.\n\nCloses #545",
+          "timestamp": "2026-05-17T18:09:38+01:00",
+          "tree_id": "85ed1611294ce7229d8801ab752c67bc19655b7f",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/c95c5658c7182d13dfb2219173570a9683d76e62"
+        },
+        "date": 1779037886631,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3165.218261139389,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028300309681022857",
+            "extra": "mean: 315.93397911208444 usec\nrounds: 1532"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2131.211560567495,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000035736035636735084",
+            "extra": "mean: 469.2166739813113 usec\nrounds: 1276"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1007.2612028286865,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008295329660254609",
+            "extra": "mean: 992.7911421503233 usec\nrounds: 809"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 814.5635257331526,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007844064568357639",
+            "extra": "mean: 1.2276513352349583 msec\nrounds: 701"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1962.8613417268382,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007113403208593165",
+            "extra": "mean: 509.46033667372774 usec\nrounds: 1497"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1939.9352018583675,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000690267195951921",
+            "extra": "mean: 515.481135164745 usec\nrounds: 1820"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2026.377403114149,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007098557988138575",
+            "extra": "mean: 493.49148804324113 usec\nrounds: 1840"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2037.4190569431105,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000045328525218761126",
+            "extra": "mean: 490.81704453102225 usec\nrounds: 1280"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1774.9832014068168,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000055702967563335025",
+            "extra": "mean: 563.385613569424 usec\nrounds: 339"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1530.785096107569,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006303826384414053",
+            "extra": "mean: 653.2595610858557 usec\nrounds: 1326"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2609.2280969054304,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026739317404771424",
+            "extra": "mean: 383.2551095038451 usec\nrounds: 1936"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 151.28958608399296,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010510458669694695",
+            "extra": "mean: 6.609840279719055 msec\nrounds: 143"
           }
         ]
       }
