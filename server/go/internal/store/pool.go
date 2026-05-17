@@ -40,16 +40,61 @@ func validateTenantID(tenantID string) error {
 	return nil
 }
 
-// poolEntry is one tenant's pooled handle: the *sql.DB plus the
-// per-tenant writer mutex. Mirrors the Python pattern of
-// (pooled connection + per-tenant threading.Lock).
+// poolEntry is one tenant's pooled handle.
+//
+// Two distinct *sql.DB handles point at the same physical tenant file:
+//
+//   - db      — the single-connection WRITE/DDL handle. SetMaxOpenConns(1)
+//     plus the per-tenant writeMu serialize every writer onto one
+//     connection (ADR-016: only the applier writes SQLite, and it does
+//     so under BEGIN IMMEDIATE on this handle). DDL (lazy index/FTS
+//     creation) and AdminDB ad-hoc access also use this handle so they
+//     observe the writer's exact view.
+//   - readDB  — a read-only POOLED handle (mode=ro + query_only,
+//     SetMaxOpenConns(N)). Pure query methods (GetNode, QueryNodes,
+//     …) use this so same-tenant reads run concurrently against
+//     SQLite WAL snapshots instead of serializing behind the single
+//     write connection. readDB is physically incapable of writing
+//     (driver opens it SQLITE_OPEN_READONLY), so it cannot violate
+//     the single-writer invariant even by mistake.
+//
+// readDB MAY be nil when WAL mode is disabled (see pool.walMode): a
+// read-only connection cannot create the -wal/-shm sidecars, and the
+// rollback-journal mode does not allow a reader concurrent with a
+// writer anyway, so the split would give nothing and risk SQLITE_BUSY.
+// In that case readDBOrWrite() falls back to the write handle and
+// behaviour is exactly as before this change.
+//
+// ADR-026: the split is OFF BY DEFAULT (--read-pool-size=1, the single
+// shared connection) — landed dark pending idle-tenant eviction
+// (canonical-store OQ-2). It is opt-IN: set --read-pool-size>1 to
+// enable. Correctness does not depend on the default: ADR-026
+// condition 1 moved the WaitForOffset offset broadcast to AFTER
+// BatchTxn.Commit (see offset.go / txn.go) unconditionally, so a
+// read-after-write fenced by WaitForOffset is only woken once the
+// write is committed and visible on every connection, including this
+// read pool when enabled. That latent regression is closed
+// regardless of --read-pool-size, not merely "preserved".
 type poolEntry struct {
 	db *sql.DB
+	// readDB is the read-only pooled handle. nil => use db for reads
+	// (non-WAL mode). Never written through.
+	readDB *sql.DB
 	// writeMu serializes writers on this tenant's DB. Readers do NOT
 	// take it; SQLite WAL mode + per-connection isolation handles them.
 	// This matches canonical_store.py:_get_tenant_lock (642) which only
 	// guards the single-pooled-writer path in Python.
 	writeMu sync.Mutex
+}
+
+// reader returns the handle pure-read methods should use: the pooled
+// read-only handle when present, else the single write handle. Callers
+// MUST only issue SELECTs through the returned handle.
+func (e *poolEntry) reader() *sql.DB {
+	if e.readDB != nil {
+		return e.readDB
+	}
+	return e.db
 }
 
 // pool is the per-tenant connection registry. Keyed by tenant_id;
@@ -68,6 +113,11 @@ type pool struct {
 	// walMode toggles PRAGMA journal_mode=WAL. true in production.
 	walMode bool
 
+	// readPoolSize is SetMaxOpenConns(N) for the per-tenant read-only
+	// handle. <=1 disables the split (reads keep using the single write
+	// connection — identical to pre-#137 behaviour).
+	readPoolSize int
+
 	// keyManager switches tenant DB opens to SQLCipher.
 	keyManager *entcrypto.KeyManager
 
@@ -79,6 +129,7 @@ type poolOptions struct {
 	rootDir            string
 	busyTimeout        time.Duration
 	walMode            bool
+	readPoolSize       int
 	keyManager         *entcrypto.KeyManager
 	encryptionRequired bool
 }
@@ -103,6 +154,7 @@ func newPool(opts poolOptions) (*pool, error) {
 		rootDir:            opts.rootDir,
 		busyTimeout:        opts.busyTimeout,
 		walMode:            opts.walMode,
+		readPoolSize:       opts.readPoolSize,
 		keyManager:         opts.keyManager,
 		encryptionRequired: opts.encryptionRequired,
 	}, nil
@@ -118,9 +170,20 @@ func (p *pool) dbPath(tenantID string) string {
 // Schema is initialized and PRAGMAs applied on first open. Subsequent
 // calls are O(1) read-locked map lookups.
 //
-// MaxOpenConns(1) is non-negotiable — it matches the Python pooled-
-// single-connection model and avoids INSERT-OR-REPLACE racing under
-// concurrent readers (canonical-store.md "Open questions" item 5).
+// The WRITE handle keeps SetMaxOpenConns(1): exactly one connection,
+// serialized further by poolEntry.writeMu. This preserves ADR-016
+// (only the applier writes SQLite, under BEGIN IMMEDIATE) and the
+// single-writer invariant verbatim — nothing about the write path
+// changes.
+//
+// When WAL mode is on and readPoolSize > 1, open() ALSO opens a
+// separate read-only pooled handle (mode=ro + PRAGMA query_only) with
+// SetMaxOpenConns(readPoolSize). Pure query methods use it so 50
+// same-tenant GetNode calls run concurrently against WAL read
+// snapshots instead of queueing on the single write connection
+// (issue #137 / canonical-store.md "Open questions" item 5 — resolved
+// here by physically opening the read handle read-only, so concurrent
+// readers cannot race INSERT-OR-REPLACE: they cannot write at all).
 func (p *pool) open(ctx context.Context, tenantID string) (*poolEntry, error) {
 	if err := validateTenantID(tenantID); err != nil {
 		return nil, err
@@ -176,9 +239,76 @@ func (p *pool) open(ctx context.Context, tenantID string) (*poolEntry, error) {
 		return nil, err
 	}
 
-	e := &poolEntry{db: db}
+	// Read-only pooled handle (issue #137). Only meaningful in WAL mode:
+	// a read-only connection cannot create the -wal/-shm sidecars, and
+	// rollback-journal mode blocks a reader concurrent with a writer, so
+	// the split would only add SQLITE_BUSY risk for zero gain. The write
+	// handle above has, by this point, created the file and switched it
+	// to WAL, so the read-only handle attaches cleanly.
+	var readDB *sql.DB
+	if p.walMode && p.readPoolSize > 1 {
+		rDriver, rDSN, rErr := p.readOpenParams(ctx, tenantID, path)
+		if rErr != nil {
+			_ = db.Close()
+			return nil, rErr
+		}
+		readDB, rErr = sql.Open(rDriver, rDSN)
+		if rErr != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("store: open read handle %q: %w", path, rErr)
+		}
+		readDB.SetMaxOpenConns(p.readPoolSize)
+		readDB.SetMaxIdleConns(p.readPoolSize)
+		readDB.SetConnMaxLifetime(0)
+		// query_only is belt-and-braces over mode=ro: any stray write
+		// (there should be none — only SELECTs reach this handle)
+		// fails fast instead of silently mutating tenant state.
+		if _, rErr = readDB.ExecContext(ctx, `PRAGMA query_only = ON`); rErr != nil {
+			_ = readDB.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("store: set query_only on read handle: %w", rErr)
+		}
+		// Bound the WAL the readers pin: NORMAL synchronous is
+		// irrelevant for read-only, but cache_size keeps hot pages
+		// resident per read connection.
+		if _, rErr = readDB.ExecContext(ctx, `PRAGMA cache_size = -64000`); rErr != nil {
+			_ = readDB.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("store: set cache_size on read handle: %w", rErr)
+		}
+	}
+
+	e := &poolEntry{db: db, readDB: readDB}
 	p.entries[tenantID] = e
 	return e, nil
+}
+
+// readOpenParams returns the driver + DSN for the read-only pooled
+// handle. It mirrors openParams but forces SQLITE_OPEN_READONLY via the
+// standard SQLite URI "mode=ro" parameter (honoured by both
+// modernc.org/sqlite and the SQLCipher driver, which open with
+// SQLITE_OPEN_URI). The encryption key is still required for SQLCipher
+// — read-only does not mean unencrypted.
+func (p *pool) readOpenParams(ctx context.Context, tenantID, path string) (driver, dsn string, err error) {
+	if p.keyManager == nil {
+		return "sqlite", fmt.Sprintf(
+			"file:%s?mode=ro&_pragma=busy_timeout(%d)&_pragma=query_only(true)",
+			path, p.busyTimeout.Milliseconds(),
+		), nil
+	}
+	key, err := p.keyManager.TenantKey(ctx, tenantID)
+	if err != nil {
+		return "", "", fmt.Errorf("store: tenant key %q: %w", tenantID, err)
+	}
+	base, err := entcrypto.SQLCipherDSN(path, key, p.busyTimeout)
+	if err != nil {
+		return "", "", err
+	}
+	// SQLCipherDSN returns "file:<path>?<params>"; append read-only +
+	// query_only. mutecomm/go-sqlcipher opens with SQLITE_OPEN_URI so
+	// mode=ro is honoured at the VFS layer, and it also parses the
+	// _query_only DSN parameter (sqlite3.go:_query_only).
+	return entcrypto.SQLCipherDriverName, base + "&mode=ro&_query_only=true", nil
 }
 
 func (p *pool) openParams(ctx context.Context, tenantID, path string) (driver, dsn string, err error) {
@@ -219,7 +349,24 @@ func (p *pool) get(tenantID string) (*poolEntry, error) {
 	return e, nil
 }
 
-// close releases the pooled connection for tenantID, if any. Idempotent.
+// closeHandles closes the read handle (if any) then the write handle,
+// returning the first error. Read handle first so no reader observes a
+// torn-down write handle (they are independent connections, but order
+// keeps shutdown deterministic).
+func (e *poolEntry) closeHandles() error {
+	var firstErr error
+	if e.readDB != nil {
+		if err := e.readDB.Close(); err != nil {
+			firstErr = err
+		}
+	}
+	if err := e.db.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+// close releases the pooled connections for tenantID, if any. Idempotent.
 func (p *pool) close(tenantID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -228,7 +375,7 @@ func (p *pool) close(tenantID string) error {
 		return nil
 	}
 	delete(p.entries, tenantID)
-	return e.db.Close()
+	return e.closeHandles()
 }
 
 // closeAll releases every pooled connection. Idempotent. Errors are
@@ -239,7 +386,7 @@ func (p *pool) closeAll() error {
 	defer p.mu.Unlock()
 	var firstErr error
 	for tid, e := range p.entries {
-		if err := e.db.Close(); err != nil && firstErr == nil {
+		if err := e.closeHandles(); err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("store: close tenant %q: %w", tid, err)
 		}
 		delete(p.entries, tid)

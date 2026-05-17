@@ -54,6 +54,7 @@ func main() {
 	kmsProvider := flag.String("kms-provider", "", "encryption master-key provider: file | aws | gcp | azure | vault")
 	kmsKeyID := flag.String("kms-key-id", "", "master-key provider identifier; file provider accepts path or env:NAME")
 	encryptionRequired := flag.Bool("encryption-required", false, "require encrypted global.db and tenant SQLite files")
+	readPoolSize := flag.Int("read-pool-size", 1, "per-tenant read-only SQLite connection pool size (issue #137 / ADR-026). OFF BY DEFAULT (1 = single shared connection, the proven legacy behaviour) — landed dark pending idle-tenant eviction (canonical-store OQ-2: each read connection adds an FD + page cache per active tenant, with no eviction). Opt IN by setting >1 to let same-tenant reads run concurrently against WAL snapshots instead of serializing behind the applier. The post-COMMIT offset-broadcast fix (ADR-026 condition 1) is always active regardless of this value.")
 	gdprWorkerEnabled := flag.Bool("gdpr-worker-enabled", true, "run GDPR deletion_queue worker that performs due deletes and crypto-shred")
 	gdprWorkerInterval := flag.Duration("gdpr-worker-interval", time.Minute, "how often the GDPR worker scans for due deletions")
 	cryptoShredDeleteFiles := flag.Bool("crypto-shred-delete-files", false, "delete tenant .db/-wal/-shm files after key shred")
@@ -198,6 +199,7 @@ func main() {
 	canonical, err := store.New(store.Options{
 		RootDir:            *dataDir,
 		WALMode:            true,
+		ReadPoolSize:       *readPoolSize,
 		Registry:           registry,
 		KeyManager:         keyManager,
 		EncryptionRequired: *encryptionRequired,

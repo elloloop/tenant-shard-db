@@ -40,7 +40,7 @@ func (s *CanonicalStore) ResolveActorGroups(ctx context.Context, tenantID, actor
 	if actor == "" {
 		return nil, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func (s *CanonicalStore) HasNodeAccess(ctx context.Context, tenantID string, act
 	if len(actorIDs) == 0 {
 		return false, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return false, err
 	}
@@ -140,7 +140,7 @@ func (s *CanonicalStore) CanAccess(ctx context.Context, tenantID, nodeID string,
 			return true, nil
 		}
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return false, err
 	}

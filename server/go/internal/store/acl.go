@@ -217,7 +217,7 @@ func (s *CanonicalStore) RemoveGroupMember(ctx context.Context, tenantID, groupI
 // caller as the response.success flag, mirroring Python's pre-WAL
 // canonical_store return value).
 func (s *CanonicalStore) IsGroupMember(ctx context.Context, tenantID, groupID, memberActorID string) (bool, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return false, err
 	}
@@ -250,7 +250,7 @@ type GroupNodeAccess struct {
 // the membership delete (per spec ordering invariant: read after delete
 // observes the already-removed edge and undercounts).
 func (s *CanonicalStore) ListNodeAccessForGroup(ctx context.Context, tenantID, groupID string) ([]GroupNodeAccess, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}

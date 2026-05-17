@@ -23,7 +23,7 @@ func (s *CanonicalStore) SearchNodes(ctx context.Context, tenantID string, typeI
 	if err := s.EnsureFTSIndex(ctx, tenantID, typeID, searchableFieldIDs); err != nil {
 		return nil, err
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}

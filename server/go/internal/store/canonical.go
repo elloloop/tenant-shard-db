@@ -23,6 +23,24 @@ type Options struct {
 	// WALMode toggles PRAGMA journal_mode=WAL. true in production.
 	WALMode bool
 
+	// ReadPoolSize is SetMaxOpenConns(N) for the per-tenant read-only
+	// SQLite handle (issue #137 PERF-1 / ADR-026). With WALMode on and
+	// N > 1, pure query methods (GetNode, QueryNodes, …) run on a
+	// separate read-only pooled handle so same-tenant reads execute
+	// concurrently against WAL snapshots instead of serializing behind
+	// the single write connection. The write path (BatchTxn / applier)
+	// is unaffected and still single-writer.
+	//
+	// The split is OFF BY DEFAULT in the binary (--read-pool-size=1) —
+	// landed dark pending idle-tenant eviction (canonical-store OQ-2).
+	// It is opt-IN: set >1 to enable. 0 or 1 keeps the single write
+	// connection, exactly as before #137. Ignored when WALMode is
+	// false. Correctness is default-independent: ADR-026 condition 1
+	// defers the WaitForOffset offset broadcast to post-BatchTxn.Commit
+	// unconditionally, so a re-routed read-pool read fenced by
+	// WaitForOffset always sees the committed write when enabled.
+	ReadPoolSize int
+
 	// NowFn returns the current Unix-epoch millisecond. Injectable so
 	// tests can drive timestamps deterministically. nil -> time.Now.
 	NowFn func() int64
@@ -41,6 +59,15 @@ type Options struct {
 	// EncryptionRequired refuses to construct a store unless KeyManager
 	// is configured. It also rejects pre-existing plaintext tenant files.
 	EncryptionRequired bool
+
+	// preCommitHook, when non-nil, is invoked by BatchTxn.Commit AFTER
+	// every write (including the UpdateAppliedOffsetTx offset row) but
+	// strictly BEFORE the SQL COMMIT executes. Test-only seam: it makes
+	// the broadcast-before-commit read-after-write window (ADR-026
+	// condition 1) deterministic instead of probabilistic — a regression
+	// test can block here while a WaitForOffset-fenced reader runs. nil
+	// in production; never set off the test path.
+	preCommitHook func()
 }
 
 // CanonicalStore is the per-tenant SQLite materialized view of the WAL.
@@ -64,6 +91,10 @@ type CanonicalStore struct {
 	appliedOffsets  map[string]int64
 	closed          bool
 	closeOnceClosed sync.Once
+
+	// preCommitHook mirrors Options.preCommitHook (test-only seam,
+	// ADR-026 condition 2 regression test). nil in production.
+	preCommitHook func()
 }
 
 // New constructs a CanonicalStore. Caller must Close. RootDir is created
@@ -73,6 +104,7 @@ func New(opts Options) (*CanonicalStore, error) {
 		rootDir:            opts.RootDir,
 		busyTimeout:        opts.BusyTimeout,
 		walMode:            opts.WALMode,
+		readPoolSize:       opts.ReadPoolSize,
 		keyManager:         opts.KeyManager,
 		encryptionRequired: opts.EncryptionRequired,
 	})
@@ -89,6 +121,7 @@ func New(opts Options) (*CanonicalStore, error) {
 		nowFn:          nowFn,
 		indexCache:     newIndexCache(),
 		appliedOffsets: map[string]int64{},
+		preCommitHook:  opts.preCommitHook,
 	}
 	cs.offsetCond = sync.NewCond(&cs.offsetMu)
 	return cs, nil
@@ -122,14 +155,32 @@ func (s *CanonicalStore) Close() error {
 	return err
 }
 
-// db returns the opened *sql.DB for tenantID or an error if the tenant
-// has not been opened. Read-side helper used by every Get/Query method.
+// db returns the WRITE/DDL *sql.DB handle for tenantID, or an error if
+// the tenant has not been opened. This is the single-connection handle
+// (SetMaxOpenConns(1) + writeMu) — used by lazy DDL (Ensure*Index),
+// AdminDB ad-hoc access, and anything that must observe the writer's
+// exact view. Pure read methods use readDB instead (issue #137).
 func (s *CanonicalStore) db(tenantID string) (*sql.DB, error) {
 	e, err := s.pool.get(tenantID)
 	if err != nil {
 		return nil, err
 	}
 	return e.db, nil
+}
+
+// readDB returns the read-only pooled handle for tenantID (issue #137),
+// or the single write handle when the split is disabled (non-WAL mode
+// or ReadPoolSize<=1). Used by pure SELECT methods so same-tenant reads
+// run concurrently. The returned handle MUST only be used for reads —
+// when the split is active it is physically read-only and any write
+// fails; the non-split fallback shares the serialized write handle so
+// correctness is identical to pre-#137 either way.
+func (s *CanonicalStore) readDB(tenantID string) (*sql.DB, error) {
+	e, err := s.pool.get(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return e.reader(), nil
 }
 
 // dbAuto returns the opened *sql.DB for tenantID, lazy-opening if

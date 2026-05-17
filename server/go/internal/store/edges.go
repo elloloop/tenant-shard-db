@@ -43,7 +43,7 @@ func (s *CanonicalStore) GetEdgesTo(ctx context.Context, tenantID, nodeID string
 }
 
 func (s *CanonicalStore) getEdges(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, outgoing bool, limit int) ([]*Edge, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}

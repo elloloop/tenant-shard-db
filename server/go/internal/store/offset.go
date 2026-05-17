@@ -34,20 +34,36 @@ func (s *CanonicalStore) UpdateAppliedOffset(ctx context.Context, tenantID, topi
 	}); err != nil {
 		return err
 	}
-	// Notify any WaitForOffset waiters. We MUST set the entry even
-	// when offset == 0 (the very first record on an in-memory WAL
-	// starts at offset 0) so that WaitForOffset's "ok && cur >=
-	// target" predicate becomes true. Bumping only when offset > cur
-	// leaves the map unset on first apply and any wait_applied=true
-	// call for the first event hangs until timeout. Pinned by the
-	// Go E2E create_single_node test.
+	// withWrite has already COMMITted the offset row above, so the
+	// data backing this offset is durable and visible on every
+	// connection (including the read pool) before we wake any
+	// WaitForOffset waiter. This is the non-txn / global apply path
+	// (see internal/apply/global.go); it is correct as-is because the
+	// notify happens strictly post-commit. The in-txn applier path uses
+	// UpdateAppliedOffsetTx + BatchTxn.Commit instead (ADR-026).
+	s.notifyOffset(tenantID, offset)
+	return nil
+}
+
+// notifyOffset advances the in-memory applied-offset tracker for
+// tenantID and wakes every WaitForOffset waiter. It MUST only be
+// called once the data backing `offset` is committed and visible on
+// any SQLite connection — pre-commit notification is the read-after-
+// write regression ADR-026 condition 1 closes.
+//
+// We MUST set the entry even when offset == 0 (the very first record
+// on an in-memory WAL starts at offset 0) so that WaitForOffset's
+// "ok && cur >= target" predicate becomes true. Bumping only when
+// offset > cur leaves the map unset on first apply and any
+// wait_applied=true call for the first event hangs until timeout.
+// Pinned by the Go E2E create_single_node test.
+func (s *CanonicalStore) notifyOffset(tenantID string, offset int64) {
 	s.offsetMu.Lock()
 	if cur, ok := s.appliedOffsets[tenantID]; !ok || offset > cur {
 		s.appliedOffsets[tenantID] = offset
 	}
 	s.offsetCond.Broadcast()
 	s.offsetMu.Unlock()
-	return nil
 }
 
 // UpdateAppliedOffsetTx is the in-transaction variant. The applier
@@ -67,21 +83,21 @@ func (s *CanonicalStore) UpdateAppliedOffsetTx(ctx context.Context, b *BatchTxn,
 	if err != nil {
 		return fmt.Errorf("store: UpdateAppliedOffsetTx: %w", err)
 	}
-	// Notify in-memory waiters even before commit; readers polling on
-	// WaitForOffset are tolerating staleness anyway, and the post-commit
-	// state will catch up at the next applied write. Strictly correct
-	// implementations would defer this to BatchTxn.Commit() — kept
-	// simple here, refine in W1.10 if a parity test demands it.
+	// ADR-026 condition 1 (root-cause fix; also fixes the pre-existing
+	// latent read-after-write bug): the offset row is written INSIDE
+	// the applier's BatchTxn (above) so the advance is atomic with the
+	// data it covers, but the in-memory tracker + cond Broadcast that
+	// wakes WaitForOffset(N) waiters MUST NOT fire until tx.Commit()
+	// succeeds. Notifying before COMMIT lets a woken reader on an
+	// independent connection (the #137 read pool) take a WAL snapshot
+	// that excludes the still-uncommitted write and read the client's
+	// own confirmed write back as stale / Found=false.
 	//
-	// MUST publish offset 0 on first apply too (see
-	// UpdateAppliedOffset above): otherwise wait_applied=true on the
-	// very first record hangs until timeout.
-	s.offsetMu.Lock()
-	if cur, ok := s.appliedOffsets[b.tenantID]; !ok || offset > cur {
-		s.appliedOffsets[b.tenantID] = offset
-	}
-	s.offsetCond.Broadcast()
-	s.offsetMu.Unlock()
+	// We stash the pending notification on the BatchTxn; BatchTxn.Commit
+	// publishes it via notifyOffset only after the SQL COMMIT returns
+	// (a no-op idempotency commit / Rollback intentionally publishes
+	// nothing — no data became visible).
+	b.pendingOffset = &pendingOffsetNotify{tenantID: b.tenantID, offset: offset}
 	return nil
 }
 
@@ -90,7 +106,7 @@ func (s *CanonicalStore) UpdateAppliedOffsetTx(ctx context.Context, b *BatchTxn,
 // canonical_store.py:get_applied_offset (514) extended with topic /
 // partition.
 func (s *CanonicalStore) GetAppliedOffset(ctx context.Context, tenantID, topic string, partition int32) (int64, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return 0, err
 	}

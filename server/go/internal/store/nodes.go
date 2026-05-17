@@ -49,7 +49,7 @@ type ACLEntry struct {
 // GetNode fetches one node by (tenant, node_id). Returns ErrNodeNotFound
 // (NotFound) when missing.
 func (s *CanonicalStore) GetNode(ctx context.Context, tenantID, nodeID string) (*Node, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (s *CanonicalStore) GetNode(ctx context.Context, tenantID, nodeID string) (
 // applier creates it on the write path). Without the index the
 // SELECT still works but degrades to a scan.
 func (s *CanonicalStore) GetNodeByKey(ctx context.Context, tenantID string, typeID, fieldID int32, value any) (*Node, error) {
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (s *CanonicalStore) GetNodeByCompositeKey(ctx context.Context, tenantID str
 	if len(fieldIDs) == 0 || len(fieldIDs) != len(values) {
 		return nil, fmt.Errorf("store: GetNodeByCompositeKey: field_ids/values length mismatch (%d vs %d)", len(fieldIDs), len(values))
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (s *CanonicalStore) GetNodes(ctx context.Context, tenantID string, nodeIDs 
 	if len(nodeIDs) == 0 {
 		return nil, nil, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -309,7 +309,7 @@ type QueryNodesArgs struct {
 // filtered by per-field equality. SQL injection is prevented by an
 // allow-list on OrderBy and parameterised values everywhere else.
 func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([]*Node, error) {
-	db, err := s.db(args.TenantID)
+	db, err := s.readDB(args.TenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +569,7 @@ func (s *CanonicalStore) CountOwnedNodes(ctx context.Context, tenantID, ownerAct
 	if tenantID == "" || ownerActor == "" {
 		return 0, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		// Tenant file not yet open: treat as zero-owned for parity.
 		return 0, nil
@@ -593,7 +593,7 @@ func (s *CanonicalStore) ListOwnedNodeIDs(ctx context.Context, tenantID, ownerAc
 	if tenantID == "" || ownerActor == "" {
 		return nil, nil
 	}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, nil
 	}
@@ -664,7 +664,7 @@ func (s *CanonicalStore) ExportUserData(
 	reg *schema.Registry,
 ) (TenantExport, error) {
 	out := TenantExport{TenantID: tenantID, Nodes: []TenantExportNode{}}
-	db, err := s.db(tenantID)
+	db, err := s.readDB(tenantID)
 	if err != nil {
 		return out, err
 	}
