@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015326388,
+  "lastUpdate": 1779015332025,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -864,6 +864,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0002770248400089896",
             "extra": "mean: 6.275228425197804 msec\nrounds: 127"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b5f0244359b76b9895bcb845465113516b110f27",
+          "message": "Harden transient-retry policy in both SDKs (PERF-7) (#534)\n\nThe retry layer had three problems that bite during an outage:\n\n- The exponential backoff was a fixed 0.1 * 2**attempt with no\n  randomness, so every client recovering from the same outage\n  retried in lockstep — a thundering herd.\n- DEADLINE_EXCEEDED was retried unconditionally, including for\n  ExecuteAtomic and the other mutating RPCs. A timeout means the\n  deadline elapsed mid-flight, so the write may already have\n  committed; a blind retry risks a duplicate mutation.\n- There was no ceiling on total time spent retrying a single call,\n  so a high max_retries plus exponential backoff could block a\n  caller for minutes past their own deadline.\n- The Go SDK configured WithMaxRetries but never consumed it —\n  there was no transient-retry loop at all.\n\nPython (_grpc_client.py):\n- Full-jitter backoff: uniform(0, min(cap, base*2**attempt)),\n  cap 5s. RNG is injectable for deterministic tests.\n- Per-call wall-clock budget (default 30s, configurable via\n  DbClient(retry_budget=...)): bail before the next sleep would\n  exceed it.\n- DEADLINE_EXCEEDED now only retries a read-method allowlist;\n  UNAVAILABLE still retries every method (request likely never\n  reached the server).\n\nGo (sdk/go/entdb): new retry.go installs a unary client\ninterceptor with identical semantics — same jitter, same\nallowlist, same budget — chained outside the redirect\ninterceptor so each attempt still follows tenant redirects.\nWithRetryBudget option added for parity.\n\nTests both sides drive the loop with a deterministic jitter\nsource and assert attempt counts, allowlist behaviour, and\nbudget cut-off.\n\nCloses #143",
+          "timestamp": "2026-05-17T11:49:07+01:00",
+          "tree_id": "c08340150e4cda1e7b7cdf95a8f5d3c69f2ebc86",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/b5f0244359b76b9895bcb845465113516b110f27"
+        },
+        "date": 1779015331201,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3028.724552286395,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000025131841278906832",
+            "extra": "mean: 330.17198584304947 usec\nrounds: 1554"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2061.614761201652,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000038188573010967445",
+            "extra": "mean: 485.05667441822663 usec\nrounds: 1290"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 966.6136272657674,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009076431564055479",
+            "extra": "mean: 1.034539522092888 msec\nrounds: 860"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 809.6803393681931,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007519333873535956",
+            "extra": "mean: 1.2350553068638377 msec\nrounds: 743"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1902.9301519755295,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007227960949263512",
+            "extra": "mean: 525.5053628541482 usec\nrounds: 1626"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1884.378123707851,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007435498519494613",
+            "extra": "mean: 530.6790539641381 usec\nrounds: 2094"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1951.5606831894029,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006681603340913764",
+            "extra": "mean: 512.4104049717362 usec\nrounds: 1931"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1980.4372857365045,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004558371739803533",
+            "extra": "mean: 504.9389885770153 usec\nrounds: 1138"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1835.565666774409,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024403040189050943",
+            "extra": "mean: 544.7911878616 usec\nrounds: 346"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1550.0634644933225,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005625684063099884",
+            "extra": "mean: 645.1348753819415 usec\nrounds: 1308"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2442.4727460806166,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000406656660589553",
+            "extra": "mean: 409.42114977728136 usec\nrounds: 2023"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 121.24208931742508,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002057399702420599",
+            "extra": "mean: 8.247960799998179 msec\nrounds: 110"
           }
         ]
       }
