@@ -24,6 +24,7 @@ jobs:
       docker: ${{ steps.filter.outputs.docker }}
       ci: ${{ steps.filter.outputs.ci }}
       schema: ${{ steps.filter.outputs.schema }}
+      docs: ${{ steps.filter.outputs.docs }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -57,6 +58,15 @@ jobs:
               - 'proto/console/v1/**.proto'
               - 'sdk/python/entdb_sdk/schema*'
               - '.schema-snapshot.json'
+              - '.github/workflows/ci.yml'
+            docs:
+              - 'proto/entdb/v1/**.proto'
+              - 'sdk/python/entdb_sdk/**'
+              - 'sdk/go/entdb/**'
+              - 'scripts/generate_api_docs.py'
+              - 'scripts/check_docs_coverage.py'
+              - 'docs/generated/**'
+              - 'examples/**'
               - '.github/workflows/ci.yml'
 
   lint:
@@ -128,6 +138,57 @@ jobs:
         env:
           ENTDB_GO_BINARY: /tmp/entdb-server
         run: uv run pytest tests/python/integration -v
+
+  # Issue #40: docs are generated from code + examples are tested.
+  #   1. regenerate docs/generated/ and fail if the checked-in copy is
+  #      stale (proto / SDK changed but docs weren't regenerated);
+  #   2. fail if any public RPC or SDK symbol is undocumented;
+  #   3. run every examples/*.py end-to-end against the Go server so a
+  #      breaking SDK/wire change trips here before a reader copies a
+  #      stale snippet.
+  docs-coverage:
+    name: Docs Coverage & Examples
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.go == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: |
+            server/go/go.sum
+            sdk/go/entdb/go.sum
+
+      - name: Build Go entdb-server (examples harness)
+        working-directory: server/go
+        run: go build -o /tmp/entdb-server ./cmd/entdb-server
+
+      - uses: astral-sh/setup-uv@v4
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: |
+          uv venv
+          uv pip install -e ./sdk/python \
+            "pytest>=8.0.0" "pytest-asyncio>=0.23.0" \
+            "pytest-timeout>=2.2.0" "grpcio-tools>=1.60.0"
+
+      - name: Regenerate generated docs (Go surface included)
+        run: uv run python scripts/generate_api_docs.py
+
+      - name: Fail on stale generated docs
+        run: |
+          if ! git diff --exit-code -- docs/generated/; then
+            echo "::error::docs/generated/ is stale — run 'python scripts/generate_api_docs.py' and commit the result"
+            exit 1
+          fi
+
+      - name: Doc-coverage guard (every RPC + SDK symbol documented)
+        run: uv run python scripts/check_docs_coverage.py
+
+      - name: Run examples end-to-end against the Go server
+        env:
+          ENTDB_GO_BINARY: /tmp/entdb-server
+        run: uv run pytest examples/ -p no:cacheprovider --timeout=120 -v
 
   schema-compat:
     name: Schema Compatibility Check
@@ -342,7 +403,7 @@ jobs:
     name: All Checks Passed
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, unit-tests, integration-tests, schema-compat, go-server-build, go-server-proto-drift, docker-build, e2e-tests, security-scan]
+    needs: [lint, unit-tests, integration-tests, docs-coverage, schema-compat, go-server-build, go-server-proto-drift, docker-build, e2e-tests, security-scan]
     steps:
       - name: Verify required checks
         env:
