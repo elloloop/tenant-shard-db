@@ -89,6 +89,22 @@ CREATE TABLE IF NOT EXISTS tenant_usage (
     writes_count    INTEGER NOT NULL DEFAULT 0,
     updated_at      INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_id      TEXT PRIMARY KEY,
+    tenant_id   TEXT NOT NULL DEFAULT '',
+    name        TEXT NOT NULL,
+    hash        TEXT NOT NULL,
+    scopes      TEXT NOT NULL DEFAULT '',
+    status      TEXT NOT NULL DEFAULT 'active',
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL DEFAULT 0,
+    revoked_at  INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_api_keys_tenant
+    ON api_keys(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_api_keys_status
+    ON api_keys(status);
 `
 
 // initSchema runs schemaDDL and the table-info-guarded ALTERs. Safe to

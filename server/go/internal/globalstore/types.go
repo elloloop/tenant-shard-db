@@ -89,6 +89,29 @@ type Usage struct {
 	UpdatedAt     int64
 }
 
+// APIKeyRecord is one row of api_keys. The Hash is an argon2id PHC
+// string produced by the auth package; globalstore never sees the
+// plaintext secret. Scopes is the decoded scope list (stored as a
+// comma-separated TEXT column on disk). ExpiresAt / RevokedAt are
+// Unix-epoch seconds; 0 means "unset" (never expires / not revoked).
+type APIKeyRecord struct {
+	KeyID     string
+	TenantID  string
+	Name      string
+	Hash      string
+	Scopes    []string
+	Status    string // "active" | "revoked"
+	CreatedAt int64
+	ExpiresAt int64 // 0 == never
+	RevokedAt int64 // 0 == not revoked
+}
+
+// API-key status values. Strings are part of the on-disk contract.
+const (
+	APIKeyStatusActive  = "active"
+	APIKeyStatusRevoked = "revoked"
+)
+
 // TransferResult is the outcome of TransferUserContent.
 type TransferResult struct {
 	TenantID          string
