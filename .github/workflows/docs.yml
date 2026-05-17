@@ -6,6 +6,9 @@ on:
     paths:
       - 'docs-site/**'
       - 'docs/**'
+      - 'scripts/generate_api_docs.py'
+      - 'proto/entdb/v1/**.proto'
+      - 'sdk/python/entdb_sdk/**'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
@@ -24,6 +27,25 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: sdk/go/entdb/go.sum
+
+      - uses: astral-sh/setup-uv@v4
+
+      # Regenerate the machine-extracted API/SDK reference from the
+      # proto + both SDK surfaces so the deployed site can never ship
+      # a stale contract section. Source of truth is code, not the
+      # checked-in markdown (issue #40 Layer 1).
+      - name: Generate API docs from source
+        run: |
+          uv python install 3.11
+          uv venv
+          uv pip install -e ./sdk/python
+          uv run python scripts/generate_api_docs.py
 
       - name: Setup Node
         uses: actions/setup-node@v4
