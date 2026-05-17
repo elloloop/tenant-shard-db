@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779027239583,
+  "lastUpdate": 1779028141844,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2268,6 +2268,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001985468309067924",
             "extra": "mean: 7.908722261362784 msec\nrounds: 88"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9273ead68e0a2815a5b9517c6d9605793f54f995",
+          "message": "perf(apply): parallel WAL apply across distinct tenants (#140 PERF-4) (#541)\n\nThe applier was a single goroutine applying WAL records strictly\nserially regardless of tenant, so apply latency scaled with the\nnumber of distinct tenants in a poll window even though per-tenant\nSQLite files are independent (ADR-001, ADR-014).\n\nWithin a poll batch, records are now partitioned by tenant route key\n(scope + \"\\x00\" + tenant_id) and applied in parallel across distinct\nkeys, one worker goroutine per key, bounded by --apply-concurrency.\nThis amends ADR-016's \"no fan-out within the consumer\" clause exactly\nas ADR-027 records it. Invariants preserved:\n\n- Per-tenant ordering: a route key's records apply serially in offset\n  order on a single worker; two records for one tenant never run\n  concurrently.\n- Single-writer-per-tenant (ADR-016): workers only ever touch their\n  own tenant's DB; distinct tenants own independent SQLite files.\n- Gap-free monotonic offset commit: offsets are committed only in the\n  serial finalizeBatch loop, strictly in batch order, returning at the\n  first poisoned record. A faster later-tenant worker never advances\n  the consumer-group offset past an earlier un-applied record.\n\nHalt-on-poison semantics are unchanged: finalisation stops committing\nat the first failure in batch order; the speculative tail is left\nuncommitted and re-delivered after restart, where the in-txn\nidempotency probe SKIPs already-applied records (ADR-027 accepted\nconsequence).\n\nADR-027 blocking conditions:\n- cond 2: --apply-concurrency flag wired in cmd/entdb-server/main.go\n  (0 = runtime.GOMAXPROCS; 1 = strictly serial / pre-#140 behaviour)\n  so operators have a no-redeploy kill-switch; passed into\n  apply.Options.MaxApplyConcurrency.\n- cond 3: TestParallelApply_SamePartitionPoisonContiguousOffset —\n  two tenants forced onto the SAME WAL partition (collision asserted\n  at runtime via wal.InMemory.PartitionFor) with a tenant-B poison\n  sandwiched between two tenant-A records; asserts gap-free\n  contiguous-prefix commit and idempotent resume on the same group.\n- recommended #6: a load-bearing comment at the finalizeBatch commit\n  site stating that committing offsets from anywhere other than this\n  serial loop breaks the gap-free invariant.\n\nHonest benchmark (independently reproduced): ~2-3.7x at 256-1024\ntenant batches. The earlier \"~2.1x at 64 tenants\" claim did NOT\nreproduce (~1.0-1.3x, within noise) and is dropped per ADR-027.\n\nTests: per-tenant ordering under concurrency, single-writer proof\n(strict update-chain + race detector + serial-vs-parallel\nequivalence), same-partition and multi-partition poison\ncontiguous-offset gap-free commit, serial/parallel equivalence. Full\nGo suite + race detector green.",
+          "timestamp": "2026-05-17T15:12:09+01:00",
+          "tree_id": "20031841be74ab3518b81adbb375e95edc81e811",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/9273ead68e0a2815a5b9517c6d9605793f54f995"
+        },
+        "date": 1779028140852,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3074.75436225123,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002468332823359966",
+            "extra": "mean: 325.2292320573648 usec\nrounds: 836"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2085.6015251331855,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000037894725361876805",
+            "extra": "mean: 479.47797695254394 usec\nrounds: 781"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 986.5324982165862,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008517089432087959",
+            "extra": "mean: 1.0136513513825038 msec\nrounds: 868"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 811.3162425723041,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008262982779343127",
+            "extra": "mean: 1.232564994421248 msec\nrounds: 717"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1893.879866973595,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008664215216875389",
+            "extra": "mean: 528.0165956872397 usec\nrounds: 1484"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1891.822643195714,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009403867694560745",
+            "extra": "mean: 528.590776517388 usec\nrounds: 1763"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1946.9955870532694,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007742401991281316",
+            "extra": "mean: 513.6118472222506 usec\nrounds: 1800"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2003.137538909933,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000038241801844161255",
+            "extra": "mean: 499.21684386394145 usec\nrounds: 1646"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1843.6493099146087,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000022118484827152113",
+            "extra": "mean: 542.402502809125 usec\nrounds: 356"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1560.174627194528,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005538525801701089",
+            "extra": "mean: 640.9538923204886 usec\nrounds: 1263"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2529.9526417584575,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027002302881645837",
+            "extra": "mean: 395.2643158193446 usec\nrounds: 1770"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 158.1085721883799,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00020190272373644619",
+            "extra": "mean: 6.324767760273876 msec\nrounds: 146"
           }
         ]
       }
