@@ -3,13 +3,27 @@ package testseed
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
-func newStores(t *testing.T) (*globalstore.GlobalStore, *store.CanonicalStore, *schema.Registry) {
+// testTopic / testGroupID mirror the server defaults; the seed event
+// is keyed by tenant_id so a single in-memory partition is enough.
+const (
+	testTopic   = "entdb-wal"
+	testGroupID = "entdb-applier"
+)
+
+// newStores builds the globalstore + canonical store + a connected
+// in-memory WAL with the applier already running, mirroring how
+// cmd/entdb-server/main.go wires the seed (the applier consumes the
+// seed event the seed appends — GitHub issue #505).
+func newStores(t *testing.T) (*globalstore.GlobalStore, *store.CanonicalStore, *schema.Registry, wal.Producer) {
 	t.Helper()
 	dir := t.TempDir()
 	g, err := globalstore.New(globalstore.Options{DataDir: dir, WALMode: false})
@@ -32,14 +46,38 @@ func newStores(t *testing.T) (*globalstore.GlobalStore, *store.CanonicalStore, *
 	}
 	t.Cleanup(func() { _ = s.Close() })
 
-	return g, s, reg
+	w := wal.NewInMemory(1)
+	if err := w.Connect(context.Background()); err != nil {
+		t.Fatalf("wal.Connect: %v", err)
+	}
+
+	applier, err := apply.New(apply.Options{
+		Store:       s,
+		Global:      g,
+		Consumer:    w,
+		Topic:       testTopic,
+		GroupID:     testGroupID,
+		PollTimeout: 25 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("apply.New: %v", err)
+	}
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- applier.Run(runCtx) }()
+	t.Cleanup(func() {
+		cancel()
+		<-done
+	})
+
+	return g, s, reg, w
 }
 
 func TestSeedTenant_PopulatesContractFixture(t *testing.T) {
 	ctx := context.Background()
-	g, s, _ := newStores(t)
+	g, s, _, w := newStores(t)
 
-	if err := SeedTenant(ctx, g, s, "acme"); err != nil {
+	if err := SeedTenant(ctx, g, s, w, testTopic, "acme"); err != nil {
 		t.Fatalf("SeedTenant: %v", err)
 	}
 
@@ -94,8 +132,11 @@ func TestSeedTenant_PopulatesContractFixture(t *testing.T) {
 		t.Fatalf("CheckIdempotency seed-1 = false, want true")
 	}
 
-	// WaitForOffset returns immediately for target=0 since the applied
-	// offset map is populated.
+	// The applier (not a pre-bump) advanced the offset for the seed
+	// event, which is the first in-memory record (offset 0). The
+	// in-memory tracker is therefore populated honestly, so a
+	// WaitForOffset for an offset we have already passed returns
+	// without blocking — the GitHub-issue-#505 invariant.
 	if err := s.WaitForOffset(ctx, "acme", 0); err != nil {
 		t.Fatalf("WaitForOffset(0): %v", err)
 	}
@@ -103,12 +144,12 @@ func TestSeedTenant_PopulatesContractFixture(t *testing.T) {
 
 func TestSeedTenant_Idempotent(t *testing.T) {
 	ctx := context.Background()
-	g, s, _ := newStores(t)
+	g, s, _, w := newStores(t)
 
-	if err := SeedTenant(ctx, g, s, "acme"); err != nil {
+	if err := SeedTenant(ctx, g, s, w, testTopic, "acme"); err != nil {
 		t.Fatalf("first SeedTenant: %v", err)
 	}
-	if err := SeedTenant(ctx, g, s, "acme"); err != nil {
+	if err := SeedTenant(ctx, g, s, w, testTopic, "acme"); err != nil {
 		t.Fatalf("second SeedTenant (should be idempotent): %v", err)
 	}
 }
