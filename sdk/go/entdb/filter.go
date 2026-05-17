@@ -28,11 +28,20 @@ const (
 	FilterGe FilterOp = "ge"
 )
 
-// Filter is one AND-ed predicate passed to [QueryWhere]. Field is
-// the proto field name (the gRPC boundary resolves it to a payload
-// field_id). Op selects the comparison operator. Value is bound as
-// a SQLite parameter and supports the JSON-marshallable scalars
-// SQLite understands (string, int, int64, float64, bool, nil).
+// Filter is one AND-ed predicate passed to [QueryWhere] (and
+// [DeleteWhere]). Field is the proto field name (the gRPC boundary
+// resolves it to a payload field_id). Op selects the comparison
+// operator. Value is bound as a SQLite parameter and supports the
+// JSON-marshallable scalars SQLite understands (string, int, int64,
+// float64, bool, nil).
+//
+// Schema-less escape hatch (issue #545): Field may instead be the
+// digit-only numeric payload field id (e.g. "4"). The SDK forwards
+// Field unchanged; a server with no schema treats a digit-only key as
+// a raw field id and skips name resolution. This is the only way to
+// filter against a schema-less server — a field NAME there returns
+// INVALID_ARGUMENT ("cannot translate filter key … without a
+// schema"). A schema-configured server accepts either form.
 //
 // Multiple filters on the same field are permitted — a half-open
 // range is expressed as two filters:

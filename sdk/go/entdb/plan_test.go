@@ -313,6 +313,51 @@ func TestPlan_DeleteWhere(t *testing.T) {
 	}
 }
 
+// TestPlan_DeleteWhere_SchemalessNumericFieldID is the SDK half of
+// issue #545: a Filter whose Field is the digit-only numeric payload
+// field id must reach the wire VERBATIM (no client-side name
+// resolution, no rewrite), so a schema-less server can resolve it
+// without a schema — the same escape hatch QueryWhere already gives
+// numeric filter keys. This pins that the SDK never mangles a numeric
+// Field, so the documented schema-less workflow keeps working.
+func TestPlan_DeleteWhere_SchemalessNumericFieldID(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+
+	// "4" is the caller's own (server-unknown) expires_at field id.
+	DeleteWhere[*testpb.Product](plan, []Filter{
+		{Field: "4", Op: FilterLt, Value: int64(1700000000000)},
+	}, 1000)
+
+	ops := plan.Operations()
+	if len(ops) != 1 || ops[0].Type != OpDeleteWhere {
+		t.Fatalf("ops = %#v, want one OpDeleteWhere", ops)
+	}
+	if ops[0].Where[0].Field != "4" {
+		t.Fatalf("Field = %q, want %q (must NOT be name-resolved client-side)",
+			ops[0].Where[0].Field, "4")
+	}
+
+	protoOps, err := operationsToProto(ops)
+	if err != nil {
+		t.Fatalf("operationsToProto: %v", err)
+	}
+	dw := protoOps[0].GetDeleteWhere()
+	if dw == nil {
+		t.Fatalf("expected DeleteWhere proto op, got %#v", protoOps[0].GetOp())
+	}
+	if len(dw.GetWhere()) != 1 {
+		t.Fatalf("proto Where len = %d, want 1", len(dw.GetWhere()))
+	}
+	if got := dw.GetWhere()[0].GetField(); got != "4" {
+		t.Fatalf("wire field = %q, want %q — the numeric id must travel "+
+			"unchanged so a schema-less server resolves it without a schema", got, "4")
+	}
+	if dw.GetWhere()[0].GetOp() != pb.FilterOp_LT {
+		t.Errorf("wire op = %v, want LT", dw.GetWhere()[0].GetOp())
+	}
+}
+
 func TestPlan_CreateEdge(t *testing.T) {
 	mock := &mockTransport{}
 	plan := newPlan(mock, "t1", "user:alice", "key-1")

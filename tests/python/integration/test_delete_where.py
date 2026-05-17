@@ -171,3 +171,167 @@ async def test_delete_where_limit_is_best_effort(stub) -> None:
         if await _exists(stub, f"{p}-{n}"):
             remaining += 1
     assert remaining == 0, f"second sweep should drain all, got {remaining}"
+
+
+# ---------------------------------------------------------------------------
+# Issue #545 — DeleteWhere against a schema-less server
+# ---------------------------------------------------------------------------
+#
+# A server started without a schema (``--seed-profile none``) cannot
+# resolve a FieldFilter.field NAME to a payload field id. The
+# documented contract (mirroring QueryNodes' schema-optional path) is:
+# a digit-only numeric field id works without a schema; a field NAME
+# returns a clear INVALID_ARGUMENT. These exercise that end-to-end
+# against a live schema-less Go subprocess.
+
+SL_TENANT = "sl-545"
+SL_TYPE_ID = 525  # caller's own (server-unknown) node type
+SL_ADMIN = "system:admin"
+
+
+def _sl_ctx() -> pb.RequestContext:
+    # system:/admin: actors bypass tenant-membership checks
+    # (execute_atomic.go:826); this test pins field-id resolution,
+    # not ACL, so drive it as the tenant's creating admin.
+    return pb.RequestContext(tenant_id=SL_TENANT, actor=SL_ADMIN)
+
+
+async def _sl_provision_tenant(stub: EntDBServiceStub) -> None:
+    """Create SL_TENANT on the schema-less server (no --seed-tenant).
+
+    CreateTenant flows through the global WAL + applier asynchronously,
+    so poll GetTenant until it materialises before any write.
+    """
+    import asyncio
+
+    resp = await stub.CreateTenant(
+        pb.CreateTenantRequest(actor=SL_ADMIN, tenant_id=SL_TENANT, name="SL 545")
+    )
+    assert resp.success, resp
+    for _ in range(100):
+        g = await stub.GetTenant(pb.GetTenantRequest(actor=SL_ADMIN, tenant_id=SL_TENANT))
+        if g.found:
+            return
+        await asyncio.sleep(0.05)
+    raise AssertionError(f"tenant {SL_TENANT!r} never materialised")
+
+
+def _int_value(v: int) -> struct_pb2.Value:
+    out = struct_pb2.Value()
+    out.number_value = v
+    return out
+
+
+@pytest.fixture
+async def schemaless_stub(schemaless_grpc_endpoint):
+    async with grpc_aio.insecure_channel(schemaless_grpc_endpoint) as ch:
+        stub = EntDBServiceStub(ch)
+        await _sl_provision_tenant(stub)
+        yield stub
+
+
+async def _sl_seed(stub: EntDBServiceStub, rows: dict[str, int]) -> None:
+    """Create id-keyed nodes on the schema-less server (field 4 = expires_at)."""
+    ops = []
+    for node_id, expires_at in rows.items():
+        data = struct_pb2.Struct()
+        # Schema-less => the payload itself is id-keyed ("4", not "expires_at").
+        json_format.ParseDict({"4": expires_at}, data)
+        ops.append(
+            pb.Operation(create_node=pb.CreateNodeOp(type_id=SL_TYPE_ID, id=node_id, data=data))
+        )
+    resp = await stub.ExecuteAtomic(
+        pb.ExecuteAtomicRequest(
+            context=_sl_ctx(),
+            idempotency_key=f"sl-seed-{uuid.uuid4().hex[:8]}",
+            operations=ops,
+            wait_applied=True,
+            wait_timeout_ms=5000,
+        )
+    )
+    assert resp.success, resp.error
+
+
+async def _sl_exists(stub: EntDBServiceStub, node_id: str) -> bool:
+    resp = await stub.GetNode(
+        pb.GetNodeRequest(context=_sl_ctx(), type_id=SL_TYPE_ID, node_id=node_id)
+    )
+    return resp.found
+
+
+async def test_delete_where_schemaless_by_numeric_field_id(schemaless_stub) -> None:
+    """Schema-less server: DeleteWhere by NUMERIC field id sweeps the matches.
+
+    Proves the issue #545 escape hatch works end-to-end: no schema on
+    the server, no client registry — the digit-only ``field="4"`` is
+    resolved to a raw payload field id and exactly the matching nodes
+    are swept.
+    """
+    p = f"sln-{uuid.uuid4().hex[:6]}"
+    await _sl_seed(
+        schemaless_stub,
+        {f"{p}-stale-1": 10, f"{p}-stale-2": 20, f"{p}-keep": 9999},
+    )
+
+    resp = await schemaless_stub.ExecuteAtomic(
+        pb.ExecuteAtomicRequest(
+            context=_sl_ctx(),
+            idempotency_key=f"sl-sweep-{uuid.uuid4().hex[:8]}",
+            operations=[
+                pb.Operation(
+                    delete_where=pb.DeleteWhereOp(
+                        type_id=SL_TYPE_ID,
+                        where=[
+                            # NUMERIC field id — no schema needed.
+                            pb.FieldFilter(
+                                field="4",
+                                op=pb.FilterOp.LT,
+                                value=_int_value(100),
+                            )
+                        ],
+                    )
+                )
+            ],
+            wait_applied=True,
+            wait_timeout_ms=5000,
+        )
+    )
+    assert resp.success, resp.error
+
+    assert not await _sl_exists(schemaless_stub, f"{p}-stale-1")
+    assert not await _sl_exists(schemaless_stub, f"{p}-stale-2")
+    assert await _sl_exists(schemaless_stub, f"{p}-keep")
+
+
+async def test_delete_where_schemaless_field_name_rejected(schemaless_stub) -> None:
+    """Schema-less server: a field NAME is a clear INVALID_ARGUMENT.
+
+    The numeric id is the only schema-less route; a non-digit name is
+    genuinely unresolvable and must surface the shared
+    "cannot translate filter key … without a schema" wording.
+    """
+    with pytest.raises(grpc_aio.AioRpcError) as exc:
+        await schemaless_stub.ExecuteAtomic(
+            pb.ExecuteAtomicRequest(
+                context=_sl_ctx(),
+                idempotency_key=f"sl-name-{uuid.uuid4().hex[:8]}",
+                operations=[
+                    pb.Operation(
+                        delete_where=pb.DeleteWhereOp(
+                            type_id=SL_TYPE_ID,
+                            where=[
+                                pb.FieldFilter(
+                                    field="expires_at",
+                                    op=pb.FilterOp.LT,
+                                    value=_int_value(100),
+                                )
+                            ],
+                        )
+                    )
+                ],
+            )
+        )
+    assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+    msg = exc.value.details() or ""
+    assert "cannot translate filter key" in msg
+    assert "without a schema" in msg

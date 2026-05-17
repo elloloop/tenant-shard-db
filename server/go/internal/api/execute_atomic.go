@@ -507,6 +507,21 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 			// Resolve the developer-facing FieldFilter names to stable
 			// field_ids using the EXACT same path QueryNodes uses
 			// (issue #501) so the predicate is schema-less on the WAL.
+			//
+			// Schema-OPTIONAL, exactly like QueryNodes (issue #545): a
+			// nil registry is the server's schema-less mode and is
+			// tolerated here just as it is in query_nodes.go. When the
+			// registry is nil, typeName stays "" and
+			// fieldFiltersToStoreFilters -> payload.FilterNamesToIDs
+			// takes its schema-less branch: digit-only FieldFilter.field
+			// keys parse to raw payload field ids, and a non-digit field
+			// NAME surfaces as INVALID_ARGUMENT with the same wording as
+			// the QueryNodes path ("payload: cannot translate filter key
+			// %q without a schema"). Do NOT add a hard reject for a
+			// missing schema here — that is the exact bug #545 fixes and
+			// would diverge from the QueryNodes contract. Schema-mode
+			// behaviour (registry configured) is unchanged: an unknown
+			// type_id is still INVALID_ARGUMENT.
 			typeName := ""
 			if s.registry != nil {
 				nt := s.registry.NodeTypeByID(dw.GetTypeId())
