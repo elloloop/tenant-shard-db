@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779041741076,
+  "lastUpdate": 1779044592481,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2592,6 +2592,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0006807949831509457",
             "extra": "mean: 5.677713882759909 msec\nrounds: 145"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17fee3937e4f923960c8659b377345ec01a1ca8b",
+          "message": "fix(wal): Service Bus backend uses session receivers for per-tenant ordering (#548)\n\nThe Azure Service Bus WAL backend (shipped v1.15.0) created a\nnon-session receiver via Client.NewReceiverForQueue. The producer\nstamps every message with SessionId = tenant key, so a session-enabled\nqueue requires a *session* receiver: a plain receiver fails at runtime\n(\"entity requires sessions\") and cannot preserve per-session FIFO\n(= per-tenant ordering). The old unit fake had no session model, so\nthis shipped undetected.\n\nReshape the ServiceBusAPI seam to be session-scoped: the only consume\nentry point is AcceptNextSession, which returns a serviceBusSession\n(a per-session receiver) backed by Client.AcceptNextSessionForQueue.\nThere is no queue-wide Receive, so a non-session receiver is\nstructurally unrepresentable — a *azservicebus.Receiver cannot satisfy\nserviceBusSession, so reverting the bug fails to compile.\n\nConsumer semantics preserved against the wal.Consumer/Producer\ncontract the other backends honour:\n- Per-session FIFO == per-tenant order; cross-session order is not\n  promised (Service Bus doesn't, the WAL contract only needs per-key).\n- Fair rotation: accept-next loop services each tenant in turn,\n  releasing an idle/empty session lock so no tenant starves; a\n  visited set within a poll cycle prevents spinning on one tenant.\n- At-least-once: a received-but-uncommitted message stays locked\n  until Commit; on lock loss it redelivers and the applier dedupes.\n- Commit == Complete on the owning session's link (settlement is\n  link-scoped); once a session's in-flight set is fully settled the\n  lock is released so the queue stays fully drainable.\n- Connected/Close lifecycle and ErrConnection-before-Connect behaviour\n  unchanged; error classification now also maps *azservicebus.Error\n  codes (Timeout/ConnectionLost/Unauthorized/NotFound/Closed) before\n  the string-sniff fallback.\n\nThe fake now models sessions: no queue-wide read path, per-session\nFIFO, session locks, and an explicit lock-expiry seam for redelivery.\nNew/changed tests: multi-session (multi-tenant) FIFO, redelivery-\nbefore-commit then commit-stops-redelivery, commit-stops-redelivery\nacross lock expiry, accept-session error classification, not-connected\nguards for every consumer entry point, and an explicit session-based\nreceiver regression guard.\n\nAlso documents (ADR-005) the in-memory-checkpoint restart re-replay\nwindow and non-unique StreamPos-within-a-ms on the cloud backends.\nThe pubsub/v2 indirect-dep cleanup is deferred (go mod tidy reports no\nchurn; it is a legitimately-required transitive dep and removing it\nwould need code changes outside this fix's scope).\n\nCloses #543",
+          "timestamp": "2026-05-17T20:00:50+01:00",
+          "tree_id": "42b73d7abf7c6167149b8b3fad24d3cfaa6d92d4",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/17fee3937e4f923960c8659b377345ec01a1ca8b"
+        },
+        "date": 1779044592150,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2500.5132666393515,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002601646997254382",
+            "extra": "mean: 399.91789419457206 usec\nrounds: 1068"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1749.7601806619593,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004997679704605893",
+            "extra": "mean: 571.5068905166682 usec\nrounds: 1160"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 962.5353728360269,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00032074124031081057",
+            "extra": "mean: 1.0389228575086928 msec\nrounds: 779"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 737.0872402634699,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008771358415979003",
+            "extra": "mean: 1.3566915086503908 msec\nrounds: 578"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1199.9405506325709,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001973493652616489",
+            "extra": "mean: 833.374619661642 usec\nrounds: 1241"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1075.0233124143263,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0027225688421988964",
+            "extra": "mean: 930.21238558461 usec\nrounds: 1429"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1225.2794120134915,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019132166831271182",
+            "extra": "mean: 816.1403759789845 usec\nrounds: 1532"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1662.2536030120084,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015678272730715719",
+            "extra": "mean: 601.5929207119763 usec\nrounds: 1236"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1448.9024249337765,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005758006952222766",
+            "extra": "mean: 690.1776011905744 usec\nrounds: 336"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1293.5045427332864,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000041161456841380874",
+            "extra": "mean: 773.093535401827 usec\nrounds: 1031"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2073.234098892876,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002743284798864021",
+            "extra": "mean: 482.3381983414262 usec\nrounds: 1447"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 177.42446160474302,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004499539180877003",
+            "extra": "mean: 5.636201406251118 msec\nrounds: 160"
           }
         ]
       }
