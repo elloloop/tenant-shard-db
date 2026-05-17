@@ -113,6 +113,11 @@ const (
 	OpDeleteNode
 	OpCreateEdge
 	OpDeleteEdge
+	// OpDeleteWhere is the single-RPC predicate-based sweeper
+	// (GitHub issue #504): delete every node of a type matching an
+	// AND-ed [Filter] predicate in one round trip, instead of a
+	// QueryWhere + Delete loop.
+	OpDeleteWhere
 )
 
 // ── Quotas ──────────────────────────────────────────────────────────
@@ -203,6 +208,18 @@ type Operation struct {
 	//
 	// Only valid on OpUpdateNode. Ignored for other op types.
 	Precondition *Precondition `json:"precondition,omitempty"`
+
+	// Where carries the AND-ed predicate for OpDeleteWhere (GitHub
+	// issue #504). Field names are resolved to payload field ids at
+	// the SDK boundary, exactly like QueryWhere. Only valid on
+	// OpDeleteWhere; ignored for other op types.
+	Where []Filter `json:"where,omitempty"`
+
+	// Limit is the best-effort cap on the number of nodes deleted by
+	// an OpDeleteWhere op (Postgres DELETE … LIMIT semantics). Zero
+	// selects the server default; the server clamps to its own hard
+	// ceiling. Ignored for other op types.
+	Limit int `json:"limit,omitempty"`
 }
 
 // Precondition is a single-field equality predicate evaluated by the

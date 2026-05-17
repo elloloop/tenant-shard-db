@@ -187,6 +187,21 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 				TypeId: int32(op.TypeID),
 				Id:     op.NodeID,
 			}}
+		case OpDeleteWhere:
+			// Reuse the QueryWhere lowering (issue #501): the typed
+			// Filter slice -> MongoDB-style map -> []*pb.FieldFilter,
+			// so DeleteWhere shares one predicate encoder with query.
+			// Field NAMES travel on the wire; the server resolves them
+			// to stable field ids (same path as QueryNodes).
+			where, err := filterToProto(filtersToMap(op.Where))
+			if err != nil {
+				return nil, fmt.Errorf("entdb: delete_where filters: %w", err)
+			}
+			po.Op = &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: int32(op.TypeID),
+				Where:  where,
+				Limit:  int32(op.Limit),
+			}}
 		case OpCreateEdge:
 			po.Op = &pb.Operation_CreateEdge{CreateEdge: &pb.CreateEdgeOp{
 				EdgeId: int32(op.EdgeTypeID),

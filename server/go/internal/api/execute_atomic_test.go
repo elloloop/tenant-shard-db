@@ -1229,3 +1229,140 @@ func TestExecuteAtomic_AliasResolution_DottedFormSupported(t *testing.T) {
 		t.Fatalf("to: got %q want %q", to, aliceUUID)
 	}
 }
+
+// TestExecuteAtomic_DeleteWhereEmptyPredicateRejected pins the
+// issue-#504 safety rail: an unconditional bulk delete is too
+// dangerous to express implicitly, so a DeleteWhereOp with no `where`
+// predicate is INVALID_ARGUMENT before any WAL append.
+func TestExecuteAtomic_DeleteWhereEmptyPredicateRejected(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context: &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: 1,
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatalf("ExecuteAtomic: expected error, got nil")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code: got %v, want InvalidArgument", got)
+	}
+	if n := f.wal.GetRecordCount(xaTopic); n != 0 {
+		t.Fatalf("WAL: got %d records, want 0 (rejected before append)", n)
+	}
+}
+
+// TestExecuteAtomic_DeleteWhereMissingTypeIDRejected pins the per-op
+// required-field validation parity with the other ops.
+func TestExecuteAtomic_DeleteWhereMissingTypeIDRejected(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context: &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				Where: []*pb.FieldFilter{
+					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "x")},
+				},
+			}},
+		}},
+	})
+	if err == nil {
+		t.Fatalf("ExecuteAtomic: expected error, got nil")
+	}
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code: got %v, want InvalidArgument", got)
+	}
+}
+
+// TestExecuteAtomic_DeleteWhereRoundTrip is the full #504 contract end
+// to end: the handler resolves the developer-facing field NAME to a
+// stable field_id (reusing the QueryNodes #501 path), appends a single
+// predicate op, and the applier sweeps exactly the matching nodes —
+// one round trip, no QueryNodes+DeleteNode loop. The handler's
+// existing write-access gate is the ACL chokepoint (ADR-016: handlers
+// gate, applier just materialises).
+func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+	f.runApplier(t)
+
+	// Seed: three Users. Two have name="sweep-me", one does not.
+	seed, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-seed",
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "u-stale-1",
+				Data: newStruct(t, map[string]any{"email": "a@x", "name": "sweep-me"}),
+			}}},
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "u-stale-2",
+				Data: newStruct(t, map[string]any{"email": "b@x", "name": "sweep-me"}),
+			}}},
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: 1, Id: "u-keep",
+				Data: newStruct(t, map[string]any{"email": "c@x", "name": "keep"}),
+			}}},
+		},
+	})
+	if err != nil || !seed.GetSuccess() {
+		t.Fatalf("seed ExecuteAtomic: err=%v resp=%+v", err, seed)
+	}
+	f.waitForIdempKey(t, "dw-seed")
+
+	// Single-RPC sweep by NAME predicate (handler resolves name->id).
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: "dw-sweep",
+		WaitApplied:    true,
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
+				TypeId: 1,
+				Where: []*pb.FieldFilter{
+					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "sweep-me")},
+				},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("sweep ExecuteAtomic: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("sweep Success=false (error=%q code=%q)", resp.GetError(), resp.GetErrorCode())
+	}
+	f.waitForIdempKey(t, "dw-sweep")
+
+	// Matching nodes swept; the non-matching one survives.
+	for _, id := range []string{"u-stale-1", "u-stale-2"} {
+		if _, err := f.store.GetNode(context.Background(), xaTenant, id); err == nil {
+			t.Fatalf("node %q should have been swept", id)
+		}
+	}
+	if _, err := f.store.GetNode(context.Background(), xaTenant, "u-keep"); err != nil {
+		t.Fatalf("u-keep must survive the predicate sweep: %v", err)
+	}
+
+	// The WAL carries exactly one id-keyed predicate (schema-less on
+	// the log) — field NAME "name" resolved to field_id 2.
+	recs := f.wal.GetAllRecords(xaTopic)
+	var ev wal.Event
+	if err := json.Unmarshal(recs[len(recs)-1].Value, &ev); err != nil {
+		t.Fatalf("decode sweep event: %v", err)
+	}
+	if got := ev.Ops[0]["op"]; got != "delete_where" {
+		t.Fatalf("op: got %v want delete_where", got)
+	}
+	where, ok := ev.Ops[0]["where"].([]any)
+	if !ok || len(where) != 1 {
+		t.Fatalf("where: got %#v want one predicate", ev.Ops[0]["where"])
+	}
+	pm, _ := where[0].(map[string]any)
+	if fid, _ := pm["field_id"].(float64); int(fid) != 2 {
+		t.Fatalf("predicate field_id: got %v want 2 (name->id resolved)", pm["field_id"])
+	}
+}

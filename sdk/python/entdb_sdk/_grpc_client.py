@@ -40,6 +40,7 @@ from ._generated import (
     DeleteNodeOp,
     # GDPR operations (Issue #103)
     DeleteUserRequest,
+    DeleteWhereOp,
     EntDBServiceStub,
     ExecuteAtomicRequest,
     ExportUserDataRequest,
@@ -1076,6 +1077,30 @@ class GrpcClient:
                     DeleteNodeOp(
                         type_id=delete.get("type_id", 0),
                         id=delete.get("id", ""),
+                    )
+                )
+
+            elif "delete_where" in op:
+                # Single-RPC predicate-based sweeper (GitHub issue
+                # #504). The `where` dict is the same MongoDB-style
+                # shape the query path emits; reuse the identical
+                # FieldFilter lowering (a {"$op": v} sub-dict rides
+                # through as a Value, which the server's inlined-
+                # operator decoder fans into one FieldFilter per op,
+                # issue #501). Field NAMES travel on the wire; the
+                # server resolves them to stable field ids.
+                dw = op["delete_where"]
+                where_filters = []
+                where_dict = dw.get("where") or {}
+                for field_name, field_value in where_dict.items():
+                    v = Value()
+                    json_format.Parse(json.dumps(field_value), v)
+                    where_filters.append(FieldFilter(field=field_name, value=v))
+                proto_op.delete_where.CopyFrom(
+                    DeleteWhereOp(
+                        type_id=dw.get("type_id", 0),
+                        where=where_filters,
+                        limit=int(dw.get("limit", 0)),
                     )
                 )
 

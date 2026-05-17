@@ -1,0 +1,39 @@
+version: v2
+
+# Codegen for the Go SDK's checked-in proto stubs — entdb.v1 surface.
+#
+# Produces protobuf message stubs and gRPC service stubs from
+# proto/entdb/v1/entdb.proto into sdk/go/entdb/internal/pb/ (package pb).
+#
+# Run from the repository root:
+#
+#     buf generate --template sdk/go/entdb/buf.gen.yaml
+#
+# The Go SDK keeps its OWN copy of the generated stubs (separate from
+# server/go/internal/pb/) on purpose: SDK consumers must not transitively
+# pull server-only dependencies, so the server module and the SDK module
+# generate the proto package independently. The wire format is the
+# contract — both copies come from the same .proto.
+
+# entdb.proto declares a placeholder `go_package`. Managed mode rewrites
+# it to the SDK module's internal path so the generated files compile
+# under the right import path without editing the .proto.
+managed:
+  enabled: true
+  override:
+    - file_option: go_package
+      value: github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb
+
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: sdk/go/entdb/internal/pb
+    opt:
+      - paths=source_relative
+
+  - remote: buf.build/grpc/go:v1.5.1
+    out: sdk/go/entdb/internal/pb
+    opt:
+      - paths=source_relative
+
+inputs:
+  - directory: proto/entdb/v1

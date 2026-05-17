@@ -277,6 +277,27 @@ func storeFilterOpFromWire(field string, op pb.FilterOp) (store.QueryFilterOp, e
 	}
 }
 
+// storeFilterOpToToken maps the store comparison-operator enum back to
+// the stable string token carried on the WAL by predicate-bearing ops
+// (OpDeleteWhere, issue #504). The token set matches the applier's
+// deleteWhereOpFromString decoder so the round-trip is lossless.
+func storeFilterOpToToken(op store.QueryFilterOp) string {
+	switch op {
+	case store.QueryFilterNe:
+		return "ne"
+	case store.QueryFilterLt:
+		return "lt"
+	case store.QueryFilterLe:
+		return "le"
+	case store.QueryFilterGt:
+		return "gt"
+	case store.QueryFilterGe:
+		return "ge"
+	default:
+		return "eq"
+	}
+}
+
 // storeFilterOpFromInlineKey maps the MongoDB-style “$gt“ keys used
 // by the Python SDK when smuggling non-EQ operators through Op=EQ.
 func storeFilterOpFromInlineKey(key string) (store.QueryFilterOp, bool) {

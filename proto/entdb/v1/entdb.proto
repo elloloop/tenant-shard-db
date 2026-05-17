@@ -202,6 +202,7 @@ message Operation {
         DeleteNodeOp delete_node = 3;
         CreateEdgeOp create_edge = 4;
         DeleteEdgeOp delete_edge = 5;
+        DeleteWhereOp delete_where = 6;
     }
 }
 
@@ -345,6 +346,45 @@ message DeleteNodeOp {
 
     // Node ID (required)
     string id = 2;
+}
+
+// DeleteWhereOp is a single-RPC predicate-based sweeper: it deletes
+// every node of ``type_id`` whose payload matches ALL of the ``where``
+// predicates, inside one ``ExecuteAtomic`` op. It collapses the
+// standard "QueryNodes to find ids, then ExecuteAtomic to delete them"
+// loop into a single round trip — the TTL-sweeper pattern. See GitHub
+// issue #504.
+//
+// The ``where`` predicates reuse the exact ``FieldFilter`` / ``FilterOp``
+// types shipped for ``QueryNodes`` (issue #501), so no new wire concept
+// is introduced — Eq/Ne/Lt/Le/Gt/Ge are supported and AND-ed together.
+//
+// Limit semantics are BEST-EFFORT (Postgres ``DELETE … LIMIT`` style):
+// at most ``limit`` matching nodes are deleted in this op; the rest
+// remain for a subsequent sweep. This matches sweeper semantics — a
+// caller polls until a sweep deletes zero rows. The server caps
+// ``limit`` to a server-side maximum so a runaway predicate cannot pin
+// the single applier goroutine for one tenant (CLAUDE.md single-applier
+// invariant). ``limit <= 0`` means "use the server default cap".
+//
+// Out of scope for v1 (issue #504): the deleted ids are NOT returned in
+// the response — callers that need the ids keep using the
+// QueryNodes + DeleteNodeOp loop.
+message DeleteWhereOp {
+    // Node type ID (required). Only nodes of this type are considered.
+    int32 type_id = 1;
+
+    // Predicate filters, AND-ed together. Same shape as
+    // ``QueryNodesRequest.filters``. An empty list is rejected
+    // (INVALID_ARGUMENT) — an unconditional bulk delete is too
+    // dangerous to express implicitly; delete by id or pass an
+    // explicit always-true predicate.
+    repeated FieldFilter where = 2;
+
+    // Best-effort cap on the number of nodes deleted by this op.
+    // ``<= 0`` selects the server default. The server clamps this to
+    // its own hard ceiling regardless of the requested value.
+    int32 limit = 3;
 }
 
 message CreateEdgeOp {

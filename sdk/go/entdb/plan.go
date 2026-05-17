@@ -183,6 +183,48 @@ func Delete[T proto.Message](p *Plan, nodeID string) {
 	})
 }
 
+// DeleteWhere accumulates a single-RPC predicate-based sweeper op
+// (GitHub issue #504). It deletes every node of type T whose payload
+// matches ALL of the AND-ed [Filter] predicates, capped best-effort
+// by limit, in one round trip — collapsing the QueryWhere + Delete
+// loop the TTL-sweeper pattern otherwise needs.
+//
+// Like [Delete], DeleteWhere is a free function (Go has no generic
+// methods) and T is a compile-time type witness: the SDK reads
+// "(entdb.node).type_id" from T's descriptor without a message
+// instance. The Filter field names are resolved to payload field ids
+// server-side, exactly like [QueryWhere], so no client registry is
+// needed for the predicate.
+//
+// limit is best-effort (Postgres DELETE … LIMIT semantics): at most
+// limit nodes are deleted by this op. Pass 0 for the server default;
+// the server clamps to its own hard ceiling so a runaway predicate
+// cannot pin the single applier goroutine for a tenant. To drain a
+// large backlog, sweep in a loop until a sweep deletes nothing.
+//
+// At least one filter is required — an unconditional bulk delete is
+// rejected server-side. Passing T with no "(entdb.node)" option
+// panics at call time.
+//
+//	entdb.DeleteWhere[*auth.WebAuthnChallenge](plan,
+//	    []entdb.Filter{{Field: "expires_at", Op: entdb.FilterLt, Value: now}},
+//	    1000,
+//	)
+func DeleteWhere[T proto.Message](p *Plan, where []Filter, limit int) {
+	p.ensureNotCommitted()
+	msg := newZeroMessage[T]()
+	typeID, err := typeIDFromMessage(msg)
+	if err != nil {
+		panic(fmt.Errorf("entdb: DeleteWhere: %w", err))
+	}
+	p.operations = append(p.operations, Operation{
+		Type:   OpDeleteWhere,
+		TypeID: int(typeID),
+		Where:  where,
+		Limit:  limit,
+	})
+}
+
 // EdgeCreate accumulates a create-edge operation.
 //
 // The type parameter T is an edge proto message type (annotated
