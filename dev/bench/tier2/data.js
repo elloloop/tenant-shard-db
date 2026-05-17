@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779015419317,
+  "lastUpdate": 1779015459293,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -1080,6 +1080,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000808926679663388",
             "extra": "mean: 6.211658095587533 msec\nrounds: 136"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e047de768bb974312f7d4294560ad6aff7ee05ee",
+          "message": "audit: archive-lag metrics + WAL->S3 Object Lock e2e (#538)\n\nCloses two of the four remaining gaps on the S3 Object Lock archive\nEPIC (#511 / ADR-015); the archive foundation under\nserver/go/internal/audit/ already shipped in eda6ba9.\n\nMetrics\n- New entdb_archive_lag_events gauge ({topic,partition}) plus\n  entdb_archive_writes_total / entdb_archive_errors_total. Lag is the\n  count of WAL records polled by the archive sidecar but not yet\n  durably written to S3 + committed: it drains to 0 once caught up and\n  stays elevated when S3 is unavailable, which is the operator alert\n  signal ADR-015's failure-modes section names.\n- The archiver publishes lag per partition on every poll/commit cycle\n  and counts retryable failures.\n- Added a -metrics-addr flag exposing the Prometheus default registry\n  at /metrics on a separate HTTP listener (off by default; the gRPC\n  metrics were registered but never scrapable before this).\n\nMinIO + Redpanda e2e\n- docker-compose.archive.yml + Dockerfile.archive + run-archive-e2e.sh\n  boot Redpanda + MinIO (Object-Lock COMPLIANCE bucket) + the server\n  with -archive-enabled. Kept separate from the fast 22-case e2e stack\n  so it does not pay the MinIO/archiver startup cost.\n- test_archive_object_lock.py drives the SDK, then asserts the WAL->S3\n  round-trip: COMPLIANCE mode + retain-until on the object, gzip-JSONL\n  body decodes back to the written events, and the lag gauge drains to\n  0 while the writes counter advances. Skips cleanly when collected by\n  the main stack (no boto3 / no S3 endpoint).\n- Added -archive-s3-path-style so the archiver works against MinIO and\n  other non-AWS S3 endpoints (required for path-style addressing).\n\nLegal-hold lift on existing objects and deployment/ops docs remain\nopen on #511.",
+          "timestamp": "2026-05-17T11:49:30+01:00",
+          "tree_id": "dacd8691e9630372c2febc2f13e6d9161d3b59cc",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/e047de768bb974312f7d4294560ad6aff7ee05ee"
+        },
+        "date": 1779015457818,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2521.108992766195,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030988661813079554",
+            "extra": "mean: 396.65084011413023 usec\nrounds: 1057"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1767.784095312523,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005190446095181383",
+            "extra": "mean: 565.6799394516626 usec\nrounds: 1057"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 960.9082208410987,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00032991571802961235",
+            "extra": "mean: 1.0406821154310488 msec\nrounds: 823"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 732.1585171040077,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008649684090184756",
+            "extra": "mean: 1.3658244446235728 msec\nrounds: 623"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1212.4766757336354,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019467493197114747",
+            "extra": "mean: 824.7581335079525 usec\nrounds: 1146"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1141.5032519049337,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002481359247767411",
+            "extra": "mean: 876.0378021974149 usec\nrounds: 1183"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1210.8844512500111,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0020194003060724362",
+            "extra": "mean: 825.8426301268362 usec\nrounds: 1414"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1701.768006303704,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003304906072687438",
+            "extra": "mean: 587.624162809379 usec\nrounds: 1253"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1597.6271660777686,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000031245255150651526",
+            "extra": "mean: 625.9282648873801 usec\nrounds: 487"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1376.5007953341765,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005858154363008561",
+            "extra": "mean: 726.4797836584087 usec\nrounds: 1077"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2087.9495924532666,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024784169177479482",
+            "extra": "mean: 478.9387653870683 usec\nrounds: 1641"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 194.89196081029723,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003978000364416739",
+            "extra": "mean: 5.131047970590096 msec\nrounds: 170"
           }
         ]
       }
