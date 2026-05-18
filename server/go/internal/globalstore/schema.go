@@ -72,6 +72,20 @@ CREATE TABLE IF NOT EXISTS legal_holds (
     PRIMARY KEY (tenant_id, held_by)
 );
 
+-- legal_hold_lift_queue records a tenant whose legal hold was explicitly
+-- released (SetLegalHold OFF) and whose already-archived S3 objects must
+-- have their Object Lock legal hold lifted. The row is enqueued in the
+-- SAME globalstore transaction that clears the legal_holds row + flips
+-- tenant_registry.status (ApplyLegalHoldSet), so a crash AFTER release
+-- still has the pending lift durably recorded. A background worker drains
+-- it by running the paginated S3 sweep and deletes the row only on full
+-- success; any failure leaves the row for the next tick (retry/resume).
+-- EPIC #511 Gap 1, ADR-015.
+CREATE TABLE IF NOT EXISTS legal_hold_lift_queue (
+    tenant_id   TEXT PRIMARY KEY,
+    enqueued_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS tenant_quotas (
     tenant_id                  TEXT PRIMARY KEY,
     max_writes_per_month       INTEGER NOT NULL DEFAULT 0,

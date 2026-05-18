@@ -112,6 +112,12 @@ services:
       - "-archive-poll-timeout=1s"
       - "-archive-retry-backoff=2s"
       - "-archive-s3-path-style=true"
+      # EPIC #511 Gap 1: the durable legal-hold-lift worker is on by
+      # default; tighten its interval so the release -> sweep round-trip
+      # completes well within the test's 90s poll window. The lift is NOT
+      # a request-scoped goroutine — it is this crash-durable worker
+      # draining the legal_hold_lift_queue.
+      - "-legal-hold-lift-worker-interval=2s"
     depends_on:
       redpanda:
         condition: service_healthy

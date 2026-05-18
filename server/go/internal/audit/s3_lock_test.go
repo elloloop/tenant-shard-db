@@ -120,3 +120,22 @@ func (f *fakeS3Client) PutObject(_ context.Context, in *s3.PutObjectInput, _ ...
 	}
 	return &s3.PutObjectOutput{}, nil
 }
+
+// The plain fakeS3Client only exercises the archive-write path; the
+// legal-hold-lift sweep is covered by liftFakeS3 in
+// legalhold_lift_test.go. These stubs just satisfy the S3API interface.
+func (f *fakeS3Client) ListObjectsV2(context.Context, *s3.ListObjectsV2Input, ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
+	return &s3.ListObjectsV2Output{}, nil
+}
+
+func (f *fakeS3Client) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (f *fakeS3Client) GetObjectLegalHold(context.Context, *s3.GetObjectLegalHoldInput, ...func(*s3.Options)) (*s3.GetObjectLegalHoldOutput, error) {
+	return &s3.GetObjectLegalHoldOutput{}, nil
+}
+
+func (f *fakeS3Client) PutObjectLegalHold(context.Context, *s3.PutObjectLegalHoldInput, ...func(*s3.Options)) (*s3.PutObjectLegalHoldOutput, error) {
+	return &s3.PutObjectLegalHoldOutput{}, nil
+}

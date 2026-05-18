@@ -302,6 +302,19 @@ func (g *GlobalStore) ApplyLegalHoldSet(ctx context.Context, in LegalHoldApply) 
 		); err != nil {
 			return fmt.Errorf("globalstore: apply legal_hold_set clear: %w", err)
 		}
+		// EPIC #511 Gap 1: on an *explicit* release, durably enqueue the
+		// S3 Object Lock legal-hold lift for this tenant's
+		// already-archived objects IN THIS SAME TRANSACTION. Committing
+		// the pending-lift row atomically with the hold release is what
+		// makes the lift crash-durable: a server restart / S3 outage
+		// after the release still finds the pending row and a background
+		// worker resumes the (idempotent, paginated) sweep on its next
+		// tick. GDPR erasure never reaches here — only SetLegalHold OFF
+		// emits a legal_hold_set op with enabled=false (legal hold
+		// supersedes erasure; ADR-015).
+		if err := enqueueLegalHoldLiftTx(ctx, tx, in.TenantID, in.CreatedAt); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE tenant_registry SET status = ? WHERE tenant_id = ?`,

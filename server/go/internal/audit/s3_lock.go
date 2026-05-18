@@ -35,15 +35,30 @@ type ArchiveObject struct {
 // ObjectLockStore writes archive objects and verifies that the
 // destination supports Object Lock in COMPLIANCE mode before archival
 // starts.
+//
+// LiftLegalHoldForReleasedTenant sweeps the archive prefix and clears
+// the S3 Object Lock legal hold on objects that no longer carry any
+// still-held tenant once tenantID's hold has been released. It never
+// touches COMPLIANCE-mode retention (immutable by design — ADR-015) and
+// is idempotent / partial-completion-safe (see legalhold_lift.go).
 type ObjectLockStore interface {
 	VerifyObjectLock(ctx context.Context) error
 	PutLockedObject(ctx context.Context, obj ArchiveObject) error
+	LiftLegalHoldForReleasedTenant(ctx context.Context, tenantID string, stillHeld TenantHeldFunc) (LiftSummary, error)
 }
 
 // S3API is the small subset of the AWS S3 client needed by this package.
+// The legal-hold-lift sweep adds list/get/get-legal-hold/put-legal-hold
+// on top of the archive write path; PutObjectLegalHold is the only
+// mutating call and it touches the legal-hold flag only — never the
+// COMPLIANCE retention, which stays immutable (ADR-015).
 type S3API interface {
 	GetObjectLockConfiguration(ctx context.Context, params *s3.GetObjectLockConfigurationInput, optFns ...func(*s3.Options)) (*s3.GetObjectLockConfigurationOutput, error)
 	PutObject(ctx context.Context, params *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error)
+	ListObjectsV2(ctx context.Context, params *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error)
+	GetObject(ctx context.Context, params *s3.GetObjectInput, optFns ...func(*s3.Options)) (*s3.GetObjectOutput, error)
+	GetObjectLegalHold(ctx context.Context, params *s3.GetObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.GetObjectLegalHoldOutput, error)
+	PutObjectLegalHold(ctx context.Context, params *s3.PutObjectLegalHoldInput, optFns ...func(*s3.Options)) (*s3.PutObjectLegalHoldOutput, error)
 }
 
 // S3ObjectLockStore stores WAL archive objects in a single S3 bucket.

@@ -153,6 +153,28 @@ func (s *Server) SetLegalHold(
 		return nil, err
 	}
 
+	// EPIC #511 Gap 1: on an *explicit* release (enabled=false) the S3
+	// Object Lock legal hold on the tenant's already-archived objects
+	// must be lifted. That is NOT done from this RPC path: the
+	// appendGlobalAdminOp above has already driven the durable global
+	// apply step (apply/global.go -> globalstore.ApplyLegalHoldSet) which,
+	// in the SAME transaction that clears the legal_holds row + flips
+	// tenant_registry.status, upserts a legal_hold_lift_queue row. A
+	// crash-durable background worker (internal/audit.LiftWorker, wired
+	// in cmd/entdb-server/main.go) drains that queue, running the
+	// idempotent/resumable paginated sweep and retrying until complete.
+	//
+	// This replaces the previous detached fire-and-forget goroutine,
+	// which left a released tenant's objects stuck LegalHold=ON with no
+	// retry and no signal after a restart / S3 outage / timeout —
+	// unacceptable for a compliance feature (GDPR
+	// right-to-erasure-after-release would be silently unfulfillable).
+	// The OFF RPC now just causes the durable enqueue (via the apply
+	// path) and returns; the worker does the rest. GDPR erasure never
+	// lifts a hold — only an explicit release emits enabled=false (legal
+	// hold supersedes erasure; DeleteUser still refuses to queue while
+	// held). COMPLIANCE retention is never touched by the sweep.
+
 	return &pb.LegalHoldResponse{
 		Success: true,
 		Status:  newStatus,

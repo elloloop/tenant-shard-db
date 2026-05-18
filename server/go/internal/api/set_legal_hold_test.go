@@ -22,7 +22,9 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"runtime"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 
@@ -31,6 +33,172 @@ import (
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
+
+// TestSetLegalHold_Release_DurablyEnqueuesLift: an explicit release
+// (enabled=false) does NOT spawn any goroutine off the RPC path. It
+// drives the durable global apply step which, in the SAME transaction
+// that clears the legal_holds row + flips tenant_registry.status, upserts
+// a legal_hold_lift_queue row. This is the EPIC #511 Gap 1 crash-durable
+// contract: a server restart after the release still finds the pending
+// lift recorded.
+func TestSetLegalHold_Release_DurablyEnqueuesLift(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminWALFixture(t)
+	gs := f.gs
+	ctx := context.Background()
+	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	// Enable first so there is a hold to release; ON must NOT enqueue.
+	if _, err := f.srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
+		Actor: "admin:root", TenantId: "acme", Enabled: true,
+	}); err != nil {
+		t.Fatalf("SetLegalHold(enable): %v", err)
+	}
+	if q, err := gs.GetLegalHoldLiftQueue(ctx); err != nil {
+		t.Fatalf("GetLegalHoldLiftQueue: %v", err)
+	} else if len(q) != 0 {
+		t.Fatalf("ON path enqueued %d lift rows; want 0", len(q))
+	}
+
+	// Release: the lift must be durably enqueued for "acme".
+	resp, err := f.srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
+		Actor: "admin:root", TenantId: "acme", Enabled: false,
+	})
+	if err != nil {
+		t.Fatalf("SetLegalHold(release): %v", err)
+	}
+	if !resp.GetSuccess() || resp.GetStatus() != "active" {
+		t.Fatalf("release resp: success=%v status=%q", resp.GetSuccess(), resp.GetStatus())
+	}
+	q, err := gs.GetLegalHoldLiftQueue(ctx)
+	if err != nil {
+		t.Fatalf("GetLegalHoldLiftQueue: %v", err)
+	}
+	if len(q) != 1 || q[0].TenantID != "acme" {
+		t.Fatalf("lift queue = %+v; want exactly [acme]", q)
+	}
+	if q[0].EnqueuedAt == 0 {
+		t.Fatalf("enqueued_at not set: %+v", q[0])
+	}
+	// The globalstore hold must be gone in the SAME durable step that
+	// enqueued the lift (precedence: release first, then erasure may
+	// proceed; the worker's stillHeld lookup sees the post-release state).
+	if held, _ := gs.IsLegalHoldSet(ctx, "acme"); held {
+		t.Fatal("globalstore hold still set after release; worker would see stale state")
+	}
+}
+
+// TestSetLegalHold_Release_SpawnsNoGoroutine proves the detached
+// fire-and-forget sweep goroutine is GONE. The OFF RPC now just causes
+// the durable enqueue (via the apply path) and returns; the lift is done
+// by the separate crash-durable worker (internal/audit.LiftWorker), not
+// a request-scoped goroutine. We measure the live goroutine count across
+// the OFF call: a detached `go func()` sweep would leave it elevated.
+func TestSetLegalHold_Release_SpawnsNoGoroutine(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminWALFixture(t)
+	gs := f.gs
+	ctx := context.Background()
+	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+
+	// Settle any transient goroutines, then snapshot the baseline.
+	runtime.GC()
+	time.Sleep(50 * time.Millisecond)
+	before := runtime.NumGoroutine()
+
+	if _, err := f.srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
+		Actor: "admin:root", TenantId: "acme", Enabled: false,
+	}); err != nil {
+		t.Fatalf("SetLegalHold(release): %v", err)
+	}
+
+	// A detached sweep goroutine would still be alive here. Allow brief
+	// settle for the synchronous applier-driven enqueue to finish.
+	time.Sleep(100 * time.Millisecond)
+	runtime.GC()
+	after := runtime.NumGoroutine()
+	// Allow tiny scheduler noise but not a leaked long-lived sweep.
+	if after > before+1 {
+		t.Fatalf("goroutine count grew %d -> %d across the OFF RPC; "+
+			"the detached lift goroutine must be gone (lift is now the durable worker)",
+			before, after)
+	}
+
+	// And the lift is instead recorded durably.
+	q, err := gs.GetLegalHoldLiftQueue(ctx)
+	if err != nil {
+		t.Fatalf("GetLegalHoldLiftQueue: %v", err)
+	}
+	if len(q) != 1 || q[0].TenantID != "acme" {
+		t.Fatalf("lift queue = %+v; want exactly [acme] (durable, not a goroutine)", q)
+	}
+}
+
+// TestSetLegalHold_Enable_DoesNotEnqueueLift: the ON path must never
+// enqueue a lift — legal hold is being ADDED, not lifted.
+func TestSetLegalHold_Enable_DoesNotEnqueueLift(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminWALFixture(t)
+	ctx := context.Background()
+	if _, err := f.gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	if _, err := f.srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
+		Actor: "admin:root", TenantId: "acme", Enabled: true,
+	}); err != nil {
+		t.Fatalf("SetLegalHold(enable): %v", err)
+	}
+	q, err := f.gs.GetLegalHoldLiftQueue(ctx)
+	if err != nil {
+		t.Fatalf("GetLegalHoldLiftQueue: %v", err)
+	}
+	if len(q) != 0 {
+		t.Fatalf("ON path enqueued %d lift rows; want 0", len(q))
+	}
+}
+
+// TestSetLegalHold_Release_ReEnqueueKeepsEarliestAge: re-releasing an
+// already-queued tenant (idempotent re-issue) must not reset
+// enqueued_at — the age drives operator alerting on a stuck lift.
+func TestSetLegalHold_Release_ReEnqueueKeepsEarliestAge(t *testing.T) {
+	t.Parallel()
+
+	f := newAdminWALFixture(t)
+	gs := f.gs
+	ctx := context.Background()
+	if _, err := gs.CreateTenant(ctx, "acme", "Acme", "us-east-1"); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	rel := func() {
+		if _, err := f.srv.SetLegalHold(ctx, &pb.LegalHoldRequest{
+			Actor: "admin:root", TenantId: "acme", Enabled: false,
+		}); err != nil {
+			t.Fatalf("SetLegalHold(release): %v", err)
+		}
+	}
+	rel()
+	q1, err := gs.GetLegalHoldLiftQueue(ctx)
+	if err != nil || len(q1) != 1 {
+		t.Fatalf("first release queue=%+v err=%v", q1, err)
+	}
+	first := q1[0].EnqueuedAt
+	rel()
+	q2, err := gs.GetLegalHoldLiftQueue(ctx)
+	if err != nil || len(q2) != 1 {
+		t.Fatalf("second release queue=%+v err=%v", q2, err)
+	}
+	if q2[0].EnqueuedAt != first {
+		t.Fatalf("re-release reset enqueued_at: was %d now %d (want unchanged)",
+			first, q2[0].EnqueuedAt)
+	}
+}
 
 // TestSetLegalHold_AdminEnable_HappyPath: admin actor sets the hold; the
 // response carries success=true + status="legal_hold" and the
