@@ -108,9 +108,36 @@ Implementation status:
   COMPLIANCE-mode enabled. The archiver verifies this at boot and
   refuses to start otherwise (defense in depth — operators can't
   accidentally turn off tamper evidence).
-- Legal hold escalates via S3 Object Lock's `LegalHold=ON` flag on
-  per-tenant archive object prefixes. No application-layer legal
+- Legal hold escalates via S3 Object Lock's `LegalHold=ON` flag.
+  Archive objects are keyed per WAL partition
+  (`wal/<topic>/<partition>/<start>-<end>.jsonl.gz`), not per tenant —
+  one object can carry many tenants, so it gets `LegalHold=ON` if any
+  tenant it carries is held when written. No application-layer legal
   hold mechanism duplicates this.
+- **Legal hold is liftable on release; COMPLIANCE retention is not.**
+  An explicit `SetLegalHold` OFF for a tenant durably enqueues a
+  pending-lift row (`legal_hold_lift_queue`) in the *same* globalstore
+  transaction that clears the hold and flips `tenant_registry.status`
+  (EPIC #511 Gap 1) — so a crash, S3 outage, or restart after the
+  release still has the lift recorded. A crash-durable background worker
+  (mirroring the GDPR deletion-queue worker;
+  `--legal-hold-lift-worker-interval`) drains that queue, running a
+  paginated archive sweep that clears `LegalHold=OFF` on the tenant's
+  already-written objects — covering objects archived *before* the
+  release, not just future writes. The worker deletes the queue row only
+  on full success; any failure / partial / per-run timeout leaves the
+  row so the next tick resumes (the sweep is idempotent and resumable —
+  every decision is derived from live S3 + globalstore state, no
+  progress cursor). It clears an object's hold only once *no* tenant the
+  object carries is still held (shared objects stay locked while a
+  co-tenant remains held) and issues `PutObjectLegalHold` only — the
+  `ObjectLockMode=COMPLIANCE` retain-until is never touched and stays
+  immutable. Progress is observable via `entdb_legal_hold_lift_pending`
+  (queue depth gauge) plus completed/error counters. The lift is
+  triggered ONLY by an explicit release: GDPR erasure never lifts a hold
+  (legal hold deliberately supersedes erasure — `DeleteUser` refuses to
+  queue while a tenant is held), so only an explicit release lifts the
+  archive hold and only then may queued erasure proceed.
 
 **What this makes easy:**
 

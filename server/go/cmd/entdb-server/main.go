@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -58,6 +59,8 @@ func main() {
 	readPoolSize := flag.Int("read-pool-size", 1, "per-tenant read-only SQLite connection pool size (issue #137 / ADR-026). OFF BY DEFAULT (1 = single shared connection, the proven legacy behaviour) — landed dark pending idle-tenant eviction (canonical-store OQ-2: each read connection adds an FD + page cache per active tenant, with no eviction). Opt IN by setting >1 to let same-tenant reads run concurrently against WAL snapshots instead of serializing behind the applier. The post-COMMIT offset-broadcast fix (ADR-026 condition 1) is always active regardless of this value.")
 	gdprWorkerEnabled := flag.Bool("gdpr-worker-enabled", true, "run GDPR deletion_queue worker that performs due deletes and crypto-shred")
 	gdprWorkerInterval := flag.Duration("gdpr-worker-interval", time.Minute, "how often the GDPR worker scans for due deletions")
+	legalHoldLiftWorkerEnabled := flag.Bool("legal-hold-lift-worker-enabled", true, "run the durable legal_hold_lift_queue worker that lifts S3 Object Lock legal hold on a released tenant's already-archived objects (EPIC #511 Gap 1); only does work when -archive-enabled")
+	legalHoldLiftWorkerInterval := flag.Duration("legal-hold-lift-worker-interval", time.Minute, "how often the legal-hold-lift worker drains the pending-lift queue")
 	cryptoShredDeleteFiles := flag.Bool("crypto-shred-delete-files", false, "delete tenant .db/-wal/-shm files after key shred")
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka | kinesis | pubsub | sqs | servicebus | eventhubs")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
@@ -303,6 +306,7 @@ func main() {
 	srvOpts = append(srvOpts, api.WithWALProducer(walImpl), api.WithWALTopic(*walTopic))
 
 	var archiver *audit.Archiver
+	var archiveStore *audit.S3ObjectLockStore
 	if *archiveEnabled {
 		if *walBackend != "kafka" {
 			log.Fatalf("entdb-server: --archive-enabled requires --wal-backend=kafka")
@@ -321,8 +325,16 @@ func main() {
 			if *archiveS3PathStyle {
 				o.UsePathStyle = true
 			}
+			// AWS SDK Go v2 (Jan-2025 default change) computes a CRC32
+			// request checksum on every supported op. MinIO and other
+			// non-AWS S3 endpoints reject that on legacy
+			// Content-MD5-required operations (PutObjectLegalHold ->
+			// HTTP 400 MissingContentMD5). Scope checksum calculation to
+			// ops that strictly require it so the SDK falls back to the
+			// Content-MD5 those endpoints expect; harmless on real AWS.
+			o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 		})
-		archiveStore := audit.NewS3ObjectLockStore(
+		archiveStore = audit.NewS3ObjectLockStore(
 			s3Client,
 			strings.TrimSpace(*archiveBucket),
 			strings.TrimSpace(*archiveKMSKeyID),
@@ -346,6 +358,12 @@ func main() {
 		if err := archiver.Verify(ctx); err != nil {
 			log.Fatalf("entdb-server: archive object lock verification: %v", err)
 		}
+		// EPIC #511 Gap 1: the S3 Object Lock legal-hold lift on a
+		// released tenant's already-archived objects is NOT triggered
+		// from the SetLegalHold RPC. The OFF path durably enqueues a
+		// legal_hold_lift_queue row (apply -> globalstore, same txn that
+		// clears the hold); the crash-durable LiftWorker wired below
+		// drains that queue. archiveStore is kept for that worker.
 		log.Printf("entdb-server: S3 Object Lock archive enabled (bucket=%s group=%s)", strings.TrimSpace(*archiveBucket), *archiveGroup)
 	}
 
@@ -398,6 +416,32 @@ func main() {
 			gdprErr <- gdprProcessor.Run(ctx, *gdprWorkerInterval)
 		}()
 		log.Printf("entdb-server: GDPR deletion worker enabled (interval=%s crypto-shred-delete-files=%v)", *gdprWorkerInterval, *cryptoShredDeleteFiles)
+	}
+
+	// EPIC #511 Gap 1: the durable legal-hold-lift worker. SetLegalHold
+	// OFF durably enqueues a legal_hold_lift_queue row (in the same
+	// globalstore txn that clears the hold); this worker drains the
+	// queue, running the idempotent/resumable paginated S3 sweep for
+	// each released tenant and retrying on the next tick until complete.
+	// It replaces the previous detached fire-and-forget goroutine, which
+	// was not crash-durable. Only does work when the archive sidecar is
+	// enabled (archiveStore != nil); otherwise there is no S3 to sweep
+	// and the queue stays empty (the OFF path is a pure status flip).
+	liftErr := make(chan error, 1)
+	if *legalHoldLiftWorkerEnabled && archiveStore != nil {
+		liftWorker, err := audit.NewLiftWorker(audit.LiftWorkerOptions{
+			Queue:  legalHoldLiftQueueAdapter{global: global},
+			Lifter: archiveStore,
+		})
+		if err != nil {
+			log.Fatalf("entdb-server: legal-hold lift worker: %v", err)
+		}
+		go func() {
+			liftErr <- liftWorker.Run(ctx, *legalHoldLiftWorkerInterval)
+		}()
+		log.Printf("entdb-server: legal-hold-lift worker enabled (interval=%s)", *legalHoldLiftWorkerInterval)
+	} else if *legalHoldLiftWorkerEnabled {
+		log.Printf("entdb-server: legal-hold-lift worker idle (archive sidecar disabled; nothing to sweep)")
 	}
 
 	// Test-only seed: the cross-impl harnesses boot the binary with
@@ -579,6 +623,10 @@ func main() {
 		if err != nil && err != context.Canceled {
 			log.Printf("entdb-server: gdpr worker exited: %v", err)
 		}
+	case err := <-liftErr:
+		if err != nil && err != context.Canceled {
+			log.Printf("entdb-server: legal-hold-lift worker exited: %v", err)
+		}
 	}
 }
 
@@ -687,4 +735,37 @@ func effectiveKMSProvider(provider string) string {
 		return "file"
 	}
 	return strings.TrimSpace(provider)
+}
+
+// legalHoldLiftQueueAdapter adapts *globalstore.GlobalStore to the
+// audit.LiftQueueStore the durable lift worker drains (EPIC #511 Gap 1).
+// It is a thin shim: the only real work is mapping the globalstore
+// queue-entry slice to the audit package's local type so internal/audit
+// does not import internal/globalstore.
+type legalHoldLiftQueueAdapter struct {
+	global *globalstore.GlobalStore
+}
+
+func (a legalHoldLiftQueueAdapter) GetLegalHoldLiftQueue(ctx context.Context) ([]audit.LiftQueueEntry, error) {
+	rows, err := a.global.GetLegalHoldLiftQueue(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]audit.LiftQueueEntry, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, audit.LiftQueueEntry{TenantID: r.TenantID, EnqueuedAt: r.EnqueuedAt})
+	}
+	return out, nil
+}
+
+func (a legalHoldLiftQueueAdapter) DequeueLegalHoldLift(ctx context.Context, tenantID string) (bool, error) {
+	return a.global.DequeueLegalHoldLift(ctx, tenantID)
+}
+
+func (a legalHoldLiftQueueAdapter) CountLegalHoldLiftQueue(ctx context.Context) (int, error) {
+	return a.global.CountLegalHoldLiftQueue(ctx)
+}
+
+func (a legalHoldLiftQueueAdapter) IsLegalHoldSet(ctx context.Context, tenantID string) (bool, error) {
+	return a.global.IsLegalHoldSet(ctx, tenantID)
 }

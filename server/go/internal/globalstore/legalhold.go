@@ -101,3 +101,89 @@ func (g *GlobalStore) IsLegalHoldSet(ctx context.Context, tenantID string) (bool
 	}
 	return true, nil
 }
+
+// LegalHoldLiftQueueEntry is one pending-lift row: a tenant whose hold
+// was explicitly released and whose already-archived S3 objects still
+// need their Object Lock legal hold cleared.
+type LegalHoldLiftQueueEntry struct {
+	TenantID   string
+	EnqueuedAt int64
+}
+
+// enqueueLegalHoldLiftTx upserts a pending-lift row INSIDE the caller's
+// transaction. It is called from ApplyLegalHoldSet on the durable
+// release path so the pending lift is committed atomically with clearing
+// the legal_holds row + flipping tenant_registry.status — a crash AFTER
+// the release still has the lift recorded. ON CONFLICT keeps the
+// earliest enqueued_at so a re-release does not reset the age. EPIC #511
+// Gap 1.
+func enqueueLegalHoldLiftTx(ctx context.Context, tx *sql.Tx, tenantID string, enqueuedAt int64) error {
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO legal_hold_lift_queue (tenant_id, enqueued_at)
+		 VALUES (?, ?)
+		 ON CONFLICT(tenant_id) DO NOTHING`,
+		tenantID, enqueuedAt,
+	); err != nil {
+		return fmt.Errorf("globalstore: enqueue legal-hold lift %q: %w", tenantID, err)
+	}
+	return nil
+}
+
+// GetLegalHoldLiftQueue returns every pending-lift entry, oldest first.
+// The background lift worker drains this on its tick. Reading purely
+// from the durable table is what makes the lift survive a server
+// restart (no in-memory trigger state).
+func (g *GlobalStore) GetLegalHoldLiftQueue(ctx context.Context) ([]*LegalHoldLiftQueueEntry, error) {
+	rows, err := g.db.QueryContext(ctx,
+		`SELECT tenant_id, enqueued_at
+		 FROM legal_hold_lift_queue
+		 ORDER BY enqueued_at, tenant_id`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("globalstore: list legal-hold lift queue: %w", err)
+	}
+	defer rows.Close()
+	out := []*LegalHoldLiftQueueEntry{}
+	for rows.Next() {
+		var e LegalHoldLiftQueueEntry
+		if err := rows.Scan(&e.TenantID, &e.EnqueuedAt); err != nil {
+			return nil, fmt.Errorf("globalstore: scan legal-hold lift row: %w", err)
+		}
+		out = append(out, &e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("globalstore: iterate legal-hold lift rows: %w", err)
+	}
+	return out, nil
+}
+
+// DequeueLegalHoldLift removes a tenant's pending-lift row. The worker
+// calls this only after the sweep for that tenant has fully completed;
+// any failure / partial run leaves the row so the next tick retries.
+// Returns true iff a row existed.
+func (g *GlobalStore) DequeueLegalHoldLift(ctx context.Context, tenantID string) (bool, error) {
+	res, err := g.db.ExecContext(ctx,
+		`DELETE FROM legal_hold_lift_queue WHERE tenant_id = ?`,
+		tenantID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("globalstore: dequeue legal-hold lift %q: %w", tenantID, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("globalstore: rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// CountLegalHoldLiftQueue returns the number of pending-lift rows. Used
+// to publish the entdb_legal_hold_lift_pending gauge.
+func (g *GlobalStore) CountLegalHoldLiftQueue(ctx context.Context) (int, error) {
+	var n int
+	if err := g.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM legal_hold_lift_queue`,
+	).Scan(&n); err != nil {
+		return 0, fmt.Errorf("globalstore: count legal-hold lift queue: %w", err)
+	}
+	return n, nil
+}

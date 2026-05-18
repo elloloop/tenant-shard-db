@@ -287,6 +287,12 @@ func (f *fakeObjectLockStore) PutLockedObject(_ context.Context, obj ArchiveObje
 	return nil
 }
 
+func (f *fakeObjectLockStore) LiftLegalHoldForReleasedTenant(
+	context.Context, string, TenantHeldFunc,
+) (LiftSummary, error) {
+	return LiftSummary{}, nil
+}
+
 func gunzipLines(t *testing.T, body []byte) []string {
 	t.Helper()
 	gz, err := gzip.NewReader(bytes.NewReader(body))

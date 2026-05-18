@@ -477,7 +477,14 @@ resource "aws_iam_role_policy" "ecs_task" {
         Action = [
           "s3:GetObject",
           "s3:PutObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          # Required so the durable legal-hold-lift worker can lift the
+          # Object Lock legal hold on a released tenant's already-archived
+          # objects (EPIC #511 Gap 1; SetLegalHold OFF durably enqueues,
+          # the worker sweeps). Does NOT grant retention changes —
+          # COMPLIANCE retain-until stays immutable (ADR-015).
+          "s3:GetObjectLegalHold",
+          "s3:PutObjectLegalHold"
         ]
         Resource = [
           aws_s3_bucket.archive.arn,
