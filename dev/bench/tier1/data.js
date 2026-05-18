@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779044554622,
+  "lastUpdate": 1779106476409,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2700,6 +2700,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001511637905736464",
             "extra": "mean: 6.9270350458005066 msec\nrounds: 131"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f46b7705941a25ca6db4751891289f3ad2435456",
+          "message": "feat(audit): durable queue + worker to lift S3 Object Lock legal hold on tenant release (#550)\n\nCloses #511\n\nWhen a tenant is under legal hold the archiver escalates archive writes\nto LegalHold=ON. Releasing the hold must then clear that hold on the\nobjects already written to S3, otherwise GDPR right-to-erasure-after-\nrelease is silently unfulfillable and the objects need manual S3 surgery.\n\nProblem with the first cut: the lift ran as a detached fire-and-forget\ngoroutine launched from the SetLegalHold OFF RPC path (30-min timeout).\nIt was not crash-durable — a server restart, S3 outage, or a run past\nthe timeout left a released tenant's objects stuck LegalHold=ON with no\nautomatic retry and no signal. Unacceptable for a compliance feature.\n\nRework to a durable queue + retrying worker, mirroring the GDPR\ndeletion-queue worker:\n\n- Durable enqueue. ApplyLegalHoldSet (the WAL-driven global apply step\n  that clears the legal_holds row and flips tenant_registry.status) now,\n  in that SAME transaction, upserts a row into a new\n  legal_hold_lift_queue table on an explicit release. A crash after the\n  release still has the pending lift recorded. The OFF RPC no longer\n  spawns anything — it just causes the enqueue via the apply path and\n  returns. The detached goroutine, its timeout const, the\n  WithLegalHoldLifter server seam and the main.go adapter are removed.\n\n- Background worker. internal/audit.LiftWorker drains the queue on an\n  interval (-legal-hold-lift-worker-enabled, default true;\n  -legal-hold-lift-worker-interval, default 1m), running the existing\n  idempotent/resumable paginated sweep per queued tenant. The queue row\n  is deleted only on full success; any failure / partial / per-run\n  timeout leaves the row so the next tick resumes. Only does work when\n  the archive sidecar is enabled.\n\n- Observability. New metrics close the no-signal gap:\n  entdb_legal_hold_lift_pending (gauge, queue depth),\n  entdb_legal_hold_lift_completed_total, entdb_legal_hold_lift_errors_total.\n\nSweep correctness is byte-for-byte preserved: per-partition shared-object\nsafety (a co-tenant still held keeps the object ON), COMPLIANCE\nretain-until never touched, GDPR never lifts a hold (legal hold\nsupersedes erasure; DeleteUser still refuses to queue while held), MinIO\nContent-MD5 middleware kept. Only the trigger + execution model changed.\n\nTests:\n\n- Durability (audit.TestLiftWorker_DurableRestart): a pre-populated\n  queue + a FRESH worker with zero in-memory state completes the lift\n  purely from the persisted queue + live S3 — models a crash/restart\n  after the release committed.\n- No goroutine (api.TestSetLegalHold_Release_SpawnsNoGoroutine): the OFF\n  RPC does not grow the live goroutine count and instead records the\n  lift durably in the queue.\n- Retry (audit.TestLiftWorker_RetryAfterTransientS3Error): a transient\n  S3 List error on tick 1 retains the queue row and bumps the error\n  metric; tick 2 succeeds from the same row and removes it.\n- Metrics (audit.TestLiftWorker_Metrics): pending gauge tracks queue\n  depth, completed counter advances per swept tenant.\n- Atomic enqueue (globalstore.TestApplyLegalHoldSet_*): release enqueues\n  in the same txn that clears the hold; ON never enqueues; re-release\n  keeps the earliest enqueued_at; queue CRUD round-trip.\n- All existing sweep correctness tests retained and passing\n  (shared-object, idempotent re-run, retention-untouched,\n  other-tenant-untouched, pagination, list-error, enable-no-trigger).\n- Archive e2e extended: release -> durable worker sweep (not a request\n  goroutine) -> LegalHold OFF while ObjectLockMode=COMPLIANCE and\n  retain-until unchanged; entdb_legal_hold_lift_pending exported and\n  drains to 0.\n\nADR-015 Gap-1 consequence updated to the durable design; deployment.md\nIAM comment updated (IAM actions unchanged).",
+          "timestamp": "2026-05-18T13:12:45+01:00",
+          "tree_id": "0549f2a3e7d02061ff1e3de252dba1f8ce83aa48",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/f46b7705941a25ca6db4751891289f3ad2435456"
+        },
+        "date": 1779106475629,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3047.7273010533195,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004177712623637992",
+            "extra": "mean: 328.11334519804046 usec\nrounds: 1489"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2051.499789220617,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004560082527700696",
+            "extra": "mean: 487.44825871023306 usec\nrounds: 1349"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 989.9327519047852,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010012440347842532",
+            "extra": "mean: 1.0101696282660046 msec\nrounds: 842"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 787.0778305742443,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008068866349718243",
+            "extra": "mean: 1.2705223818467986 msec\nrounds: 639"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1936.3322725086082,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007629785806443761",
+            "extra": "mean: 516.440289818882 usec\nrounds: 1601"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1933.621022413567,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007213032446352869",
+            "extra": "mean: 517.1644228152779 usec\nrounds: 1911"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2021.2225312136616,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007243882584924564",
+            "extra": "mean: 494.7500755394513 usec\nrounds: 1668"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2012.865590499273,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004506529543719195",
+            "extra": "mean: 496.80416055597584 usec\nrounds: 791"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1870.985717596795,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000021963016206887252",
+            "extra": "mean: 534.4776235301567 usec\nrounds: 340"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1587.805860233,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006000028178351909",
+            "extra": "mean: 629.7999176380774 usec\nrounds: 1287"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2584.7808741859426,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029549922043321304",
+            "extra": "mean: 386.8799904807956 usec\nrounds: 2101"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 150.1412262066805,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002405889202050042",
+            "extra": "mean: 6.660395850393722 msec\nrounds: 127"
           }
         ]
       }
