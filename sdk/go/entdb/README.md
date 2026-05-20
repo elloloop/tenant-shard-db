@@ -183,6 +183,27 @@ captures tenant + actor once so you never repeat them on every call.
 Actors are strongly typed — use `UserActor`, `GroupActor`, or
 `ServiceActor` rather than raw `"user:alice"` strings.
 
+## Observability hooks
+
+Install gRPC client interceptors when your service needs outbound
+tracing, metrics, or request-correlation propagation around SDK calls:
+
+```go
+import (
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+)
+
+client, err := entdb.NewClient("api.example.com:443",
+    entdb.WithSecure(),
+    entdb.WithUnaryClientInterceptors(otelgrpc.UnaryClientInterceptor()),
+)
+```
+
+Caller-supplied interceptors wrap the SDK's own redirect handling, so
+spans and propagation cover typed calls, admin calls, and raw transport
+RPCs reached through the client.
+
 ## Creating nodes
 
 `Plan.Create(msg, opts...)` is the only way to create a node:

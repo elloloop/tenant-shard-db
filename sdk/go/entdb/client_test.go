@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -332,6 +333,46 @@ func TestWithTimeout(t *testing.T) {
 	cfg := client.Config()
 	if cfg.timeout != 5*time.Second {
 		t.Errorf("timeout = %v, want %v", cfg.timeout, 5*time.Second)
+	}
+}
+
+func TestClientInterceptorOptions(t *testing.T) {
+	unary := func(
+		ctx context.Context,
+		method string,
+		req, reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+	stream := func(
+		ctx context.Context,
+		desc *grpc.StreamDesc,
+		cc *grpc.ClientConn,
+		method string,
+		streamer grpc.Streamer,
+		opts ...grpc.CallOption,
+	) (grpc.ClientStream, error) {
+		return streamer(ctx, desc, cc, method, opts...)
+	}
+
+	client, err := NewClient(
+		"localhost:50051",
+		WithUnaryClientInterceptors(nil, unary, unary),
+		WithStreamClientInterceptors(nil, stream),
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	cfg := client.Config()
+	if got := len(cfg.unaryClientInterceptors); got != 2 {
+		t.Fatalf("unaryClientInterceptors len = %d, want 2", got)
+	}
+	if got := len(cfg.streamClientInterceptors); got != 1 {
+		t.Fatalf("streamClientInterceptors len = %d, want 1", got)
 	}
 }
 

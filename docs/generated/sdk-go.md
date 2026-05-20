@@ -320,7 +320,7 @@ func (a *Admin) CreateTenant(ctx context.Context, actor, tenantID, name string, 
     Pass WithRegion to pin the tenant to a specific geographic region (e.g.
     “WithRegion("eu-west-1")“); when omitted the server defaults the
     tenant to its own served region. The pinned region is reflected on
-    TenantDetail.Region.
+    [TenantDetail.Region].
 
 func (a *Admin) CreateUser(ctx context.Context, actor, userID, email, name string) (*UserInfo, error)
     CreateUser registers a new user in the global registry. “email“ is unique
@@ -434,8 +434,25 @@ func WithRetryBudget(d time.Duration) ClientOption
 func WithSecure() ClientOption
     WithSecure enables TLS for the gRPC connection.
 
+func WithStreamClientInterceptors(interceptors ...grpc.StreamClientInterceptor) ClientOption
+    WithStreamClientInterceptors prepends caller-supplied stream gRPC client
+    interceptors to the SDK's internal interceptor chain.
+
+    The current EntDB wire API is unary-only, but exposing the stream hook keeps
+    the SDK option surface aligned with grpc-go and future-proofs streaming RPC
+    additions.
+
 func WithTimeout(d time.Duration) ClientOption
     WithTimeout sets the default timeout for RPCs.
+
+func WithUnaryClientInterceptors(interceptors ...grpc.UnaryClientInterceptor) ClientOption
+    WithUnaryClientInterceptors prepends caller-supplied unary gRPC client
+    interceptors to the SDK's internal interceptor chain.
+
+    This is intended for cross-cutting concerns such as OpenTelemetry tracing,
+    metrics, request correlation, or custom propagation. When SDK-owned
+    interceptors are also installed, for example node redirect handling,
+    these interceptors run first and wrap the full outbound RPC.
 
 type CommitResult struct {
 	Success        bool     `json:"success"`

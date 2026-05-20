@@ -28,13 +28,28 @@ type redirectFakeServer struct {
 
 	nodeID       string // "node-a" / "node-b" — used in redirect trailer
 	redirectTo   string // empty = serve normally
+	failCode     codes.Code
+	failN        int32
 	hits         atomic.Int32
 	lastTenantID atomic.Value // string — tenant on the last received call
+	lastUserHook atomic.Value // string — marker from caller-supplied interceptor
 }
 
 func (s *redirectFakeServer) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNodeResponse, error) {
-	s.hits.Add(1)
+	n := s.hits.Add(1)
 	s.lastTenantID.Store(req.GetContext().GetTenantId())
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if vals := md.Get("x-user-interceptor"); len(vals) > 0 {
+			s.lastUserHook.Store(vals[0])
+		}
+	}
+	if n <= s.failN {
+		code := s.failCode
+		if code == codes.OK {
+			code = codes.Unavailable
+		}
+		return nil, status.Errorf(code, "transient %d", n)
+	}
 	if s.redirectTo != "" {
 		_ = grpc.SetTrailer(ctx, metadata.Pairs("entdb-redirect-node", s.redirectTo))
 		return nil, status.Errorf(
@@ -85,7 +100,7 @@ func (r *bufconnResolver) Resolve(nodeID string) (string, error) {
 	return "passthrough:///" + nodeID + ".bufnet", nil
 }
 
-func newRedirectTransport(t *testing.T, primaryNode string, lis map[string]*bufconn.Listener) *grpcTransport {
+func newRedirectTransport(t *testing.T, primaryNode string, lis map[string]*bufconn.Listener, opts ...ClientOption) *grpcTransport {
 	t.Helper()
 	resolver := &bufconnResolver{listeners: lis}
 
@@ -102,6 +117,10 @@ func newRedirectTransport(t *testing.T, primaryNode string, lis map[string]*bufc
 	}
 
 	cfg := defaultConfig()
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	cfg.retryJitter = fixedJitter{0.0}
 	cfg.nodeResolver = resolver
 	cfg.dialOptions = []grpc.DialOption{
 		grpc.WithContextDialer(dialer),
@@ -117,6 +136,90 @@ func newRedirectTransport(t *testing.T, primaryNode string, lis map[string]*bufc
 	}
 	t.Cleanup(func() { _ = tr.Close() })
 	return tr
+}
+
+func TestUnaryClientInterceptorsWrapRedirectInterceptor(t *testing.T) {
+	srvA := &redirectFakeServer{nodeID: "node-a", redirectTo: "node-b"}
+	srvB := &redirectFakeServer{nodeID: "node-b"}
+	listeners := map[string]*bufconn.Listener{
+		"node-a": startRedirectServer(t, srvA),
+		"node-b": startRedirectServer(t, srvB),
+	}
+
+	var userInterceptorCalls atomic.Int32
+	userInterceptor := func(
+		ctx context.Context,
+		method string,
+		req, reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		userInterceptorCalls.Add(1)
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-user-interceptor", "outer")
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+
+	tr := newRedirectTransport(t, "node-a", listeners, WithUnaryClientInterceptors(userInterceptor))
+
+	got, err := tr.GetNode(context.Background(), "tenant-b", "user:alice", 1, "n1")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got == nil || got.NodeID != "n1" {
+		t.Fatalf("expected node n1, got %+v", got)
+	}
+	if calls := userInterceptorCalls.Load(); calls != 1 {
+		t.Fatalf("user interceptor calls = %d, want 1", calls)
+	}
+	if hook, _ := srvB.lastUserHook.Load().(string); hook != "outer" {
+		t.Fatalf("redirect target saw user hook %q, want outer", hook)
+	}
+}
+
+func TestRetryInterceptorWrapsRedirectInterceptor(t *testing.T) {
+	srvA := &redirectFakeServer{nodeID: "node-a", redirectTo: "node-b"}
+	srvB := &redirectFakeServer{nodeID: "node-b", failCode: codes.Unavailable, failN: 1}
+	listeners := map[string]*bufconn.Listener{
+		"node-a": startRedirectServer(t, srvA),
+		"node-b": startRedirectServer(t, srvB),
+	}
+
+	var userInterceptorCalls atomic.Int32
+	userInterceptor := func(
+		ctx context.Context,
+		method string,
+		req, reply any,
+		cc *grpc.ClientConn,
+		invoker grpc.UnaryInvoker,
+		opts ...grpc.CallOption,
+	) error {
+		userInterceptorCalls.Add(1)
+		ctx = metadata.AppendToOutgoingContext(ctx, "x-user-interceptor", "outer")
+		return invoker(ctx, method, req, reply, cc, opts...)
+	}
+
+	tr := newRedirectTransport(t, "node-a", listeners, WithUnaryClientInterceptors(userInterceptor))
+
+	got, err := tr.GetNode(context.Background(), "tenant-b", "user:alice", 1, "n1")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if got == nil || got.NodeID != "n1" {
+		t.Fatalf("expected node n1, got %+v", got)
+	}
+	if hits := srvA.hits.Load(); hits != 1 {
+		t.Fatalf("primary hits = %d, want 1", hits)
+	}
+	if hits := srvB.hits.Load(); hits != 2 {
+		t.Fatalf("redirect target hits = %d, want 2", hits)
+	}
+	if calls := userInterceptorCalls.Load(); calls != 1 {
+		t.Fatalf("user interceptor calls = %d, want 1", calls)
+	}
+	if hook, _ := srvB.lastUserHook.Load().(string); hook != "outer" {
+		t.Fatalf("redirect target saw user hook %q, want outer", hook)
+	}
 }
 
 func TestRedirect_FollowsHintAndCaches(t *testing.T) {

@@ -227,20 +227,24 @@ func redirectInterceptor(resolver NodeResolver, cache *tenantEndpointCache) grpc
 // connection (TLS / insecure, plus any explicit dial options).
 func dialerFromConfig(cfg clientConfig) func(string) (*grpc.ClientConn, error) {
 	return func(endpoint string) (*grpc.ClientConn, error) {
-		opts := append([]grpc.DialOption(nil), cfg.dialOptions...)
-		// Caller-supplied dial options win — only apply our
-		// transport-credentials default when they did not.
-		if !hasTransportCreds(opts) {
-			var creds credentials.TransportCredentials
-			if cfg.secure {
-				creds = credentials.NewTLS(nil)
-			} else {
-				creds = insecure.NewCredentials()
-			}
-			opts = append(opts, grpc.WithTransportCredentials(creds))
-		}
-		return grpc.NewClient(endpoint, opts...)
+		return grpc.NewClient(endpoint, dialOptionsFromConfig(cfg)...)
 	}
+}
+
+func dialOptionsFromConfig(cfg clientConfig) []grpc.DialOption {
+	opts := append([]grpc.DialOption(nil), cfg.dialOptions...)
+	// Caller-supplied dial options win — only apply our
+	// transport-credentials default when they did not.
+	if !hasTransportCreds(opts) {
+		var creds credentials.TransportCredentials
+		if cfg.secure {
+			creds = credentials.NewTLS(nil)
+		} else {
+			creds = insecure.NewCredentials()
+		}
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	}
+	return opts
 }
 
 // hasTransportCreds reports whether “opts“ already carries a
