@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779121430598,
+  "lastUpdate": 1779288830874,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -2916,6 +2916,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0011350087666591388",
             "extra": "mean: 5.843895111111251 msec\nrounds: 144"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "928aaf23b10d931eeb94f8690fe12cfd386098b8",
+          "message": "docs: S3 Object Lock archive bucket requirements + ops runbook (#551)\n\nDocument the operator-facing surface of the S3 Object Lock WAL archive\n(EPIC #511): what the bucket must look like, the exact IAM the server\nneeds, retention vs legal-hold semantics, and the runbook for the archive\n+ legal-hold-lift metrics. EntDB ships no Terraform/IaC module — bucket\nprovisioning is the operator's choice — so this is docs-only, with a\nsingle clearly-labelled aws-cli/IAM example marked \"adapt to your own\ntooling\".\n\n- docs-site compliance/audit.astro: rewrite the stale page (it described\n  the retired Python server's YAML/env-var config and an IAM policy that\n  omitted the legal-hold actions) to the Go server reality — CLI flags,\n  per-partition wal/<topic>/<partition>/... object keys, COMPLIANCE WORM\n  implications, the verified IAM action set, the durable legal-hold-lift\n  worker, GDPR-supersedes-hold, and the lag + lift metric runbooks.\n- docs/operations.md: add an \"S3 Object Lock archive\" section (bucket\n  requirements, IAM table, retention vs legal hold, archive-lag and\n  legal-hold-lift runbooks); refresh the metrics table with the lift\n  gauges and the now-shipped -metrics-addr endpoint; extend the\n  production checklist.\n- docs/deployment.md: add s3:GetBucketObjectLockConfiguration to the\n  archive IAM block and point at the operations runbook + ADR-015.\n\nIAM set verified against server/go/internal/audit/{s3_lock,archiver,\nlegalhold_lift,legalhold_lift_worker}.go: s3:GetBucketObjectLockConfiguration,\ns3:PutObject, s3:PutObjectLegalHold, s3:GetObjectLegalHold, s3:ListBucket,\ns3:GetObject (+ SSE-KMS perms when -archive-kms-key-id is set).\n\nCloses #549",
+          "timestamp": "2026-05-20T15:51:09+01:00",
+          "tree_id": "b441f016da036747305ee171ebe3e9fa2bea4b8e",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/928aaf23b10d931eeb94f8690fe12cfd386098b8"
+        },
+        "date": 1779288829978,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2478.563787717561,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029123296724187652",
+            "extra": "mean: 403.4594570272777 usec\nrounds: 989"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1708.04603423257,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005710503914106029",
+            "extra": "mean: 585.4643141683841 usec\nrounds: 974"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 895.6573073742103,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004143901170953137",
+            "extra": "mean: 1.1164984551197268 msec\nrounds: 791"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 608.9763800473479,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000308852729606613",
+            "extra": "mean: 1.642099813333072 msec\nrounds: 525"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1092.9100848070066,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001760466397609357",
+            "extra": "mean: 914.9883543956745 usec\nrounds: 1092"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 972.6189464143191,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002518236239588968",
+            "extra": "mean: 1.028151881768934 msec\nrounds: 1108"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1234.4446981070948,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0014812321424449936",
+            "extra": "mean: 810.0808416394887 usec\nrounds: 903"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1529.6488876806875,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00034474356084728127",
+            "extra": "mean: 653.7447959814087 usec\nrounds: 1294"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1463.4040312931186,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004326630663558408",
+            "extra": "mean: 683.3382843126122 usec\nrounds: 408"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1295.7869279640959,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00022541495274937002",
+            "extra": "mean: 771.7318167201856 usec\nrounds: 933"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1906.57146974939,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00018475591204566595",
+            "extra": "mean: 524.5017120346637 usec\nrounds: 1396"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 168.95058656992845,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005726364264713364",
+            "extra": "mean: 5.918890370860601 msec\nrounds: 151"
           }
         ]
       }
