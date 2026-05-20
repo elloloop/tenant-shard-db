@@ -478,6 +478,10 @@ resource "aws_iam_role_policy" "ecs_task" {
           "s3:GetObject",
           "s3:PutObject",
           "s3:ListBucket",
+          # Boot-time verification: the archiver calls
+          # GetObjectLockConfiguration and refuses to start unless the
+          # bucket is Object Lock COMPLIANCE (ADR-015).
+          "s3:GetBucketObjectLockConfiguration",
           # Required so the durable legal-hold-lift worker can lift the
           # Object Lock legal hold on a released tenant's already-archived
           # objects (EPIC #511 Gap 1; SetLegalHold OFF durably enqueues,
@@ -497,6 +501,19 @@ resource "aws_iam_role_policy" "ecs_task" {
   })
 }
 ```
+
+The archive bucket has hard requirements — Object Lock enabled **at
+creation** (it cannot be added later), versioning, and a COMPLIANCE-mode
+default retention matching `-archive-retention-days`. The archiver verifies
+this at boot and refuses to start otherwise. The bucket-creation steps and
+the archive lag / legal-hold-lift ops runbook live in the
+[Operations Guide](operations.md#s3-object-lock-archive); the same content
+renders in the docs site under Compliance → Audit & Object Lock. Add
+`kms:GenerateDataKey` + `kms:Decrypt` on the key only when you set
+`-archive-kms-key-id`. EntDB ships **no** Terraform/IaC module for the
+bucket — the `aws_s3_bucket.archive` resource above is an illustrative
+example; how you provision it is your choice (see
+[ADR-015](adr/015-wal-and-s3-object-lock-as-audit-log.md)).
 
 ### Encryption
 
