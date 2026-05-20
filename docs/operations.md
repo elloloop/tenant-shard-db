@@ -11,8 +11,10 @@ Before running EntDB in front of real traffic:
 - Set `-require-tls=true` with `-tls-cert`, `-tls-key` paths. Use `-tls-min-version=1.3` unless a documented legacy client still needs TLS 1.2.
 - Enable mTLS for service-to-service callers: `-require-client-cert=true` + `-tls-ca <client-ca>`.
 - Set `-kms-provider` (`aws`, `vault`, or `file` — `gcp` / `azure` flags exist but error at boot; not yet implemented) and `-kms-key-id`. Set `-encryption-required=true`.
-- Enable the WAL archive: `-archive-enabled=true`, `-archive-bucket`, `-archive-region`, `-archive-retention-days` matching your retention policy. The bucket must have Object Lock COMPLIANCE pre-configured ([ADR-015](adr/015-wal-and-s3-object-lock-as-audit-log.md)).
+- Enable the WAL archive: `-archive-enabled=true`, `-archive-bucket`, `-archive-region`, `-archive-retention-days` matching your retention policy. The bucket must have Object Lock COMPLIANCE pre-configured at creation — see [S3 Object Lock archive](#s3-object-lock-archive) for bucket requirements, the full IAM action set, and the ops runbook ([ADR-015](adr/015-wal-and-s3-object-lock-as-audit-log.md)).
+- Keep `-legal-hold-lift-worker-enabled=true` (default) so a released legal hold is lifted on already-archived S3 objects; it only does work when `-archive-enabled`.
 - Keep `-gdpr-worker-enabled=true` with `-gdpr-worker-interval` matched to your erasure SLA.
+- Set `-metrics-addr` (e.g. `:9090`) so dashboards can scrape `entdb_archive_lag_events` and the legal-hold-lift metrics.
 
 ## Health checking
 
@@ -48,12 +50,14 @@ Prometheus-style counters and histograms are collected internally (`server/go/in
 | `entdb_grpc_request_duration_seconds{method}` | RPC latency histogram |
 | `entdb_wal_append_duration_seconds` | WAL producer latency |
 | `entdb_wal_consumer_lag` | Applier lag in events |
-| `entdb_archive_lag_events` | Archive sidecar lag |
-| `entdb_archive_writes_total`, `entdb_archive_errors_total` | Archive activity |
+| `entdb_archive_lag_events{topic,partition}` | Archive sidecar lag (records polled but not yet on S3) — see [S3 Object Lock archive](#s3-object-lock-archive) |
+| `entdb_archive_writes_total`, `entdb_archive_errors_total` | Archive activity / failures |
+| `entdb_legal_hold_lift_pending` | Durable legal-hold-lift queue depth (should drain to 0) |
+| `entdb_legal_hold_lift_completed_total`, `entdb_legal_hold_lift_errors_total` | Lift sweep completions / failures |
 
-**Note:** the server does not yet expose a `/metrics` HTTP endpoint. The internal counters are recorded but need wiring (`promhttp.Handler()` next to the gRPC listener) to be scraped. See [ADR-011](adr/011-security-and-compliance.md) "Monitoring" status.
+Set `-metrics-addr` (for example `-metrics-addr=:9090`) to expose the Prometheus `/metrics` endpoint on a plain HTTP listener separate from the gRPC port. It is off by default; scrape traffic is expected to be in-cluster. Metric names and labels are stable across releases.
 
-Until then, operational signals come from:
+Complementary operational signals:
 
 - **Kafka/MSK consumer-group lag** on `entdb-wal` via `kafka-consumer-groups.sh` or CloudWatch.
 - **Client-side latency / error rates** from the SDKs.
@@ -66,6 +70,111 @@ OpenTelemetry is a transitive dependency but no spans are emitted by the server 
 ### Logging
 
 Structured JSON logs to stdout. Aggregate with your container runtime's log collector (CloudWatch agent, Fluent Bit, Loki Promtail, etc.).
+
+## S3 Object Lock archive
+
+The WAL archive (`-archive-enabled=true`) copies WAL events to S3 with Object Lock COMPLIANCE, giving tamper-evident long-term storage that survives Kafka retention rolling off ([ADR-015](adr/015-wal-and-s3-object-lock-as-audit-log.md)). The archiver runs as a sidecar goroutine that consumes the WAL topic with its own consumer group (`-archive-group`).
+
+> **EntDB ships no Terraform / IaC module.** It is an OSS Docker image plus SDKs; how you provision the bucket (Terraform, CloudFormation, CDK, console) is your choice. The CLI snippets below are illustrative examples — adapt them to your own tooling.
+
+### Bucket requirements
+
+The archive bucket MUST satisfy all of:
+
+- **Object Lock enabled at bucket creation.** S3 Object Lock can only be turned on when the bucket is *created* — it cannot be added to an existing bucket. (Enabling Object Lock at creation also turns on versioning, which Object Lock requires.)
+- **A COMPLIANCE-mode default retention** with a `Days` window matching `-archive-retention-days`. The server verifies COMPLIANCE specifically and rejects GOVERNANCE (a privileged principal can bypass GOVERNANCE).
+- **A dedicated bucket with all public access blocked.**
+
+COMPLIANCE retention is true WORM: a `RetainUntil` date in the future is immutable — nobody, including the AWS account root, can shorten it, overwrite the object, or delete it before it expires. The flip side is that a long retention (e.g. `-archive-retention-days=2557`, ~7 years) is a long commitment, including for objects written by a bug. Use a separate dev/staging bucket *without* Object Lock for testing.
+
+The archiver calls `GetObjectLockConfiguration` at boot and **refuses to start** unless the bucket is Object Lock COMPLIANCE — defence in depth so the archiver is never pointed at a non-WORM bucket.
+
+Archive objects are keyed `wal/<topic>/<partition>/<start>-<end>.jsonl.gz` — **one object per WAL partition run, not per tenant**; a single object can carry records for many tenants.
+
+```bash
+# Example only — adapt to your own IaC/tooling. EntDB ships no module for this.
+# 1. Object Lock MUST be enabled at create time (cannot be added later;
+#    also turns on versioning automatically).
+aws s3api create-bucket \
+  --bucket entdb-audit-prod --region us-east-1 \
+  --object-lock-enabled-for-bucket
+
+# 2. Block all public access.
+aws s3api put-public-access-block \
+  --bucket entdb-audit-prod \
+  --public-access-block-configuration \
+    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
+
+# 3. COMPLIANCE default retention matching -archive-retention-days.
+aws s3api put-object-lock-configuration \
+  --bucket entdb-audit-prod \
+  --object-lock-configuration \
+    '{"ObjectLockEnabled":"Enabled","Rule":{"DefaultRetention":{"Mode":"COMPLIANCE","Days":2557}}}'
+```
+
+### IAM permissions
+
+The server role needs the archive-write actions plus the legal-hold-lift sweep actions. Every action below is exercised by a real code path in `server/go/internal/audit/` (archiver + legal-hold lift), not listed speculatively:
+
+| IAM action | Used by | S3 call |
+|---|---|---|
+| `s3:GetBucketObjectLockConfiguration` | Boot verification | `GetObjectLockConfiguration` (refuses to start unless COMPLIANCE) |
+| `s3:PutObject` | Archive write | `PutObject` with COMPLIANCE retain-until (+ legal-hold ON when held) |
+| `s3:PutObjectLegalHold` | Archive write & lift sweep | Sets hold ON at write for a held tenant; clears OFF on release |
+| `s3:GetObjectLegalHold` | Lift sweep | Skip objects already OFF |
+| `s3:ListBucket` | Lift sweep | `ListObjectsV2` over the `wal/` prefix |
+| `s3:GetObject` | Lift sweep | Decode object bodies to recover the authoritative tenant set |
+
+Add `kms:GenerateDataKey` + `kms:Decrypt` on the key only when you set `-archive-kms-key-id`. Notably **absent**: `s3:DeleteObject` (the archive is append-only) and `s3:PutObjectRetention` / `s3:BypassGovernanceRetention` (retention is immutable; only the legal-hold flag is ever mutated).
+
+### Retention vs legal hold
+
+Two independent Object Lock controls:
+
+- **COMPLIANCE retention** — set by the archiver on every write; immutable until expiry; cleared by nothing but time.
+- **Legal hold** — stamped ON for a tenant under hold (`SetLegalHold` ON); persists even after retention expires; liftable only via an explicit `SetLegalHold` OFF.
+
+An object is undeletable while it has either an unexpired retention **or** an active legal hold.
+
+Releasing a hold (`SetLegalHold` OFF) flows through the WAL; the apply step that clears the hold also enqueues a row in a durable `legal_hold_lift_queue` *in the same transaction* (crash-durable). The `-legal-hold-lift-worker-enabled` worker (default on, `-legal-hold-lift-worker-interval` default `1m`) drains the queue, running an idempotent, resumable sweep of the `wal/` prefix: for each object with legal-hold ON it decodes the body to find the tenants it carries and clears the hold **only when none of them is still under hold** (a co-tenant still on hold keeps the object ON). The queue row is deleted only on full success; the COMPLIANCE retention is never touched. The worker only does work when `-archive-enabled` is on.
+
+GDPR erasure never lifts a hold — legal hold supersedes erasure. While a tenant is held, `DeleteUser` refuses to queue erasure; only an explicit `SetLegalHold` OFF clears the hold, after which queued erasure may proceed.
+
+### Runbook: archive lag
+
+`entdb_archive_lag_events{topic,partition}` is the number of WAL records polled from a partition but not yet durably written to S3 and committed. A healthy archiver drives it to 0 after each cycle. A **sustained non-zero lag means the archiver is falling behind or S3 is unreachable** — events live only in Kafka/Redpanda, outside tamper-evident storage.
+
+```promql
+# Page when archive lag is stuck above zero for 10 minutes.
+max(entdb_archive_lag_events) > 0 for 10m
+# Corroborate with the error counter.
+rate(entdb_archive_errors_total[5m]) > 0
+```
+
+When lag is sustained:
+
+1. Check `entdb_archive_errors_total` and server logs for the underlying S3 error.
+2. Confirm S3 reachability and that the role still has `s3:PutObject` + `s3:GetBucketObjectLockConfiguration` (a policy change or KMS key disablement is a common cause).
+3. Confirm the bucket still has Object Lock COMPLIANCE configured.
+4. You usually don't intervene on the data: keep Kafka/Redpanda retention longer than your worst-case archive lag so events are never lost before reaching S3. Once S3 recovers, the archiver resumes from its committed offset (retrying with `-archive-retry-backoff`) and lag drains to 0.
+
+### Runbook: legal-hold lift
+
+`entdb_legal_hold_lift_pending` is the durable lift-queue depth — tenants whose hold was released but whose archived objects have not been fully swept clear. It climbs on release and **should drain back to 0**. Sustained `entdb_legal_hold_lift_errors_total` growth means a stuck lift — almost always an S3 permission or availability problem.
+
+```promql
+# A release hasn't drained for 30 minutes (the worker ticks every minute).
+entdb_legal_hold_lift_pending > 0 for 30m
+# The lift sweep is erroring repeatedly.
+rate(entdb_legal_hold_lift_errors_total[10m]) > 0
+```
+
+When pending stays non-zero or errors climb:
+
+1. Check server logs for the lift sweep error.
+2. Confirm the role has the lift-sweep actions: `s3:ListBucket`, `s3:GetObject`, `s3:GetObjectLegalHold`, `s3:PutObjectLegalHold`.
+3. No manual replay is needed — the durable queue retries automatically every tick and the sweep is idempotent/resumable. Once the underlying problem is fixed, the next tick completes the lift and the gauge drains.
+4. Objects shared with a co-tenant that is *still* legitimately held correctly stay ON; that is not an error.
 
 ## Kafka / WAL operations
 

@@ -1,315 +1,457 @@
 ---
 import DocsLayout from "../../../layouts/DocsLayout.astro";
 import { Code } from "astro-expressive-code/components";
-import CodeTabs from "../../../components/CodeTabs.astro";
 ---
 
-<DocsLayout title="Compliance & Audit">
-  <h1>Compliance &amp; Audit</h1>
+<DocsLayout title="Audit & S3 Object Lock">
+  <h1>Audit &amp; S3 Object Lock</h1>
   <p>
-    EntDB's WAL-first architecture means every mutation &mdash; writes, ACL
-    changes, GDPR operations, ownership transfers &mdash; is appended to an
-    immutable event log. That event log <em>is</em> the audit trail. There
-    is no separate audit table to keep in sync.
+    EntDB has <strong>one</strong> audit log: the WAL. Every mutation
+    &mdash; node and edge writes, ACL changes, ownership transfers, GDPR
+    operations, and the admin/control-plane operations &mdash; is appended
+    to the WAL before any state change. That event log <em>is</em> the
+    audit trail; there is no separate <code>audit_log</code> table to keep
+    in sync. The archiver copies the WAL to S3 with Object Lock in
+    COMPLIANCE mode, giving you tamper-evident, replayable long-term
+    storage. See
+    <a href="https://github.com/elloloop/tenant-shard-db/blob/main/docs/adr/015-wal-and-s3-object-lock-as-audit-log.md">ADR-015</a>
+    for the normative design.
+  </p>
+  <p>
+    This page is the operator reference for the S3 Object Lock archive
+    (EPIC <a href="https://github.com/elloloop/tenant-shard-db/issues/511">#511</a>):
+    what the bucket must look like, the exact IAM the server needs, and the
+    runbook for the metrics that tell you the archive is healthy.
   </p>
 
-  <h2>S3 Object Lock (Tamper-Evident Audit)</h2>
+  <blockquote>
+    <p>
+      <strong>No Terraform / IaC module is shipped with EntDB.</strong>
+      EntDB is an OSS Docker image plus SDKs; how you provision the bucket
+      (Terraform, CloudFormation, CDK, Pulumi, or the console) is your
+      choice. The CLI snippets below are <em>illustrative examples</em>
+      &mdash; adapt them to your own tooling.
+    </p>
+  </blockquote>
+
+  <h2>How the archive works</h2>
   <p>
-    For compliance regimes that require tamper-evident storage (SOC 2,
-    HIPAA, ISO 27001, 21 CFR Part 11), configure the S3 WAL backend with
-    <strong>Object Lock in COMPLIANCE mode</strong>. Once written, audit
-    events cannot be altered or deleted &mdash; not even by the account
-    root &mdash; until the retention period expires.
+    The archiver runs as a sidecar goroutine inside <code>entdb-server</code>
+    when <code>-archive-enabled=true</code>. It consumes the WAL topic with
+    its own consumer group (<code>-archive-group</code>, distinct from the
+    applier group) and writes batches of records as immutable gzip-JSONL
+    objects:
   </p>
-  <Code code={`# entdb-server config
-wal:
-  backend: s3
-  s3:
-    bucket: entdb-audit-prod
-    region: us-east-1
-    object_lock:
-      enabled: true
-      mode: COMPLIANCE       # or GOVERNANCE
-      retention_days: 2555   # 7 years`} lang="yaml" />
-
+  <ul>
+    <li>
+      Each object is keyed
+      <code>wal/&lt;topic&gt;/&lt;partition&gt;/&lt;start-offset&gt;-&lt;end-offset&gt;.jsonl.gz</code>
+      &mdash; one object per contiguous run of a single WAL partition.
+      Objects are <strong>per WAL partition, not per tenant</strong>; a
+      single object can carry records for many tenants.
+    </li>
+    <li>
+      Every object is written with
+      <code>ObjectLockMode=COMPLIANCE</code> and an
+      <code>ObjectLockRetainUntilDate</code> of
+      <em>now + <code>-archive-retention-days</code></em>. Within that
+      window the object cannot be overwritten or deleted &mdash; not even
+      by the account root.
+    </li>
+    <li>
+      Objects are written conditionally (<code>If-None-Match: *</code>), so
+      a retried batch never clobbers an already-archived object.
+    </li>
+  </ul>
   <p>
-    The bucket itself must be created with Object Lock enabled &mdash; it
-    cannot be turned on retroactively. Use a dedicated bucket for audit logs
-    separate from general application data.
+    The server takes <strong>CLI flags only</strong> &mdash; no
+    <code>ENTDB_*</code> environment variables. The archive flags:
+  </p>
+  <Code code={`/entdb-server \\
+  -data-dir=/var/lib/entdb \\
+  -wal-backend=kafka \\
+  -wal-brokers="$KAFKA_BROKERS" \\
+  -archive-enabled=true \\
+  -archive-bucket=entdb-audit-prod \\
+  -archive-region=us-east-1 \\
+  -archive-retention-days=2557 \\
+  -archive-kms-key-id=arn:aws:kms:us-east-1:123:key/...  # optional SSE-KMS
+  # -metrics-addr=:9090   # expose Prometheus /metrics (see runbook below)`} lang="bash" />
+  <p>
+    <code>-archive-enabled=true</code> requires
+    <code>-wal-backend=kafka</code>; the server refuses to boot otherwise.
+    It also calls <code>GetObjectLockConfiguration</code> at startup and
+    <strong>refuses to start</strong> unless the bucket has Object Lock in
+    COMPLIANCE mode &mdash; this is defence in depth so an operator cannot
+    accidentally point the archiver at a non-WORM bucket.
   </p>
 
-  <h3>AWS S3 Object Lock setup walkthrough</h3>
-  <p>End-to-end: provision the bucket, lock it, point the server at it.</p>
+  <h2>Bucket requirements</h2>
+  <p>The archive bucket must satisfy all of the following:</p>
+  <table>
+    <tr><th>Requirement</th><th>Why</th></tr>
+    <tr>
+      <td><strong>Object Lock enabled at creation</strong></td>
+      <td>
+        S3 Object Lock can only be enabled when the bucket is
+        <em>created</em> &mdash; it cannot be added to an existing bucket.
+        If you forgot, create a new bucket and point the archiver at it.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Versioning enabled</strong></td>
+      <td>
+        Object Lock requires bucket versioning. Enabling Object Lock at
+        creation turns versioning on automatically; keep it on.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>COMPLIANCE-mode default retention</strong></td>
+      <td>
+        Set a default retention rule of
+        <code>Mode=COMPLIANCE</code> with a <code>Days</code> window that
+        matches your <code>-archive-retention-days</code>. The server
+        verifies COMPLIANCE specifically and refuses GOVERNANCE.
+      </td>
+    </tr>
+    <tr>
+      <td><strong>Dedicated bucket, public access blocked</strong></td>
+      <td>
+        Use a bucket dedicated to the audit archive, separate from
+        application data, with all public access blocked.
+      </td>
+    </tr>
+  </table>
 
-  <h4>1. Create the bucket with Object Lock at creation time</h4>
-  <Code code={`# Object Lock MUST be enabled when the bucket is created.
-# It cannot be turned on later.
+  <h3>WORM implications</h3>
+  <p>
+    COMPLIANCE mode is true write-once-read-many. A
+    <code>RetainUntil</code> date in the future is <strong>immutable</strong>:
+    nobody &mdash; including the AWS account root &mdash; can shorten it,
+    overwrite the object, or delete it before it expires. This is the
+    guarantee compliance frameworks (SOC 2, HIPAA, ISO 27001, 21 CFR
+    Part 11) require, and it is the reason EntDB rejects GOVERNANCE mode
+    (which a privileged principal can bypass with
+    <code>s3:BypassGovernanceRetention</code>).
+  </p>
+  <p>
+    The flip side: a long retention is a long commitment. With
+    <code>-archive-retention-days=2557</code> (~7 years), an object written
+    today is undeletable until ~2033 &mdash; including any object written
+    by a bug. Pick the retention deliberately, and use a separate
+    dev/staging bucket <em>without</em> Object Lock for testing so you are
+    never WORM-locking throwaway data.
+  </p>
+
+  <h3>Example: create and lock the bucket</h3>
+  <p>
+    <em>Example only &mdash; adapt to your own IaC/tooling. EntDB ships no
+    module that does this for you.</em>
+  </p>
+  <Code code={`# 1. Object Lock MUST be enabled at create time (cannot be added later).
+#    This also turns on bucket versioning automatically.
 aws s3api create-bucket \\
   --bucket entdb-audit-prod \\
   --region us-east-1 \\
   --object-lock-enabled-for-bucket
 
-# Block all public access (defence in depth).
+# 2. Block all public access (defence in depth).
 aws s3api put-public-access-block \\
   --bucket entdb-audit-prod \\
   --public-access-block-configuration \\
     "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true"
 
-# Enable versioning (required by Object Lock).
-aws s3api put-bucket-versioning \\
-  --bucket entdb-audit-prod \\
-  --versioning-configuration Status=Enabled`} lang="bash" />
-
-  <h4>2. Apply a default retention policy</h4>
-  <p>
-    EntDB's <code>configure_s3_object_lock()</code> helper
-    (<code>dbaas/entdb_server/audit/s3_lock.py</code>) does this at
-    startup, but you can also seed it once with the AWS CLI:
-  </p>
-  <Code code={`aws s3api put-object-lock-configuration \\
+# 3. Apply a COMPLIANCE-mode default retention matching your
+#    -archive-retention-days (2557 days here, ~7 years).
+aws s3api put-object-lock-configuration \\
   --bucket entdb-audit-prod \\
   --object-lock-configuration '{
     "ObjectLockEnabled": "Enabled",
     "Rule": {
-      "DefaultRetention": {
-        "Mode": "COMPLIANCE",
-        "Days": 2190
-      }
+      "DefaultRetention": { "Mode": "COMPLIANCE", "Days": 2557 }
     }
   }'`} lang="bash" />
+
+  <h2>IAM permissions</h2>
   <p>
-    <strong>COMPLIANCE</strong> mode: nobody &mdash; including the AWS
-    account root &mdash; can shorten retention or delete the object until
-    it expires. <strong>GOVERNANCE</strong> mode: a principal holding
-    <code>s3:BypassGovernanceRetention</code> can override. Pick
-    COMPLIANCE for true WORM; reserve GOVERNANCE for non-regulated
-    environments where you may need to recover from misconfiguration.
+    The server role needs two sets of S3 actions: the <strong>archive
+    write</strong> path, and the <strong>legal-hold lift</strong> sweep
+    that clears holds on a released tenant's already-archived objects
+    (EPIC #511 Gap 1). All actions below are exercised by real code paths
+    in <code>internal/audit/</code> &mdash; nothing is listed
+    speculatively.
+  </p>
+  <table>
+    <tr><th>IAM action</th><th>Used by</th><th>S3 call</th></tr>
+    <tr>
+      <td><code>s3:GetBucketObjectLockConfiguration</code></td>
+      <td>Boot-time verification</td>
+      <td><code>GetObjectLockConfiguration</code> &mdash; refuses to start unless COMPLIANCE</td>
+    </tr>
+    <tr>
+      <td><code>s3:PutObject</code></td>
+      <td>Archive write</td>
+      <td><code>PutObject</code> with COMPLIANCE retain-until + (when held) legal-hold ON</td>
+    </tr>
+    <tr>
+      <td><code>s3:PutObjectLegalHold</code></td>
+      <td>Archive write &amp; lift sweep</td>
+      <td>Sets legal-hold ON at write for a held tenant; clears it OFF on release</td>
+    </tr>
+    <tr>
+      <td><code>s3:GetObjectLegalHold</code></td>
+      <td>Lift sweep</td>
+      <td><code>GetObjectLegalHold</code> &mdash; skip objects already OFF</td>
+    </tr>
+    <tr>
+      <td><code>s3:ListBucket</code></td>
+      <td>Lift sweep</td>
+      <td><code>ListObjectsV2</code> over the <code>wal/</code> prefix</td>
+    </tr>
+    <tr>
+      <td><code>s3:GetObject</code></td>
+      <td>Lift sweep</td>
+      <td><code>GetObject</code> &mdash; decodes object bodies to recover the authoritative tenant set</td>
+    </tr>
+  </table>
+  <p>
+    Add SSE-KMS permissions (<code>kms:GenerateDataKey</code>,
+    <code>kms:Decrypt</code>) on the key only when you set
+    <code>-archive-kms-key-id</code>. Note what is <strong>not</strong>
+    here: there is no <code>s3:DeleteObject</code> (the archive is
+    append-only) and no <code>s3:PutObjectRetention</code> /
+    <code>s3:BypassGovernanceRetention</code> (retention is immutable;
+    only the legal-hold flag is ever mutated). Omitting them keeps the
+    least-privilege story clean for auditors.
   </p>
 
-  <h4>3. Minimum IAM policy for the EntDB server role</h4>
+  <h3>Example: minimum IAM policy</h3>
+  <p><em>Example only &mdash; adapt to your own IaC/tooling.</em></p>
   <Code code={`{
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AppendOnlyAuditWrites",
+      "Sid": "EntDBArchiveWrite",
       "Effect": "Allow",
       "Action": [
         "s3:PutObject",
+        "s3:PutObjectLegalHold"
+      ],
+      "Resource": "arn:aws:s3:::entdb-audit-prod/*"
+    },
+    {
+      "Sid": "EntDBLegalHoldLiftSweep",
+      "Effect": "Allow",
+      "Action": [
         "s3:GetObject",
+        "s3:GetObjectLegalHold"
+      ],
+      "Resource": "arn:aws:s3:::entdb-audit-prod/*"
+    },
+    {
+      "Sid": "EntDBBucketListAndVerify",
+      "Effect": "Allow",
+      "Action": [
         "s3:ListBucket",
-        "s3:GetObjectRetention",
         "s3:GetBucketObjectLockConfiguration"
       ],
-      "Resource": [
-        "arn:aws:s3:::entdb-audit-prod",
-        "arn:aws:s3:::entdb-audit-prod/*"
-      ]
+      "Resource": "arn:aws:s3:::entdb-audit-prod"
     }
   ]
 }`} lang="json" />
   <p>
-    Notably absent: <code>s3:DeleteObject</code> and
-    <code>s3:PutObjectRetention</code>. The application has no need for
-    them, and Object Lock would block them anyway &mdash; explicitly
-    omitting keeps the principle-of-least-privilege story clean for
-    auditors.
+    Bucket-level actions (<code>ListBucket</code>,
+    <code>GetBucketObjectLockConfiguration</code>) target the bucket ARN;
+    object-level actions target the <code>/*</code> ARN. If you set
+    <code>-archive-kms-key-id</code>, add a statement granting
+    <code>kms:GenerateDataKey</code> and <code>kms:Decrypt</code> on that
+    key.
   </p>
 
-  <h4>4. Point the server at the bucket</h4>
+  <h2>Retention vs legal hold</h2>
   <p>
-    EntDB reads S3 settings from environment variables (see
-    <code>S3Config.from_env()</code> in
-    <code>dbaas/entdb_server/config.py</code>):
+    These are two independent S3 Object Lock controls, and operators must
+    understand the difference:
   </p>
-  <Code code={`# WAL backend selection
-WAL_BACKEND=s3              # or set in your storage.archive section
-
-# S3 bucket for archived WAL segments / audit objects
-S3_BUCKET=entdb-audit-prod
-S3_REGION=us-east-1
-S3_ARCHIVE_PREFIX=archive   # WAL segments land here
-S3_SNAPSHOT_PREFIX=snapshots
-
-# Standard AWS credential resolution (env, IRSA, instance profile)
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-# AWS_REGION falls through to S3_REGION when unset`} lang="bash" />
-  <p>
-    There is no separate <code>AUDIT_S3_BUCKET</code> variable today
-    &mdash; the same <code>S3_BUCKET</code> is used for archived WAL
-    segments, which <em>are</em> the audit trail. If you need physical
-    isolation, run a separate EntDB instance with its own
-    <code>S3_BUCKET</code> dedicated to audit data, or use distinct
-    <code>S3_ARCHIVE_PREFIX</code> values within one bucket.
-  </p>
-
-  <h3>Verifying audit integrity</h3>
-  <p>
-    Object Lock is the primary integrity guarantee &mdash; an object that
-    successfully lists with a future <code>Retention</code> timestamp
-    cannot have been altered. To verify a specific segment:
-  </p>
-  <Code code={`# 1. Inspect retention metadata — must be present and in the future.
-aws s3api get-object-retention \\
-  --bucket entdb-audit-prod \\
-  --key archive/2026/04/segment-000123.jsonl
-
-# 2. Download the segment and recompute its hash.
-aws s3 cp s3://entdb-audit-prod/archive/2026/04/segment-000123.jsonl - \\
-  | sha256sum
-
-# 3. Cross-check against the manifest emitted by export_audit_trail()
-#    (the manifest carries the SHA-256 of every included segment).`} lang="bash" />
-  <p>
-    If the bucket is also configured with SSE-KMS, the KMS key policy is
-    your second integrity layer &mdash; rotation and access events show
-    up in CloudTrail, and a stolen S3 object is unreadable without KMS
-    decrypt rights.
-  </p>
-
-  <h3>Legal holds</h3>
-  <p>
-    Beyond the default retention period, individual objects can be placed
-    on an indefinite legal hold &mdash; useful when a tenant is involved
-    in litigation and standard retention is insufficient:
-  </p>
-  <Code code={`# Apply a legal hold to every audit segment for tenant "acme" in 2026-Q1
-aws s3api list-objects-v2 \\
-  --bucket entdb-audit-prod \\
-  --prefix archive/2026/q1/acme/ \\
-  --query 'Contents[].Key' --output text \\
-| xargs -n1 -I{} aws s3api put-object-legal-hold \\
-    --bucket entdb-audit-prod --key {} \\
-    --legal-hold Status=ON
-
-# Release later, once the legal team signs off
-# (use Status=OFF, requires s3:PutObjectLegalHold)`} lang="bash" />
-  <p>
-    A legal hold is independent of the retention period: an object with an
-    expired retention but an active hold is still undeletable. Releasing
-    the hold lets standard retention rules take effect again.
-  </p>
-
-  <h2>Exporting the Audit Trail</h2>
-  <p>
-    Use <code>export_audit_trail()</code> on the server to produce a
-    time-bounded export for auditors or incident response. It reads
-    archived WAL segments straight from the object store, applies the
-    requested filters, and returns a sorted, formatted document.
-  </p>
-  <CodeTabs
-    python={`from dbaas.entdb_server.audit.compliance import export_audit_trail
-
-# JSON output (default), filtered by tenant + time window
-report = await export_audit_trail(
-    object_store,             # S3ObjectStore (or any compatible store)
-    prefix="archive",         # matches S3_ARCHIVE_PREFIX
-    tenant_id="acme",
-    since_ms=1704067200000,   # 2024-01-01T00:00:00Z
-    until_ms=1711929600000,   # 2024-03-31T23:59:59Z
-    format="json",            # or "csv"
-)
-
-# CSV output, filtered by actor across all tenants
-csv = await export_audit_trail(
-    object_store,
-    actor="user:alice",
-    format="csv",
-)`}
-    goNote="Audit-trail export is a server-side operation, not yet exposed in the Go SDK. Run it from Python or invoke the server tool directly."
-  />
-  <p>Supported filters (all optional, all combine with AND):</p>
   <table>
-    <tr><th>Argument</th><th>Effect</th></tr>
-    <tr><td><code>tenant_id</code></td><td>Single tenant; omit for cross-tenant export</td></tr>
-    <tr><td><code>actor</code></td><td>Single actor (e.g. <code>"user:alice"</code>)</td></tr>
-    <tr><td><code>since_ms</code> / <code>until_ms</code></td><td>Half-open time window in Unix milliseconds</td></tr>
-    <tr><td><code>format</code></td><td><code>"json"</code> (default) or <code>"csv"</code></td></tr>
+    <tr><th></th><th>COMPLIANCE retention</th><th>Legal hold</th></tr>
+    <tr>
+      <td>Set by</td>
+      <td>The archiver, on every write (<code>-archive-retention-days</code>)</td>
+      <td>The archiver, on writes for a tenant under hold</td>
+    </tr>
+    <tr>
+      <td>Lifetime</td>
+      <td>Fixed window from write time</td>
+      <td>Indefinite &mdash; persists even after retention expires</td>
+    </tr>
+    <tr>
+      <td>Mutable?</td>
+      <td><strong>No.</strong> Immutable until expiry, even by root</td>
+      <td><strong>Yes</strong> &mdash; can be turned OFF</td>
+    </tr>
+    <tr>
+      <td>Cleared by</td>
+      <td>Nothing &mdash; only time</td>
+      <td>An explicit <code>SetLegalHold</code> OFF on the tenant</td>
+    </tr>
   </table>
   <p>
-    Each emitted record contains <code>timestamp_ms</code>,
-    <code>tenant_id</code>, <code>actor</code>,
-    <code>idempotency_key</code>, <code>operation</code>,
-    <code>type_id</code>, <code>node_id</code>, and
-    <code>schema_fingerprint</code>. Because the events come straight from
-    Object Lock-protected storage, the export is trustworthy without a
-    separate hash chain &mdash; recompute the SHA-256 of any segment
-    listed and compare against what the bucket returns.
+    Put a tenant under legal hold with the
+    <code>SetLegalHold</code> admin RPC. While the hold is ON, the archiver
+    stamps <code>LegalHold=ON</code> on every object it writes that carries
+    that tenant. An object is undeletable while it has either an unexpired
+    retention <em>or</em> an active legal hold.
   </p>
 
-  <h2>Encryption at Rest</h2>
+  <h3>Releasing a hold: the durable lift worker</h3>
   <p>
-    Each tenant has its own SQLite file; you can enable SQLCipher to
-    encrypt those files with a per-tenant Data Encryption Key (DEK). DEKs
-    are wrapped by a Key Encryption Key (KEK) managed by your KMS of
-    choice.
+    Releasing a hold is <code>SetLegalHold</code> OFF. Because archive
+    objects are per-partition (one object can carry many tenants), there is
+    no per-tenant prefix to flip; the holds already stamped on existing
+    objects must be swept and cleared. EntDB does this with a
+    <strong>durable, crash-safe worker</strong> rather than a fire-and-
+    forget goroutine:
   </p>
-  <Code code={`storage:
-  sqlite:
-    sqlcipher: true
-  kms:
-    provider: aws-kms        # or gcp-kms, vault, file
-    kek_arn: arn:aws:kms:us-east-1:123:key/...`} lang="yaml" />
-
-  <h2>Crypto-Shred</h2>
+  <ol>
+    <li>
+      <code>SetLegalHold</code> OFF flows through the WAL. The apply step
+      that clears the hold also, <em>in the same transaction</em>, enqueues
+      a row in a durable <code>legal_hold_lift_queue</code>. A crash after
+      the release still has the pending lift recorded.
+    </li>
+    <li>
+      The <code>-legal-hold-lift-worker-enabled</code> worker (default on,
+      interval <code>-legal-hold-lift-worker-interval</code>, default
+      <code>1m</code>) drains the queue. For each released tenant it runs
+      an idempotent, resumable sweep of the <code>wal/</code> prefix: for
+      every object with legal-hold ON it decodes the body to find the
+      tenants it carries and clears the hold <strong>only when none of
+      those tenants is still under hold</strong> (a co-tenant still on hold
+      keeps the object ON).
+    </li>
+    <li>
+      The queue row is deleted only on full success. Any failure, partial
+      run, or per-run timeout leaves the row so the next tick resumes. The
+      sweep <strong>never touches COMPLIANCE retention</strong> &mdash;
+      only the legal-hold flag.
+    </li>
+  </ol>
   <p>
-    Because each tenant's data is encrypted with a distinct DEK, destroying
-    that DEK makes the tenant's on-disk data permanently unreadable &mdash;
-    even from backups. This is the cleanest way to honour
-    "right-to-erasure" for an entire tenant.
+    The lift worker only does work when <code>-archive-enabled</code> is on
+    (otherwise there is no S3 to sweep and the OFF path is a pure status
+    flip).
   </p>
-  <CodeTabs
-    python={`# Server-side API — requires admin credentials
-await global_store.crypto_shred_tenant("acme", reason="contract terminated")`}
-    goNote="crypto_shred_tenant is a server-side admin operation, not exposed in the Go SDK."
-  />
 
+  <h3>GDPR and legal hold</h3>
   <p>
-    Crypto-shred is itself recorded in the WAL, so the event that a tenant
-    was shredded (and when, by whom, and why) remains in the Object
-    Lock-protected audit trail even after the data itself is gone.
+    Legal hold deliberately <strong>supersedes</strong> GDPR erasure. GDPR
+    erasure never lifts a hold: while a tenant is held, <code>DeleteUser</code>
+    refuses to queue an erasure, and crypto-shred does not run. Only an
+    explicit <code>SetLegalHold</code> OFF clears the hold; only then may
+    queued erasure proceed. See the
+    <a href="/tenant-shard-db/docs/compliance/gdpr">GDPR Operations</a>
+    page. (Erasure itself is achieved by destroying the tenant key &mdash;
+    crypto-shred &mdash; which makes even the immutable S3 archive
+    unreadable; the COMPLIANCE objects stay in place but are ciphertext.)
   </p>
 
-  <h3>When to crypto-shred vs. delete rows</h3>
-  <table>
-    <tr><th>Scenario</th><th>Use</th></tr>
-    <tr><td>Single user requests right-to-erasure</td><td><code>delete_user()</code> &mdash; per-row, respects per-type <code>data_policy</code></td></tr>
-    <tr><td>Tenant offboards, contract terminated</td><td><code>crypto_shred_tenant()</code> &mdash; whole tenant unreadable, including backups</td></tr>
-    <tr><td>Need to honour erasure across <em>all</em> on-disk and backup copies</td><td><code>crypto_shred_tenant()</code></td></tr>
-    <tr><td>Need to keep audit trail referenceable but anonymized</td><td><code>delete_user()</code> with <code>BUSINESS</code>/<code>AUDIT</code> policies</td></tr>
-  </table>
+  <h2>Ops runbook</h2>
   <p>
-    See the dedicated <a href="/tenant-shard-db/docs/compliance/encryption">Encryption at rest</a> page for the key
-    hierarchy (KEK / DEK), KMS provider configuration, and the precise
-    on-disk effect of destroying a tenant's DEK.
+    Expose the metrics by setting <code>-metrics-addr</code> (for example
+    <code>-metrics-addr=:9090</code>), which serves Prometheus
+    <code>/metrics</code> on a plain HTTP listener separate from the gRPC
+    port. The archive and lift metric names and labels are stable across
+    releases so dashboards and alert rules survive upgrades.
   </p>
 
-  <h2>Authentication &amp; Authorization</h2>
+  <h3>Archive lag &mdash; <code>entdb_archive_lag_events</code></h3>
   <p>
-    Beyond ACL, EntDB supports:
+    Gauge, labelled <code>{topic, partition}</code>. It is the number of
+    WAL records the archiver has polled from a partition but not yet
+    durably written to S3 + committed. A healthy archiver drives it to 0
+    after each cycle. <strong>A sustained non-zero lag means the archiver
+    is falling behind or S3 is unreachable</strong> &mdash; events live
+    only in Kafka/Redpanda, outside tamper-evident storage. The companion
+    counters are <code>entdb_archive_writes_total</code> (records archived)
+    and <code>entdb_archive_errors_total</code> (poll/build/put/commit
+    failures; the archiver retries with <code>-archive-retry-backoff</code>).
   </p>
-  <ul>
-    <li><strong>OAuth 2.0 / OIDC</strong> &mdash; delegate authentication to an external IdP (Okta, Auth0, Cognito, Google, Microsoft Entra ID).</li>
-    <li><strong>Scoped API keys</strong> &mdash; long-lived keys with explicit tenant, actor, and permission scopes. Keys are hashed at rest and rotate without service disruption.</li>
-    <li><strong>Session management</strong> &mdash; short-lived session tokens with idle and absolute timeouts, logged to the WAL on create, refresh, and revoke.</li>
-  </ul>
+  <Code code={`# Alert: archive lag stuck above zero for 10 minutes (page).
+max(entdb_archive_lag_events) > 0 for 10m
 
-  <h2>What's in the Audit Trail</h2>
-  <table>
-    <tr><th>Event</th><th>Captures</th></tr>
-    <tr><td>Node create/update/delete</td><td>actor, tenant, before/after payload, timestamp</td></tr>
-    <tr><td>Edge create/delete</td><td>actor, endpoints, edge type, timestamp</td></tr>
-    <tr><td>ACL share/revoke</td><td>grantor, grantee, permission, resource, timestamp</td></tr>
-    <tr><td>Ownership transfer</td><td>old owner, new owner, node, timestamp</td></tr>
-    <tr><td>GDPR delete/freeze/export</td><td>user_id, reason, grace window, timestamp</td></tr>
-    <tr><td>Tenant crypto-shred</td><td>tenant, reason, actor, timestamp</td></tr>
-    <tr><td>API key create/revoke</td><td>scope, actor, timestamp</td></tr>
-    <tr><td>Session create/refresh/revoke</td><td>user, client, timestamp</td></tr>
-  </table>
+# Corroborate with the error counter climbing.
+rate(entdb_archive_errors_total[5m]) > 0`} lang="promql" />
+  <p><strong>Runbook</strong> when archive lag is sustained:</p>
+  <ol>
+    <li>Check <code>entdb_archive_errors_total</code> and server logs for the underlying S3 error.</li>
+    <li>
+      Confirm S3 reachability and that the role still has
+      <code>s3:PutObject</code> + <code>s3:GetBucketObjectLockConfiguration</code>
+      on the archive bucket (a policy change or KMS key disablement is a
+      common cause).
+    </li>
+    <li>
+      Confirm the bucket still has Object Lock COMPLIANCE configured &mdash;
+      the archiver verifies it and a misconfiguration fails loudly.
+    </li>
+    <li>
+      You usually do not need to intervene on the data: Kafka/Redpanda
+      retention is the floor. Keep WAL retention longer than your worst-
+      case archive lag so events are never lost before they reach S3. Once
+      S3 recovers, the archiver resumes from its committed offset and lag
+      drains to 0.
+    </li>
+  </ol>
+
+  <h3>Legal-hold lift &mdash; <code>entdb_legal_hold_lift_pending</code></h3>
+  <p>
+    Gauge: the depth of the durable <code>legal_hold_lift_queue</code>
+    &mdash; tenants whose hold was released but whose archived objects have
+    not yet been fully swept clear. It climbs when a release is recorded
+    and <strong>should drain back to 0</strong> once the worker finishes.
+    The companion counters are
+    <code>entdb_legal_hold_lift_completed_total</code> (tenants fully swept
+    and dequeued) and <code>entdb_legal_hold_lift_errors_total</code>
+    (sweep failures; the queue row is retained and retried next tick).
+  </p>
+  <Code code={`# Alert: a release has not drained for 30 minutes (the worker ticks every minute).
+entdb_legal_hold_lift_pending > 0 for 30m
+
+# Alert: the lift sweep is erroring repeatedly (stuck lift).
+rate(entdb_legal_hold_lift_errors_total[10m]) > 0`} lang="promql" />
+  <p><strong>Runbook</strong> when pending stays non-zero or errors climb:</p>
+  <ol>
+    <li>
+      Check server logs for the lift sweep error. Sustained
+      <code>entdb_legal_hold_lift_errors_total</code> growth means the
+      sweep is stuck &mdash; almost always an S3 permission or availability
+      problem.
+    </li>
+    <li>
+      Confirm the role has the lift-sweep actions:
+      <code>s3:ListBucket</code>, <code>s3:GetObject</code>,
+      <code>s3:GetObjectLegalHold</code>, <code>s3:PutObjectLegalHold</code>.
+    </li>
+    <li>
+      No manual replay is needed: the queue retries automatically every
+      tick and the sweep is idempotent and resumable. Once the underlying
+      problem is fixed, the next tick completes the lift and the gauge
+      drains to 0.
+    </li>
+    <li>
+      If a co-tenant on the same archive objects is <em>still</em> under a
+      legitimate hold, those objects correctly stay ON &mdash; that is not
+      an error. The released tenant's objects that are not shared with a
+      held tenant will still clear.
+    </li>
+  </ol>
 
   <h2>Related</h2>
   <ul>
+    <li><a href="https://github.com/elloloop/tenant-shard-db/blob/main/docs/adr/015-wal-and-s3-object-lock-as-audit-log.md">ADR-015 &mdash; WAL + S3 Object Lock is the audit log</a></li>
     <li><a href="/tenant-shard-db/docs/compliance/gdpr">GDPR Operations</a></li>
     <li><a href="/tenant-shard-db/docs/deploy/wal">WAL Backends</a></li>
+    <li><a href="/tenant-shard-db/docs/deploy/observability">Monitoring &amp; Observability</a></li>
   </ul>
 </DocsLayout>
