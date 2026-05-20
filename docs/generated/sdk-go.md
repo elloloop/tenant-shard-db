@@ -320,7 +320,7 @@ func (a *Admin) CreateTenant(ctx context.Context, actor, tenantID, name string, 
     Pass WithRegion to pin the tenant to a specific geographic region (e.g.
     “WithRegion("eu-west-1")“); when omitted the server defaults the
     tenant to its own served region. The pinned region is reflected on
-    [TenantDetail.Region].
+    TenantDetail.Region.
 
 func (a *Admin) CreateUser(ctx context.Context, actor, userID, email, name string) (*UserInfo, error)
     CreateUser registers a new user in the global registry. “email“ is unique
