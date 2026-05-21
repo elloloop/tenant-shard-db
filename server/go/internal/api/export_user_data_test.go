@@ -5,14 +5,13 @@
 // Pinned behaviours (one test per arm):
 //
 //  1. Self happy path — alice exports her own bundle across all tenants
-//     she's a member of (mirrors test_gdpr_engine.py:678-692 and
-//     test_grpc_contract.py:643-648).
+//     she's a member of (test_grpc_contract.py:643-648).
 //  2. Admin happy path — admin:root exports bob's bundle without
 //     needing to be a member of bob's tenants.
 //  3. No-data user — a user with zero memberships → empty bundle, the
-//     `tenants` array is `[]` not `null` (Python json.dumps([])).
-//  4. Non-self / non-admin → PERMISSION_DENIED (mirrors
-//     test_gdpr_engine.py:696-704 and test_grpc_contract.py:649-653).
+//     `tenants` array is `[]` not `null`.
+//  4. Non-self / non-admin → PERMISSION_DENIED
+//     (test_grpc_contract.py:649-653).
 
 package api_test
 

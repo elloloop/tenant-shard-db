@@ -7,9 +7,8 @@ import (
 )
 
 // BatchTxn is the explicit transaction handle the applier wraps a batch
-// of write ops in. Mirrors canonical_store.py:batch_transaction
-// (1265-1289) — BEGIN IMMEDIATE so the writer slot is acquired up front
-// (avoiding deferred-begin upgrade deadlocks).
+// of write ops in. Uses BEGIN IMMEDIATE so the writer slot is acquired
+// up front (avoiding deferred-begin upgrade deadlocks).
 //
 // We deliberately use *sql.Conn (not *sql.Tx) because database/sql's
 // BeginTx issues a plain "BEGIN" / "BEGIN DEFERRED" depending on driver

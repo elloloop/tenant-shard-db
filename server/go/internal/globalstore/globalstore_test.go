@@ -638,7 +638,7 @@ func TestUsageRollover(t *testing.T) {
 }
 
 // TestUsageNegativeIsNoop confirms n <= 0 returns the existing usage
-// without mutation, matching the Python guard at global_store.py:1269.
+// without mutation.
 func TestUsageNegativeIsNoop(t *testing.T) {
 	gs := newStore(t, nil)
 	ctx := context.Background()

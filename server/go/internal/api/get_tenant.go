@@ -9,15 +9,11 @@
 //   - Read-only on globalstore.tenant_registry. No WAL append, no
 //     per-tenant SQLite touch (CLAUDE.md invariants #1 / #4 satisfied
 //     trivially — the registry is the cross-tenant exception).
-//   - NO membership / admin gate. Python deliberately omits
-//     `_check_tenant` here (contrast `GetTenantQuota` at
-//     grpc_server.py:3130). Any authenticated caller can read any
-//     tenant's metadata. This is pinned by
-//     tests/python/integration/test_region_pinning.py:97-106 and
-//     tests/python/unit/test_tenant_registry.py:307-321 — preserving
-//     this cross-tenant metadata leak for parity is REQUIRED, not a
-//     bug we're free to fix here. Flagged as a follow-up in the spec
-//     "Open questions / risks" section.
+//   - NO membership / admin gate. Any authenticated caller can read any
+//     tenant's metadata. This cross-tenant metadata leak is preserved
+//     for parity and is REQUIRED, not a bug we're free to fix here.
+//     Flagged as a follow-up in the spec "Open questions / risks"
+//     section.
 //   - Authoritative actor is still resolved via auth.Authoritative so
 //     the privilege-escalation fix (commit fece3fb) holds: a malicious
 //     caller cannot claim `actor: "system:admin"` and expect the
@@ -25,11 +21,8 @@
 //     for any authorization decision — this matches Python's posture.
 //   - Argument validation (`actor == ""` / `tenant_id == ""`) returns
 //     `INVALID_ARGUMENT` cleanly via status.Error, BEFORE the recover
-//     block. This is strictly stricter than Python (where
-//     context.abort raises AbortError that the outer except may swallow
-//     to `found=false`); the contract test at
-//     test_grpc_contract.py:472-476 accepts either form. See spec
-//     "Error contract" wart at grpc_server.py:2392-2395.
+//     block. The contract test at test_grpc_contract.py:472-476
+//     accepts either form. See spec "Error contract".
 //   - All other unexpected errors / panics degrade to
 //     `&GetTenantResponse{Found: false}, nil` with metric label
 //     "error". Mirrors Python's catch-all at :2392-2395.

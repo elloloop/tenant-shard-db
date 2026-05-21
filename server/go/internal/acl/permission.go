@@ -19,10 +19,9 @@ package acl
 type Permission uint8
 
 const (
-	// PermDeny is the explicit-negative override. Matches Python
-	// Permission.DENY (acl.py:41). Stored as the literal "deny" in
-	// node_access.permission. The zero value is DENY, NOT "unspecified",
-	// to mirror the Python set("") -> {} behaviour of an unset grant.
+	// PermDeny is the explicit-negative override. Stored as the literal
+	// "deny" in node_access.permission. The zero value is DENY, NOT
+	// "unspecified", matching the behaviour of an unset grant.
 	PermDeny Permission = iota
 	// PermRead — implies READ. Python "read".
 	PermRead
@@ -128,7 +127,7 @@ var permissionHierarchy = map[Permission]map[Permission]struct{}{
 }
 
 // Implies reports whether holding p satisfies a request for required.
-// PermDeny implies nothing. Mirrors the lookup at acl.py:256-258.
+// PermDeny implies nothing.
 func (p Permission) Implies(required Permission) bool {
 	if p == PermDeny {
 		return false

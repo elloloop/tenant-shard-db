@@ -48,8 +48,7 @@ import (
 // for the clock.
 type Options struct {
 	// DataDir is the directory the global.db file lives in. Created
-	// with 0o755 if it does not exist (matches the Python behaviour at
-	// global_store.py:145).
+	// with 0o755 if it does not exist.
 	DataDir string
 
 	// BusyTimeout is the SQLite busy_timeout. 0 -> 5s default.

@@ -106,8 +106,7 @@ func TestCreateTenant_AdminHappyPath(t *testing.T) {
 }
 
 // TestCreateTenant_RegionDefaultsToServedRegion: empty req.region falls
-// back to s.region. Pinned by the Python region-pin contract test at
-// tests/python/integration/test_region_pinning.py:81-106.
+// back to s.region.
 func TestCreateTenant_RegionDefaultsToServedRegion(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t, api.WithRegion("eu-west-1"))
@@ -189,8 +188,7 @@ func TestCreateTenant_DuplicateAlreadyExists(t *testing.T) {
 }
 
 // TestCreateTenant_InvalidArgument: each of the three required wire
-// fields produces INVALID_ARGUMENT when empty. Mirrors the three
-// abort sites in Python at grpc_server.py:2318-2323.
+// fields produces INVALID_ARGUMENT when empty.
 func TestCreateTenant_InvalidArgument(t *testing.T) {
 	t.Parallel()
 
@@ -229,8 +227,7 @@ func TestCreateTenant_InvalidArgument(t *testing.T) {
 }
 
 // TestCreateTenant_GlobalStoreUnconfigured: no globalstore wired →
-// UNIMPLEMENTED. Mirrors Python's `abort(UNIMPLEMENTED, "Tenant
-// registry not configured")` at grpc_server.py:2312-2316.
+// UNIMPLEMENTED.
 func TestCreateTenant_GlobalStoreUnconfigured(t *testing.T) {
 	t.Parallel()
 	srv := api.New() // no globalstore

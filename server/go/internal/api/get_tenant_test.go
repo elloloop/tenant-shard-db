@@ -1,21 +1,15 @@
 // Tests for the GetTenant RPC. Spec: docs/go-port/rpcs/GetTenant.md.
 //
-// Coverage matches the Python contract pins:
+// Coverage matches the contract pins:
 //
-//   - test_grpc_contract.py:460-465 / test_tenant_registry.py:307-321
-//     happy path: existing tenant round-trips with tenant_id, name,
-//     status, created_at, region.
-//   - test_grpc_contract.py:466-471 / test_tenant_registry.py:323-334
-//     not-found: an unknown tenant_id yields `found=false` with OK
-//     status, NOT a NOT_FOUND gRPC error.
+//   - test_grpc_contract.py:460-465: happy path: existing tenant
+//     round-trips with tenant_id, name, status, created_at, region.
+//   - test_grpc_contract.py:466-471: not-found: an unknown tenant_id
+//     yields `found=false` with OK status, NOT a NOT_FOUND gRPC error.
 //   - test_grpc_contract.py:472-476: empty actor / empty tenant_id
-//     yields INVALID_ARGUMENT. The Go port returns this cleanly
-//     (Python's wart at grpc_server.py:2392-2395 is fixed; the contract
-//     test accepts either form — see spec "Error contract").
-//   - test_region_pinning.py:97-106: cross-tenant metadata reads are
-//     allowed. Any authenticated caller can fetch any tenant's
-//     metadata; the region-pinning test pins this behaviour and we
-//     preserve it for parity.
+//     yields INVALID_ARGUMENT (see spec "Error contract").
+//   - Cross-tenant metadata reads are allowed. Any authenticated caller
+//     can fetch any tenant's metadata; preserved for parity.
 
 package api_test
 
@@ -33,9 +27,7 @@ import (
 
 // TestGetTenant_Roundtrip pins the happy path: a tenant created via
 // globalstore.CreateTenant round-trips through GetTenant with all
-// TenantDetail fields populated. Mirrors
-// tests/python/unit/test_tenant_registry.py:307-321 plus the SDK-side
-// region pin at :804-823.
+// TenantDetail fields populated.
 func TestGetTenant_Roundtrip(t *testing.T) {
 	t.Parallel()
 
@@ -85,8 +77,7 @@ func TestGetTenant_Roundtrip(t *testing.T) {
 
 // TestGetTenant_UnknownTenantInBandFalse pins the not-found contract:
 // an unknown tenant_id yields `found=false` with no gRPC error. The
-// handler MUST NOT return NOT_FOUND. Mirrors
-// tests/python/unit/test_tenant_registry.py:323-334.
+// handler MUST NOT return NOT_FOUND.
 func TestGetTenant_UnknownTenantInBandFalse(t *testing.T) {
 	t.Parallel()
 
@@ -135,8 +126,8 @@ func TestGetTenant_EmptyTenantIDInvalidArgument(t *testing.T) {
 }
 
 // TestGetTenant_EmptyActorInvalidArgument pins the same wart from the
-// other side: empty `actor` -> INVALID_ARGUMENT. Python validates
-// actor before tenant_id (grpc_server.py:2376-2379) and so do we.
+// other side: empty `actor` -> INVALID_ARGUMENT. Actor is validated
+// before tenant_id.
 func TestGetTenant_EmptyActorInvalidArgument(t *testing.T) {
 	t.Parallel()
 
@@ -156,10 +147,9 @@ func TestGetTenant_EmptyActorInvalidArgument(t *testing.T) {
 }
 
 // TestGetTenant_CrossTenantMetadataLeak pins the region-pinning
-// behaviour at tests/python/integration/test_region_pinning.py:97-106:
-// any authenticated caller can read any tenant's metadata regardless
-// of membership. This is a known information leak preserved for parity
-// with Python (spec "Open questions / risks"). The trusted identity on
+// behaviour: any authenticated caller can read any tenant's metadata
+// regardless of membership. This is a known information leak preserved
+// for parity (spec "Open questions / risks"). The trusted identity on
 // ctx is bob, but bob is not a member of t-us — the lookup MUST still
 // succeed. Flagging this with a dedicated test ensures a future
 // hardening pass cannot silently change behaviour without breaking
@@ -192,7 +182,7 @@ func TestGetTenant_CrossTenantMetadataLeak(t *testing.T) {
 		t.Fatalf("GetTenant cross-tenant: unexpected error: %v", err)
 	}
 	if !resp.GetFound() {
-		t.Fatalf("GetTenant cross-tenant: Found = false; want true (parity with test_region_pinning.py:97-106)")
+		t.Fatalf("GetTenant cross-tenant: Found = false; want true (cross-tenant metadata leak preserved for parity)")
 	}
 	td := resp.GetTenant()
 	if td == nil {
@@ -209,8 +199,7 @@ func TestGetTenant_CrossTenantMetadataLeak(t *testing.T) {
 }
 
 // TestGetTenant_NoGlobalStoreUnimplemented pins the defensive
-// UNIMPLEMENTED path (grpc_server.py:2370-2374). No Python test pins
-// this — preserved per spec for partial-deployment safety.
+// UNIMPLEMENTED path. Preserved per spec for partial-deployment safety.
 func TestGetTenant_NoGlobalStoreUnimplemented(t *testing.T) {
 	t.Parallel()
 

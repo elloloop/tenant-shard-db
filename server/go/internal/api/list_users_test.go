@@ -119,8 +119,7 @@ func TestListUsers_RoundTripsMultipleUsers(t *testing.T) {
 // TestListUsers_DefaultStatusApplied: when the request omits status,
 // the handler coerces to status="active". We pin the behaviour by
 // seeding a "deleted" row alongside an "active" one and asserting the
-// deleted row is filtered out by the default-status branch. Mirrors
-// grpc_server.py:2248.
+// deleted row is filtered out by the default-status branch.
 func TestListUsers_DefaultStatusApplied(t *testing.T) {
 	t.Parallel()
 
@@ -166,11 +165,10 @@ func TestListUsers_DefaultStatusApplied(t *testing.T) {
 	}
 }
 
-// TestListUsers_DefaultLimitApplied pins the limit=0 -> 100 coercion
-// (grpc_server.py:2249). We seed 101 active users and assert the
-// default-limit response caps at 100; a follow-up explicit limit=200
-// confirms the cap was the default, not a hard ceiling (Python imposes
-// no upper cap — a parity wart tracked in the spec).
+// TestListUsers_DefaultLimitApplied pins the limit=0 -> 100 coercion.
+// We seed 101 active users and assert the default-limit response caps
+// at 100; a follow-up explicit limit=200 confirms the cap was the
+// default, not a hard ceiling.
 func TestListUsers_DefaultLimitApplied(t *testing.T) {
 	t.Parallel()
 
@@ -241,8 +239,8 @@ func TestListUsers_EmptyActorInvalidArgument(t *testing.T) {
 
 // TestListUsers_GlobalStoreUnconfigured pins the UNIMPLEMENTED branch:
 // when the server boots without a globalstore handle wired, ListUsers
-// MUST fail with codes.Unimplemented and the verbatim Python message
-// "User registry not configured" (grpc_server.py:2239-2243).
+// MUST fail with codes.Unimplemented and the message
+// "User registry not configured".
 func TestListUsers_GlobalStoreUnconfigured(t *testing.T) {
 	t.Parallel()
 
@@ -263,9 +261,6 @@ func TestListUsers_GlobalStoreUnconfigured(t *testing.T) {
 // internal error from globalstore.ListUsers is swallowed and the
 // handler returns codes.OK with an empty Users list. We force the
 // error by closing the underlying SQLite handle before calling.
-//
-// Python source: grpc_server.py:2262-2265 (`except Exception: ...
-// return ListUsersResponse(users=[])`).
 func TestListUsers_InternalErrorSwallowed(t *testing.T) {
 	t.Parallel()
 

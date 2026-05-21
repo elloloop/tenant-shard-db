@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// computeFingerprint mirrors Python schema/registry.py:_compute_fingerprint:
+// computeFingerprint produces the canonical schema fingerprint:
 //
 //	canonical = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
 //	hash = sha256(canonical).hexdigest()

@@ -94,64 +94,54 @@ func (e *codeError) Is(target error) bool {
 // deadline pass-through). See error-mapping.md notes on these codes.
 var (
 	// ErrInvalidArgument -> codes.InvalidArgument.
-	// Python source: api/grpc_server.py (every required-arg validation site,
-	// see error-mapping.md row "INVALID_ARGUMENT").
+	// See error-mapping.md row "INVALID_ARGUMENT".
 	ErrInvalidArgument = newCode(codes.InvalidArgument)
 
 	// ErrNotFound -> codes.NotFound.
-	// Python source: api/grpc_server.py:505-516 (_check_tenant existence
-	// leak guard).
+	// Raised at the tenant-existence leak guard.
 	ErrNotFound = newCode(codes.NotFound)
 
 	// ErrAlreadyExists -> codes.AlreadyExists.
-	// Python source: api/grpc_server.py:697,746 (idempotency replay,
-	// unique-constraint violations from apply/canonical_store.py).
+	// Idempotency replay, unique-constraint violations.
 	ErrAlreadyExists = newCode(codes.AlreadyExists)
 
 	// ErrPermission -> codes.PermissionDenied.
-	// Python source: api/grpc_server.py many sites (privilege escalation
-	// guard, ACL deny, admin-only checks).
+	// Privilege escalation guard, ACL deny, admin-only checks.
 	ErrPermission = newCode(codes.PermissionDenied)
 
 	// ErrFailedPrecondition -> codes.FailedPrecondition.
-	// Python source: api/grpc_server.py:520,526 (region-pin mismatch);
-	// schema/compat.py CompatibilityError; crypto-shred state.
+	// Region-pin mismatch, CompatibilityError, crypto-shred state.
 	ErrFailedPrecondition = newCode(codes.FailedPrecondition)
 
 	// ErrResourceExhausted -> codes.ResourceExhausted.
-	// Python source: api/rate_limiter.py:94, auth/quota_interceptor.py:237,
-	// gRPC core (oversized message).
+	// Rate-limit enforcement and oversized gRPC messages.
 	ErrResourceExhausted = newCode(codes.ResourceExhausted)
 
 	// ErrUnauthenticated -> codes.Unauthenticated.
-	// Python source: auth/auth_interceptor.py:196,202; api/auth.py:81,131,
-	// 139,152,187 (every auth failure path).
+	// Every auth failure path (OAuth, API key, session).
 	ErrUnauthenticated = newCode(codes.Unauthenticated)
 
 	// ErrUnavailable -> codes.Unavailable.
-	// Python source: api/grpc_server.py:392-395 (sharding mismatch; the
-	// server attaches an entdb-redirect-node trailer before returning).
+	// Sharding mismatch; the server attaches an entdb-redirect-node trailer
+	// before returning.
 	ErrUnavailable = newCode(codes.Unavailable)
 
 	// ErrUnimplemented -> codes.Unimplemented.
-	// Python source: api/grpc_server.py many sites (optional-store guards
-	// when global_store / user_registry / compliance is None).
+	// Optional-store guards when global_store / user_registry / compliance
+	// is not configured.
 	ErrUnimplemented = newCode(codes.Unimplemented)
 
 	// ErrInternal -> codes.Internal.
-	// Python source: api/grpc_server.py:824 sets the *string* "INTERNAL" on
-	// ExecuteAtomicResponse.error_code; gRPC status stays OK. The Go port
-	// keeps that in-band channel for ExecuteAtomic specifically (see
-	// error-mapping.md "Swallow patterns" item 3). This sentinel exists for
-	// any future RPC that needs codes.Internal as a real status, and for
-	// the recover-and-wrap fallback discussed in error-mapping.md "Open
-	// questions / risks" item 4.
+	// ExecuteAtomic sets the *string* "INTERNAL" on
+	// ExecuteAtomicResponse.error_code; gRPC status stays OK. This sentinel
+	// exists for any future RPC that needs codes.Internal as a real status
+	// and for the recover-and-wrap fallback discussed in error-mapping.md
+	// "Open questions / risks" item 4.
 	ErrInternal = newCode(codes.Internal)
 
 	// ErrDeadlineExceeded -> codes.DeadlineExceeded.
-	// Python source: not raised by the server -- surfaces only when the
-	// client deadline elapses (transport-level). Exported for completeness
-	// and for handlers that want to translate context.DeadlineExceeded.
+	// Surfaces when the client deadline elapses (transport-level). Exported
+	// for handlers that want to translate context.DeadlineExceeded.
 	ErrDeadlineExceeded = newCode(codes.DeadlineExceeded)
 )
 

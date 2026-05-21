@@ -2,15 +2,13 @@
 
 package wal
 
-// Google Cloud Pub/Sub WAL backend for the Go server. Ported from the
-// retired Python source (server/python/entdb_server/wal/pubsub.py),
-// which used the synchronous publisher/subscriber pull APIs. We use the
+// Google Cloud Pub/Sub WAL backend for the Go server. We use the
 // generated apiv1 PublisherClient / SubscriberClient (the gRPC Pull /
-// Publish / Acknowledge RPCs) for the same synchronous, bounded model —
+// Publish / Acknowledge RPCs) for a synchronous, bounded model —
 // the high-level streaming Subscription.Receive callback can't bound a
 // PollBatch the way the WAL contract requires.
 //
-// Concept mapping (mirrors the Python docstring):
+// Concept mapping:
 //
 //   - Pub/Sub topic   -> WAL topic.
 //   - Ordering key    -> partition key (tenant_id). With message
@@ -18,11 +16,11 @@ package wal
 //                         ordering key's messages in publish order —
 //                         that is the per-tenant total order guarantee.
 //   - Subscription    -> consumer group (groupID is the subscription
-//                         id, exactly like pubsub.py).
+//                         id).
 //   - ack_id          -> commit handle. Commit issues Acknowledge.
 //
 // Pub/Sub has no partitions; StreamPos.Partition is always 0 and
-// StreamPos.Offset is the publish time in ms (parity with pubsub.py).
+// StreamPos.Offset is the publish time in ms.
 // Headers ride as Pub/Sub message attributes (string->string), so no
 // payload envelope is needed (unlike Kinesis).
 //
@@ -161,7 +159,7 @@ func (p *PubSub) subPath(groupID string) string {
 
 // Connect builds the clients. Pub/Sub has no cheap "describe" that
 // works without IAM, so connectivity is validated lazily on first
-// Publish/Pull (parity with pubsub.py, which only created clients here).
+// Publish/Pull.
 func (p *PubSub) Connect(ctx context.Context) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -278,7 +276,7 @@ func (p *PubSub) PollBatch(
 		if err != nil {
 			if status.Code(err) == codes.DeadlineExceeded {
 				// No messages within the pull window — a normal "nothing
-				// yet" signal, not an error (parity with pubsub.py).
+				// yet" signal, not an error.
 				msgs = nil
 			} else {
 				return nil, classifyGRPCErr("pubsub pull", err)

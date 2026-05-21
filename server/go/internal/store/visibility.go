@@ -8,9 +8,8 @@ import (
 )
 
 // updateVisibilityWithConn refreshes the node_visibility index for one
-// node. Mirrors canonical_store.py:_update_visibility (2785). Called
-// by writers (CreateNodeRaw, TransferOwnership, transfer_user_content)
-// inside their transaction.
+// node. Called by writers (CreateNodeRaw, TransferOwnership,
+// transfer_user_content) inside their transaction.
 //
 // Behaviour:
 //
@@ -65,10 +64,8 @@ func (s *CanonicalStore) AddVisibility(ctx context.Context, tenantID, nodeID, pr
 // GetVisibleNodeIDs returns the subset of nodeIDs the actor can see by
 // owner_actor or node_visibility (including the tenant:* wildcard).
 // Used by read handlers to post-filter results before egress.
-//
-// This is the data-access slice of the ACL post-filter pattern at
-// canonical_store.py:_sync_get_visible_nodes (2715). Full ACL semantics
-// (typed capabilities, group resolution, inheritance) live in W1.9.
+// Full ACL semantics (typed capabilities, group resolution, inheritance)
+// live in W1.9.
 func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string, actorIDs []string, nodeIDs []string) (map[string]struct{}, error) {
 	if len(nodeIDs) == 0 {
 		return map[string]struct{}{}, nil
@@ -81,8 +78,7 @@ func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string,
 		return nil, err
 	}
 	// Build the parameterized IN clauses. tenant:* is included as a
-	// visibility-only wildcard (matches Python "tenant:*" handling at
-	// _sync_can_access:2887).
+	// visibility-only wildcard.
 	visIDs := make([]string, 0, len(actorIDs)+1)
 	visIDs = append(visIDs, actorIDs...)
 	visIDs = append(visIDs, "tenant:*")
@@ -134,8 +130,7 @@ func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string,
 }
 
 // ListSharedWithMe returns nodes the actor (or any of their groups) has
-// an explicit, non-deny, non-expired node_access entry on. Mirrors
-// canonical_store.py:_sync_list_shared_with_me (3444).
+// an explicit, non-deny, non-expired node_access entry on.
 //
 // Pagination uses limit + offset. Cursor-based pagination can layer on
 // top later (returning offset as the cursor is the simplest contract).

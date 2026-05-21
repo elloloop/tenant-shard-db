@@ -48,8 +48,7 @@ func (c CoreCapability) String() string {
 // meaning is type-scoped — see docs/decisions/acl.md "Layer 2".
 type ExtCapID int32
 
-// CoreImplications is the built-in core implication hierarchy, mirroring
-// CORE_IMPLICATIONS at capability_registry.py:80-94. Used by the
+// CoreImplications is the built-in core implication hierarchy. Used by the
 // per-type closure builder; consumers go through Registry instead.
 var CoreImplications = map[CoreCapability][]CoreCapability{
 	CoreCapAdmin: {
@@ -68,13 +67,10 @@ var CoreImplications = map[CoreCapability][]CoreCapability{
 }
 
 // LegacyToCoreCaps maps a legacy Permission to the typed CoreCapability
-// list a grant of that permission implies. Mirrors
-// CapabilityRegistry.legacy_permission_to_core_caps at
-// capability_registry.py:357-389.
+// list a grant of that permission implies.
 //
 // Used by the wire compatibility shim on ShareNode and the
-// _migrate_permissions_to_capabilities back-fill at
-// canonical_store.py:3054.
+// migrate_permissions_to_capabilities back-fill path.
 //
 //   - PermDeny → [] (deny grants no positive caps; the deny row itself
 //     is recognised by the ACL query path).

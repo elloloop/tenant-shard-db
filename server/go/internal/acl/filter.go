@@ -7,9 +7,8 @@ import (
 )
 
 // VisibilityReader is the bulk read-path predicate. Mirrors the SQL
-// JOIN against node_visibility at canonical_store.py:2728 + the
-// post-filter pattern documented in docs/go-port/shared/acl.md "Post-
-// read filtering / SQL JOIN".
+// JOIN against node_visibility post-filter pattern documented in
+// docs/go-port/shared/acl.md "Post-read filtering / SQL JOIN".
 //
 // store.CanonicalStore.GetVisibleNodeIDs already implements exactly
 // this contract for the same-tenant case. The interface lets tests
@@ -47,8 +46,7 @@ func NewFilter(resolver *Resolver, vis VisibilityReader) *Filter {
 // Order is unspecified (callers should not rely on it).
 //
 // Special cases:
-//   - System actor → returns nodeIDs unchanged (system bypass at
-//     canonical_store.py:2883-2884).
+//   - System actor → returns nodeIDs unchanged (system bypass).
 //   - Empty nodeIDs → returns nil.
 //   - Empty actor → returns nil (zero-trust default).
 func (f *Filter) FilterReadable(ctx context.Context, tenantID string, a Actor, nodeIDs []string) ([]string, error) {

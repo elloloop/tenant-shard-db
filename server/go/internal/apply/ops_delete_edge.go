@@ -7,8 +7,8 @@ import (
 	"fmt"
 )
 
-// applyDeleteEdge dispatches a "delete_edge" op. Mirrors
-// applier.py:1220-1247. Also removes the inherited ACL pointer if any.
+// applyDeleteEdge dispatches a "delete_edge" op. Also removes the
+// inherited ACL pointer if any.
 func (a *Applier) applyDeleteEdge(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, aliases nodeAliasMap) error {
 	edgeTypeID := intField(op, "edge_id")
 	if edgeTypeID == 0 {

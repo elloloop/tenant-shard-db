@@ -4,8 +4,7 @@
 //
 // Behaviour pinned here:
 //   - Single-hop traversal returns every connected outbound node, ordered
-//     by created_at DESC (mirrors canonical_store.py:3328 / Python
-//     contract test test_grpc_contract.py:255-266).
+//     by created_at DESC (mirrors test_grpc_contract.py:255-266).
 //   - Cycle protection: a graph with a back-edge a→b→a does NOT cause
 //     a→a to surface; visited-set keeps the source out of the result.
 //   - Depth limit: BFS does not cross beyond MaxConnectedDepth (= 1
@@ -14,10 +13,9 @@
 //     test guards against accidental recursion).
 //   - ACL prune: a child node owned by a different user with no
 //     visibility row is NOT returned, even though the edge exists.
-//     Mirrors test_acl_v2.py:496-507 / 509-515.
 //   - Unknown tenant (gate failure) propagates as a gRPC error rather
 //     than a swallowed empty list — the Go port deliberately tightens
-//     the Python "swallow everything" behaviour, per spec "Error
+//     the "swallow everything" behaviour, per spec "Error
 //     contract" recommendation.
 
 package api_test
@@ -181,9 +179,6 @@ func TestGetConnectedNodes_CycleProtection(t *testing.T) {
 // has been ACL'd onto it; one child is owned by bob (visible), the
 // other by carol with no visibility (denied). Only the visible child
 // must be returned.
-//
-// Pinned by the spec's "ACL prune" behaviour (canonical_store.py:3334-
-// 3371) and test_acl_v2.py:496-507.
 func TestGetConnectedNodes_ACLFilterPrunesChild(t *testing.T) {
 	t.Parallel()
 	srv, cs, ctx := connectedTestServer(t)
@@ -219,8 +214,7 @@ func TestGetConnectedNodes_ACLFilterPrunesChild(t *testing.T) {
 
 // TestGetConnectedNodes_SourceNotAccessibleReturnsEmpty: the actor has
 // no read access to the source node — the handler must short-circuit
-// to []. Spec: source-gate at canonical_store.py:3291-3293 + "do NOT
-// leak existence via a different code".
+// to []. Spec: source-gate — "do NOT leak existence via a different code".
 func TestGetConnectedNodes_SourceNotAccessibleReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	srv, cs, ctx := connectedTestServer(t)

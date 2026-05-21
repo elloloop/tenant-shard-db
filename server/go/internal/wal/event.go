@@ -50,7 +50,7 @@ type Event struct {
 // keeps the byte layout deterministic for cross-impl contract tests.
 //
 // If TsMs is zero, it is replaced with the current wall-clock time in
-// milliseconds (mirrors applier.py:266 default).
+// milliseconds.
 func (e Event) Encode() ([]byte, error) {
 	if e.TsMs == 0 {
 		e.TsMs = time.Now().UnixMilli()
@@ -58,11 +58,10 @@ func (e Event) Encode() ([]byte, error) {
 	return json.Marshal(e)
 }
 
-// DecodeEvent parses a JSON-encoded Event from a record value. Mirrors
-// applier.py:241 (TransactionEvent.from_dict): tenant_id, actor,
-// idempotency_key, ops are required; missing fields surface as a
-// non-nil error so the applier can halt rather than silently
-// proceeding.
+// DecodeEvent parses a JSON-encoded Event from a record value.
+// tenant_id, actor, idempotency_key, and ops are required; missing
+// fields surface as a non-nil error so the applier can halt rather
+// than silently proceeding.
 func DecodeEvent(value []byte) (Event, error) {
 	var e Event
 	if err := json.Unmarshal(value, &e); err != nil {
@@ -106,8 +105,7 @@ type StreamPos struct {
 }
 
 // String returns the canonical "topic:partition:offset" form. Used as
-// the stream-position receipt the SDK returns to clients (see Python
-// grpc_server.py:799).
+// the stream-position receipt the SDK returns to clients.
 func (p StreamPos) String() string {
 	return fmt.Sprintf("%s:%d:%d", p.Topic, p.Partition, p.Offset)
 }

@@ -1,10 +1,6 @@
 // Tests for the ListTenants RPC. Pinned by:
-//   - tests/python/unit/test_listtenants_auth.py:99-258 (admin/user
-//     visibility, nil identity → PERMISSION_DENIED, sharding still
-//     applies, no globalstore → empty for users).
-//   - tests/python/integration/test_privilege_escalation.py:386-417
-//     (claimed admin actor on the wire MUST NOT bypass membership
-//     filtering).
+//   - A claimed admin actor on the wire MUST NOT bypass membership
+//     filtering.
 //   - tests/python/integration/test_grpc_contract.py:288-295
 //     (over-the-wire empty request without auth interceptor →
 //     PERMISSION_DENIED).
@@ -54,7 +50,7 @@ func tenantIDs(resp *pb.ListTenantsResponse) []string {
 
 // TestListTenants_Admin_SeesAll: every admin-class identity
 // ("__system__", "system:*", "admin:*") sees every tenant on the
-// node. Pinned by test_listtenants_auth.py:99-111.
+// node.
 func TestListTenants_Admin_SeesAll(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -97,8 +93,7 @@ func TestListTenants_Admin_SeesAll(t *testing.T) {
 
 // TestListTenants_RegularUser_SeesOwnOnly: a "user:<id>" caller sees
 // only the tenants they are a member of. Non-member tenants stay
-// invisible — no enumeration leak. Pinned by
-// test_listtenants_auth.py:119-137.
+// invisible — no enumeration leak.
 func TestListTenants_RegularUser_SeesOwnOnly(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -139,8 +134,7 @@ func TestListTenants_RegularUser_SeesOwnOnly(t *testing.T) {
 }
 
 // TestListTenants_RegularUser_NoMemberships_Empty: a user with zero
-// memberships sees an empty list — no enumeration leak. Pinned by
-// test_listtenants_auth.py:140-154.
+// memberships sees an empty list — no enumeration leak.
 func TestListTenants_RegularUser_NoMemberships_Empty(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -165,7 +159,6 @@ func TestListTenants_RegularUser_NoMemberships_Empty(t *testing.T) {
 // TestListTenants_UserPrefix_Stripped: the "user:" prefix is stripped
 // before the membership lookup, so a session subject "user:alice" and
 // a bare-id subject "alice" both resolve to alice's memberships.
-// Pinned by test_listtenants_auth.py:157-171.
 func TestListTenants_UserPrefix_Stripped(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -199,7 +192,7 @@ func TestListTenants_UserPrefix_Stripped(t *testing.T) {
 // TestListTenants_NoIdentity_PermissionDenied: with no trusted
 // identity on the context (interceptor missing), the handler MUST
 // return PERMISSION_DENIED and NOT fall open. Pinned by
-// test_listtenants_auth.py:179-192 and test_grpc_contract.py:288-295.
+// test_grpc_contract.py:288-295.
 func TestListTenants_NoIdentity_PermissionDenied(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -250,8 +243,7 @@ func TestListTenants_EmptyIdentity_PermissionDenied(t *testing.T) {
 
 // TestListTenants_NoGlobalStore_RegularUser_Empty: in the embedded
 // harness (no globalstore wired), a regular user sees the empty
-// list rather than the unfiltered inventory. Pinned by
-// test_listtenants_auth.py:238-258.
+// list rather than the unfiltered inventory.
 func TestListTenants_NoGlobalStore_RegularUser_Empty(t *testing.T) {
 	t.Parallel()
 	srv := api.New() // no WithGlobalStore.
@@ -268,8 +260,7 @@ func TestListTenants_NoGlobalStore_RegularUser_Empty(t *testing.T) {
 
 // TestListTenants_Sharding_AppliesToAdmin: even an admin caller is
 // filtered by the node's sharding view. Tenants the node does not
-// own are stripped from the response. Pinned by
-// test_listtenants_auth.py:200-230.
+// own are stripped from the response.
 func TestListTenants_Sharding_AppliesToAdmin(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -310,9 +301,8 @@ func TestListTenants_Sharding_AppliesToAdmin(t *testing.T) {
 // payload has no actor field, so there's nothing for a malicious
 // caller to spoof at this RPC. The handler MUST derive visibility
 // purely from the trusted Identity on ctx, even if a sibling RPC
-// idiom would have looked at a request-context actor. Mirrors
-// test_privilege_escalation.py:386-417 (eve cannot claim admin and
-// see everything).
+// idiom would have looked at a request-context actor: eve cannot
+// claim admin and see everything.
 func TestListTenants_PrivilegeEscalation_BodyClaimIgnored(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -371,9 +361,7 @@ func TestListTenants_EmptyResponse_Wire(t *testing.T) {
 
 // TestListTenants_GlobalStoreError_SwallowToEmpty: an internal error
 // from globalstore.GetUserTenants MUST be swallowed to an empty,
-// OK-coded response — matches Python's `except Exception` at
-// grpc_server.py:1600-1603. Surfacing codes.Internal is a contract
-// break.
+// OK-coded response. Surfacing codes.Internal is a contract break.
 //
 // We trigger the error by closing the globalstore before the RPC so
 // the underlying *sql.DB returns "database is closed" on every query.

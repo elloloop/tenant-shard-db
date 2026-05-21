@@ -1,7 +1,7 @@
 // Tests for the deprecated ListMailboxUsers stub. Behavioural parity
-// with Python is pinned by tests/python/integration/test_grpc_contract.py:281-287
+// is pinned by tests/python/integration/test_grpc_contract.py:281-287
 // (the cross-language contract suite); this file covers the two
-// branches the Python handler has after _check_tenant:
+// branches after the tenant gate:
 //
 //  1. valid tenant -> OK with an empty user_ids list.
 //  2. unknown tenant -> NOT_FOUND from the tenant.CheckTenant gate.

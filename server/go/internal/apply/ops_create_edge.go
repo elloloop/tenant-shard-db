@@ -8,9 +8,8 @@ import (
 	"fmt"
 )
 
-// applyCreateEdge dispatches a "create_edge" op. Mirrors
-// applier.py:1159-1217. INSERT OR REPLACE semantics on the edges row so
-// re-creating an edge with new props is idempotent.
+// applyCreateEdge dispatches a "create_edge" op. INSERT OR REPLACE semantics
+// on the edges row so re-creating an edge with new props is idempotent.
 //
 // Edge ACL inheritance: when propagates_acl is true, an acl_inherit row
 // is added (cycle-checked via a depth-bounded recursive CTE).
@@ -52,7 +51,7 @@ func (a *Applier) applyCreateEdge(ctx context.Context, tx *BatchTxn, ev *Event, 
 	}
 	if propagates == 1 {
 		// Cycle check: would adding (to inherits-from from) create a
-		// cycle? Bounded at depth 10 (canonical_store.py:_ACL_MAX_DEPTH).
+		// cycle? Bounded at depth 10.
 		var one int
 		err := conn.QueryRowContext(ctx, `
 			WITH RECURSIVE chain(nid, depth) AS (

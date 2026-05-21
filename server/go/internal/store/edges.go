@@ -31,13 +31,11 @@ type EdgeInput struct {
 
 // GetEdgesFrom returns outgoing edges from nodeID. If edgeTypeID is
 // non-nil it filters by edge type; otherwise returns every edge type.
-// Mirrors canonical_store.py:_sync_get_edges_from (2609).
 func (s *CanonicalStore) GetEdgesFrom(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, limit int) ([]*Edge, error) {
 	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, true, limit)
 }
 
-// GetEdgesTo returns incoming edges to nodeID. Mirrors
-// canonical_store.py:_sync_get_edges_to (2662).
+// GetEdgesTo returns incoming edges to nodeID.
 func (s *CanonicalStore) GetEdgesTo(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, limit int) ([]*Edge, error) {
 	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, false, limit)
 }
@@ -88,8 +86,7 @@ func (s *CanonicalStore) getEdges(ctx context.Context, tenantID, nodeID string, 
 	return out, nil
 }
 
-// CreateEdge inserts (or replaces) an edge row. INSERT OR REPLACE
-// matches canonical_store.py:_sync_create_edge (2476).
+// CreateEdge inserts (or replaces) an edge row.
 func (s *CanonicalStore) CreateEdge(ctx context.Context, tenantID string, in EdgeInput) (*Edge, error) {
 	if in.FromNodeID == "" || in.ToNodeID == "" {
 		return nil, fmt.Errorf("store: CreateEdge: from/to node ids required")
@@ -139,8 +136,7 @@ func (s *CanonicalStore) CreateEdge(ctx context.Context, tenantID string, in Edg
 }
 
 // DeleteEdge removes an edge by (edge_type_id, from, to). Returns
-// ErrEdgeNotFound if no row was deleted. Mirrors
-// canonical_store.py:_sync_delete_edge (2564).
+// ErrEdgeNotFound if no row was deleted.
 func (s *CanonicalStore) DeleteEdge(ctx context.Context, tenantID string, edgeTypeID int32, fromNodeID, toNodeID string) error {
 	return s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		res, err := conn.ExecContext(ctx, `

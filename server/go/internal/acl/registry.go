@@ -18,8 +18,7 @@ type Registry struct {
 	defaultType *TypeCapabilities
 }
 
-// TypeCapabilities is per-type capability metadata after build. Mirrors
-// the Python TypeCapabilities dataclass at capability_registry.py:137-151.
+// TypeCapabilities is per-type capability metadata after build.
 type TypeCapabilities struct {
 	TypeID            int32
 	ExtensionEnumName string
@@ -45,8 +44,7 @@ type CapabilityMapping struct {
 }
 
 // Specificity returns a score used to pick the best matching mapping.
-// Higher is more specific. Mirrors CapabilityMapping.specificity at
-// capability_registry.py:113-119.
+// Higher is more specific.
 func (m CapabilityMapping) Specificity() int {
 	score := 0
 	if m.Field != "" {
@@ -71,8 +69,7 @@ type CapabilityImplication struct {
 }
 
 // DefaultOpRequirements is the built-in op → core-cap table applied
-// when a type has no explicit override. Mirrors DEFAULT_OP_REQUIREMENTS
-// at capability_registry.py:61-76. CreateNode is intentionally absent —
+// when a type has no explicit override. CreateNode is intentionally absent —
 // that is a tenant-level check, not per-node.
 var DefaultOpRequirements = map[string]CoreCapability{
 	"GetNode":           CoreCapRead,
@@ -119,8 +116,7 @@ func (r *Registry) RegisterType(tc *TypeCapabilities) {
 }
 
 // GetType returns the TypeCapabilities for typeID, or the implicit
-// type-0 default when the id is unknown. Mirrors get_type at
-// capability_registry.py:244.
+// type-0 default when the id is unknown.
 func (r *Registry) GetType(typeID int32) *TypeCapabilities {
 	if tc, ok := r.types[typeID]; ok {
 		return tc
@@ -152,8 +148,7 @@ type OpQuery struct {
 // node of the given type. Exactly one of the returned values is
 // non-zero, or both are zero meaning "no requirement — allow".
 //
-// Mirrors required_for_op at capability_registry.py:250-289. Lookup
-// order:
+// Lookup order:
 //
 //  1. Most-specific type-level mapping matching op + selectors.
 //  2. Default op requirement baked into DefaultOpRequirements.
@@ -198,8 +193,6 @@ func (r *Registry) RequiredForOp(typeID int32, op string, q OpQuery) (CoreCapabi
 // requiredExt and the type's ext → core closure. grantedExt is always
 // interpreted in the scope of the SAME typeID — cross-type extension
 // grants never satisfy a check (by construction of the registry).
-//
-// Mirrors check_grant at capability_registry.py:291-350.
 func (r *Registry) CheckGrant(grantedCore []CoreCapability, grantedExt []ExtCapID, requiredCore CoreCapability, requiredExt ExtCapID, typeID int32) bool {
 	if requiredCore == CoreCapUnspecified && requiredExt == 0 {
 		return true
@@ -265,16 +258,13 @@ func (r *Registry) CheckGrant(grantedCore []CoreCapability, grantedExt []ExtCapI
 	return false
 }
 
-// LegacyToCoreCaps is a thin method alias for the package-level helper,
-// exposed on Registry for parity with the Python static method
-// CapabilityRegistry.legacy_permission_to_core_caps.
+// LegacyToCoreCaps is a thin method alias for the package-level helper.
 func (r *Registry) LegacyToCoreCaps(p Permission) []CoreCapability {
 	return LegacyToCoreCaps(p)
 }
 
 // buildClosures populates implicationClosureCore / implicationClosureExt
-// / extImpliesCore on tc. Mirrors _build_closures at
-// capability_registry.py:392-449.
+// / extImpliesCore on tc.
 func buildClosures(tc *TypeCapabilities) {
 	coreGraph := map[CoreCapability]map[CoreCapability]struct{}{}
 	for src, dsts := range CoreImplications {
@@ -299,7 +289,7 @@ func buildClosures(tc *TypeCapabilities) {
 			}
 			// Implies-ext on a core source is rare and intentionally
 			// not modelled: anyone holding imp.Core matches before exts
-			// are consulted (capability_registry.py:412-418).
+			// are consulted.
 		} else if imp.Ext != 0 {
 			set, ok := extGraph[imp.Ext]
 			if !ok {

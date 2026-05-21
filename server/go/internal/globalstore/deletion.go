@@ -1,5 +1,4 @@
-// deletion_queue CRUD. Mirrors the Python helpers at
-// through :908 (mark_deletion_completed). Used by the GDPR worker.
+// deletion_queue CRUD. Used by the GDPR worker.
 
 package globalstore
 
@@ -18,9 +17,8 @@ import (
 const secondsPerDay int64 = 86400
 
 // QueueDeletion schedules a user for deletion after `graceDays`. If
-// `graceDays <= 0`, deletion is queued for "now" (matches the Python
-// behaviour at global_store.py:817 — `now + grace_days * 86400` with
-// no clamp). Returns ErrAlreadyExists if the user is already queued.
+// `graceDays <= 0`, deletion is queued for "now" (`now + grace_days * 86400`
+// with no clamp). Returns ErrAlreadyExists if the user is already queued.
 func (g *GlobalStore) QueueDeletion(ctx context.Context, userID string, graceDays int) (*DeletionEntry, error) {
 	now := g.now()
 	executeAt := now + int64(graceDays)*secondsPerDay
@@ -46,8 +44,7 @@ func (g *GlobalStore) QueueDeletion(ctx context.Context, userID string, graceDay
 
 // CancelDeletion removes a *pending* deletion_queue row. Returns true
 // iff a pending row existed. Already-completed entries are immutable
-// (they record the audit fact that erasure ran). Mirrors
-// `_sync_cancel_deletion` (global_store.py:842).
+// (they record the audit fact that erasure ran).
 func (g *GlobalStore) CancelDeletion(ctx context.Context, userID string) (bool, error) {
 	res, err := g.db.ExecContext(ctx,
 		`DELETE FROM deletion_queue WHERE user_id = ? AND status = 'pending'`,
@@ -64,8 +61,7 @@ func (g *GlobalStore) CancelDeletion(ctx context.Context, userID string) (bool, 
 }
 
 // GetDeletionQueue returns every pending deletion entry, ordered by
-// execute_at ASC. Mirrors `_sync_get_pending_deletions`
-// (global_store.py:858).
+// execute_at ASC.
 func (g *GlobalStore) GetDeletionQueue(ctx context.Context) ([]*DeletionEntry, error) {
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT user_id, requested_at, execute_at, export_path, status
@@ -81,7 +77,7 @@ func (g *GlobalStore) GetDeletionQueue(ctx context.Context) ([]*DeletionEntry, e
 
 // GetExecutableDeletions returns pending entries whose execute_at is
 // <= `now` (Unix-epoch second). If `now == 0`, the store's clock is
-// used. Mirrors `_sync_get_executable_deletions` (global_store.py:876).
+// used.
 func (g *GlobalStore) GetExecutableDeletions(ctx context.Context, now int64) ([]*DeletionEntry, error) {
 	if now == 0 {
 		now = g.now()
@@ -123,9 +119,8 @@ func (g *GlobalStore) GetDeletionEntry(ctx context.Context, userID string) (*Del
 }
 
 // MarkDeletionStarted is reserved for future progress reporting. The
-// Python implementation jumps straight from 'pending' to 'completed'
-// (global_store.py:902); we keep the symbol so the GDPR worker has an
-// explicit hook.
+// current flow jumps straight from 'pending' to 'completed'; this symbol
+// exists so the GDPR worker has an explicit hook.
 func (g *GlobalStore) MarkDeletionStarted(ctx context.Context, userID string) (bool, error) {
 	res, err := g.db.ExecContext(ctx,
 		`UPDATE deletion_queue SET status = 'in_progress' WHERE user_id = ? AND status = 'pending'`,
@@ -141,8 +136,7 @@ func (g *GlobalStore) MarkDeletionStarted(ctx context.Context, userID string) (b
 	return n > 0, nil
 }
 
-// MarkDeletionCompleted flips the row to status='completed'. Mirrors
-// `_sync_mark_deletion_completed` (global_store.py:902).
+// MarkDeletionCompleted flips the row to status='completed'.
 func (g *GlobalStore) MarkDeletionCompleted(ctx context.Context, userID string) (bool, error) {
 	res, err := g.db.ExecContext(ctx,
 		`UPDATE deletion_queue SET status = 'completed' WHERE user_id = ?`,

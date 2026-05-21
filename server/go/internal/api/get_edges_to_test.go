@@ -1,15 +1,13 @@
 // Tests for the GetEdgesTo RPC. Spec: docs/go-port/rpcs/GetEdgesTo.md.
 //
-// Coverage matches the Python contract pins called out in the spec:
+// Coverage:
 //
 //   - test_grpc_contract.py:248-254 — empty seed ⇒ edges == [], OK.
-//   - test_canonical_store.py:331-370 / test_crud_comprehensive.py:317-325 —
-//     fan-in count: two edges to one target ⇒ length 2.
-//   - test_workplace_chat.py / test_workplace_posts.py / test_workplace_tasks.py —
-//     edge_type_id filter narrows the fan-in.
-//   - test_batch_applier.py:1223 — empty fan-in for a missing dst node.
-//   - grpc_server.py:1454 — `except Exception` collapse: any internal
-//     error degrades to GetEdgesResponse{} with codes.OK.
+//   - fan-in count: two edges to one target ⇒ length 2.
+//   - edge_type_id filter narrows the fan-in.
+//   - empty fan-in for a missing dst node.
+//   - `except Exception` collapse: any internal error degrades to
+//     GetEdgesResponse{} with codes.OK.
 
 package api_test
 
@@ -126,9 +124,8 @@ func TestGetEdgesTo_SingleEdgeRoundtrip(t *testing.T) {
 	}
 }
 
-// TestGetEdgesTo_MultipleEdgesFanIn pins the fan-in count contract
-// from test_canonical_store.py:331-370: two edges directed at the
-// same target ⇒ length 2.
+// TestGetEdgesTo_MultipleEdgesFanIn pins the fan-in count contract:
+// two edges directed at the same target ⇒ length 2.
 func TestGetEdgesTo_MultipleEdgesFanIn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -171,10 +168,9 @@ func TestGetEdgesTo_MultipleEdgesFanIn(t *testing.T) {
 	}
 }
 
-// TestGetEdgesTo_MissingDstReturnsEmpty pins
-// test_batch_applier.py:1223: a node_id that has no inbound edges
-// (here: never created) yields an empty result, NOT an error. Also
-// covers the "ghost"-target case from the spec.
+// TestGetEdgesTo_MissingDstReturnsEmpty: a node_id that has no inbound
+// edges (here: never created) yields an empty result, NOT an error.
+// Also covers the "ghost"-target case from the spec.
 func TestGetEdgesTo_MissingDstReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -206,7 +202,7 @@ func TestGetEdgesTo_MissingDstReturnsEmpty(t *testing.T) {
 
 // TestGetEdgesTo_EdgeTypeFilter pins the workplace-chat / workplace-
 // posts contract: passing edge_type_id narrows fan-in to that single
-// edge type. Mirrors test_workplace_chat.py:233 et al.
+// edge type.
 func TestGetEdgesTo_EdgeTypeFilter(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -281,11 +277,9 @@ func TestGetEdgesTo_EdgeTypeFilter(t *testing.T) {
 }
 
 // TestGetEdgesTo_StoreErrorReturnsEmpty pins the swallow-and-empty
-// contract from grpc_server.py:1454: any internal storage fault
-// collapses to GetEdgesResponse{} with codes.OK and metric label
-// "error". Driven here by skipping OpenTenant so the read-side pool
-// returns ErrTenantNotOpen — same shape as the Python `except
-// Exception` catch-all.
+// contract: any internal storage fault collapses to GetEdgesResponse{}
+// with codes.OK and metric label "error". Driven here by skipping
+// OpenTenant so the read-side pool returns ErrTenantNotOpen.
 func TestGetEdgesTo_StoreErrorReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

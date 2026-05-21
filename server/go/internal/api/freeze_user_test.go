@@ -1,14 +1,12 @@
 // Tests for the FreezeUser RPC and the freeze-gate interceptor that
-// enforces it. The Python contract pins enumerated in
+// enforces it. The contract pins enumerated in
 // docs/go-port/rpcs/FreezeUser.md ("Contract tests pinning behavior")
 // reduce in the Go port to:
 //
 //   - admin happy path (sets status to "frozen", success=true);
 //   - frozen user's mutating RPC → PERMISSION_DENIED via interceptor
-//     (the load-bearing test for the freeze gate, mirroring
-//     test_freeze_user_rejects_writes at test_gdpr_engine.py:734-751);
-//   - frozen user's read RPC still allowed (mirroring
-//     test_frozen_user_can_still_read at test_gdpr_engine.py:754-767);
+//     (the load-bearing test for the freeze gate);
+//   - frozen user's read RPC still allowed;
 //
 // plus the standard pre-check arms (UNIMPLEMENTED, INVALID_ARGUMENT,
 // PERMISSION_DENIED for non-admin/non-self, in-band "User not found").
@@ -30,7 +28,6 @@ import (
 
 // TestFreezeUser_Admin_HappyPath: admin freezes alice. Status is
 // flipped to "frozen"; response carries success=true and status="frozen".
-// Mirrors test_freeze_user_handler at test_gdpr_engine.py:707-717.
 func TestFreezeUser_Admin_HappyPath(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -71,8 +68,7 @@ func TestFreezeUser_Admin_HappyPath(t *testing.T) {
 // load-bearing test for the freeze gate. After alice is frozen, her
 // next mutating RPC (driven through the FreezeGateInterceptor) MUST
 // abort PERMISSION_DENIED. The interceptor consults
-// user_registry.status; FreezeUser only sets the bit. Mirrors
-// test_freeze_user_rejects_writes at test_gdpr_engine.py:734-751.
+// user_registry.status; FreezeUser only sets the bit.
 func TestFreezeUser_FrozenUserMutation_DeniedViaInterceptor(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -122,8 +118,7 @@ func TestFreezeUser_FrozenUserMutation_DeniedViaInterceptor(t *testing.T) {
 
 // TestFreezeUser_FrozenUserRead_StillAllowed: reads bypass the freeze
 // gate. The interceptor MUST admit a frozen user's read RPC (e.g.
-// GetNode) so the user can still see her data. Mirrors
-// test_frozen_user_can_still_read at test_gdpr_engine.py:754-767.
+// GetNode) so the user can still see her data.
 func TestFreezeUser_FrozenUserRead_StillAllowed(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -168,7 +163,6 @@ func TestFreezeUser_FrozenUserRead_StillAllowed(t *testing.T) {
 // TestFreezeUser_Unfreeze_Idempotent: unfreezing returns success=true
 // status="active" even when the user is already active — SetUserStatus
 // UPDATEs unconditionally and rowcount > 0 iff the row existed.
-// Mirrors test_unfreeze_user_handler at test_gdpr_engine.py:721-731.
 func TestFreezeUser_Unfreeze_Idempotent(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -227,8 +221,7 @@ func TestFreezeUser_Self_HappyPath(t *testing.T) {
 // TestFreezeUser_NonAdminOther_Denied: alice trying to freeze bob is
 // the privilege-escalation guard. The handler MUST consult ctx for the
 // trusted identity and ignore the request payload's claim of
-// `admin:root`. Mirrors the privilege-escalation matrix in
-// tests/python/integration/test_privilege_escalation.py.
+// `admin:root`.
 func TestFreezeUser_NonAdminOther_Denied(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -266,8 +259,7 @@ func TestFreezeUser_NonAdminOther_Denied(t *testing.T) {
 
 // TestFreezeUser_NotFound_InBandFailure: freezing a missing user_id
 // returns success=false, error="User not found" in-band. No NOT_FOUND
-// status code — clients pin the in-band shape. Mirrors
-// grpc_server.py:3094-3096.
+// status code — clients pin the in-band shape.
 func TestFreezeUser_NotFound_InBandFailure(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -300,8 +292,7 @@ func TestFreezeUser_NotFound_InBandFailure(t *testing.T) {
 }
 
 // TestFreezeUser_GlobalstoreUnset_Unimplemented: a Server with no
-// globalstore wired aborts with codes.Unimplemented. Mirrors the
-// configuration gate at grpc_server.py:3080-3081.
+// globalstore wired aborts with codes.Unimplemented.
 func TestFreezeUser_GlobalstoreUnset_Unimplemented(t *testing.T) {
 	t.Parallel()
 	srv := api.New() // no WithGlobalStore
@@ -356,9 +347,9 @@ func TestFreezeUser_EmptyUserID_InvalidArgument(t *testing.T) {
 }
 
 // TestFreezeGate_PendingDeletion_BlocksMutations: pending_deletion is
-// treated identically to frozen by the gate (Python predicate at
-// grpc_server.py:552). DeleteUser writes pending_deletion; the gate
-// must reject the user's mutating RPCs the same way.
+// treated identically to frozen by the gate. DeleteUser writes
+// pending_deletion; the gate must reject the user's mutating RPCs the
+// same way.
 func TestFreezeGate_PendingDeletion_BlocksMutations(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -387,8 +378,7 @@ func TestFreezeGate_PendingDeletion_BlocksMutations(t *testing.T) {
 
 // TestFreezeGate_AdminCaller_BypassesGate: admin/system callers
 // bypass the freeze gate even when (hypothetically) the registry knows
-// about them — the gate only consults user-kind identities. Mirrors
-// _check_tenant_access short-circuit at grpc_server.py:496-499.
+// about them — the gate only consults user-kind identities.
 func TestFreezeGate_AdminCaller_BypassesGate(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)

@@ -1,24 +1,22 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
 // Tests for the ShareNode RPC. Spec: docs/go-port/rpcs/ShareNode.md.
-// Behavioural pins (mirror Python contract suite):
+// Behavioural pins:
 //
 //   - Owner-as-trusted-actor happy path (test_grpc_contract.py:327-338).
 //   - Non-owner / non-admin → soft-fail success=false, error contains
-//     "permission denied" (Python: PermissionError → success=false at
-//     grpc_server.py:1791-1793).
+//     "permission denied".
 //   - Unknown node id → soft-fail success=false (spec §Wire-contract.NodeId
 //     "auth check carries the existence signal").
 //   - Idempotent re-share: two ShareNode calls with the same shape both
 //     succeed; the WAL records two events but the applier collapses
-//     them via INSERT OR REPLACE (canonical_store.py:2989).
+//     them via INSERT OR REPLACE.
 //   - Cross-tenant recipient (tenant:<id>) lands a user_id /
 //     source_tenant hint into the WAL op so the applier can populate
-//     GlobalStore.shared_index (spec §Side-effects.4 / cross-tenant pin
-//     test_cross_tenant_read.py:75-105). This is the closest analogue
-//     to a "recipient mailbox flag" — ShareNode does NOT fan a
-//     notification into the recipient's mailbox today (spec §Side-
-//     effects "Mailbox fanout: ShareNode does NOT currently fan a
+//     GlobalStore.shared_index (spec §Side-effects.4). This is the
+//     closest analogue to a "recipient mailbox flag" — ShareNode does
+//     NOT fan a notification into the recipient's mailbox today (spec
+//     §Side-effects "Mailbox fanout: ShareNode does NOT currently fan a
 //     notification into the recipient's mailbox SQLite").
 
 package api_test
@@ -162,7 +160,7 @@ func TestShareNode_OwnerHappyPath(t *testing.T) {
 
 // TestShareNode_BareActorIDNormalized: a bare "<id>" recipient is
 // rewritten to "user:<id>" before the WAL append, mirroring
-// entdb.proto:723-725 and grpc_server.py:1772-1778.
+// entdb.proto:723-725.
 func TestShareNode_BareActorIDNormalized(t *testing.T) {
 	t.Parallel()
 
@@ -249,8 +247,7 @@ func TestShareNode_UnknownNodeSoftFail(t *testing.T) {
 }
 
 // TestShareNode_AdminBypass: an admin: actor may share any node it does
-// not own. Mirrors the system/admin short-circuit at
-// grpc_server.py:498-499 / 341-347.
+// not own.
 func TestShareNode_AdminBypass(t *testing.T) {
 	t.Parallel()
 
@@ -271,10 +268,8 @@ func TestShareNode_AdminBypass(t *testing.T) {
 
 // TestShareNode_IdempotentReshare: re-sharing the same (node, recipient)
 // tuple twice each returns success=true. The applier collapses the two
-// records via INSERT OR REPLACE — pinned at the handler level by simply
-// not failing on the second call. Spec §Side-effects: "Re-issuing the
-// same ShareNode produces an INSERT OR REPLACE that updates
-// granted_at."
+// records via INSERT OR REPLACE. Spec §Side-effects: "Re-issuing the
+// same ShareNode produces an INSERT OR REPLACE that updates granted_at."
 func TestShareNode_IdempotentReshare(t *testing.T) {
 	t.Parallel()
 
@@ -314,7 +309,6 @@ func TestShareNode_IdempotentReshare(t *testing.T) {
 // mailbox notification (spec §Side-effects "Mailbox fanout: ShareNode
 // does NOT currently fan a notification into the recipient's mailbox
 // SQLite"); the WAL hint is what makes ListSharedWithMe see the share.
-// Cross-tenant pin: test_cross_tenant_read.py:75-105.
 func TestShareNode_CrossTenantRecipient(t *testing.T) {
 	t.Parallel()
 
@@ -349,10 +343,9 @@ func TestShareNode_CrossTenantRecipient(t *testing.T) {
 }
 
 // TestShareNode_TypedCapsPersistedVerbatim: when CoreCaps and ExtCapIds
-// are populated on the request, they must reach the WAL op verbatim
-// (spec contract pin test_acl_capabilities.py:60-82). Numeric values
-// arrive as JSON numbers (float64) on the consumer side — the test
-// asserts the encoded form rather than the typed slice.
+// are populated on the request, they must reach the WAL op verbatim.
+// Numeric values arrive as JSON numbers (float64) on the consumer side —
+// the test asserts the encoded form rather than the typed slice.
 func TestShareNode_TypedCapsPersistedVerbatim(t *testing.T) {
 	t.Parallel()
 

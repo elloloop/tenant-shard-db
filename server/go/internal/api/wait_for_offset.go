@@ -23,14 +23,13 @@ import (
 // (store/offset.go) so the handler parks on a single select and does not
 // burn a goroutine on a busy-loop.
 //
-// Differences from the Python handler:
-//   - Python swallows all internal errors and returns OK + reached=false.
+// Differences from the original handler:
+//   - The original swallowed all internal errors and returned OK + reached=false.
 //     The Go port honours ctx cancellation as a real gRPC status
 //     (DEADLINE_EXCEEDED) — this matches grpc-go idiom and is the
 //     contract pinned by the W2 task spec.
-//   - Topic/partition prefix in stream_position is ignored (parity with
-//     canonical_store.py:_parse_stream_offset: split on last `:`, parse
-//     trailing int; non-numeric → 0).
+//   - Topic/partition prefix in stream_position is ignored: split on last `:`,
+//     parse trailing int; non-numeric → 0.
 func (s *Server) WaitForOffset(ctx context.Context, req *pb.WaitForOffsetRequest) (*pb.WaitForOffsetResponse, error) {
 	tenantID := req.GetContext().GetTenantId()
 	if tenantID == "" {
@@ -66,9 +65,8 @@ func (s *Server) WaitForOffset(ctx context.Context, req *pb.WaitForOffsetRequest
 
 	// Read the latest applied offset (after the wait succeeded) and
 	// rebuild a "topic:partition:offset"-shaped string so the response
-	// shape matches the client's view of the WAL. Matches Python at
-	// grpc_server.py:986 (`current_position = get_applied_offset(...) or
-	// ""`).
+	// shape matches the client's view of the WAL. Returns "" when the
+	// offset is 0 or unset.
 	cur := s.currentAppliedPosition(ctx, tenantID, req.GetStreamPosition())
 
 	return &pb.WaitForOffsetResponse{
@@ -77,11 +75,10 @@ func (s *Server) WaitForOffset(ctx context.Context, req *pb.WaitForOffsetRequest
 	}, nil
 }
 
-// parseStreamOffset mirrors canonical_store.py:_parse_stream_offset (90):
-// split on the last `:` and parse the trailing integer. Inputs that do
-// not parse cleanly produce 0 — matching Python's `int(...) except 0`
-// behaviour. An empty string is therefore "offset 0", which is
-// "already reached" once anything has been applied for the tenant.
+// parseStreamOffset splits on the last `:` and parses the trailing integer.
+// Inputs that do not parse cleanly produce 0. An empty string is therefore
+// "offset 0", which is "already reached" once anything has been applied for
+// the tenant.
 func parseStreamOffset(s string) int64 {
 	if s == "" {
 		return 0
@@ -101,8 +98,7 @@ func parseStreamOffset(s string) int64 {
 // rebuilds the "topic:partition:offset" string the client expects. The
 // (topic, partition) pair is parsed from the request's stream_position;
 // if absent we fall back to ("", 0). On any read error or
-// not-yet-applied tenant we return "" — matching grpc_server.py:986
-// (`current_position = get_applied_offset(...) or ""`).
+// not-yet-applied tenant we return "".
 func (s *Server) currentAppliedPosition(ctx context.Context, tenantID, requested string) string {
 	topic, partition := parseStreamTopicPartition(requested)
 	off, err := s.store.GetAppliedOffset(ctx, tenantID, topic, partition)
@@ -120,8 +116,7 @@ func (s *Server) currentAppliedPosition(ctx context.Context, tenantID, requested
 
 // parseStreamTopicPartition splits "topic:partition:offset" into
 // (topic, partition). The partition is parsed as int32; non-numeric or
-// missing → 0. Mirror of canonical_store.py:_parse_stream_offset shape
-// awareness (90-109).
+// missing → 0.
 func parseStreamTopicPartition(s string) (string, int32) {
 	if s == "" {
 		return "", 0

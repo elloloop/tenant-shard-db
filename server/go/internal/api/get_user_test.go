@@ -4,15 +4,14 @@
 // per contract test referenced by the spec:
 //
 //  1. Happy round-trip: an existing user -> found=true with
-//     UserInfo populated (mirrors test_grpc_contract.py:396-400 and
-//     test_user_registry.py:196-217).
+//     UserInfo populated (mirrors test_grpc_contract.py:396-400).
 //
 //  2. Missing user: unknown user_id -> found=false, no error
-//     (mirrors test_grpc_contract.py:401-406 and
-//     test_user_registry.py:219-231). DO NOT upgrade to NOT_FOUND.
+//     (mirrors test_grpc_contract.py:401-406). DO NOT upgrade to
+//     NOT_FOUND.
 //
 //  3. Empty actor: -> codes.InvalidArgument (mirrors
-//     test_grpc_contract.py:407-411 and test_user_registry.py:233-245).
+//     test_grpc_contract.py:407-411).
 //
 // The shared globalstore helper lives in helpers_external_test.go;
 // do NOT redeclare newGlobalStore here.

@@ -7,14 +7,10 @@
 //
 // # WAL-first restoration (PLAN.md §6.1, fixed on port)
 //
-// The Python handler bypasses the WAL and writes directly to per-tenant
-// SQLite via canonical_store.revoke_access (DELETE on node_access).
-// Revocations are silently lost on rebuild — a documented violation of
-// CLAUDE.md invariant #1 ("all writes go through the WAL"). The Go port
-// fixes this: the handler appends a "revoke_access" op to the WAL and
-// the applier handler in apply/ops_revoke_access.go performs the DELETE
-// (and the cross-tenant shared_index cleanup hook). See spec §"Side
-// effects" and §"Open questions" item 1.
+// The Go port appends a "revoke_access" op to the WAL; the applier
+// handler in apply/ops_revoke_access.go performs the DELETE (and the
+// cross-tenant shared_index cleanup hook). See spec §"Side effects" and
+// §"Open questions" item 1.
 //
 // # Auth model — trusted-actor, ADMIN capability
 //
@@ -27,10 +23,8 @@
 //      a. system: / admin: prefixed (server-side actor), OR
 //      b. an "owner" or "admin" member of the tenant per
 //         globalstore.tenant_members.
-//     This mirrors the Python ADMIN capability check
-//     (capability_registry.py:74). The Go port narrows the per-node
-//     ADMIN-grant satisfaction (an explicit ADMIN grant on the node)
-//     to membership-based admin for now; the per-node grant satisfaction
+//     The Go port narrows the per-node ADMIN-grant satisfaction to
+//     membership-based admin for now; the per-node grant satisfaction
 //     can land alongside the full capability registry port.
 //
 // # Tenant gate
@@ -111,8 +105,7 @@ func (s *Server) RevokeAccess(
 
 	// Required-arg validation. Empty actor / tenant_id / node_id /
 	// actor_id surface as INVALID_ARGUMENT before any privilege or
-	// tenant-gate work — wire-contract pin (parity with Python's
-	// argument check at grpc_server.py:1830-1834).
+	// tenant-gate work.
 	rctx := req.GetContext()
 	if rctx == nil || rctx.GetTenantId() == "" {
 		statusLabel = "error"
@@ -145,11 +138,10 @@ func (s *Server) RevokeAccess(
 	// is the privilege-escalation hole fixed by commit fece3fb.
 	trusted := auth.Authoritative(ctx, auth.ParseActor(rctx.GetActor()))
 
-	// Admin / system bypass + tenant-membership admin path. Mirrors the
-	// Python ADMIN capability check (capability_registry.py:74). We
-	// narrow to membership-based admin/owner for now; the per-node
-	// ADMIN grant satisfaction lands with the full capability registry
-	// port (spec §"Auth" item 3).
+	// Admin / system bypass + tenant-membership admin path. Narrow to
+	// membership-based admin/owner for now; the per-node ADMIN grant
+	// satisfaction lands with the full capability registry port
+	// (spec §"Auth" item 3).
 	if !(trusted.IsAdmin() || trusted.IsSystem()) {
 		role := ""
 		if s.global != nil {

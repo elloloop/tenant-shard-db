@@ -1,9 +1,7 @@
 // Tests for ChangeMemberRole. Behavioural pins are documented in
-// docs/go-port/rpcs/ChangeMemberRole.md and the Python contract suite
-// (tests/python/unit/test_tenant_registry.py:585-686). The Go-side
-// drift this file enforces is the last-owner demotion protection
-// (PLAN.md §6) — the Python handler does NOT have this and the Go
-// port adds it.
+// docs/go-port/rpcs/ChangeMemberRole.md. The Go-side drift this file
+// enforces is the last-owner demotion protection (PLAN.md §6) — the
+// Python handler does NOT have this and the Go port adds it.
 
 package api_test
 

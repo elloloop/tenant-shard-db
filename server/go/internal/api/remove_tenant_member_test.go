@@ -36,9 +36,8 @@ func seedTenantWithMembers(t *testing.T, gs *globalstore.GlobalStore, tenantID s
 }
 
 // TestRemoveTenantMember_AdminHappyPath: an admin caller removes a
-// regular member; the row is deleted and Success is true. Mirrors
-// test_tenant_registry.py:462-479 (Python happy path), with the added
-// admin-role enforcement that Go layers on top.
+// regular member; the row is deleted and Success is true. Tests
+// admin-role enforcement.
 func TestRemoveTenantMember_AdminHappyPath(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -143,7 +142,6 @@ func TestRemoveTenantMember_NonAdminDenied(t *testing.T) {
 
 // TestRemoveTenantMember_LastOwnerBlocked: removing the only "owner"
 // returns success=false with the canonical "last owner" error string.
-// Mirrors test_tenant_registry.py:481-495.
 func TestRemoveTenantMember_LastOwnerBlocked(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -195,7 +193,7 @@ func TestRemoveTenantMember_LastOwnerBlocked(t *testing.T) {
 
 // TestRemoveTenantMember_IdempotentNonMember: removing a user who is
 // not a member returns success=false with "Member not found" — gRPC
-// code OK (idempotent no-op). Mirrors test_tenant_registry.py:513-526.
+// code OK (idempotent no-op).
 func TestRemoveTenantMember_IdempotentNonMember(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)

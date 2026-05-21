@@ -2,10 +2,9 @@
 
 package wal
 
-// Azure Event Hubs WAL backend for the Go server. Ported from the
-// retired Python source (server/python/entdb_server/wal/eventhubs.py).
+// Azure Event Hubs WAL backend for the Go server.
 //
-// Concept mapping (mirrors the Python docstring):
+// Concept mapping:
 //
 //   - Event Hub        -> WAL topic.
 //   - partition_key    -> partition key (tenant_id). Event Hubs hashes
@@ -23,12 +22,11 @@ package wal
 //                          id as StreamPos.Partition so per-partition
 //                          order is observable.
 //
-// Checkpointing: eventhubs.py kept an in-memory checkpoint and noted
-// that production should persist it. We mirror that: Commit records the
-// per-partition sequence number in memory so a re-Subscribe resumes
-// after it. Durable checkpoint stores (blob) are an operational add-on,
-// out of scope for #518 (the WAL contract only requires at-least-once +
-// in-order-per-key, which this provides).
+// Checkpointing: Commit records the per-partition sequence number in
+// memory so a re-Subscribe resumes after it. Durable checkpoint stores
+// (blob) are an operational add-on, out of scope for #518 (the WAL
+// contract only requires at-least-once + in-order-per-key, which this
+// provides).
 //
 // Halt-on-poison: event bodies pass through verbatim; a malformed event
 // surfaces at the applier (CLAUDE.md: WAL is the source of truth).
@@ -158,7 +156,7 @@ func (e *EventHubs) defaultNewClient(ctx context.Context) (EventHubsAPI, error) 
 }
 
 // Connect builds the producer + consumer clients. Connectivity surfaces
-// on first Send/Receive (parity with eventhubs.py).
+// on first Send/Receive.
 func (e *EventHubs) Connect(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -352,7 +350,6 @@ func (e *EventHubs) Subscribe(
 
 // Commit advances the in-memory per-partition checkpoint so a
 // subsequent PollBatch / Subscribe resumes after this sequence number.
-// Mirrors eventhubs.py commit (in-memory checkpoint).
 func (e *EventHubs) Commit(ctx context.Context, groupID string, record Record) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()

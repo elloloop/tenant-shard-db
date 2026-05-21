@@ -8,10 +8,8 @@ import (
 )
 
 // applyAdminTransferContent dispatches an "admin_transfer_content" op.
-// Mirrors applier.py:1230-1238. PLAN.md §6.4 item 3 calls out that the
-// Python applier doesn't refresh node_visibility on transfer; the Go
-// port also refreshes the visibility for every owner-row that changed
-// hands.
+// Also refreshes the visibility for every owner-row that changed hands
+// (the original applier did not do this).
 //
 // op shape:
 //

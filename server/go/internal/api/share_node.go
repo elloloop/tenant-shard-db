@@ -6,14 +6,13 @@
 //
 // # WAL-first restoration (PLAN.md §6)
 //
-// The Python ShareNode handler bypasses the WAL (CLAUDE.md invariant
-// #1). It writes directly to canonical_store.share_node(...) at
-// grpc_server.py:1794, which means a materialized-view rebuild from
-// the WAL silently drops every share grant. The Go port restores
-// the invariant: handler appends a `share_node` op to the WAL, the
-// applier (already wired in W1.10 — ops_share_node.go) consumes it
-// and writes node_access. There is no direct CanonicalStore.ShareNode
-// call from this handler.
+// The Python ShareNode handler bypassed the WAL (CLAUDE.md invariant
+// #1), writing directly to the canonical store, which means a
+// materialized-view rebuild from the WAL silently dropped every share
+// grant. The Go port restores the invariant: handler appends a
+// `share_node` op to the WAL, the applier (already wired in W1.10 —
+// ops_share_node.go) consumes it and writes node_access. There is no
+// direct CanonicalStore.ShareNode call from this handler.
 //
 // # Auth model — trusted-actor + acl.Checker (Phase 4A.2)
 //
@@ -133,9 +132,8 @@ func (s *Server) ShareNode(
 		return &pb.ShareNodeResponse{Success: false, Error: "actor is required"}, nil
 	}
 
-	// 3. Required-arg validation. Python (grpc_server.py:1746-1826)
-	//    does not pre-validate node_id / actor_id shape — soft-fail
-	//    parity preserved.
+	// 3. Required-arg validation. node_id / actor_id shape is not
+	//    pre-validated — soft-fail parity preserved.
 	nodeID := req.GetNodeId()
 	actorID := normalizeActorID(req.GetActorId())
 	if nodeID == "" || actorID == "" {
@@ -149,9 +147,7 @@ func (s *Server) ShareNode(
 	// 4. ACL pre-check via acl.Checker. The Checker handles
 	//    system/admin bypass, owner short-circuit and grant-based
 	//    ADMIN (so a non-owner with an explicit ADMIN row on the node
-	//    can re-share). Mirrors Python's _check_capability +
-	//    canonical_store owner short-circuit (the two paths combined),
-	//    and matches the recommendation in
+	//    can re-share). Matches the recommendation in
 	//    .claude/triage/sharenode-owner-share-analysis.md §5.1.
 	//
 	//    NOT_FOUND on the underlying GetNode (surfaced by the Checker
@@ -209,8 +205,7 @@ func (s *Server) ShareNode(
 	// When actor_id is "tenant:<X>" or contains "@tenant:<Y>", record
 	// the recipient + source_tenant so the applier post-commit hook
 	// can write the GlobalStore.shared_index row that ListSharedWithMe
-	// reads (spec §Side-effects.4 / cross-tenant pin
-	// test_cross_tenant_read.py:75-105).
+	// reads (spec §Side-effects.4).
 	userID, sourceTenant := crossTenantHint(actorID, tenantID)
 
 	op := map[string]any{
@@ -257,10 +252,8 @@ func (s *Server) ShareNode(
 }
 
 // normalizeActorID rewrites a bare "<id>" form to "user:<id>". Mirrors
-// the Python normalisation at grpc_server.py:1772-1778 and the proto
-// comment at entdb.proto:723-725. Already-prefixed ids
-// (user:/group:/system:/admin:/service:/tenant:) pass through
-// unchanged.
+// the proto comment at entdb.proto:723-725. Already-prefixed ids
+// (user:/group:/system:/admin:/service:/tenant:) pass through unchanged.
 func normalizeActorID(s string) string {
 	if s == "" {
 		return ""

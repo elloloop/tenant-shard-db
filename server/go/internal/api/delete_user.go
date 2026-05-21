@@ -9,24 +9,20 @@
 // Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
-//     codes.Unimplemented "User registry not configured" (parity with
-//     grpc_server.py:2939).
+//     codes.Unimplemented "User registry not configured".
 //   - actor and user_id are required (codes.InvalidArgument). Order of
-//     validation matches Python: actor before user_id.
+//     validation: actor before user_id.
 //   - Trusted-actor pattern: the privilege decision uses
 //     auth.Authoritative(ctx, claimed). The wire `actor` field is
 //     UNTRUSTED and only consulted as the fallback when no interceptor
-//     ran (unit tests). Self-or-admin gate matches Python's
-//     _is_self_or_admin (grpc_server.py:2071-2086) and shares the helper
-//     defined in update_user.go.
+//     ran (unit tests). Self-or-admin gate shares the helper defined in
+//     update_user.go.
 //   - Idempotent re-queue: if a deletion_queue row with status='pending'
 //     already exists, return the EXISTING requested_at / execute_at
-//     unchanged. Matches grpc_server.py:2950-2956 and the contract pin
-//     at test_gdpr_engine.py:637-643.
+//     unchanged.
 //   - User not found is reported IN-BAND: success=false,
-//     error="User not found" (no NOT_FOUND status) — pinned by
-//     test_gdpr_engine.py:658-662.
-//   - grace_days <= 0 is normalized to 30 (Python grpc_server.py:2965).
+//     error="User not found" (no NOT_FOUND status).
+//   - grace_days <= 0 is normalized to 30.
 //     Note that the underlying globalstore.QueueDeletion does NOT clamp
 //     itself; the handler is the single source of normalization.
 //   - On success returns success=true, status="pending" along with the
@@ -71,9 +67,9 @@ import (
 
 const deleteUserMethod = "DeleteUser"
 
-// defaultDeleteUserGraceDays is the Python normalization fallback for
-// grace_days <= 0 (grpc_server.py:2965). Pulled out as a constant so
-// tests can reference it without re-deriving.
+// defaultDeleteUserGraceDays is the normalization fallback for
+// grace_days <= 0. Pulled out as a constant so tests can reference it
+// without re-deriving.
 const defaultDeleteUserGraceDays = 30
 
 // DeleteUser implements entdb.v1.EntDBService/DeleteUser.
@@ -90,13 +86,13 @@ func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb
 		metrics.RecordGRPCRequest(deleteUserMethod, outcome, time.Since(start))
 	}()
 
-	// Configuration gate. Mirrors Python grpc_server.py:2939.
+	// Configuration gate.
 	if s.global == nil {
 		outcome = "error"
 		return nil, status.Error(codes.Unimplemented, "User registry not configured")
 	}
 
-	// Required-field aborts. Mirrors grpc_server.py:2940-2943.
+	// Required-field aborts.
 	if req.GetActor() == "" {
 		outcome = "error"
 		return nil, status.Error(codes.InvalidArgument, "actor is required")
@@ -130,9 +126,8 @@ func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb
 		return &pb.DeleteUserResponse{Success: false, Error: "User not found"}, nil
 	}
 
-	// Idempotency: if a pending entry exists, return it unchanged. The
-	// Python handler short-circuits here (grpc_server.py:2950-2956) and
-	// re-queueing must NOT push execute_at forward.
+	// Idempotency: if a pending entry exists, return it unchanged.
+	// Re-queueing must NOT push execute_at forward.
 	if existing, eerr := s.global.GetDeletionEntry(ctx, userID); eerr == nil && existing != nil && existing.Status == "pending" {
 		return &pb.DeleteUserResponse{
 			Success:     true,
@@ -166,7 +161,7 @@ func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb
 		}
 	}
 
-	// Normalize grace days (parity with grpc_server.py:2965).
+	// Normalize grace days.
 	grace := int(req.GetGraceDays())
 	if grace <= 0 {
 		grace = defaultDeleteUserGraceDays

@@ -2,10 +2,9 @@
 
 package wal
 
-// AWS SQS FIFO WAL backend for the Go server. Ported from the retired
-// Python source (server/python/entdb_server/wal/sqs.py).
+// AWS SQS FIFO WAL backend for the Go server.
 //
-// Concept mapping (mirrors the Python docstring):
+// Concept mapping:
 //
 //   - FIFO queue              -> WAL topic. The queue name MUST end in
 //                                ".fifo"; ordering + dedupe only exist
@@ -25,8 +24,8 @@ package wal
 //                                DeleteMessage (the SQS ack).
 //
 // SQS FIFO has no partitions; StreamPos.Partition is always 0 and
-// StreamPos.Offset is a per-process monotone counter (parity with
-// sqs.py self._counter). Ordering across a poll is preserved because
+// StreamPos.Offset is a per-process monotone counter. Ordering across
+// a poll is preserved because
 // SQS delivers a group's messages in order and we never reorder a
 // batch.
 //
@@ -153,7 +152,7 @@ func (s *Sqs) queueURL(topic string) string {
 }
 
 // Connect builds the client and verifies the queue is reachable
-// (GetQueueAttributes — parity with sqs.py health_check on connect).
+// (GetQueueAttributes).
 func (s *Sqs) Connect(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -218,8 +217,8 @@ func (s *Sqs) Append(
 	queue := s.queueURL(topic)
 
 	// MessageDeduplicationId: prefer the WAL idempotency key so a
-	// caller retry collapses server-side; else fall back to a content
-	// hash (parity with sqs.py sha256(value)).
+	// caller retry collapses server-side; else fall back to a SHA-256
+	// content hash.
 	dedupID := idempKey
 	if dedupID == "" {
 		sum := sha256.Sum256(value)
@@ -408,8 +407,8 @@ func (s *Sqs) Subscribe(
 	return out, errCh, nil
 }
 
-// Commit deletes the message from the queue (the SQS ack). Mirrors
-// sqs.py commit -> DeleteMessage by receipt handle.
+// Commit deletes the message from the queue (the SQS ack) by receipt
+// handle.
 func (s *Sqs) Commit(ctx context.Context, groupID string, record Record) error {
 	s.mu.Lock()
 	if !s.connected || s.client == nil {
@@ -425,8 +424,7 @@ func (s *Sqs) Commit(ctx context.Context, groupID string, record Record) error {
 	s.mu.Unlock()
 
 	if !ok || receipt == "" {
-		// Nothing to ack (already committed or unknown offset). Mirrors
-		// sqs.py's "no pending receipt handle" warning -> no-op.
+		// Nothing to ack (already committed or unknown offset) — no-op.
 		return nil
 	}
 	queue := record.Position.Topic

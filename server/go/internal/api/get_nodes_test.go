@@ -10,8 +10,7 @@
 //     (gaps closed); duplicates are NOT deduped.
 //   - Mixed missing + visible + denied: missing-or-denied are merged
 //     into missing_ids; the cross-tenant denied case must NOT be
-//     distinguishable from not-found
-//     (test_cross_tenant_read.py:254-407 + spec "Auth").
+//     distinguishable from not-found (spec "Auth").
 //   - Oversize batch (> maxBatchNodeIDs) -> RESOURCE_EXHAUSTED before
 //     any I/O. Hardening delta vs Python (no Python equivalent).
 //   - Unknown tenant -> NOT_FOUND from the tenant gate
@@ -339,8 +338,7 @@ func TestGetNodes_OversizeBatchExactlyAtCapAccepted(t *testing.T) {
 
 // TestGetNodes_UnknownTenantNotFound pins the tenant-gate behaviour:
 // an unknown tenant_id results in codes.NotFound from CheckTenant
-// before any read work runs. Mirrors the Python NOT_FOUND from
-// _check_tenant (grpc_server.py:362-401).
+// before any read work runs.
 func TestGetNodes_UnknownTenantNotFound(t *testing.T) {
 	t.Parallel()
 

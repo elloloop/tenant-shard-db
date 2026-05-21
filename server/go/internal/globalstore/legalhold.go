@@ -1,5 +1,4 @@
-// legal_holds CRUD. Mirrors the Python helpers at
-// through :1057 (is_under_legal_hold).
+// legal_holds CRUD.
 //
 // Two concepts collide here:
 //
@@ -23,7 +22,6 @@ import (
 
 // SetLegalHold inserts a legal_holds row for (tenant_id, held_by). It
 // is INSERT OR IGNORE — re-running with the same key is a no-op.
-// Mirrors `_sync_set_legal_hold_record` (global_store.py:984).
 func (g *GlobalStore) SetLegalHold(ctx context.Context, tenantID, heldBy, reason string) (*LegalHold, error) {
 	now := g.now()
 	_, err := g.db.ExecContext(ctx,
@@ -43,7 +41,7 @@ func (g *GlobalStore) SetLegalHold(ctx context.Context, tenantID, heldBy, reason
 }
 
 // ClearLegalHold removes a (tenant_id, held_by) row. Returns true iff
-// a row existed. Mirrors `_sync_remove_legal_hold` (global_store.py:1013).
+// a row existed.
 func (g *GlobalStore) ClearLegalHold(ctx context.Context, tenantID, heldBy string) (bool, error) {
 	res, err := g.db.ExecContext(ctx,
 		`DELETE FROM legal_holds WHERE tenant_id = ? AND held_by = ?`,
@@ -60,7 +58,7 @@ func (g *GlobalStore) ClearLegalHold(ctx context.Context, tenantID, heldBy strin
 }
 
 // GetLegalHold lists every legal_holds row for a tenant, ordered by
-// created_at. Mirrors `_sync_get_legal_holds` (global_store.py:1032).
+// created_at.
 func (g *GlobalStore) GetLegalHold(ctx context.Context, tenantID string) ([]*LegalHold, error) {
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT tenant_id, held_by, reason, created_at
@@ -86,7 +84,7 @@ func (g *GlobalStore) GetLegalHold(ctx context.Context, tenantID string) ([]*Leg
 }
 
 // IsLegalHoldSet reports whether *any* legal_holds row exists for the
-// tenant. Mirrors `_sync_is_under_legal_hold` (global_store.py:1051).
+// tenant.
 func (g *GlobalStore) IsLegalHoldSet(ctx context.Context, tenantID string) (bool, error) {
 	var one int
 	err := g.db.QueryRowContext(ctx,

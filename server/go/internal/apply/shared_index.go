@@ -7,8 +7,7 @@ import (
 )
 
 // maintainSharedIndex applies shared_index updates after a successful
-// per-tenant commit. Mirrors the Python applier hooks at
-// applier.py:1687-1845.
+// per-tenant commit.
 //
 // shared_index is a HINT — authoritative ACLs live in the per-tenant
 // canonical store. Best-effort against globalstore: we log + continue

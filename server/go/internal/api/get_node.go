@@ -8,46 +8,38 @@
 //
 //   - Read-only single-node lookup keyed on (tenant_id, node_id). Per
 //     the spec, type_id on the request is ACCEPTED but NOT used to
-//     filter the lookup — bug-for-bug parity with Python's
-//     `canonical_store.get_node(tenant, node_id)` chokepoint
-//     (`grpc_server.py:1029-1031`). Flagged as a follow-up in the spec
-//     "Open questions / risks" section.
+//     filter the lookup — bug-for-bug parity with the storage chokepoint.
+//     Flagged as a follow-up in the spec "Open questions / risks" section.
 //
 //   - Trusted-actor pattern (CLAUDE.md, commit fece3fb): the wire
 //     `request.context.actor` is UNTRUSTED. We resolve identity via
 //     `auth.Authoritative` and ignore the wire claim for any auth
-//     decision. Pinned by
-//     tests/python/integration/test_privilege_escalation.py:186-209.
+//     decision.
 //
 //   - NOT_FOUND wins over PERMISSION_DENIED. The handler runs the
 //     tenant gate, then determines the caller's role
 //     (local/member/cross_tenant), then looks up the row. If the row
 //     does not exist we return `&pb.GetNodeResponse{Found: false}` with
-//     gRPC status OK — Python contract pin
-//     test_grpc_contract.py:217-222 (`r.found is False`).
-//     PERMISSION_DENIED is reserved for the case where the caller is
-//     not a tenant member at all (fires before lookup; spec
+//     gRPC status OK — pin test_grpc_contract.py:217-222 (`r.found is
+//     False`). PERMISSION_DENIED is reserved for the case where the
+//     caller is not a tenant member at all (fires before lookup; spec
 //     "Error contract" — non-members cannot probe for node existence)
 //     OR where the row EXISTS and a cross-tenant caller lacks an
 //     explicit per-node grant.
 //
 //   - Cross-tenant role check. When the caller is not a tenant member
 //     but DOES have at least one node_access row in the tenant, role
-//     becomes "cross_tenant" (Python `_check_cross_tenant_read`). The
-//     per-node ACL is then re-checked against the specific node_id
-//     post-lookup, mirroring Python's two-step at
-//     `grpc_server.py:561-618` + `:1031-1045`.
+//     becomes "cross_tenant". The per-node ACL is then re-checked
+//     against the specific node_id post-lookup.
 //
 //   - Payload egress is id-keyed (CLAUDE.md invariant #6). The wire
 //     Struct has stringified field_id keys ("1", "2", ...); SDK
-//     translates id -> name on the client side. Pinned by
-//     test_payload_wire_format.py:158-189.
+//     translates id -> name on the client side.
 //
 //   - `after_offset` + `wait_timeout_ms` provide read-after-write
 //     consistency by waiting for the WAL applier to reach a stream
 //     position before reading. Default 30s when wait_timeout_ms == 0.
-//     Wait failures are silent (Python parity at
-//     `grpc_server.py:1015-1020`).
+//     Wait failures are silent.
 //
 //   - Unlike Python, we do NOT swallow uncaught exceptions into
 //     found=false. The Python handler's outer try/except is a
@@ -116,12 +108,10 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	//    (privilege-escalation guard, commit fece3fb).
 	actor := auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
 
-	// 3. Make sure the per-tenant DB exists. Mirrors Python's
-	//    auto-open via `_get_connection(tenant_id)` at
-	//    canonical_store.py:2306. CheckTenant has already vetted the
-	//    tenant id; this just lazy-creates the tenant_<id>.db file
-	//    and is a precondition for both the cross-tenant ACL probe
-	//    and the GetNode read below.
+	// 3. Make sure the per-tenant DB exists. CheckTenant has already
+	//    vetted the tenant id; this just lazy-creates the
+	//    tenant_<id>.db file and is a precondition for both the
+	//    cross-tenant ACL probe and the GetNode read below.
 	if err := s.store.OpenTenant(ctx, tenantID); err != nil {
 		resultStatus = "error"
 		return nil, errs.Errorf(errs.Code(err), "GetNode: open tenant: %v", err)
@@ -137,9 +127,7 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	}
 
 	// 5. Optional read-after-write barrier. Failures are silent — the
-	//    handler proceeds with a stale read. Mirrors Python's
-	//    `_wait_for_offset` returning a bool that GetNode discards
-	//    (`grpc_server.py:1015-1020`).
+	//    handler proceeds with a stale read.
 	if off := req.GetAfterOffset(); off != "" {
 		timeout := 30 * time.Second
 		if ms := req.GetWaitTimeoutMs(); ms > 0 {
@@ -199,12 +187,8 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 // node_id post-lookup ACL re-check.
 
 // hasNodeAccess returns true if actorID has a non-deny, non-expired
-// node_access grant on (tenantID, nodeID). Mirrors a slim slice of
-// `canonical_store.can_access` (`canonical_store.py:2867-2946`) — for
-// W2 GetNode parity the read predicate "any non-deny grant" is
-// sufficient (Python `:1041-1045` calls `can_access(node_id, actor,
-// "read")` which collapses to the same SQL when no typed caps are
-// registered for the type).
+// node_access grant on (tenantID, nodeID). For GetNode parity the read
+// predicate "any non-deny grant" is sufficient.
 func (s *Server) hasNodeAccess(ctx context.Context, tenantID, nodeID, actorID string) (bool, error) {
 	db, err := s.store.AdminDB(tenantID)
 	if err != nil {

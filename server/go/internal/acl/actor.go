@@ -86,8 +86,7 @@ func Role(name string) Actor { return Actor{Kind: ActorKindRole, ID: name} }
 func Tenant(id string) Actor { return Actor{Kind: ActorKindTenant, ID: id} }
 
 // TenantWildcard returns the tenant:* actor — every authenticated user
-// in the current tenant. Matches the wildcard handled at
-// canonical_store.py:2887 and acl.py:127-129.
+// in the current tenant.
 func TenantWildcard() Actor { return Actor{Kind: ActorKindTenant, ID: "*"} }
 
 // System returns a system:<svc> actor.
@@ -108,7 +107,7 @@ func (a Actor) IsTenantWildcard() bool {
 }
 
 // IsSystem reports whether the actor is a system:<svc>. System actors
-// bypass capability checks (mirrors canonical_store.py:2883-2884).
+// bypass capability checks.
 func (a Actor) IsSystem() bool { return a.Kind == ActorKindSystem }
 
 // String renders the actor as "kind:id". For the zero value returns "".

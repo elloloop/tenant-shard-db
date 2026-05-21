@@ -15,14 +15,14 @@
 //     When no Identity is present (unit tests, no-auth deployments) we
 //     fall through to the claimed actor — the documented Authoritative
 //     contract. Mirrors get_authoritative_actor in
-//   - Authorization gate: matches Python `_require_admin_or_owner`
-//     (grpc_server.py:2656-2690). The trusted actor passes if it is
-//     system:/admin:, or if it is a user: whose tenant role is "owner"
-//     or "admin". Plain members and non-members → PERMISSION_DENIED.
-//     Empty tenant_id → INVALID_ARGUMENT.
+//   - Authorization gate: `_require_admin_or_owner` semantics. The
+//     trusted actor passes if it is system:/admin:, or if it is a
+//     user: whose tenant role is "owner" or "admin". Plain members and
+//     non-members → PERMISSION_DENIED. Empty tenant_id →
+//     INVALID_ARGUMENT.
 //   - period_end_ms is computed locally from time.Now(), never read from
 //     the DB — keeps dashboards correct for tenants with no writes this
-//     period (parity with grpc_server.py:3137-3141).
+//     period.
 
 package api
 
@@ -58,9 +58,7 @@ func (s *Server) GetTenantQuota(
 	}
 
 	// Tenant gate (sharding ownership / region pin / NotFound). Same
-	// ingress contract as every other tenant-scoped RPC; matches the
-	// Python `_check_tenant` call before the admin gate at
-	// grpc_server.py:3122-3128.
+	// ingress contract as every other tenant-scoped RPC.
 	if err := s.checkTenant(ctx, tenantID); err != nil {
 		outcome = "error"
 		return nil, err
@@ -71,8 +69,7 @@ func (s *Server) GetTenantQuota(
 	// claimed actor is ignored — this is the privilege-escalation guard
 	// (commit fece3fb). When no interceptor ran (unit tests, contract
 	// harness without auth), Authoritative falls through to the claimed
-	// actor, matching Python's get_authoritative_actor fallback at
-	// auth_interceptor.py:108-115.
+	// actor.
 	claimed := auth.ParseActor(req.GetActor())
 	trusted := auth.Authoritative(ctx, claimed)
 
@@ -82,8 +79,7 @@ func (s *Server) GetTenantQuota(
 			"GetTenantQuota: quota registry not configured")
 	}
 
-	// Admin/owner gate. Mirrors `_require_admin_or_owner` at
-	// grpc_server.py:2671-2690:
+	// Admin/owner gate:
 	//   - system:/admin: actors bypass the membership check.
 	//   - user: actors must have role "owner" or "admin" on the tenant.
 	// Plain members and non-members are rejected.
@@ -136,11 +132,10 @@ func (s *Server) GetTenantQuota(
 
 // nextCalendarMonthStartMs returns the Unix-millisecond timestamp of the
 // start of the UTC calendar month immediately following the one
-// containing t. Mirrors `_next_calendar_month_start_ms`
-// (auth/quota_interceptor.py:65-71). Kept local to this file to avoid
-// adding new exported helpers / fields per the W2 task constraints; the
-// equivalent for the start-of-current-month lives in the globalstore
-// package as calendarMonthStartMs.
+// containing t. Kept local to this file to avoid adding new exported
+// helpers / fields per the W2 task constraints; the equivalent for the
+// start-of-current-month lives in the globalstore package as
+// calendarMonthStartMs.
 func nextCalendarMonthStartMs(t time.Time) int64 {
 	t = t.UTC()
 	year, month := t.Year(), t.Month()

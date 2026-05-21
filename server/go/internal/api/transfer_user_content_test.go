@@ -402,8 +402,7 @@ func TestTransferUserContent_RecipientSeesNodesAfterApply(t *testing.T) {
 // TestTransferUserContent_NonAdminPermissionDenied: a plain tenant
 // member (carol) attempting the transfer must be rejected with
 // PERMISSION_DENIED, AND no WAL event must be appended (the
-// privilege-escalation regression pinned by Python at
-// test_privilege_escalation.py:344-365).
+// privilege-escalation regression).
 func TestTransferUserContent_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 	f := newTransferFixture(t)

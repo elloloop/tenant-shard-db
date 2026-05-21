@@ -92,14 +92,12 @@ func (i *Interceptor) Stream() grpc.StreamServerInterceptor {
 
 // authenticate runs the credential chain. It returns either the
 // augmented context (carrying a trusted Identity) or an
-// UNAUTHENTICATED error. Mirrors AuthInterceptor.authenticate in
-// auth_interceptor.py:222-276.
+// UNAUTHENTICATED error.
 func (i *Interceptor) authenticate(ctx context.Context) (context.Context, error) {
 	md, _ := metadata.FromIncomingContext(ctx)
 
 	// 1. Bearer token (OAuth/OIDC). Only treated as a JWT if it has
-	//    the two-dot shape -- this matches _is_jwt at
-	//    auth_interceptor.py:278-281, which lets us coexist with
+	//    the two-dot shape (isJWT heuristic), which lets us coexist with
 	//    other authorization schemes a future deployment might add
 	//    without misclassifying them as malformed JWTs.
 	if raw := firstHeader(md, headerAuthorization); raw != "" {
@@ -156,9 +154,8 @@ func (i *Interceptor) authenticate(ctx context.Context) (context.Context, error)
 	return nil, unauthenticatedf("no valid authentication credentials provided")
 }
 
-// identityFromClaims picks the identity string out of a claims map.
-// Mirrors auth_interceptor.py:248: prefer sub, fall back to email,
-// fall back to the literal "unknown".
+// identityFromClaims picks the identity string out of a claims map:
+// prefer sub, fall back to email, fall back to the literal "unknown".
 func identityFromClaims(claims map[string]any) string {
 	if s, ok := claims["sub"].(string); ok && s != "" {
 		return s
@@ -169,8 +166,8 @@ func identityFromClaims(claims map[string]any) string {
 	return "unknown"
 }
 
-// isJWT is the same heuristic Python uses: a JWT has exactly two dots
-// (header.payload.signature). See auth_interceptor.py:278-281.
+// isJWT checks the two-dot heuristic: a JWT has exactly two dots
+// (header.payload.signature).
 func isJWT(s string) bool {
 	return strings.Count(s, ".") == 2
 }

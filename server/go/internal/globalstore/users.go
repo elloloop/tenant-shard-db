@@ -16,8 +16,6 @@ import (
 
 // CreateUser inserts a new user_registry row. Returns ErrAlreadyExists
 // (codes.AlreadyExists) on duplicate user_id or duplicate email.
-//
-// Mirrors `_sync_create_user` (global_store.py:352).
 func (g *GlobalStore) CreateUser(ctx context.Context, userID, email, name string) (*User, error) {
 	now := g.now()
 	_, err := g.db.ExecContext(ctx,
@@ -79,8 +77,7 @@ func (g *GlobalStore) GetUserByEmail(ctx context.Context, email string) (*User, 
 }
 
 // UserUpdates carries the optional patch for UpdateUser. Nil pointer
-// fields are skipped (matches the Python kwargs whitelist of
-// {email, name, status} at global_store.py:397).
+// fields are skipped ({email, name, status} are the mutable fields).
 type UserUpdates struct {
 	Email  *string
 	Name   *string
@@ -89,8 +86,6 @@ type UserUpdates struct {
 
 // UpdateUser applies a partial update. Returns true iff a row existed.
 // Returns ErrAlreadyExists if the new email collides with another row.
-//
-// Mirrors `_sync_update_user` (global_store.py:396).
 func (g *GlobalStore) UpdateUser(ctx context.Context, userID string, upd UserUpdates) (bool, error) {
 	cols := []string{}
 	args := []any{}
@@ -157,10 +152,8 @@ func (g *GlobalStore) SetUserStatus(ctx context.Context, userID, status string) 
 }
 
 // ListUsers returns up to limit users with status, ordered by
-// created_at (ASC, the Python default). limit <= 0 means "no upper
-// bound"; SQLite accepts -1 as unlimited.
-//
-// Mirrors `_sync_list_users` (global_store.py:426).
+// created_at ASC. limit <= 0 means "no upper bound"; SQLite accepts -1
+// as unlimited.
 func (g *GlobalStore) ListUsers(ctx context.Context, status string, limit, offset int) ([]*User, error) {
 	if limit <= 0 {
 		limit = -1
@@ -189,9 +182,8 @@ func (g *GlobalStore) ListUsers(ctx context.Context, status string, limit, offse
 	return out, nil
 }
 
-// DeleteUser is a soft delete: it sets status='deleted' (Python uses
-// the same status enum at global_store.py:33). Returns true iff the row
-// existed.
+// DeleteUser is a soft delete: it sets status='deleted'. Returns true iff
+// the row existed.
 func (g *GlobalStore) DeleteUser(ctx context.Context, userID string) (bool, error) {
 	return g.SetUserStatus(ctx, userID, "deleted")
 }

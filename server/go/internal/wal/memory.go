@@ -261,9 +261,8 @@ func (m *InMemory) Subscribe(
 }
 
 // Commit advances the stored offset for (topic, groupID) to one past
-// record.Position.Offset. Mirrors the Python in-memory backend's
-// commit (memory.py:304-312) but is keyed by groupID so two consumer
-// groups can independently iterate the same topic.
+// record.Position.Offset. Keyed by groupID so two consumer groups can
+// independently iterate the same topic.
 func (m *InMemory) Commit(ctx context.Context, groupID string, record Record) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -347,8 +346,7 @@ func (m *InMemory) waitWithDeadline(ctx context.Context, deadline time.Time) {
 
 func (m *InMemory) partitionFor(key string) int32 {
 	sum := md5.Sum([]byte(key))
-	// Match Python's int.from_bytes(hash_bytes[:4], "big") % num_partitions
-	// at memory.py:337-339.
+	// md5(key)[:4] big-endian uint32 mod numPartitions.
 	hashInt := binary.BigEndian.Uint32(sum[:4])
 	return int32(hashInt % uint32(m.numPartitions))
 }
@@ -374,7 +372,7 @@ func copyHeaders(in map[string][]byte) map[string][]byte {
 	return out
 }
 
-// --- Test helpers (mirroring memory.py:343-403) ---
+// --- Test helpers ---
 
 // GetAllRecords returns every record in topic, in (partition, offset)
 // order. Cross-impl contract tests rely on this for log introspection.
@@ -423,7 +421,7 @@ func (m *InMemory) ClearTopic(topic string) {
 
 // WaitForRecords blocks until topic has at least count records or
 // ctx is cancelled. Returns true on success, false on ctx timeout /
-// cancel. Mirrors memory.py:382 (wait_for_records).
+// cancel.
 func (m *InMemory) WaitForRecords(ctx context.Context, topic string, count int) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()

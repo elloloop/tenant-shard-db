@@ -6,25 +6,19 @@
 //
 // # Behavioural pins
 //
-//   - WAL-first restoration. Python writes directly to per-tenant
-//     SQLite via canonical_store.remove_group_member, bypassing the
-//     event log (CLAUDE.md §1 violation flagged by the spec). The Go
-//     port routes the membership delete through wal.Append as a
-//     `remove_group_member` op (W1.10 applier handler at
-//     server/go/internal/apply/ops_remove_group_member.go), so a
-//     replay-from-empty-WAL reconstructs the same group_users state.
-//     The group-derived shared_index cleanup is represented as a
+//   - WAL-first restoration. The Go port routes the membership delete
+//     through wal.Append as a `remove_group_member` op (W1.10 applier
+//     handler at server/go/internal/apply/ops_remove_group_member.go),
+//     so a replay-from-empty-WAL reconstructs the same group_users
+//     state. The group-derived shared_index cleanup is represented as a
 //     paired WAL op and applied best-effort by the applier, not by the
 //     handler.
 //
-//   - Auth (Go HARDENS vs Python). Python's capability registry does
-//     NOT map RemoveGroupMember to a capability — any caller passing
-//     `_check_tenant` can remove anyone from any group (privilege-
-//     escalation gap, spec §"Open questions" item 6). The Go port
-//     gates the RPC behind admin/system trusted actors OR a tenant
-//     "owner"/"admin" membership row, matching AddTenantMember /
-//     ChangeMemberRole / RemoveTenantMember. There is no "group
-//     owner" concept in the schema today; v1 rule is tenant-admin.
+//   - Auth (Go HARDENS vs Python). The Go port gates the RPC behind
+//     admin/system trusted actors OR a tenant "owner"/"admin" membership
+//     row, matching AddTenantMember / ChangeMemberRole / RemoveTenantMember.
+//     There is no "group owner" concept in the schema today; v1 rule is
+//     tenant-admin.
 //
 //   - Trusted-actor rebind. The wire `actor` is UNTRUSTED. Privilege
 //     decisions consult auth.Authoritative(ctx) only. The privilege-
@@ -49,9 +43,8 @@
 //     delete-if-exists.
 //
 //   - role on Remove. Proto carries `role` (shared with AddGroupMember)
-//     but Python ignores it on the Remove path (grpc_server.py:1962
-//     reads it on Add only). Go port: accept and discard, do NOT
-//     thread it into the WAL op.
+//     but it is ignored on the Remove path. Go port: accept and discard,
+//     do NOT thread it into the WAL op.
 
 package api
 
@@ -98,9 +91,8 @@ func (s *Server) RemoveGroupMember(
 
 	tenantID := req.GetContext().GetTenantId()
 
-	// Tenant gate (region pin + redirect trailer). Mirrors
-	// grpc_server.py:1994. On miss/redirect this surfaces the typed
-	// gRPC code the SDK redirect cache reads.
+	// Tenant gate (region pin + redirect trailer). On miss/redirect this
+	// surfaces the typed gRPC code the SDK redirect cache reads.
 	if err := s.checkTenant(ctx, tenantID); err != nil {
 		status = "error"
 		return nil, err
@@ -125,10 +117,9 @@ func (s *Server) RemoveGroupMember(
 	trusted := auth.Authoritative(ctx, claimed)
 
 	// Capability check — Go HARDENS vs Python (spec §"Open questions"
-	// item 6 latent privilege escalation). System / admin prefixed
-	// trusted actors bypass; otherwise the caller must be a tenant
-	// owner/admin, mirroring AddTenantMember / ChangeMemberRole /
-	// RemoveTenantMember.
+	// item 6 latent privilege escalation). System / admin prefixed trusted
+	// actors bypass; otherwise the caller must be a tenant owner/admin,
+	// mirroring AddTenantMember / ChangeMemberRole / RemoveTenantMember.
 	if !(trusted.IsSystem() || trusted.IsAdmin()) {
 		if s.global == nil {
 			status = "error"
@@ -172,10 +163,8 @@ func (s *Server) RemoveGroupMember(
 	if s.global != nil {
 		entries, gerr := s.store.ListNodeAccessForGroup(ctx, tenantID, groupID)
 		if gerr != nil {
-			// Best-effort pre-read: log and continue without cascade
-			// (matches Python grpc_server.py:1998-2008 swallow on the
-			// pre-read error path). The membership delete still goes
-			// through.
+			// Best-effort pre-read: log and continue without cascade.
+			// The membership delete still goes through.
 			slog.WarnContext(ctx, "RemoveGroupMember: shared_index pre-read failed",
 				"tenant", tenantID, "group", groupID, "err", gerr)
 		} else {
@@ -224,8 +213,7 @@ func (s *Server) RemoveGroupMember(
 		wal.HeaderIdempotencyKey: []byte(idempKey),
 	}
 	// Per-tenant total order: key by tenant_id so all of a tenant's
-	// records land on the same partition (matches the Python applier
-	// partition strategy in wal/memory.py:74).
+	// records land on the same partition.
 	if _, werr := s.producer.Append(ctx, removeGroupMemberWALTopic, tenantID, value, headers); werr != nil {
 		status = "error"
 		return &pb.GroupMemberResponse{

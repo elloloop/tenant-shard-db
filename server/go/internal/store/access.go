@@ -9,18 +9,16 @@ import (
 )
 
 // systemActor is the bootstrap/replay identity used by the applier.
-// It bypasses every ACL check (mirrors canonical_store.py:2825 +
-// :2883). Never appears on the wire.
+// It bypasses every ACL check. Never appears on the wire.
 const systemActor = "__system__"
 
 // aclMaxDepth bounds recursive group-membership / acl_inherit
-// expansion. Mirrors canonical_store.py:_ACL_MAX_DEPTH = 10.
+// expansion.
 const aclMaxDepth = 10
 
 // ResolveActorGroups expands an actor into the flat list
 // [actor, group_1, group_2, ...] by recursively walking the
-// group_users table. Mirrors canonical_store.py:_sync_resolve_actor_groups
-// (2828-2853).
+// group_users table.
 //
 // Cycle-safe: the SQL CTE bounds depth at aclMaxDepth.
 //
@@ -76,8 +74,7 @@ func (s *CanonicalStore) ResolveActorGroups(ctx context.Context, tenantID, actor
 }
 
 // HasNodeAccess reports whether at least one of actorIDs has a
-// non-deny, non-expired node_access grant in the tenant. Mirrors
-// canonical_store.py:_sync_has_node_access (3956-3974).
+// non-deny, non-expired node_access grant in the tenant.
 //
 // Used by the cross-tenant role gate in GetNodes / QueryNodes to
 // decide whether a non-member caller has any reason to be reading
@@ -119,8 +116,7 @@ func (s *CanonicalStore) HasNodeAccess(ctx context.Context, tenantID string, act
 }
 
 // CanAccess reports whether any of actorIDs can read nodeID per the
-// owner / visibility / node_access / acl_inherit rules. Mirrors
-// canonical_store.py:_sync_can_access (2867-2946).
+// owner / visibility / node_access / acl_inherit rules.
 //
 // Order:
 //  1. The "__system__" actor short-circuits to true.

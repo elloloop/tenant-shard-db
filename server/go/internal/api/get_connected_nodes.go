@@ -14,25 +14,21 @@
 //     trusted identity via auth.Authoritative and ignore any wire claim
 //     (CLAUDE.md / commit fece3fb).
 //   - Source gate: if the trusted actor cannot read the source node, we
-//     return an empty response (does NOT leak existence — same shape as
-//     canonical_store.py:3291-3293).
-//   - BFS traversal over GetEdgesFrom (outbound only — Python's storage
-//     joins e.from_node_id = node_id only). Each frontier is run through
-//     acl.Filter.FilterReadable BEFORE being yielded, so an ACL-denied
-//     child is pruned both from the result set and from the next-level
-//     frontier (it cannot leak its descendants either).
+//     return an empty response (does NOT leak existence).
+//   - BFS traversal over GetEdgesFrom (outbound only). Each frontier is
+//     run through acl.Filter.FilterReadable BEFORE being yielded, so an
+//     ACL-denied child is pruned both from the result set and from the
+//     next-level frontier (it cannot leak its descendants either).
 //   - Depth is bounded by MaxConnectedDepth. The proto has no `depth`
-//     field today; mirroring the Python depth=1 contract, the default
-//     traversal collects only direct children (depth 1), but the Go
-//     traversal is structured so the constant can be raised in a follow-
-//     up without rewriting the handler.
+//     field today; the default traversal collects only direct children
+//     (depth 1), but the Go traversal is structured so the constant can
+//     be raised in a follow-up without rewriting the handler.
 //   - Cycle protection via a visited set keyed on node_id (so a graph
 //     containing back-edges or rings cannot cause unbounded work).
 //   - Result-size limit honoured: BFS stops as soon as len(out) ==
-//     limit. has_more = (len(out) == limit), matching Python's heuristic.
+//     limit. has_more = (len(out) == limit).
 //   - Catch-all internal errors collapse to (nodes=[], OK) with
-//     status="error" on the metric — matches the Python
-//     `except Exception` swallow at grpc_server.py:1741-1744.
+//     status="error" on the metric.
 //
 // No WAL append, no SQLite write, no audit-log entry, no quota debit.
 // Read-only RPC.
@@ -53,9 +49,8 @@ import (
 const getConnectedNodesMethod = "GetConnectedNodes"
 
 // MaxConnectedDepth caps BFS traversal depth. The wire proto exposes no
-// depth field today; this constant matches Python's effective depth=1
-// contract (canonical_store.py joins one level only). Raising it is a
-// behaviour change — track via EPIC #407 before flipping.
+// depth field today; the effective depth=1 contract joins one level only.
+// Raising it is a behaviour change — track via EPIC #407 before flipping.
 const MaxConnectedDepth = 1
 
 // MaxConnectedResultLimit caps the per-call result size. The Python
@@ -64,8 +59,7 @@ const MaxConnectedDepth = 1
 // Limits ≤ 0 coerce to defaultConnectedLimit.
 const MaxConnectedResultLimit = 1000
 
-// defaultConnectedLimit mirrors the Python limit-or-100 default at
-// grpc_server.py:1726.
+// defaultConnectedLimit is the limit-or-100 default for connected-node queries.
 const defaultConnectedLimit = 100
 
 // GetConnectedNodes implements entdb.v1.EntDBService/GetConnectedNodes.
@@ -126,8 +120,7 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 	resolver := acl.NewResolver(nil)
 	filter := acl.NewFilter(resolver, storeVisibilityAdapter{s: s.store})
 
-	// Source gate: if the actor cannot read the source node, return
-	// empty. Mirrors canonical_store.py:3291-3293.
+	// Source gate: if the actor cannot read the source node, return empty.
 	if !aclActor.IsZero() && !aclActor.IsSystem() {
 		visibleSrc, err := filter.FilterReadable(ctx, tenantID, aclActor, []string{req.GetNodeId()})
 		if err != nil {
@@ -227,11 +220,10 @@ func (s *Server) bfsConnected(
 			break
 		}
 
-		// Per-step ACL filter. System actor bypasses (matches
-		// canonical_store.py:3281-3289). For zero actor (uncommon —
-		// usually the auth interceptor fills one in) we also bypass to
-		// preserve the Python "no auth context, no filter" fallback used
-		// by the Applier replay path.
+		// Per-step ACL filter. System actor bypasses. For zero actor
+		// (uncommon — usually the auth interceptor fills one in) we also
+		// bypass to preserve the "no auth context, no filter" fallback
+		// used by the Applier replay path.
 		var allowed []string
 		if systemBypass || aclActor.IsZero() {
 			allowed = nextIDs
@@ -258,9 +250,8 @@ func (s *Server) bfsConnected(
 			continue
 		}
 
-		// Materialise the allowed node rows ordered by created_at DESC
-		// to match the Python contract (canonical_store.py:3328, 3358,
-		// 3405). GetNodes itself does not order; we sort post-fetch.
+		// Materialise the allowed node rows ordered by created_at DESC.
+		// GetNodes itself does not order; we sort post-fetch.
 		nodes, _, err := s.store.GetNodes(ctx, tenantID, allowed)
 		if err != nil {
 			return nil, err
@@ -289,8 +280,7 @@ func (s *Server) bfsConnected(
 }
 
 // sortNodesByCreatedAtDesc orders a node slice by created_at DESC,
-// stable on (created_at, node_id). Mirrors the ORDER BY clause Python
-// uses on the connected-nodes SQL.
+// stable on (created_at, node_id).
 func sortNodesByCreatedAtDesc(nodes []*store.Node) {
 	// In-place insertion sort: result sets here are bounded by the BFS
 	// frontier size (typically small; the limit ceiling is 1000). Avoids

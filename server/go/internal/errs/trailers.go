@@ -1,15 +1,14 @@
 // Trailer helpers for the Go gRPC server.
 //
-// Spec: docs/go-port/shared/error-mapping.md "Detail trailers". The Python
-// server attaches trailing metadata in two places only:
+// Spec: docs/go-port/shared/error-mapping.md "Detail trailers". The server
+// attaches trailing metadata in two places only:
 //
-//   - entdb-redirect-node on UNAVAILABLE (api/grpc_server.py:387-389)
-//   - retry-after on RESOURCE_EXHAUSTED (auth/quota_interceptor.py:233)
+//   - entdb-redirect-node on UNAVAILABLE
+//   - retry-after on RESOURCE_EXHAUSTED (from the quota interceptor)
 //
 // Order matters: trailers MUST be set BEFORE the handler returns the status
 // error, otherwise grpc-go flushes trailers along with the closing status
-// and the late call is a no-op (same constraint Python documents at
-// api/grpc_server.py:390).
+// and the late call is a no-op.
 //
 // Both helpers wrap grpc.SetTrailer, which writes to the call's trailer set
 // rather than mutating the response -- so the return idiom is
@@ -40,15 +39,13 @@ import (
 // form so contract tests can compare bytes directly.
 const (
 	// TrailerRedirectNode carries the owning node id the SDK should retry
-	// against on a sharding miss. Python source:
-	// api/grpc_server.py:387-389. Always paired with codes.Unavailable.
+	// against on a sharding miss. Always paired with codes.Unavailable.
 	TrailerRedirectNode = "entdb-redirect-node"
 
 	// TrailerRetryAfter carries the integer-second delay before the SDK
-	// should retry. Python source: auth/quota_interceptor.py:233. Always
-	// paired with codes.ResourceExhausted from the quota interceptor.
-	// Format: decimal integer seconds, no unit suffix (matches HTTP
-	// Retry-After "delta-seconds" form, RFC 7231 §7.1.3).
+	// should retry. Always paired with codes.ResourceExhausted from the
+	// quota interceptor. Format: decimal integer seconds, no unit suffix
+	// (matches HTTP Retry-After "delta-seconds" form, RFC 7231 §7.1.3).
 	TrailerRetryAfter = "retry-after"
 )
 

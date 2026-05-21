@@ -8,10 +8,8 @@ import (
 )
 
 // UpdateAppliedOffset records that the applier has applied at least
-// `offset` for (tenant, topic, partition). Mirrors the spirit of
-// canonical_store.py:update_applied_offset (463) — though the Python
-// version only tracks one stream_pos per tenant, the Go port persists
-// (topic, partition) to support multi-partition WAL deployments.
+// `offset` for (tenant, topic, partition). Persists (topic, partition)
+// to support multi-partition WAL deployments.
 //
 // The persisted value is what survives restarts; the in-memory tracker
 // (used by WaitForOffset) is updated atomically alongside.
@@ -102,9 +100,7 @@ func (s *CanonicalStore) UpdateAppliedOffsetTx(ctx context.Context, b *BatchTxn,
 }
 
 // GetAppliedOffset returns the persisted offset for (tenant, topic,
-// partition), or 0 + nil if no row exists. Mirrors
-// canonical_store.py:get_applied_offset (514) extended with topic /
-// partition.
+// partition), or 0 + nil if no row exists.
 func (s *CanonicalStore) GetAppliedOffset(ctx context.Context, tenantID, topic string, partition int32) (int64, error) {
 	db, err := s.readDB(tenantID)
 	if err != nil {
@@ -127,7 +123,6 @@ func (s *CanonicalStore) GetAppliedOffset(ctx context.Context, tenantID, topic s
 
 // WaitForOffset blocks until the in-memory applied offset for tenantID
 // reaches at least targetOffset, or ctx is done, or Close is called.
-// Mirrors canonical_store.py:wait_for_offset (478).
 //
 // Implementation is a sync.Cond watcher: each successful Update*
 // broadcasts on the cond and we re-check the predicate. ctx

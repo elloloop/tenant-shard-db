@@ -60,10 +60,9 @@ func userToProto(u *globalstore.User) *pb.UserInfo {
 
 // lookupMemberRole returns the role string for (tenantID, userID) or
 // "" if no membership row exists. Empty userID short-circuits to ""
-// so callers don't have to guard. O(N) in the tenant's member count
-// to stay in lock-step with the Python _get_member_role implementation
-// (grpc_server.py:2290-2296); a dedicated MemberRole helper in
-// globalstore is tracked as a follow-up in the port spec.
+// so callers don't have to guard. O(N) in the tenant's member count;
+// a dedicated MemberRole helper in globalstore is tracked as a
+// follow-up in the port spec.
 //
 // Errors from the globalstore are returned raw — call sites decide
 // how to wrap them (e.g. as codes.Internal). This matches the
@@ -94,16 +93,14 @@ type readRole int
 
 const (
 	// roleLocal is the back-compat path when no global_store is wired.
-	// Skips all membership checks; matches Python's
-	// `if self.global_store is None: return "local"` (`:570-571`).
+	// Skips all membership checks.
 	roleLocal readRole = iota
 	// roleMember means the caller is either a tenant member or a
-	// system / admin actor. Same as Python `"member"` (`:582-589`).
+	// system / admin actor.
 	roleMember
 	// roleCrossTenant means the caller is not a member but has at
 	// least one node_access row in the tenant. The handler must then
-	// re-check the specific node_id post-lookup. Same as Python
-	// `"cross_tenant"` (`:597-617`).
+	// re-check the specific node_id post-lookup.
 	roleCrossTenant
 )
 
@@ -167,13 +164,11 @@ func (s *Server) checkCrossTenantRead(ctx context.Context, tenantID string, a au
 
 // edgeToProto translates a store.Edge into its wire shape. PropsJSON
 // is stored as a JSON-encoded map keyed by field IDs (CLAUDE.md
-// invariant 6); we round-trip through map[string]any -> structpb so
-// the wire `props` mirrors Python's `_dict_to_struct` output.
+// invariant 6); we round-trip through map[string]any -> structpb.
 //
 // Defensive shape: an empty / invalid props_json lowers to an empty
 // Struct (never nil) so SDK consumers can rely on `edge.props.fields`
-// being addressable without a nil check. Matches Python's
-// `_dict_to_struct` zero-value behaviour at grpc_server.py:166.
+// being addressable without a nil check.
 func edgeToProto(e *store.Edge) *pb.Edge {
 	return &pb.Edge{
 		TenantId:   e.TenantID,
@@ -396,9 +391,8 @@ func (s *Server) aclCheck(ctx context.Context, req acl.CheckRequest) error {
 // key for a WAL Append. The producer's dedupe identity is
 // (topic, key, idempotency_key); a fresh key per RPC means every
 // distinct WAL-writing invocation lands a distinct record even when
-// the natural (topic, key) pair repeats. Mirrors the
-// uuid.uuid4().hex pattern Python uses at grpc_server.py:797 and
-// elsewhere — only uniqueness is contractually pinned.
+// the natural (topic, key) pair repeats. Only uniqueness is
+// contractually pinned.
 //
 // Consolidated from three duplicates
 // (remove_group_member.go, set_legal_hold.go, transfer_ownership.go).

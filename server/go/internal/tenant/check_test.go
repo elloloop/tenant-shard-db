@@ -1,6 +1,5 @@
-// Tests for the tenant.CheckTenant gate. The four cases in
-// docs/go-port/shared/error-mapping.md mirror the Python `_check_tenant`
-// behaviour at api/grpc_server.py:362.
+// Tests for the tenant.CheckTenant gate. The four cases are documented
+// in docs/go-port/shared/error-mapping.md.
 //
 // The trailer-attachment case is exercised through an in-memory
 // grpc.Server (same harness shape as
@@ -125,8 +124,7 @@ func TestCheckTenant_ShardingMiss(t *testing.T) {
 
 // TestCheckTenant_ShardingMiss_NoOwner: when the sharding registry has
 // no owner mapping, the redirect trailer is omitted but the status
-// remains UNAVAILABLE (the SDK simply can't redirect — Python behaves
-// the same way at api/grpc_server.py:378).
+// remains UNAVAILABLE (the SDK simply can't redirect).
 func TestCheckTenant_ShardingMiss_NoOwner(t *testing.T) {
 	gs := newStore(t)
 	if _, err := gs.CreateTenant(context.Background(), "acme", "Acme", "us-east-1"); err != nil {

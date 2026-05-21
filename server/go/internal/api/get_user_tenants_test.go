@@ -1,8 +1,7 @@
 // Tests for the GetUserTenants handler. Behavioural parity is
-// pinned by tests/python/integration/test_grpc_contract.py:500-510 and
-// tests/python/unit/test_tenant_registry.py:557-582; this file covers
-// every branch the Python handler has after the validation gate plus
-// the silent-swallow degradation path.
+// pinned by tests/python/integration/test_grpc_contract.py:500-510;
+// this file covers every branch the handler has after the validation
+// gate plus the silent-swallow degradation path.
 
 package api_test
 
@@ -20,8 +19,7 @@ import (
 
 // TestGetUserTenants_ZeroMemberships pins the empty-list happy path:
 // a known user with no memberships returns OK and an empty (but
-// non-nil) Memberships slice. Mirrors Python's
-// `global_store.get_user_tenants(...)` returning [] (global_store.py:622-628).
+// non-nil) Memberships slice.
 func TestGetUserTenants_ZeroMemberships(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -86,9 +84,8 @@ func TestGetUserTenants_OneMembership(t *testing.T) {
 	}
 }
 
-// TestGetUserTenants_MultipleMemberships pins the multi-tenant case
-// from test_tenant_registry.py:557-582: alice in two tenants, both
-// must be returned.
+// TestGetUserTenants_MultipleMemberships pins the multi-tenant case:
+// alice in two tenants, both must be returned.
 func TestGetUserTenants_MultipleMemberships(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -122,8 +119,7 @@ func TestGetUserTenants_MultipleMemberships(t *testing.T) {
 }
 
 // TestGetUserTenants_EmptyActor: empty actor string -> INVALID_ARGUMENT.
-// Mirrors grpc_server.py:2586-2587 and is the contract pin from
-// test_grpc_contract.py:506-510.
+// Contract pin from test_grpc_contract.py:506-510.
 func TestGetUserTenants_EmptyActor(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -142,9 +138,9 @@ func TestGetUserTenants_EmptyActor(t *testing.T) {
 }
 
 // TestGetUserTenants_EmptyUserID: empty user_id -> INVALID_ARGUMENT.
-// Pinned by grpc_server.py:2588-2589. The Python contract suite does
-// not currently exercise this branch through gRPC; the spec calls out
-// the gap and instructs the Go port to lock it down.
+// The contract suite does not currently exercise this branch through
+// gRPC; the spec calls out the gap and instructs the Go port to lock
+// it down.
 func TestGetUserTenants_EmptyUserID(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -164,7 +160,6 @@ func TestGetUserTenants_EmptyUserID(t *testing.T) {
 
 // TestGetUserTenants_NoGlobalStore: when the server has no globalstore
 // wired, the handler returns UNIMPLEMENTED with the canonical message.
-// Mirrors grpc_server.py:2580-2584.
 func TestGetUserTenants_NoGlobalStore(t *testing.T) {
 	t.Parallel()
 	srv := api.New() // no WithGlobalStore
@@ -186,7 +181,6 @@ func TestGetUserTenants_NoGlobalStore(t *testing.T) {
 // query is caught, logged, and collapsed to OK + memberships=[]. We
 // trigger the error by closing the underlying SQLite handle out from
 // under the running query (a closed *sql.DB returns ErrConnDone).
-// Mirrors grpc_server.py:2596-2599.
 func TestGetUserTenants_InternalErrorReturnsEmptyOK(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)

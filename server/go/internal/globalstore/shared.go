@@ -13,8 +13,7 @@ import (
 
 // AddShared upserts a (user_id, source_tenant, node_id) row with the
 // given permission. Uses INSERT OR REPLACE so re-sharing with a new
-// permission level just updates the row. Mirrors `_sync_add_shared`
-// (global_store.py:683).
+// permission level just updates the row.
 func (g *GlobalStore) AddShared(ctx context.Context, userID, sourceTenant, nodeID, permission string) error {
 	_, err := g.db.ExecContext(ctx,
 		`INSERT OR REPLACE INTO shared_index
@@ -47,8 +46,7 @@ func (g *GlobalStore) RemoveShared(ctx context.Context, userID, sourceTenant, no
 }
 
 // ListSharedToUser returns all shared_index rows for a grantee, newest
-// first. Maps to the Python `get_shared_with_me` (global_store.py:728).
-// limit <= 0 -> unlimited (SQLite -1).
+// first. limit <= 0 -> unlimited (SQLite -1).
 func (g *GlobalStore) ListSharedToUser(ctx context.Context, userID string, limit, offset int) ([]*SharedEntry, error) {
 	if limit <= 0 {
 		limit = -1
@@ -67,8 +65,7 @@ func (g *GlobalStore) ListSharedToUser(ctx context.Context, userID string, limit
 }
 
 // ListSharedFromNode returns all shared_index rows for a (source_tenant,
-// node_id), newest first. Maps to the Python
-// `get_shared_entries_for_node` (global_store.py:786).
+// node_id), newest first.
 func (g *GlobalStore) ListSharedFromNode(ctx context.Context, sourceTenant, nodeID string) ([]*SharedEntry, error) {
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT user_id, source_tenant, node_id, permission, shared_at
@@ -85,8 +82,7 @@ func (g *GlobalStore) ListSharedFromNode(ctx context.Context, sourceTenant, node
 
 // CleanupStaleShared deletes every shared_index row referring to a
 // (source_tenant, node_id) tuple. Called from the Applier when the
-// underlying node is deleted. Returns the row count removed. Mirrors
-// `_sync_cleanup_stale_shared` (global_store.py:766).
+// underlying node is deleted. Returns the row count removed.
 func (g *GlobalStore) CleanupStaleShared(ctx context.Context, sourceTenant, nodeID string) (int64, error) {
 	res, err := g.db.ExecContext(ctx,
 		`DELETE FROM shared_index WHERE source_tenant = ? AND node_id = ?`,
@@ -103,8 +99,7 @@ func (g *GlobalStore) CleanupStaleShared(ctx context.Context, sourceTenant, node
 }
 
 // RemoveAllSharedForUser deletes every shared_index row whose grantee
-// matches userID. Used by GDPR account deletion. Mirrors
-// `_sync_remove_all_shared_for_user` (global_store.py:744).
+// matches userID. Used by GDPR account deletion.
 func (g *GlobalStore) RemoveAllSharedForUser(ctx context.Context, userID string) (int64, error) {
 	res, err := g.db.ExecContext(ctx,
 		`DELETE FROM shared_index WHERE user_id = ?`,
@@ -143,8 +138,7 @@ func scanSharedRows(rows interface {
 
 // RevokeUserAccess deletes the (tenant_id, user_id) membership AND
 // every shared_index row where the user is the grantee within that
-// tenant, in a single transaction. Mirrors `_sync_revoke_user_access`
-// (global_store.py:1079).
+// tenant, in a single transaction.
 func (g *GlobalStore) RevokeUserAccess(ctx context.Context, tenantID, userID string) (*RevokeResult, error) {
 	tx, err := g.db.BeginTx(ctx, nil)
 	if err != nil {

@@ -2,7 +2,7 @@
 // Spec: docs/go-port/rpcs/SearchNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:148 (rpc), :1124-1136
-// (messages). Reference Python:
+// (messages).
 //
 // Semantics:
 //
@@ -15,7 +15,7 @@
 //     UNTRUSTED — the interceptor-populated Identity wins. No pre-FTS
 //     authz: anyone whose tenant gate passes can MATCH against the FTS
 //     index. The privacy boundary is the per-row ACL post-filter, not a
-//     coarse RPC-level check (parity with grpc_server.py:1146-1192).
+//     coarse RPC-level check.
 //   - ACL post-filter is applied ONLY when the actor is classified
 //     "cross_tenant" (i.e. not a tenant member, not a system identity).
 //     In-tenant members see the unfiltered FTS result set — same as
@@ -24,22 +24,19 @@
 //     query -> searchable lookup -> SQL -> ACL trim -> proto convert.
 //     Swapping any two breaks at least one contract test.
 //
-// Error contract (mirrors grpc_server.py:1149-1158 and the swallow at
-// :1210-1213):
+// Error contract:
 //
 //   - tenant gate fails -> propagated (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND).
 //   - empty query (after Trim) -> codes.InvalidArgument "query must not be empty".
 //   - len(query) > 1000 -> codes.InvalidArgument "query must be under 1000 characters".
 //   - type with no searchable -> codes.OK with nodes: [] (no SQL).
-//   - FTS5 / SQLite errors -> codes.OK with nodes: [] (Python "blanket
-//     except Exception" parity, see spec lines 63-66). The Go port
-//     preserves this swallow-to-empty for v1; flipping to INTERNAL is a
-//     future contract-test update, not this PR.
+//   - FTS5 / SQLite errors -> codes.OK with nodes: [] (swallow-to-empty,
+//     see spec lines 63-66). The Go port preserves this for v1; flipping
+//     to INTERNAL is a future contract-test update, not this PR.
 //
 // Payload egress: Node.payload is emitted as a *structpb.Struct whose
 // keys are the field-id strings ("1","2"...). Translation to field
-// names is the SDK's job (CLAUDE.md invariant 6 + spec line 30 +
-// tests/python/unit/test_payload_wire_format.py:14).
+// names is the SDK's job (CLAUDE.md invariant 6 + spec line 30).
 
 package api
 
@@ -61,7 +58,7 @@ import (
 
 const grpcMethodSearchNodes = "SearchNodes"
 
-// maxQueryLen mirrors the Python guard at grpc_server.py:1153.
+// maxQueryLen caps the query length before issuing SQL.
 const maxQueryLen = 1000
 
 // SearchNodes implements entdb.v1.EntDBService/SearchNodes.
@@ -75,7 +72,7 @@ func (s *Server) SearchNodes(
 	}()
 
 	// 1. Tenant gate (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND /
-	//    InvalidArgument for empty tenant_id). Mirrors grpc_server.py:1146.
+	//    InvalidArgument for empty tenant_id).
 	tenantID := req.GetTenantId()
 	if err := s.checkTenant(ctx, tenantID); err != nil {
 		outcome = "error"
@@ -83,8 +80,7 @@ func (s *Server) SearchNodes(
 	}
 
 	// 2. Validate query before touching storage. INVALID_ARGUMENT is
-	//    pinned by tests/python/integration/test_grpc_contract.py:627-632
-	//    and tests/python/unit/test_fts_search.py:537-554.
+	//    pinned by tests/python/integration/test_grpc_contract.py:627-632.
 	q := strings.TrimSpace(req.GetQuery())
 	if q == "" {
 		outcome = "error"
@@ -107,11 +103,10 @@ func (s *Server) SearchNodes(
 		return &pb.SearchNodesResponse{Nodes: []*pb.Node{}}, nil
 	}
 
-	// 4. Run the FTS5 JOIN. Lazy-CREATE happens inside store.SearchNodes
-	//    (mirrors canonical_store.py:_ensure_fts_table at 1993).
-	//    PARITY: any error from the FTS layer (malformed FTS5 syntax,
-	//    SQLite I/O, etc.) is swallowed and reported as an empty result
-	//    with codes.OK. See spec lines 63-66 + grpc_server.py:1210-1213.
+	// 4. Run the FTS5 JOIN. Lazy-CREATE happens inside store.SearchNodes.
+	//    Any error from the FTS layer (malformed FTS5 syntax, SQLite I/O,
+	//    etc.) is swallowed and reported as an empty result with codes.OK.
+	//    See spec lines 63-66.
 	if s.store == nil {
 		// No store wired — same contract as the Python "no canonical
 		// store" path: empty result, codes.OK.
@@ -160,17 +155,11 @@ func (s *Server) SearchNodes(
 }
 
 // isCrossTenantReader returns true when trusted is NOT a member of
-// tenantID and is NOT a system/admin identity. Mirrors the
-// "cross_tenant" branch of grpc_server.py:_check_cross_tenant_read
-// (561-618). The Python helper raises PERMISSION_DENIED for actors
-// without any node_access; that error bubbles up into the SearchNodes
-// blanket-except and becomes an empty response — so the practical
-// effect for an unrelated cross-tenant actor is the same as for a
-// cross-tenant actor with no matching grants. Either way the ACL
-// post-filter drops everything they cannot see.
+// tenantID and is NOT a system/admin identity. A cross-tenant actor
+// without any node_access grants will have the ACL post-filter drop
+// everything they cannot see, producing an empty result set.
 //
-// When global_store is not configured, the Python helper returns
-// "local" (no filter). We mirror that: nil global -> false.
+// When global_store is not configured, returns false (no filter).
 func (s *Server) isCrossTenantReader(ctx context.Context, tenantID string, trusted auth.Actor) bool {
 	if s.global == nil {
 		return false

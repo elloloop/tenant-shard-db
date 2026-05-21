@@ -4,9 +4,7 @@ package apply
 
 import "context"
 
-// fanout runs best-effort post-commit notifications. Mirrors
-// applier.py:_fanout_node (1615-1668) and the broader
-// "notifications + shared_index" hooks at applier.py:1361-1368.
+// fanout runs best-effort post-commit notifications.
 //
 // Per docs/go-port/shared/applier.md "Open questions / risks" item 8,
 // fanout intentionally runs OUTSIDE the per-tenant transaction. A crash

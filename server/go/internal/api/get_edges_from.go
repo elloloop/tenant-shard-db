@@ -15,30 +15,23 @@
 //     actor is NOT used for any authorization decision today — see the
 //     ACL parity gap below.
 //   - PARITY GAP (deliberate, pinned): no per-destination ACL filter.
-//     Python's handler does NOT call the visibility check before
-//     fan-out, so callers can enumerate `to_node_id`s they would not
-//     have READ on through GetNode. The privilege-escalation test at
-//     tests/python/integration/test_privilege_escalation.py:421-447
-//     pins this weaker property; we match byte-for-byte. Tracked as a
-//     follow-up: tightening this requires a contract change because
-//     existing SDK clients depend on the full edge fan-out shape.
+//     The handler does NOT call the visibility check before fan-out, so
+//     callers can enumerate `to_node_id`s they would not have READ on
+//     through GetNode. Tracked as a follow-up: tightening this requires
+//     a contract change because existing SDK clients depend on the full
+//     edge fan-out shape.
 //   - `offset` is declared on GetEdgesRequest (proto field 5) but the
-//     Python handler ignores it; we ignore it too. Switching to honour
-//     it must update the contract in lock-step.
-//   - `edge_type_id == 0` means "no filter" (parity with the falsy
-//     check at grpc_server.py:1393).
+//     handler ignores it; switching to honour it must update the
+//     contract in lock-step.
+//   - `edge_type_id == 0` means "no filter".
 //   - `limit <= 0` defaults to 100. We pass 0 (no limit) to the store
-//     so the slice + has_more accounting happens in this handler — the
-//     Python side does the same in-process slice
-//     (grpc_server.py:1410-1414). NOT in SQL: ordering is not
-//     contractually pinned and adding ORDER BY here would diverge from
-//     Python.
+//     so the slice + has_more accounting happens in this handler. NOT
+//     in SQL: ordering is not contractually pinned.
 //   - Side effects: none. No WAL append, no SQLite write, no metric
 //     other than the standard request counter.
 //   - Error contract: any failure below the tenant gate is swallowed
-//     into an empty GetEdgesResponse with codes.OK
-//     (grpc_server.py:1415-1418). The metric outcome is "error" so
-//     swallowed faults don't inflate the ok counter.
+//     into an empty GetEdgesResponse with codes.OK. The metric outcome
+//     is "error" so swallowed faults don't inflate the ok counter.
 
 package api
 
@@ -53,8 +46,8 @@ import (
 
 const grpcMethodGetEdgesFrom = "GetEdgesFrom"
 
-// defaultEdgesLimit mirrors grpc_server.py:1400 where `limit or 100`
-// substitutes 100 for any falsy value (0 / unset / negative).
+// defaultEdgesLimit: `limit or 100` substitutes 100 for any falsy value
+// (0 / unset / negative).
 const defaultEdgesLimit = 100
 
 // GetEdgesFrom implements entdb.v1.EntDBService/GetEdgesFrom. See file
@@ -84,8 +77,7 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	// honour the trusted-actor invariant explicitly.
 	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
 
-	// edge_type_id filter: falsy (== 0) means "no filter" per
-	// grpc_server.py:1393.
+	// edge_type_id filter: falsy (== 0) means "no filter".
 	var edgeTypeFilter *int32
 	if etid := req.GetEdgeTypeId(); etid != 0 {
 		v := etid
@@ -96,7 +88,7 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	// slice + compute has_more here for parity with Python.
 	edges, err := s.store.GetEdgesFrom(ctx, tenantID, req.GetNodeId(), edgeTypeFilter, 0)
 	if err != nil {
-		// Mirror Python's bare `except` swallow at grpc_server.py:1415.
+		// Swallow store errors — return empty response with codes.OK.
 		outcome = "error"
 		return &pb.GetEdgesResponse{Edges: []*pb.Edge{}}, nil
 	}

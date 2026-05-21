@@ -1,12 +1,8 @@
 // Tests for the ListSharedWithMe RPC (W2 — EPIC #407).
 //
 // The behaviours pinned here mirror the contract in
-// docs/go-port/rpcs/ListSharedWithMe.md and the Python reference
-// handler.
-// The Python contract tests are at:
-//   - tests/python/unit/test_acl_v2.py:455-481 (per-tenant index)
-//   - tests/python/unit/test_cross_tenant_read.py:309-356 (cross-tenant)
-//   - tests/python/unit/test_cross_tenant_read.py:362-400 (group share)
+// docs/go-port/rpcs/ListSharedWithMe.md.
+// Contract tests are at:
 //   - tests/python/integration/test_grpc_contract.py:339-350 (smoke)
 //
 // We deliberately seed via the typed store / globalstore helpers
@@ -76,7 +72,7 @@ func seedSharedNode(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, ow
 
 // seedSharedNodeExpired creates the same shape as seedSharedNode but
 // with an `expires_at` already in the past. Used to pin the "expired
-// grants are filtered" assertion (canonical_store.py:3460-3461).
+// grants are filtered" assertion.
 func seedSharedNodeExpired(t *testing.T, cs *store.CanonicalStore, tenantID, nodeID, owner, grantee, perm string, expiresAt int64) {
 	t.Helper()
 	ctx := context.Background()
@@ -144,8 +140,6 @@ func TestListSharedWithMe_Empty(t *testing.T) {
 
 // TestListSharedWithMe_SingleSameTenant: a caller with exactly one
 // non-expired, non-deny grant in the same tenant sees that one node.
-// Mirrors test_acl_v2.py:455-481 (per-tenant index / shared-nodes
-// union).
 func TestListSharedWithMe_SingleSameTenant(t *testing.T) {
 	t.Parallel()
 	cs := newCanonicalStoreForTest(t)
@@ -168,10 +162,8 @@ func TestListSharedWithMe_SingleSameTenant(t *testing.T) {
 }
 
 // TestListSharedWithMe_MultipleSameTenant: several non-deny grants
-// for the caller in one tenant all surface. Order is granted_at DESC
-// per canonical_store.py:3462; we don't pin order (parity-bug-
-// compatible cross-tenant merge breaks it later anyway), only the
-// set membership.
+// for the caller in one tenant all surface. We don't pin order (the
+// cross-tenant merge can affect it anyway), only set membership.
 func TestListSharedWithMe_MultipleSameTenant(t *testing.T) {
 	t.Parallel()
 	cs := newCanonicalStoreForTest(t)
@@ -206,7 +198,7 @@ func TestListSharedWithMe_MultipleSameTenant(t *testing.T) {
 // TestListSharedWithMe_MultipleTenantsCrossTenant: shares from
 // multiple foreign tenants surface via the global shared_index, are
 // resolved through cross-tenant store.GetNode, and union with same-
-// tenant grants. Pinned by test_cross_tenant_read.py:309-356.
+// tenant grants.
 func TestListSharedWithMe_MultipleTenantsCrossTenant(t *testing.T) {
 	t.Parallel()
 	cs := newCanonicalStoreForTest(t)
@@ -282,9 +274,8 @@ func TestListSharedWithMe_MultipleTenantsCrossTenant(t *testing.T) {
 }
 
 // TestListSharedWithMe_ExpiredGrantsFiltered: a same-tenant grant
-// whose expires_at is in the past must NOT surface. Pinned by
-// canonical_store.py:3460-3461 (the per-tenant query filters
-// `expires_at IS NULL OR expires_at > now()`).
+// whose expires_at is in the past must NOT surface. The per-tenant
+// query filters `expires_at IS NULL OR expires_at > now()`.
 //
 // Note: cross-tenant `shared_index` has NO expires_at column today
 // (spec "Open questions / risks" #3), so this case only covers the

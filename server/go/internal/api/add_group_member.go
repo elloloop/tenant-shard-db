@@ -71,9 +71,8 @@ import (
 )
 
 // addGroupMemberWALTopic is the per-tenant WAL topic the handler appends
-// to. Mirrors the default `topic = "entdb-wal"` at
-// grpc_server.py:250 — the entire EntDB stream lives on a single topic
-// today; partitioning is by tenant_id (the Append key).
+// to. The entire EntDB stream lives on a single topic today;
+// partitioning is by tenant_id (the Append key).
 const addGroupMemberWALTopic = "entdb-wal"
 
 // AddGroupMember adds (or re-adds, idempotently) a member to a group.

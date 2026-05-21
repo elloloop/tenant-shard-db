@@ -14,9 +14,7 @@
 //   - Type filter: edge_type_id != 0 narrows the result set;
 //                     edge_type_id == 0 returns every type.
 //   - Internal error: store fault (tenant DB never opened) collapses
-//                     to an empty response with codes.OK — mirrors
-//                     Python's bare-except swallow at
-//                     grpc_server.py:1415-1418.
+//                     to an empty response with codes.OK.
 //
 // The shared globalstore helper lives in helpers_external_test.go;
 // do NOT redeclare newGlobalStore here.
@@ -141,8 +139,7 @@ func TestGetEdgesFrom_SingleEdgeRoundTrip(t *testing.T) {
 // TestGetEdgesFrom_MultipleEdgesAllReturned pins the no-ACL-filter
 // parity gap. The handler returns every stored outgoing edge,
 // including destinations the caller has no READ on. Tightening this
-// requires a contract change — see GetEdgesFrom.md §"Auth" and the
-// privilege-escalation test at test_privilege_escalation.py:421-447.
+// requires a contract change — see GetEdgesFrom.md §"Auth".
 func TestGetEdgesFrom_MultipleEdgesAllReturned(t *testing.T) {
 	t.Parallel()
 	srv, cs := newEdgesServer(t, "tenant-multi")
@@ -244,8 +241,8 @@ func TestGetEdgesFrom_EdgeTypeFilter(t *testing.T) {
 
 // TestGetEdgesFrom_StoreErrorSwallowedToEmpty: tenant gate passes but
 // the canonicalstore call fails (here: tenant DB not opened on the
-// store handle). Python collapses that to an empty response with
-// codes.OK (grpc_server.py:1415-1418); we must do the same.
+// store handle). The handler collapses that to an empty response with
+// codes.OK.
 func TestGetEdgesFrom_StoreErrorSwallowedToEmpty(t *testing.T) {
 	t.Parallel()
 

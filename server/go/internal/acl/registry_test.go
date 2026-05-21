@@ -8,8 +8,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/acl"
 )
 
-// TestRequiredForOpDefaults pins the DEFAULT_OP_REQUIREMENTS table at
-// capability_registry.py:61-76.
+// TestRequiredForOpDefaults pins the DEFAULT_OP_REQUIREMENTS table.
 func TestRequiredForOpDefaults(t *testing.T) {
 	r := acl.NewRegistry()
 	cases := []struct {

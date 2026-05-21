@@ -8,21 +8,20 @@ import (
 )
 
 // ErrFrozen is returned when a mutation is attempted on a frozen
-// registry. Mirrors Python schema/registry.py RegistryFrozenError. The
-// errs package maps this to FAILED_PRECONDITION at the gRPC boundary.
+// registry. The errs package maps this to FAILED_PRECONDITION at the
+// gRPC boundary.
 var ErrFrozen = errors.New("schema: registry is frozen")
 
 // ErrDuplicateRegistration is returned by RegisterNode/RegisterEdge
 // when the type_id or name collides with an already-registered type.
-// Mirrors Python DuplicateRegistrationError.
 var ErrDuplicateRegistration = errors.New("schema: duplicate registration")
 
 // Registry is the process-wide singleton populated at boot, frozen
-// before serving. Mirrors Python SchemaRegistry.
+// before serving.
 //
 // After Freeze() returns, all read methods are lock-free — the
 // applier and gRPC handlers hold a *Registry reference without
-// further synchronization (mirrors registry.py:69-72).
+// further synchronization.
 type Registry struct {
 	mu sync.Mutex // held only during registration / freeze
 
@@ -139,7 +138,7 @@ func (r *Registry) RegisterEdge(et *EdgeTypeDef) error {
 // Freeze computes the deterministic fingerprint and flips the frozen
 // flag atomically. Subsequent RegisterNode/RegisterEdge calls return
 // ErrFrozen. Calling Freeze twice returns ErrFrozen on the second
-// call (mirrors Python SchemaRegistry.freeze).
+// call.
 //
 // After Freeze returns, the per-type field name<->id maps are
 // pre-built so translate.FieldIDByName / translate.FieldNameByID
@@ -177,8 +176,7 @@ func (r *Registry) Freeze() (string, error) {
 // NodeType returns the node type by id (int / int32) or name (string).
 // Returns nil if not found. Lock-free after Freeze.
 //
-// Accepting an `any` mirrors Python's get_node_type(int|str). Callers
-// that already have a typed argument should prefer the explicit
+// Callers that already have a typed argument should prefer the explicit
 // helpers below for compile-time safety.
 func (r *Registry) NodeType(idOrName any) *NodeTypeDef {
 	switch v := idOrName.(type) {
@@ -256,8 +254,7 @@ func (r *Registry) EdgeTypes() []*EdgeTypeDef {
 }
 
 // UniqueFieldIDs returns ids of fields declared unique on the node
-// type. Returns nil for unknown types (mirrors Python's soft
-// fall-through). Excludes deprecated fields.
+// type. Returns nil for unknown types. Excludes deprecated fields.
 func (r *Registry) UniqueFieldIDs(typeID int32) []uint32 {
 	n := r.nodes[typeID]
 	if n == nil {
@@ -286,8 +283,7 @@ func (r *Registry) CompositeUnique(typeID int32) []CompositeUniqueDef {
 }
 
 // IndexedFieldIDs returns ids of fields declared indexed but not
-// unique (unique fields already get a unique expression index). Mirrors
-// Python registry.get_indexed_field_ids.
+// unique (unique fields already get a unique expression index).
 func (r *Registry) IndexedFieldIDs(typeID int32) []uint32 {
 	n := r.nodes[typeID]
 	if n == nil {
@@ -305,8 +301,7 @@ func (r *Registry) IndexedFieldIDs(typeID int32) []uint32 {
 
 // SearchableFieldIDs returns ids of STRING fields declared searchable.
 // Non-string searchable fields are silently excluded (the warning is
-// emitted at registration time by the SDK codegen). Mirrors Python
-// registry.get_searchable_field_ids.
+// emitted at registration time by the SDK codegen).
 func (r *Registry) SearchableFieldIDs(typeID int32) []uint32 {
 	n := r.nodes[typeID]
 	if n == nil {
@@ -340,9 +335,9 @@ func (r *Registry) PIIFields(typeID int32) []string {
 }
 
 // DataPolicyOf returns the data policy for a node type, defaulting to
-// PERSONAL when unset (mirrors Python registry.get_data_policy).
-// Returns the zero value for unknown types — callers that need a
-// distinguished error should check NodeTypeByID first.
+// PERSONAL when unset. Returns the zero value for unknown types —
+// callers that need a distinguished error should check NodeTypeByID
+// first.
 func (r *Registry) DataPolicyOf(typeID int32) DataPolicy {
 	n := r.nodes[typeID]
 	if n == nil {
@@ -364,10 +359,9 @@ func (r *Registry) SubjectField(typeID int32) string {
 	return *n.SubjectField
 }
 
-// ValidateAll runs the same cross-reference checks as Python
-// registry.validate_all: every edge from_type_id / to_type_id must
-// reference a registered node, and every FieldDef.RefTypeID must point
-// at a registered node.
+// ValidateAll cross-references edge from_type_id / to_type_id against
+// registered nodes, and verifies every FieldDef.RefTypeID points at a
+// registered node.
 func (r *Registry) ValidateAll() []string {
 	var errs []string
 	for _, e := range r.edges {

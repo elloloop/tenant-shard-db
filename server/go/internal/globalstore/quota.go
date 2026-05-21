@@ -23,8 +23,7 @@ import (
 )
 
 // calendarMonthStartMs returns the Unix-millisecond timestamp of the
-// start of the UTC calendar month containing `t`. Mirrors
-// `_calendar_month_start_ms` (global_store.py:83).
+// start of the UTC calendar month containing `t`.
 func calendarMonthStartMs(t time.Time) int64 {
 	t = t.UTC()
 	start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, time.UTC)
@@ -40,8 +39,7 @@ func (g *GlobalStore) nowForUsage() (int64, int64) {
 	return now, calendarMonthStartMs(t)
 }
 
-// SetTenantQuota upserts the tenant_quotas row. Mirrors
-// `_sync_set_quota_config` (global_store.py:1144).
+// SetTenantQuota upserts the tenant_quotas row.
 func (g *GlobalStore) SetTenantQuota(ctx context.Context, q QuotaConfig) (*QuotaConfig, error) {
 	now := g.now()
 	hard := int64(0)
@@ -81,8 +79,7 @@ func (g *GlobalStore) SetTenantQuota(ctx context.Context, q QuotaConfig) (*Quota
 }
 
 // GetTenantQuota returns the row, or (nil, nil) if no config has been
-// set. The Python interceptor treats a missing row as "unlimited"
-// (global_store.py:1196).
+// set. A missing row is treated as "unlimited".
 func (g *GlobalStore) GetTenantQuota(ctx context.Context, tenantID string) (*QuotaConfig, error) {
 	row := g.db.QueryRowContext(ctx,
 		`SELECT tenant_id, max_writes_per_month, hard_enforce,
@@ -115,8 +112,7 @@ func (g *GlobalStore) GetTenantQuota(ctx context.Context, tenantID string) (*Quo
 
 // GetUsage returns the current-period usage row, or a zero-initialized
 // usage with the current calendar-month period_start_ms if no row
-// exists (matches the Python contract at global_store.py:1242 — callers
-// treat missing as "new tenant, unused"). Not persisted.
+// exists (callers treat missing as "new tenant, unused"). Not persisted.
 func (g *GlobalStore) GetUsage(ctx context.Context, tenantID string) (*Usage, error) {
 	row := g.db.QueryRowContext(ctx,
 		`SELECT tenant_id, period_start_ms, writes_count, updated_at
@@ -140,9 +136,8 @@ func (g *GlobalStore) GetUsage(ctx context.Context, tenantID string) (*Usage, er
 }
 
 // IncrementUsage adds `nWrites` to the rolling write counter, with
-// calendar-month rollover folded in. Mirrors `_sync_increment_usage`
-// (global_store.py:1268). nWrites <= 0 is a no-op that returns the
-// current usage (matches the Python guard at line 1269).
+// calendar-month rollover folded in. nWrites <= 0 is a no-op that returns
+// the current usage.
 //
 // Atomicity: this runs in a single transaction, but combined with the
 // pool's MaxOpenConns(1) two callers can't interleave even on the read
@@ -219,8 +214,7 @@ func (g *GlobalStore) IncrementUsage(ctx context.Context, tenantID string, nWrit
 }
 
 // ResetUsage forces a fresh period for a tenant (writes_count=0,
-// period_start_ms=current month). Used by tests and ops. Mirrors
-// `_sync_reset_period` (global_store.py:1314).
+// period_start_ms=current month). Used by tests and ops.
 func (g *GlobalStore) ResetUsage(ctx context.Context, tenantID string) (*Usage, error) {
 	now, periodStart := g.nowForUsage()
 	_, err := g.db.ExecContext(ctx,

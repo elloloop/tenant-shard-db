@@ -9,8 +9,7 @@
 //   - Admin-only. Caller must resolve to a system:* / admin:* trusted
 //     actor via auth.Authoritative. The request.actor field is UNTRUSTED
 //     and is fed in only as the fallback when no interceptor ran (unit
-//     tests). Privilege-escalation pin:
-//     tests/python/integration/test_privilege_escalation.py:321-341.
+//     tests).
 //
 //   - WAL-first global mutation. The handler appends a global
 //     `user_created` op and waits for the applier to insert the
@@ -63,8 +62,7 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 		return nil, errs.Errorf(codes.Unimplemented, "User registry not configured")
 	}
 
-	// Validate actor presence first (matches Python ordering at
-	// grpc_server.py:2113). We do this BEFORE the trusted-actor lookup so
+	// Validate actor presence first, before the trusted-actor lookup, so
 	// callers that forget to set the field get a precise INVALID_ARGUMENT
 	// instead of a confusing PERMISSION_DENIED.
 	if req.GetActor() == "" {

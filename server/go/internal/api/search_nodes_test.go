@@ -9,10 +9,9 @@
 //     codes.OK, Nodes == [that-one], payload Struct id-keyed.
 //  3. Multiple hits with ranking: two indexed nodes match; the tighter
 //     match (more occurrences of the query token) ranks first via
-//     SQLite FTS5 bm25 ascending — see canonical_store.py:2139.
+//     SQLite FTS5 bm25 ascending.
 //  4. ACL filter: a cross-tenant actor (non-member, non-system) sees
-//     only rows whose owner or ACL principal matches them. Mirrors
-//     the cross_tenant branch at grpc_server.py:1179-1192.
+//     only rows whose owner or ACL principal matches them.
 //  5. Malformed query (FTS5 syntax error) -> swallowed by the handler
 //     and returned as codes.OK with Nodes == [], per the spec
 //     "blanket except Exception" carve-out (lines 63-66). PARITY: do
@@ -43,8 +42,7 @@ import (
 
 // searchTypeID is the test node type id used by every SearchNodes test.
 // Field 1 is "title" (searchable string), field 2 is "body" (searchable
-// string). Mirrors the Python test_fts_search.py "Product" type
-// (fields named for clarity; the wire stays id-keyed).
+// string). Fields are named for clarity; the wire stays id-keyed.
 const searchTypeID int32 = 7
 
 // newSearchTestServer wires a fresh CanonicalStore + globalstore +
@@ -236,11 +234,10 @@ func TestSearchNodes_MultipleHitsWithRanking(t *testing.T) {
 
 // TestSearchNodes_ACLFilterAppliedToCrossTenantActor: a cross-tenant
 // actor (non-member, non-system) only sees nodes whose owner or ACL
-// principal matches them. Mirrors grpc_server.py:1179-1192. The spec's
-// in-tenant-member contract — that members see the unfiltered set — is
-// covered implicitly by the other tests: TestSearchNodes_SingleHit's
-// caller "user:alice" is a non-member but owns every seeded row, so
-// the filter is a no-op for those tests.
+// principal matches them. The spec's in-tenant-member contract — that
+// members see the unfiltered set — is covered implicitly by the other
+// tests: TestSearchNodes_SingleHit's caller "user:alice" is a non-member
+// but owns every seeded row, so the filter is a no-op for those tests.
 func TestSearchNodes_ACLFilterAppliedToCrossTenantActor(t *testing.T) {
 	t.Parallel()
 	srv, cs, tenantID := newSearchTestServer(t)
@@ -269,8 +266,7 @@ func TestSearchNodes_ACLFilterAppliedToCrossTenantActor(t *testing.T) {
 }
 
 // TestSearchNodes_EmptyQuery: codes.InvalidArgument "query must not be
-// empty". Pinned by tests/python/integration/test_grpc_contract.py:627-632
-// and tests/python/unit/test_fts_search.py:537-554.
+// empty". Pinned by tests/python/integration/test_grpc_contract.py:627-632.
 func TestSearchNodes_EmptyQuery(t *testing.T) {
 	t.Parallel()
 	srv, _, tenantID := newSearchTestServer(t)
@@ -307,8 +303,7 @@ func TestSearchNodes_EmptyQuery(t *testing.T) {
 }
 
 // TestSearchNodes_QueryTooLong: codes.InvalidArgument when the
-// post-trim query exceeds 1000 characters. Pinned by
-// grpc_server.py:1153-1158.
+// post-trim query exceeds 1000 characters.
 func TestSearchNodes_QueryTooLong(t *testing.T) {
 	t.Parallel()
 	srv, _, tenantID := newSearchTestServer(t)
@@ -328,8 +323,7 @@ func TestSearchNodes_QueryTooLong(t *testing.T) {
 	}
 }
 
-// TestSearchNodes_MalformedFTSQueryReturnsEmpty: the spec calls out a
-// known wart at grpc_server.py:1210-1213 — any error after the
+// TestSearchNodes_MalformedFTSQueryReturnsEmpty: any error after the
 // validation gates is swallowed and the handler returns codes.OK with
 // an empty node list. We pin this for parity; flipping to INTERNAL is
 // a future contract-test update.

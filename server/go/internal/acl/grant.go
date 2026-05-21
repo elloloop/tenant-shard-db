@@ -3,13 +3,11 @@
 package acl
 
 // Grant is the in-Go representation of one row of node_access — an ACL
-// grant for (NodeID, SubjectActor). Mirrors the Python row at
-// canonical_store.py:1103-1115 and 1211-1222 (typed-cap columns).
+// grant for (NodeID, SubjectActor).
 //
 // Both the legacy Permission field and the typed Capability fields are
 // kept; on read the canonical store returns whichever the row has.
-// LegacyToCoreCaps fills the typed fields when the row is legacy-only
-// (mirrors the lazy back-fill at canonical_store.py:3054).
+// LegacyToCoreCaps fills the typed fields when the row is legacy-only.
 type Grant struct {
 	// Subject is the grantee — who the grant applies to.
 	Subject Actor

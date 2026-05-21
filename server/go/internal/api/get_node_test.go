@@ -4,8 +4,7 @@
 //
 //  1. Happy round-trip: an existing node -> Found=true with Node
 //     populated; payload round-trips through the wire as id-keyed
-//     Struct (mirrors test_grpc_contract.py:212-216 and the
-//     payload-wire pin test_payload_wire_format.py:158-189).
+//     Struct (mirrors test_grpc_contract.py:212-216).
 //
 //  2. Missing node -> Found=false with status OK (NOT NOT_FOUND).
 //     Pinned by test_grpc_contract.py:217-222.
@@ -13,12 +12,11 @@
 //  3. Non-member with no per-tenant grants -> PERMISSION_DENIED. The
 //     check fires BEFORE row lookup, so a non-member querying any
 //     node_id (existent or not) sees PERMISSION_DENIED. Pinned by
-//     test_privilege_escalation.py:186-209 + spec "Error contract".
+//     spec "Error contract".
 //
 //  4. Invariant #6: payload on the wire is keyed by stringified
 //     field_id, NOT by field name. Disk and wire BOTH use id keys —
-//     the SDK does name translation. Pinned by
-//     test_payload_wire_format.py:158-189.
+//     the SDK does name translation.
 //
 // The shared globalstore helper lives in helpers_external_test.go;
 // do NOT redeclare newGlobalStore here.
