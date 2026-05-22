@@ -72,8 +72,7 @@ type Options struct {
 
 // CanonicalStore is the per-tenant SQLite materialized view of the WAL.
 // One *sql.DB per tenant_id, lazy-opened on first use, single-writer
-// per tenant (matches the Python parity pattern at canonical_store.py
-// :683-717 + :642).
+// per tenant.
 //
 // Method receivers are value-stable; the struct is safe for concurrent
 // goroutine use. Writers hold the per-tenant write mutex (see

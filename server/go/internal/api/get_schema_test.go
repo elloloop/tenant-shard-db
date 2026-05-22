@@ -1,8 +1,7 @@
 // Tests for the GetSchema RPC. Spec: docs/go-port/rpcs/GetSchema.md.
 //
-// The sole contract pin from the Python test suite
-// (tests/python/integration/test_grpc_contract.py:208) requires either
-// fingerprint != "" or HasField("schema"). The cases below cover both
+// The sole contract pin from tests/python/integration/test_grpc_contract.py:208
+// requires either fingerprint != "" or HasField("schema"). The cases below cover both
 // the empty-registry path (Struct populated, fingerprint empty) and the
 // frozen-registry path (Struct populated AND fingerprint set), plus the
 // optional type_id filter and the degraded swallow-errors path.
@@ -20,8 +19,8 @@ import (
 
 // TestGetSchema_NoRegistry covers Server constructed without
 // WithSchemaRegistry — should return OK with an empty Struct and empty
-// fingerprint, matching Python's behaviour when SchemaRegistry is empty
-// and tenant_id is also empty.
+// fingerprint (same as when the registry is empty and tenant_id is
+// also empty).
 func TestGetSchema_NoRegistry(t *testing.T) {
 	t.Parallel()
 	srv := New()
@@ -184,17 +183,17 @@ func TestGetSchema_PopulatedRegistry(t *testing.T) {
 	}
 
 	// Fingerprint is constant across filtered/unfiltered responses
-	// (the Python handler computes it from the unfiltered registry).
+	// (computed from the unfiltered registry).
 	if resp2.GetFingerprint() != fp || resp3.GetFingerprint() != fp {
 		t.Errorf("fingerprint changed under filter: %q / %q / %q",
 			resp.GetFingerprint(), resp2.GetFingerprint(), resp3.GetFingerprint())
 	}
 }
 
-// TestGetSchema_ContractPin asserts the sole behavioural pin from the
-// Python contract test (test_grpc_contract.py:208): the response
-// satisfies `fingerprint != "" || HasField("schema")` for both the
-// happy path and the degraded empty-registry path.
+// TestGetSchema_ContractPin asserts the sole behavioural pin from
+// test_grpc_contract.py:208: the response satisfies
+// `fingerprint != "" || HasField("schema")` for both the happy path
+// and the degraded empty-registry path.
 func TestGetSchema_ContractPin(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

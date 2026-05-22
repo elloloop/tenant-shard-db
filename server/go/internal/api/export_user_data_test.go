@@ -1,4 +1,4 @@
-// Tests for the ExportUserData RPC (W2 — EPIC #407, GDPR Article 20).
+// Tests for the ExportUserData RPC (GDPR Article 20).
 //
 // Spec: docs/go-port/rpcs/ExportUserData.md.
 //
@@ -140,7 +140,7 @@ func TestExportUserData_Admin_HappyPath(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs), api.WithStore(cs))
 
 	// admin:root is the trusted caller; the wire `actor` is also set to
-	// admin:root for parity with how Python's contract test invokes it.
+	// admin:root for parity with the contract test.
 	resp, err := srv.ExportUserData(withTrustedUser(ctx, "admin:root"), &pb.ExportUserDataRequest{
 		Actor:  "admin:root",
 		UserId: "alice",

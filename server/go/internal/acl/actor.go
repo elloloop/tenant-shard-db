@@ -36,7 +36,6 @@ const (
 )
 
 // String returns the canonical prefix without the trailing colon.
-// Mirrors the prefix strings used by the Python Principal type.
 func (k ActorKind) String() string {
 	switch k {
 	case ActorKindUser:

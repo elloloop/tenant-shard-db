@@ -56,7 +56,7 @@ var (
 	ErrTimeout = errors.New("wal: timeout")
 
 	// ErrSerialization signals an event payload could not be encoded
-	// or decoded. Mirrors WalSerializationError in the Python tree.
+	// or decoded.
 	ErrSerialization = errors.New("wal: serialization error")
 )
 

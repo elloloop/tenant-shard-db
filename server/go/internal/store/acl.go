@@ -208,8 +208,7 @@ func (s *CanonicalStore) RemoveGroupMember(ctx context.Context, tenantID, groupI
 // group_users for tenantID. Used by the RemoveGroupMember handler to
 // snapshot `found` before the WAL append (the applier owns the actual
 // DELETE; the handler returns the pre-read membership state to the
-// caller as the response.success flag, mirroring Python's pre-WAL
-// canonical_store return value).
+// caller as the response.success flag).
 func (s *CanonicalStore) IsGroupMember(ctx context.Context, tenantID, groupID, memberActorID string) (bool, error) {
 	db, err := s.readDB(tenantID)
 	if err != nil {

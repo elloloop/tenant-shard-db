@@ -37,11 +37,10 @@ type Server struct {
 	region   string
 	registry *schema.Registry
 
-	// legalHoldOnDelete gates the Go-port addition of a legal-hold
-	// precondition check at GDPR queue time (DeleteUser). Off by
-	// default to keep day-zero parity with the Python handler, which
-	// has no such gate. See docs/go-port/rpcs/DeleteUser.md "Side
-	// effects" / "Open questions" §4.
+	// legalHoldOnDelete gates the legal-hold precondition check at GDPR
+	// queue time (DeleteUser). Off by default; see
+	// docs/go-port/rpcs/DeleteUser.md "Side effects" / "Open
+	// questions" §4.
 	legalHoldOnDelete bool
 
 	// aclEnforcer is the optional ACL Enforcer wired by main.go (or
@@ -110,11 +109,10 @@ func WithEnforcer(e *acl.Enforcer) Option {
 	return func(srv *Server) { srv.aclEnforcer = e }
 }
 
-// WithLegalHoldOnDelete enables the Go-port-only legal-hold gate at
-// DeleteUser queue time. When true, the handler walks the user's
-// tenants and rejects with codes.FailedPrecondition if any tenant has
-// a legal_holds row. Off by default for byte-for-byte parity with the
-// Python handler at HEAD. See docs/go-port/rpcs/DeleteUser.md.
+// WithLegalHoldOnDelete enables the legal-hold gate at DeleteUser queue
+// time. When true, the handler walks the user's tenants and rejects
+// with codes.FailedPrecondition if any tenant has a legal_holds row.
+// Off by default. See docs/go-port/rpcs/DeleteUser.md.
 func WithLegalHoldOnDelete(enabled bool) Option {
 	return func(srv *Server) { srv.legalHoldOnDelete = enabled }
 }

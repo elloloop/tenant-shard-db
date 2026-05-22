@@ -6,8 +6,7 @@
 // Wire contract: proto/entdb/v1/entdb.proto:61 (rpc), :424-452
 // (request/response), :675-690 (FieldFilter / FilterOp).
 //
-// Behavior parity with the Python handler, with one DELIBERATE behavior
-// fix flagged by the spec:
+// Behavior with one DELIBERATE behavior fix flagged by the spec:
 //
 //  1. Tenant gate runs first via s.checkTenant (sharding + region +
 //     globalstore existence). Same call shape as every other
@@ -20,15 +19,14 @@
 //     are supported as AND-ed predicates per issue #501. CONTAINS and IN
 //     remain reserved (the wire enum declares them but the server still
 //     surfaces them as INVALID_ARGUMENT pending the full MongoDB-operator
-//     allow-list in W1.10's queryfilter package).
+//     allow-list).
 //  5. ACL post-filter on cross-tenant reads via acl.Filter.FilterReadable.
-//     The Python handler iterates can_access; the equivalent Go path is
-//     the bulk VisibleNodeIDs JOIN already implemented in
+//     The bulk VisibleNodeIDs JOIN is implemented in
 //     store.GetVisibleNodeIDs and exposed through acl.Filter.
 //  6. Response: id-keyed payload Struct (PayloadToStruct) — pinned by
 //     the contract suite. has_more is the cheap (len == limit) heuristic
-//     preserved verbatim (the cross-tenant ACL post-filter makes it
-//     leakier but EPIC #407 explicitly defers a fix).
+//     (the cross-tenant ACL post-filter makes it leakier; a fix is
+//     deferred).
 //
 // BEHAVIOR CHANGE flagged in the spec ("Error contract" / "Open
 // questions" §5): the Go port MUST surface gRPC errors so unsupported
@@ -176,11 +174,11 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 // (LIKE-with-wildcards, parameterised IN-list) and the issue defers
 // them. Both surface as INVALID_ARGUMENT.
 //
-// Inlined operator shape: the Python SDK historically smuggled non-EQ
-// operators through “Op=EQ, Value=Struct{"$gt": v}“. We honour that
-// shape so the existing SDK call site keeps working — the inlined
-// operator overrides the wire “op“ field. Unknown inlined keys (e.g.
-// “$nin“, “$between“) still surface as INVALID_ARGUMENT.
+// Inlined operator shape: non-EQ operators may be smuggled through
+// “Op=EQ, Value=Struct{“$gt”: v}”. We honour that shape so the
+// existing SDK call site keeps working — the inlined operator overrides
+// the wire “op” field. Unknown inlined keys (e.g. “$nin”, “$between”)
+// still surface as INVALID_ARGUMENT.
 func (s *Server) fieldFiltersToStoreFilters(typeName string, filters []*pb.FieldFilter) ([]store.QueryFilter, error) {
 	if len(filters) == 0 {
 		return nil, nil
@@ -222,10 +220,9 @@ func (s *Server) fieldFiltersToStoreFilters(typeName string, filters []*pb.Field
 		}
 
 		// Inlined operator detection: a Struct value carrying
-		// ``$gt``/``$lt``/... keys. The Python SDK uses this shape to
-		// fan a single FieldFilter into a multi-op predicate (e.g.
-		// ``{"price": {"$gte": 100, "$lt": 200}}``). Emit one store
-		// filter per inlined entry.
+		// ``$gt``/``$lt``/... keys fans a single FieldFilter into a
+		// multi-op predicate (e.g. ``{"price": {"$gte": 100, "$lt":
+		// 200}}``). Emit one store filter per inlined entry.
 		if subs, ok := inlinedFilterOps(raw); ok {
 			for _, sub := range subs {
 				op, ok := storeFilterOpFromInlineKey(sub.key)
@@ -292,8 +289,8 @@ func storeFilterOpToToken(op store.QueryFilterOp) string {
 	}
 }
 
-// storeFilterOpFromInlineKey maps the MongoDB-style “$gt“ keys used
-// by the Python SDK when smuggling non-EQ operators through Op=EQ.
+// storeFilterOpFromInlineKey maps the MongoDB-style “$gt” inlined
+// operator keys to the store comparison-operator type.
 func storeFilterOpFromInlineKey(key string) (store.QueryFilterOp, bool) {
 	switch key {
 	case "$eq":
@@ -314,9 +311,9 @@ func storeFilterOpFromInlineKey(key string) (store.QueryFilterOp, bool) {
 
 // inlinedFilterOps reports whether the FieldFilter value carries the
 // inlined operator shape (a JSON object whose first key starts with
-// “$“) and, if so, returns the (op-key, value) pairs in iteration
-// order. The shape historically lets callers express “{"price":
-// {"$gt": 10, "$lt": 100}}“.
+// “$”) and, if so, returns the (op-key, value) pairs in iteration
+// order. Callers use this to express “{“price”: {“$gt”: 10, “$lt”:
+// 100}}”.
 type inlinedFilterOp struct {
 	key   string
 	value any

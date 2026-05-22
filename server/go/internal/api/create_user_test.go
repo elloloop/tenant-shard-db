@@ -8,10 +8,8 @@
 //   - Empty required field aborts with INVALID_ARGUMENT.
 //
 // The Go port deliberately upgrades the duplicate-key path to
-// codes.AlreadyExists (the Python handler returns OK+success=false). The
-// spec calls this out as an acceptable parity break — the Python contract
-// test only inspects success=false, which is no longer reachable, but the
-// upgraded code is a strict superset of information.
+// codes.AlreadyExists. The spec calls this out as an acceptable
+// deviation — the upgraded code is a strict superset of information.
 
 package api_test
 

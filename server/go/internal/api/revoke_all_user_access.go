@@ -7,13 +7,11 @@
 //
 // # Behavioural pins
 //
-//   - WAL-FIRST RESTORATION (Go HARDENS vs Python). The Go port appends
-//     a single `admin_revoke_access` op into the WAL; the broadened
-//     applier (server/go/internal/apply/ops_admin_revoke_access.go)
+//   - WAL-FIRST. A single `admin_revoke_access` op is appended to the
+//     WAL; the applier (server/go/internal/apply/ops_admin_revoke_access.go)
 //     deletes from node_access AND group_users AND node_visibility for
 //     the user. PLAN.md §6.4 item 2. Pinned by
-//     docs/go-port/rpcs/RevokeAllUserAccess.md "WAL invariant gap (Go
-//     port MUST fix)".
+//     docs/go-port/rpcs/RevokeAllUserAccess.md "WAL invariant gap".
 //
 //   - Trusted-actor authz. The wire `actor` field is UNTRUSTED. We
 //     rebind to the auth.Authoritative identity from ctx before any
@@ -30,19 +28,16 @@
 //     before the auth gate. Pinned by
 //     tests/python/integration/test_grpc_contract.py:584-596.
 //
-//   - Tally semantics. Python returns rowcounts from the synchronous
-//     SQLite delete. The Go path is WAL-first, so we read the current
-//     row counts BEFORE appending the WAL event, wait for the applier,
-//     and return those pre-append counts as the tallies. Re-running is
-//     idempotent (the applier's per-event dedupe via applied_events)
-//     and the second call will see zero rows pre-append, matching
-//     Python's "no-op on retry" tally.
+//   - Tally semantics. The handler reads current row counts BEFORE
+//     appending the WAL event, waits for the applier, and returns those
+//     pre-append counts as the tallies. Re-running is idempotent (the
+//     applier's per-event dedupe via applied_events) and the second call
+//     will see zero rows pre-append (no-op on retry).
 //
 //   - Cross-tenant cleanup (shared_index). The same tenant WAL event
 //     carries an `access_revoked` op, applied by the applier after the
 //     tenant-scoped revoke op. The returned revoked_shared count is
-//     read before append, matching Python's synchronous-rowcount
-//     semantics.
+//     read before append.
 //
 //   - Idempotency key. Synthesized from (tenant_id, user_id,
 //     trusted_actor) so retries within the same admin's session
@@ -71,10 +66,10 @@ import (
 const revokeAllUserAccessMethod = "RevokeAllUserAccess"
 
 // revokeAllUserAccessTopic is the WAL topic the handler appends to.
-// Mirrors the cmd/entdb-server/main.go default flag value
-// ("entdb-wal"). Hard-coded here because the Server type has no topic
-// option; centralizing this constant keeps the api package
-// self-contained until the cross-RPC topic wiring lands.
+// Matches the cmd/entdb-server/main.go default flag value ("entdb-wal").
+// Hard-coded here because the Server type has no topic option;
+// centralizing this constant keeps the api package self-contained until
+// the cross-RPC topic wiring lands.
 const revokeAllUserAccessTopic = "entdb-wal"
 
 // revokeAllUserAccessSharedLimit caps the cross-tenant shared_index
@@ -143,10 +138,9 @@ func (s *Server) RevokeAllUserAccess(
 	}
 
 	// Pre-append tallies. Reading from the per-tenant SQLite gives the
-	// "rows that will be deleted by the applier" count, matching
-	// Python's synchronous-rowcount semantics. Idempotent retries
-	// (which the applier dedupes) will see zero rows here on the
-	// second call — same shape as Python's repeat-call no-op.
+	// "rows that will be deleted by the applier" count. Idempotent
+	// retries (which the applier dedupes) will see zero rows here on
+	// the second call.
 	revokedGrants, revokedGroups, err := s.countAccessRowsForUser(
 		ctx, req.GetTenantId(), req.GetUserId(),
 	)
@@ -156,10 +150,10 @@ func (s *Server) RevokeAllUserAccess(
 	}
 	revokedShared := s.countSharedIndexRows(ctx, req.GetUserId(), req.GetTenantId())
 
-	// WAL append: a single `admin_revoke_access` op. The applier's
-	// W1.10-broadened branch (apply/ops_admin_revoke_access.go) deletes
-	// node_access + group_users + node_visibility in one BEGIN
-	// IMMEDIATE txn — atomic on the tenant SQLite side.
+	// WAL append: a single `admin_revoke_access` op. The applier
+	// (apply/ops_admin_revoke_access.go) deletes node_access +
+	// group_users + node_visibility in one BEGIN IMMEDIATE txn —
+	// atomic on the tenant SQLite side.
 	idempKey := fmt.Sprintf("revoke-all:%s:%s:%s",
 		req.GetTenantId(), req.GetUserId(), trusted.String())
 	ev := apply.Event{
@@ -208,8 +202,7 @@ func (s *Server) RevokeAllUserAccess(
 
 // countAccessRowsForUser reads node_access and group_users counts for
 // userID from the per-tenant SQLite. Returns (grants, groups). A
-// missing tenant DB is treated as "no rows" (matches Python's empty-
-// store semantics — no rows to revoke).
+// missing tenant DB is treated as "no rows" — nothing to revoke.
 func (s *Server) countAccessRowsForUser(
 	ctx context.Context, tenantID, userID string,
 ) (int64, int64, error) {

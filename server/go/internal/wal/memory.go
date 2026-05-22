@@ -109,10 +109,8 @@ func (m *InMemory) Append(
 		return StreamPos{}, fmt.Errorf("%w: closed", ErrConnection)
 	}
 
-	// Application-layer idempotent retry. Mirrors the dedupe the
-	// Python applier does at apply time; we do it at append time too
-	// because (a) the spec calls for it on PLAN.md, and (b) it lets
-	// callers safely retry without polluting the log.
+	// Application-layer idempotent retry: we dedupe at append time so
+	// callers can safely retry without polluting the log (per PLAN.md).
 	idempKey := ""
 	if h, ok := headers[HeaderIdempotencyKey]; ok && len(h) > 0 {
 		idempKey = string(h)

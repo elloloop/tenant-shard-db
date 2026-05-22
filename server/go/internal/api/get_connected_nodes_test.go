@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for the GetConnectedNodes RPC (W2 — EPIC #407).
+// Tests for the GetConnectedNodes RPC.
 //
 // Behaviour pinned here:
 //   - Single-hop traversal returns every connected outbound node, ordered
@@ -111,7 +111,7 @@ func TestGetConnectedNodes_SingleHop(t *testing.T) {
 
 // TestGetConnectedNodes_DepthLimitHonored: a 2-hop graph
 // (src -> a -> grandchild) yields only `a`, not `grandchild`, because
-// the BFS depth cap is 1 (the Python single-JOIN contract).
+// the BFS depth cap is 1.
 func TestGetConnectedNodes_DepthLimitHonored(t *testing.T) {
 	t.Parallel()
 	srv, cs, ctx := connectedTestServer(t)
@@ -244,7 +244,7 @@ func TestGetConnectedNodes_SourceNotAccessibleReturnsEmpty(t *testing.T) {
 
 // TestGetConnectedNodes_UnknownTenantPropagatesError: the tenant gate
 // returns NOT_FOUND for an unknown tenant; the handler must propagate it
-// (spec: "deliberate behavior tightening" vs. Python's swallow).
+// (spec: "deliberate behavior tightening").
 func TestGetConnectedNodes_UnknownTenantPropagatesError(t *testing.T) {
 	t.Parallel()
 	srv, _, ctx := connectedTestServer(t)

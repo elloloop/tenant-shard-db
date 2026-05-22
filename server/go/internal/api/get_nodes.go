@@ -2,9 +2,9 @@
 // Spec: docs/go-port/rpcs/GetNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:58 (rpc), :409-422 (request/
-// response). Reference Python handler:
+// response).
 //
-// Semantics (preserved from the Python handler):
+// Semantics:
 //
 //   - Tenant gate first via Server.checkTenant (NOT_FOUND /
 //     UNAVAILABLE / FAILED_PRECONDITION on miss).
@@ -34,13 +34,13 @@
 //     verbatim: this masks data-loss bugs but is the documented
 //     contract.
 //
-// Hardening delta vs Python (flagged in PR body for #407 owner):
+// Hardening:
 //
-//   - Batch-size cap: Python has no upper bound; a 100k-id payload
-//     happily melts the SQLite pool and blows past gRPC's 4 MiB
-//     default response size. The Go port aborts
-//     RESOURCE_EXHAUSTED at len(node_ids) > maxBatchNodeIDs (1000)
-//     BEFORE doing any I/O. Spec "Notes on performance & limits".
+//   - Batch-size cap: the server aborts RESOURCE_EXHAUSTED at
+//     len(node_ids) > maxBatchNodeIDs (1000) BEFORE doing any I/O,
+//     preventing large payloads from melting the SQLite pool or
+//     exceeding the gRPC 4 MiB default response size. Spec "Notes on
+//     performance & limits".
 //
 // No WAL append, no SQLite write, no audit row. Pure read.
 
@@ -65,14 +65,12 @@ const (
 
 	// maxBatchNodeIDs is the server-side guardrail for a single
 	// GetNodes request. Above this we reject before doing any I/O
-	// with codes.RESOURCE_EXHAUSTED. Python has no such cap; this is
-	// a Go-port hardening delta for issue #407.
+	// with codes.RESOURCE_EXHAUSTED.
 	maxBatchNodeIDs = 1000
 
 	// getNodesFanout is the bounded concurrency for per-id store
 	// lookups. Caps in-flight SQLite reads at a small constant so a
-	// 1000-id batch doesn't starve the pool. Behaviour-preserving
-	// with respect to Python (which is serial); only a perf knob.
+	// 1000-id batch doesn't starve the pool. Only a perf knob.
 	getNodesFanout = 32
 
 	// getNodesAfterOffsetDefault is the 30s default fence timeout.
@@ -101,8 +99,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
 
 	// Batch-size cap. Reject BEFORE any I/O so a hostile / buggy
-	// caller cannot cause work to start. Python parity gap; flagged
-	// in PR body.
+	// caller cannot cause work to start.
 	if len(req.GetNodeIds()) > maxBatchNodeIDs {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.ResourceExhausted,
@@ -110,8 +107,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 			len(req.GetNodeIds()), maxBatchNodeIDs)
 	}
 
-	// Empty node_ids -> empty response. Python returns the same shape
-	// (the for-loop simply doesn't run).
+	// Empty node_ids -> empty response.
 	if len(req.GetNodeIds()) == 0 {
 		return &pb.GetNodesResponse{
 			Nodes:      []*pb.Node{},
@@ -129,10 +125,9 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 		return nil, err
 	}
 
-	// after_offset fence. Python wraps the call with a swallowing
-	// try/except so a timeout is observed as "all missing". We
-	// preserve that for v1 (spec "Open Questions" #1): a fence
-	// failure is intentionally NOT a hard error here.
+	// after_offset fence. A timeout is observed as "all missing" for
+	// v1 (spec "Open Questions" #1): a fence failure is intentionally
+	// NOT a hard error here.
 	if req.GetAfterOffset() != "" && s.store != nil {
 		timeout := getNodesAfterOffsetDefault
 		if ms := req.GetWaitTimeoutMs(); ms > 0 {
@@ -152,9 +147,8 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	}
 
 	if s.store == nil {
-		// No per-tenant store wired -- preserve Python's bare-except
-		// behaviour: everything missing, status OK, metric=error so
-		// the swallow doesn't inflate the ok counter.
+		// No per-tenant store wired — everything missing, status OK,
+		// metric=error so the swallow doesn't inflate the ok counter.
 		resultStatus = "error"
 		return &pb.GetNodesResponse{
 			Nodes:      []*pb.Node{},
@@ -179,8 +173,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 				<-sem
 				wg.Done()
 				if r := recover(); r != nil {
-					// Per-id panic -- treat as "missing", consistent
-					// with Python's outer bare-except.
+					// Per-id panic -- treat as "missing".
 					fatalMu.Lock()
 					hadFatal = true
 					fatalMu.Unlock()
@@ -203,9 +196,8 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	wg.Wait()
 
 	if hadFatal {
-		// At least one panic during the fan-out. Python's bare-except
-		// returns "all missing"; the safest parity move when we can't
-		// trust partial state is to do the same and flag the metric
+		// At least one panic during the fan-out. When partial state
+		// cannot be trusted, return "all missing" and flag the metric
 		// as error.
 		resultStatus = "error"
 		return &pb.GetNodesResponse{
@@ -224,8 +216,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 		pn, perr := s.storeNodeToProto("", results[i])
 		if perr != nil {
 			// Conversion failure on a single row -- fold into
-			// missing_ids rather than failing the whole batch
-			// (matches Python's "swallow and degrade" stance).
+			// missing_ids rather than failing the whole batch.
 			missing = append(missing, id)
 			continue
 		}

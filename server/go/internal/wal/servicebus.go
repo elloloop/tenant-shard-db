@@ -122,15 +122,14 @@ type serviceBusMessage struct {
 	EnqueuedMs     int64
 }
 
-// ServiceBusConfig captures the Service Bus-specific knobs (parity with
-// the Python ServiceBusConfig).
+// ServiceBusConfig captures the Service Bus-specific knobs.
 type ServiceBusConfig struct {
 	// ConnectionString is the Service Bus namespace connection string
 	// (Endpoint=sb://...;SharedAccessKeyName=...;SharedAccessKey=...).
 	ConnectionString string
 	// QueueName is the session-enabled queue backing the WAL.
 	QueueName string
-	// MaxWaitTime bounds a single Receive call. Python default 5s.
+	// MaxWaitTime bounds a single Receive call (default 5s).
 	MaxWaitTime time.Duration
 	// SessionAcceptTimeout bounds a single AcceptNextSession call. If a
 	// session does not become available within this window the accept
@@ -139,7 +138,7 @@ type ServiceBusConfig struct {
 	SessionAcceptTimeout time.Duration
 }
 
-// DefaultServiceBusConfig returns a config matching the Python defaults.
+// DefaultServiceBusConfig returns a config with sensible defaults.
 func DefaultServiceBusConfig(connStr, queueName string) ServiceBusConfig {
 	return ServiceBusConfig{
 		ConnectionString:     connStr,

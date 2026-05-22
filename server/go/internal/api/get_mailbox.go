@@ -3,7 +3,7 @@
 // `notifications` table. The RPC is retained for proto compatibility
 // and contract pinning (see docs/go-port/rpcs/GetMailbox.md).
 //
-// Behavior parity with the Python stub:
+// Behavior:
 //
 //  1. Run the tenant gate (CheckTenant): sharding + region. Errors
 //     from the gate (UNAVAILABLE with redirect trailer,

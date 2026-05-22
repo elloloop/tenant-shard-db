@@ -2,9 +2,9 @@
 // Spec: docs/go-port/rpcs/GetNode.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:55 (rpc), :394-407
-// (request/response), :454-472 (Node). Reference Python handler:
+// (request/response), :454-472 (Node).
 //
-// Semantics (preserved from the Python handler):
+// Semantics:
 //
 //   - Read-only single-node lookup keyed on (tenant_id, node_id). Per
 //     the spec, type_id on the request is ACCEPTED but NOT used to
@@ -41,11 +41,9 @@
 //     position before reading. Default 30s when wait_timeout_ms == 0.
 //     Wait failures are silent.
 //
-//   - Unlike Python, we do NOT swallow uncaught exceptions into
-//     found=false. The Python handler's outer try/except is a
-//     defensive artifact unreachable in real grpc.aio runtime (where
-//     context.abort is terminal). In Go, gRPC errors are returned as
-//     real status codes. See spec "Quirk to preserve".
+//   - Uncaught exceptions are NOT swallowed into found=false. In Go,
+//     gRPC errors are returned as real status codes. See spec "Quirk
+//     to preserve".
 //
 // No WAL append, no SQLite write.
 
@@ -119,7 +117,7 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 
 	// 4. Cross-tenant read membership check. PERMISSION_DENIED here
 	//    fires BEFORE the row lookup, so non-members cannot probe for
-	//    node existence (spec "Error contract" / Python `:1024-1025`).
+	//    node existence (spec "Error contract").
 	role, err := s.checkCrossTenantRead(ctx, tenantID, actor)
 	if err != nil {
 		resultStatus = "error"
@@ -139,7 +137,7 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	}
 
 	// 6. The actual read. Missing -> Found=false with status OK. Per
-	//    spec, type_id is NOT used as a filter (Python parity).
+	//    spec, type_id is NOT used as a filter.
 	n, err := s.store.GetNode(ctx, tenantID, nodeID)
 	if err != nil {
 		if errors.Is(err, store.ErrNodeNotFound) {
@@ -153,8 +151,7 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	//    confirmed the actor has SOME access in the tenant; now we
 	//    confirm the specific node grants them read. This fires AFTER
 	//    the row lookup, so it returns PERMISSION_DENIED, not the
-	//    found=false signal a non-member would see — matching Python
-	//    `:1041-1045`.
+	//    found=false signal a non-member would see.
 	if role == roleCrossTenant {
 		ok, err := s.hasNodeAccess(ctx, tenantID, nodeID, actor.String())
 		if err != nil {
@@ -242,9 +239,7 @@ func nodeToProto(reg *schema.Registry, n *store.Node) (*pb.Node, error) {
 		id, perr := strconv.ParseUint(k, 10, 32)
 		if perr != nil {
 			// Non-digit key on disk is unexpected; skip silently
-			// rather than corrupting the wire response. Matches
-			// Python's id_to_name_keys passthrough where an
-			// unparseable key falls into the decimal-string bucket.
+			// rather than corrupting the wire response.
 			continue
 		}
 		idKeyed[uint32(id)] = v

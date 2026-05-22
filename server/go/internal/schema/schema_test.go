@@ -1,6 +1,5 @@
-// Tests for the schema package. Covers JSON round-trip parity with the
-// Python SchemaRegistry.to_json shape, freeze semantics, fingerprint
-// determinism, and field-id <-> name lookup.
+// Tests for the schema package. Covers JSON round-trip, freeze
+// semantics, fingerprint determinism, and field-id <-> name lookup.
 
 package schema
 
@@ -54,10 +53,9 @@ const pythonSampleJSON = `{
   ]
 }`
 
-// Reference fingerprint computed by Python's SchemaRegistry.freeze()
-// over the same logical content as pythonSampleJSON. Keep in sync with
-// the Python fixture; if Python's emission ever changes the two must
-// be regenerated together.
+// pythonReferenceFingerprint is the expected fingerprint for pythonSampleJSON.
+// Keep in sync with the cross-language fixture; if the canonical encoder
+// changes the two must be regenerated together.
 const pythonReferenceFingerprint = "sha256:5822499c748bb30ab35473658f8000f9cba89250d6bafdeabc6ca833fcc85fe2"
 
 func TestLoadFromJSON_Sample(t *testing.T) {
@@ -171,10 +169,10 @@ func TestFingerprint_DeterministicAcrossLoads(t *testing.T) {
 }
 
 func TestFingerprint_PythonByteParity(t *testing.T) {
-	// This test pins byte-for-byte parity with Python's
-	// SchemaRegistry.freeze() output for the shared fixture. If it
-	// breaks, the canonical encoder in fingerprint.go has drifted from
-	// json.dumps(sort_keys=True, separators=(",", ":")).
+	// This test pins byte-for-byte parity with the expected reference
+	// fingerprint for the shared fixture. If it breaks, the canonical
+	// encoder in fingerprint.go has drifted from the sort-keys,
+	// no-whitespace compact JSON format.
 	r, err := LoadFromJSON([]byte(pythonSampleJSON))
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -185,7 +183,7 @@ func TestFingerprint_PythonByteParity(t *testing.T) {
 	}
 	if fp != pythonReferenceFingerprint {
 		t.Errorf(
-			"fingerprint mismatch:\n  Go    = %s\n  Python= %s",
+			"fingerprint mismatch:\n  got  = %s\n  want = %s",
 			fp, pythonReferenceFingerprint,
 		)
 	}

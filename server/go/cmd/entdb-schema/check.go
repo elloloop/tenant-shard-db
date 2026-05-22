@@ -1,8 +1,8 @@
 // `check` subcommand — verify the current schema is compatible with a
 // baseline snapshot. Exits 0 on compatible, 1 on breaking, 2 on error.
 //
-// Mirrors the deleted Python tool's UX. The classification rules live
-// in schema.Check; this subcommand is purely flag parsing + formatting.
+// The classification rules live in schema.Check; this subcommand is
+// purely flag parsing + formatting.
 
 package main
 

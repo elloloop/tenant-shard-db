@@ -6,7 +6,7 @@
 //   2. Bare body: {"node_types": [...], "edge_types": [...]}
 //      — what `(*Registry).MarshalJSON` emits directly.
 //
-// The Python-era `.schema-snapshot.json` files use shape (1). The
+// Snapshot files written by `entdb-schema snapshot` use shape (1). The
 // server's `GetSchema` RPC returns shape (2). Both must round-trip
 // through this decoder for the migration story in §6 of the issue to
 // hold.

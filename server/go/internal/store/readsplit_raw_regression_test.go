@@ -151,9 +151,8 @@ func TestReadSplitWaitForOffsetObservesAppliedWrite(t *testing.T) {
 
 	// Reader: block until the applier is INSIDE the pre-commit window
 	// (so on the pre-fix code the offsetCond has already been
-	// broadcast), then do the exact read-your-write the Python SDK does
-	// by default — WaitForOffset(target) followed immediately by a
-	// re-routed GetNode on the read pool.
+	// broadcast), then do a read-your-write — WaitForOffset(target)
+	// followed immediately by a re-routed GetNode on the read pool.
 	select {
 	case <-inWindow:
 	case <-time.After(5 * time.Second):

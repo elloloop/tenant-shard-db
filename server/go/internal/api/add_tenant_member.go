@@ -28,7 +28,7 @@
 //
 //   - Append/wait for a global `member_added` WAL op.
 //   - NO mailbox / notification fanout. The added member is silent —
-//     discovery is via GetUserTenants. Matches Python parity.
+//     discovery is via GetUserTenants.
 //   - NO FK validation on tenant_id / user_id. Both can refer to rows
 //     that were never created — preserved for parity (see the spec's
 //     "Open questions / risks" section; harden in a separate ticket).

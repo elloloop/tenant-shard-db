@@ -14,11 +14,10 @@
 //   4. Already-pending → idempotent: re-queueing returns the EXISTING
 //      requested_at / execute_at (does NOT push the timestamps forward).
 //
-// Plus the standard config / required-arg gates carried over from the
-// Python contract: Unimplemented when globalstore is not wired,
-// InvalidArgument for empty actor / user_id, PermissionDenied when a
-// non-admin tries to delete another user, and OK + success=false +
-// error="User not found" for an unknown user.
+// Plus the standard config / required-arg gates: Unimplemented when
+// globalstore is not wired, InvalidArgument for empty actor / user_id,
+// PermissionDenied when a non-admin tries to delete another user, and
+// OK + success=false + error="User not found" for an unknown user.
 
 package api_test
 
@@ -128,8 +127,7 @@ func TestDeleteUser_Admin_HappyPath(t *testing.T) {
 
 // TestDeleteUser_LegalHold_Blocks: when WithLegalHoldOnDelete(true), a
 // user belonging to a tenant with a legal_holds row gets
-// FAILED_PRECONDITION. NEW Go-port behaviour (Python has no such gate
-// at queue time); see DeleteUser.md "Side effects" §4.
+// FAILED_PRECONDITION. See DeleteUser.md "Side effects" §4.
 func TestDeleteUser_LegalHold_Blocks(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)

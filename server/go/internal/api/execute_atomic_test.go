@@ -1,6 +1,6 @@
-// Tests for the ExecuteAtomic RPC (W2 — EPIC #407).
+// Tests for the ExecuteAtomic RPC.
 //
-// Coverage targets the Python contract pins listed in
+// Coverage targets the contract pins listed in
 // docs/go-port/rpcs/ExecuteAtomic.md "Contract tests pinning behavior":
 //
 //   - Empty op list -> INVALID_ARGUMENT.
@@ -461,8 +461,7 @@ func TestExecuteAtomic_PayloadIsFieldIDKeyed(t *testing.T) {
 }
 
 // TestExecuteAtomic_UnknownFieldNameDropped: an unknown name on the
-// wire is silently dropped (matches Python ingress permissiveness). The
-// WAL event keeps the known field only.
+// wire is silently dropped. The WAL event keeps the known field only.
 func TestExecuteAtomic_UnknownFieldNameDropped(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
@@ -807,15 +806,15 @@ func tenantShardingDeny() *tenant.Sharding {
 }
 
 // =============================================================================
-// W7 — $alias resolution at gRPC ingress.
+// $alias resolution at gRPC ingress.
 //
-// The Python SDK emits {"alias_ref": "$charlie"} for edge endpoints
-// declared with as_="charlie" on a sibling create_node. Before the W7
-// fix the Go server forwarded that ref untouched to the WAL, the
-// applier read op["from"] as an empty string (it's a map, not a
-// string), and halted with "poison event: create_edge missing from/to"
-// — which then took every subsequent RPC down with UNAVAILABLE because
-// the applier's consumer loop was dead.
+// Edge endpoints declared with as_="charlie" on a sibling create_node
+// arrive as {"alias_ref": "$charlie"}. Before the fix the Go server
+// forwarded that ref untouched to the WAL, the applier read op["from"]
+// as an empty string (it's a map, not a string), and halted with
+// "poison event: create_edge missing from/to" — which then took every
+// subsequent RPC down with UNAVAILABLE because the applier's consumer
+// loop was dead.
 //
 // These tests pin the new behavior: aliases are resolved against a
 // per-transaction map at the handler, the WAL only ever sees bare
@@ -1024,8 +1023,7 @@ func TestExecuteAtomic_AliasResolution_UnresolvedAliasRejected(t *testing.T) {
 // TestExecuteAtomic_AliasResolution_ForwardReferenceRejected pins that
 // aliases are resolved in op order: an edge that references an alias
 // defined LATER in the same transaction must fail, not silently
-// half-work. (Python parity: the applier's alias map is populated
-// linearly too.)
+// half-work. The alias map is populated linearly.
 func TestExecuteAtomic_AliasResolution_ForwardReferenceRejected(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
@@ -1190,8 +1188,8 @@ func TestExecuteAtomic_AliasResolution_DeleteEdgeAlias(t *testing.T) {
 }
 
 // TestExecuteAtomic_AliasResolution_DottedFormSupported pins the
-// Python-parity dotted-alias form: "$alice.id" resolves the same as
-// "$alice". The dotted form is supported for legacy reasons.
+// dotted-alias form: "$alice.id" resolves the same as "$alice".
+// The dotted form is supported for legacy reasons.
 func TestExecuteAtomic_AliasResolution_DottedFormSupported(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)

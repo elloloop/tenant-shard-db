@@ -14,11 +14,9 @@
 //     payload's `actor` is UNTRUSTED post-#168.
 //   - "Within grace window" is enforced by the pre-read of deletion_queue.
 //     If the GDPR worker has already swept the row to 'completed', this
-//     RPC is a silent no-op:
-//     success=false, error="" — IDENTICAL to the Python parity contract
-//     (see spec "Error contract" table). The Go port does NOT promote
-//     past-no-return to FAILED_PRECONDITION; that's a documented v2
-//     follow-up (separate proto + store + test change).
+//     RPC is a silent no-op: success=false, error="" (see spec "Error
+//     contract" table). Promoting past-no-return to FAILED_PRECONDITION
+//     is a documented v2 follow-up (separate proto + store + test change).
 //   - On successful cancel, append/wait for a global
 //     `user_deletion_canceled` WAL op. The applier removes the pending
 //     deletion_queue row and flips user_registry.status back to "active"
@@ -89,8 +87,8 @@ func (s *Server) CancelUserDeletion(ctx context.Context, req *pb.CancelUserDelet
 		return &pb.CancelUserDeletionResponse{Success: false, Error: err.Error()}, nil
 	}
 	if entry == nil || entry.Status != "pending" {
-		// In-band no-op: row never existed or already completed. Same
-		// metric label ("ok") as Python — no abort fires.
+		// In-band no-op: row never existed or already completed.
+		// No abort fires; metric label stays "ok".
 		return &pb.CancelUserDeletionResponse{Success: false}, nil
 	}
 

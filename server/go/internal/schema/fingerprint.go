@@ -12,25 +12,23 @@ import (
 
 // computeFingerprint produces the canonical schema fingerprint:
 //
-//	canonical = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
-//	hash = sha256(canonical).hexdigest()
-//	return f"sha256:{hash}"
+//	canonical = sort-keys compact JSON of the registry's to_dict form
+//	hash      = sha256(canonical).hexdigest()
+//	return "sha256:" + hash
 //
 // We can't rely on encoding/json because Go preserves struct-field
-// declaration order rather than sorting keys, and Python's
-// separators=(",",":") drops the default ", "/": " spaces. We marshal
-// the registry into the same shape as Python's to_dict(), then
-// re-emit it with a custom canonical encoder.
+// declaration order rather than sorting keys, and the canonical format
+// omits whitespace between separators. We marshal the registry into
+// the to_dict() shape, then re-emit it with a custom canonical encoder.
 //
 // Floats: registry data does not include floats today, but the encoder
 // supports them for forward compatibility (using strconv with
-// 'g'/-1 precision, which matches Python's repr-derived output for
-// integral floats — round-trip safety is the contract, not byte
-// equality with Python for arbitrary floats).
+// 'g'/-1 precision for integral floats — round-trip safety is the
+// contract).
 func (r *Registry) computeFingerprint() (string, error) {
 	doc := r.toFile()
 	// Round-trip through encoding/json into a generic value so we can
-	// re-emit with sorted keys exactly as Python does.
+	// re-emit with sorted keys in canonical order.
 	raw, err := json.Marshal(doc)
 	if err != nil {
 		return "", fmt.Errorf("schema: marshal for fingerprint: %w", err)
@@ -48,8 +46,8 @@ func (r *Registry) computeFingerprint() (string, error) {
 }
 
 // CanonicalJSON marshals the registry into the byte-for-byte
-// deterministic shape used by the fingerprint (Python's
-// json.dumps(sort_keys=True, separators=(",", ":"))). entdb-schema
+// deterministic shape used by the fingerprint (sort-keys, no-whitespace
+// compact JSON). entdb-schema
 // uses this for snapshot output so two invocations on the same
 // registry produce identical bytes — see issue #488 determinism
 // requirements (§Determinism, points 7-8).
@@ -83,20 +81,16 @@ func CanonicalEncodeJSON(v any) ([]byte, error) {
 	return []byte(sb.String()), nil
 }
 
-// canonicalEncode writes v to sb using Python's
-// `json.dumps(sort_keys=True, separators=(",", ":"))` byte format:
-//   - Object keys sorted by Unicode code point (Python sorted() default).
+// canonicalEncode writes v to sb in sort-keys, no-whitespace compact
+// JSON format:
+//   - Object keys sorted by Unicode code point.
 //   - No whitespace between separators.
-//   - Strings escaped using the standard ensure_ascii=True semantics
-//     used by Python by default, which matches Go's encoding/json
-//     escaping for ASCII payloads. Schema metadata is ASCII today
-//     (names, descriptions in English), so we use json.Marshal of the
-//     leaf string which is a strict superset (Go always escapes the
-//     same control chars and uses the same backslash sequences).
+//   - Strings escaped via json.Marshal (ASCII payloads; schema metadata
+//     is ASCII today — names and descriptions in English).
 //
-// If the schema gains non-ASCII content we will need a custom string
-// encoder that matches Python's `\uXXXX` escapes — flagged in the
-// fingerprint parity test.
+// If the schema gains non-ASCII content a custom string encoder will
+// be needed to emit `\uXXXX` escapes — flagged in the fingerprint
+// parity test.
 func canonicalEncode(sb *strings.Builder, v any) error {
 	switch x := v.(type) {
 	case nil:
@@ -115,7 +109,7 @@ func canonicalEncode(sb *strings.Builder, v any) error {
 		sb.Write(b)
 	case float64:
 		// json.Unmarshal lands all numbers in float64. Emit integers
-		// without trailing ".0" to match Python's JSON output.
+		// without trailing ".0" for canonical output.
 		if x == float64(int64(x)) {
 			sb.WriteString(strconv.FormatInt(int64(x), 10))
 		} else {

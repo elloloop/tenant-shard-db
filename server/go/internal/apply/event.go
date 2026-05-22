@@ -9,7 +9,7 @@
 //
 // docs/go-port/PLAN.md §6):
 //
-//   - DelegateAccess applier dispatch (was silently dropped in Python).
+//   - DelegateAccess applier dispatch (previously absent from the applier).
 //   - WAL-first restoration for share_node, revoke_access, delegate_access,
 //     transfer_ownership, add_group_member, remove_group_member,
 //     set_legal_hold.
@@ -36,16 +36,13 @@ import "github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 type Event = wal.Event
 
 // OpType enumerates the op-type strings carried inside Event.Ops[i]["op"].
-// Mirrors the Python applier's `op_type` if/elif ladder
-//
-//	plus the new
-//
-// op types added by the Go port to close the WAL-first drift gap
+// The base set corresponds to the applier's original dispatch table;
+// additional op types were added to close WAL-first drift gaps
 // (docs/go-port/PLAN.md §6).
 type OpType string
 
 const (
-	// Steady-state ops the Python applier already implements.
+	// Steady-state ops.
 	OpCreateNode OpType = "create_node"
 	OpUpdateNode OpType = "update_node"
 	OpDeleteNode OpType = "delete_node"
@@ -60,13 +57,11 @@ const (
 	// issue-#501 range operators reused via store.QueryFilter.
 	OpDeleteWhere OpType = "delete_where"
 
-	// admin ops the Python applier already implements (broadened in Go).
+	// Admin ops (broadened in the WAL-first restoration).
 	OpAdminTransferContent OpType = "admin_transfer_content"
 	OpAdminRevokeAccess    OpType = "admin_revoke_access"
 
-	// WAL-first restorations from PLAN.md §6.1. The Python handlers
-	// write SQLite directly today; the Go port appends a WAL event and
-	// the dispatch branches below apply it on replay.
+	// WAL-first restorations from PLAN.md §6.1.
 	OpShareNode          OpType = "share_node"
 	OpRevokeAccess       OpType = "revoke_access"
 	OpDelegateAccess     OpType = "delegate_access"

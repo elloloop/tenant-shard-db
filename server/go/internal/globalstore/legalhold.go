@@ -7,9 +7,8 @@
 //   - legal_holds is the *audit/informational* table that records who
 //     placed the hold, when, and why.
 //
-// They're independent today (the Python global_store has both
-// `set_legal_hold` and `set_legal_hold_record`); see the Open Question
-// in docs/go-port/shared/global-store.md about unifying them.
+// They're independent today; see the Open Question in
+// docs/go-port/shared/global-store.md about unifying them.
 
 package globalstore
 

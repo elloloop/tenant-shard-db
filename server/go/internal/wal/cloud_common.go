@@ -10,15 +10,12 @@ package wal
 //     first-class binary header map the way Kafka does. To keep the
 //     wal.Record.Headers contract (and the HeaderIdempotencyKey
 //     round-trip) intact we embed headers in the payload envelope when
-//     the backend can't carry them natively. This mirrors the retired
-//     Python source (kinesis.py / pubsub.py _headers/_data wrapping).
+//     the backend can't carry them natively.
 //   - At-least-once redelivery: backends that ack-on-commit (SQS,
 //     Service Bus) keep an in-memory map from StreamPos.Offset to the
 //     backend-native ack handle so Commit can resolve it.
 //
-// The envelope is intentionally the same JSON shape the Python source
-// used so a stream written by the (now retired) Python server and read
-// by the Go server — or vice versa during a migration — round-trips.
+// The envelope uses the JSON shape {"_headers": {...}, "_data": ...}.
 
 import (
 	"context"
@@ -32,8 +29,7 @@ import (
 )
 
 // headerEnvelope is the JSON wrapper used to smuggle headers through a
-// transport with no native header map. Byte-for-byte the shape the
-// Python kinesis.py / pubsub.py used: {"_headers": {...}, "_data": ...}.
+// transport with no native header map: {"_headers": {...}, "_data": ...}.
 type headerEnvelope struct {
 	Headers map[string]string `json:"_headers"`
 	Data    string            `json:"_data"`
@@ -41,11 +37,10 @@ type headerEnvelope struct {
 
 // wrapHeaders returns value unchanged when there are no headers (so a
 // plain payload stays a plain payload — only records that actually
-// carry headers pay the envelope cost, exactly like the Python source).
-// When headers are present it wraps them into the JSON envelope.
+// carry headers pay the envelope cost). When headers are present it
+// wraps them into the JSON envelope.
 //
-// Header values are decoded as UTF-8 (errors replaced) to match the
-// Python `.decode("utf-8", errors="replace")` behaviour; the WAL
+// Header values are decoded as UTF-8 (errors replaced); the WAL
 // idempotency key and applier-set headers are always UTF-8 text.
 func wrapHeaders(value []byte, headers map[string][]byte) []byte {
 	if len(headers) == 0 {
@@ -91,12 +86,11 @@ func unwrapHeaders(data []byte) ([]byte, map[string][]byte) {
 }
 
 // decodeUTF8 returns b as a string, replacing invalid UTF-8 with the
-// Unicode replacement char (matching the Python source's
-// .decode("utf-8", errors="replace")). Go's []byte->string conversion
-// already substitutes U+FFFD for invalid sequences when the bytes are
-// later range-iterated/re-encoded; round-tripping through []rune makes
-// the substitution eager and explicit so the stored/transmitted form
-// is deterministic.
+// Unicode replacement char. Go's []byte->string conversion already
+// substitutes U+FFFD for invalid sequences when the bytes are later
+// range-iterated/re-encoded; round-tripping through []rune makes the
+// substitution eager and explicit so the stored/transmitted form is
+// deterministic.
 func decodeUTF8(b []byte) string {
 	if utf8.Valid(b) {
 		return string(b)

@@ -2,19 +2,15 @@
 
 // ShareNode RPC.
 // Spec: docs/go-port/rpcs/ShareNode.md.
-// Applier branch (W1.10): server/go/internal/apply/ops_share_node.go.
+// Applier branch: server/go/internal/apply/ops_share_node.go.
 //
 // # WAL-first restoration (PLAN.md §6)
 //
-// The Python ShareNode handler bypassed the WAL (CLAUDE.md invariant
-// #1), writing directly to the canonical store, which means a
-// materialized-view rebuild from the WAL silently dropped every share
-// grant. The Go port restores the invariant: handler appends a
-// `share_node` op to the WAL, the applier (already wired in W1.10 —
-// ops_share_node.go) consumes it and writes node_access. There is no
+// The handler appends a `share_node` op to the WAL; the applier
+// (ops_share_node.go) consumes it and writes node_access. There is no
 // direct CanonicalStore.ShareNode call from this handler.
 //
-// # Auth model — trusted-actor + acl.Checker (Phase 4A.2)
+// # Auth model — trusted-actor + acl.Checker
 //
 //  1. checkTenant: sharding ownership + region pinning. Errors from
 //     the gate (UNAVAILABLE w/ redirect, FAILED_PRECONDITION on region
@@ -30,7 +26,7 @@
 //     "owner OR explicit-ADMIN-grant OR system/admin" semantic.
 //     Non-owner / unknown node → soft-fail (OK + success=false).
 //
-// # Error contract (matches Python soft-fail shape)
+// # Error contract
 //
 // ShareNodeResponse is { success bool, error string } — NOT a
 // google.rpc.Status. The handler returns success=false on
@@ -51,8 +47,8 @@
 // On success: a single record is appended to the WAL. The applier
 // then writes one row to node_access (and, for cross-tenant grants,
 // one row to GlobalStore.shared_index via SharedAdded result). NO
-// mailbox fanout — Python doesn't either (spec §"Side effects",
-// open question 2). NO direct SQLite write from this handler.
+// mailbox fanout (spec §"Side effects", open question 2). NO direct
+// SQLite write from this handler.
 //
 // Idempotency: until the proto carries an idempotency_key, retries
 // generate distinct WAL records that collapse at the applier via
@@ -153,8 +149,7 @@ func (s *Server) ShareNode(
 	//    NOT_FOUND on the underlying GetNode (surfaced by the Checker
 	//    via NodeMetaReader) lowers to soft-fail success=false — a
 	//    missing node is indistinguishable from "no grant" to the
-	//    caller, matching the Python PermissionError-via-missing-node
-	//    behaviour at spec §Wire-contract.NodeId.
+	//    caller (spec §Wire-contract.NodeId).
 	aclActor := authActorToACLActor(trusted)
 	if err := s.aclCheck(ctx, acl.CheckRequest{
 		TenantID:      tenantID,
@@ -184,8 +179,7 @@ func (s *Server) ShareNode(
 		return &pb.ShareNodeResponse{Success: false, Error: err.Error()}, nil
 	}
 
-	// 5. Build the WAL op envelope. Mirror the Python applier's
-	//    op shape (apply/ops_share_node.go:18-31). Field defaults:
+	// 5. Build the WAL op envelope. Field defaults:
 	//    actor_type → "user", permission → "read" (spec §Wire-contract).
 	actorType := req.GetActorType()
 	if actorType == "" {
@@ -296,9 +290,8 @@ func crossTenantHint(actorID, sourceTenant string) (userID, src string) {
 // (the applier collapses via INSERT OR REPLACE) but distinct user-
 // driven re-shares still land. Mirrors spec §Side-effects: "Re-issuing
 // the same ShareNode produces an INSERT OR REPLACE that updates
-// granted_at." When the proto gains an idempotency_key field
-// (#407 follow-up), prefer the caller-supplied value over this
-// derived form.
+// granted_at." When the proto gains an idempotency_key field, prefer
+// the caller-supplied value over this derived form.
 func newShareNodeIdempotencyKey(tenantID, granter, nodeID, recipient string) string {
 	return strings.Join([]string{
 		"share_node",

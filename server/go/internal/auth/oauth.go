@@ -238,7 +238,7 @@ func verifyStandardClaims(claims map[string]any, now time.Time, wantIssuer, want
 }
 
 // audienceMatches accepts either a string aud or a list-of-strings aud,
-// matching the OIDC spec and what jwt.decode does in Python.
+// per the OIDC spec.
 func audienceMatches(raw any, want string) bool {
 	switch v := raw.(type) {
 	case string:

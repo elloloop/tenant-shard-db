@@ -31,10 +31,9 @@ const (
 // stamped a fingerprint yet. TsMs defaults to the current wall clock
 // when zero (see NewEvent / Encode).
 //
-// Ops is intentionally typed as []map[string]any: until the op proto
-// lands (see docs/go-port/shared/wal-producer.md "Op typing"), the
-// Python side stores ops as list[dict[str, Any]] and the Go port must
-// preserve the same encoded byte layout for cross-impl contract tests.
+// Ops is intentionally typed as []map[string]any to preserve the
+// encoded byte layout required by cross-impl contract tests (see
+// docs/go-port/shared/wal-producer.md "Op typing").
 type Event struct {
 	TenantID          string           `json:"tenant_id"`
 	Scope             Scope            `json:"scope,omitempty"`

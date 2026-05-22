@@ -85,7 +85,7 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	}
 
 	// Pass limit=0 to the store so it returns the full result set; we
-	// slice + compute has_more here for parity with Python.
+	// slice + compute has_more here.
 	edges, err := s.store.GetEdgesFrom(ctx, tenantID, req.GetNodeId(), edgeTypeFilter, 0)
 	if err != nil {
 		// Swallow store errors — return empty response with codes.OK.

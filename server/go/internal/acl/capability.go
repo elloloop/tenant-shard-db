@@ -23,8 +23,7 @@ const (
 	CoreCapAdmin CoreCapability = 5
 )
 
-// String returns the wire-stable name for a CoreCapability. Mirrors
-// the Python enum value names.
+// String returns the wire-stable name for a CoreCapability.
 func (c CoreCapability) String() string {
 	switch c {
 	case CoreCapUnspecified:

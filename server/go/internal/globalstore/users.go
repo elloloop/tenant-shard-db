@@ -40,9 +40,8 @@ func (g *GlobalStore) CreateUser(ctx context.Context, userID, email, name string
 	}, nil
 }
 
-// GetUser returns the user, or (nil, nil) if not present. The "no
-// error" sentinel mirrors the Python `dict | None` contract — callers
-// decide whether to upgrade missing-row to NOT_FOUND.
+// GetUser returns the user, or (nil, nil) if not present. Callers
+// decide whether to upgrade a missing row to NOT_FOUND.
 func (g *GlobalStore) GetUser(ctx context.Context, userID string) (*User, error) {
 	row := g.db.QueryRowContext(ctx,
 		`SELECT user_id, email, name, status, created_at, updated_at

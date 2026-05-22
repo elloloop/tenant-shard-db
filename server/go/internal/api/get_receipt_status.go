@@ -1,4 +1,4 @@
-// W2.03 — GetReceiptStatus RPC (Python -> Go server port, EPIC #407).
+// GetReceiptStatus RPC.
 //
 // Spec: docs/go-port/rpcs/GetReceiptStatus.md. The handler is a pure
 // read of the per-tenant applied_events table indexed by

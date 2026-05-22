@@ -8,8 +8,7 @@ import (
 )
 
 // applyAddGroupMember dispatches an "add_group_member" op. Restores
-// the WAL-first invariant flagged in PLAN.md §6.1 — the Python
-// AddGroupMember handler writes group_users directly today.
+// the WAL-first invariant flagged in PLAN.md §6.1.
 //
 // op shape:
 //

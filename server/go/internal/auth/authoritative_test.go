@@ -75,7 +75,7 @@ func TestAuthoritative_FallbackToClaimed(t *testing.T) {
 // TestAuthoritative_GroupSubjectIsTreatedAsUser pins that a group:
 // prefix coming through as a credential subject is NOT trusted as a
 // caller "group" identity (groups are ACL subjects only). It falls
-// through to the user:<subject> wrapping, mirroring Python.
+// through to the user:<subject> wrapping.
 func TestAuthoritative_GroupSubjectIsTreatedAsUser(t *testing.T) {
 	id := Identity{Method: MethodSession, Subject: "group:admins"}
 	ctx := WithIdentity(context.Background(), id)

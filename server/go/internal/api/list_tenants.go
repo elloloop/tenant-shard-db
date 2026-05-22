@@ -34,12 +34,10 @@
 //     escape the swallow.
 //
 // Source-of-truth: the Go port reads its tenant inventory from
-// globalstore.ListTenants("active") (the registry table) rather than
-// the Python directory scan over `data_dir/tenant_*.db`. The two land
-// on the same set in production deployments because tenant creation
-// always inserts into the registry first; the empty-globalstore branch
-// from Python (test harness with no globalstore) is preserved by the
-// nil-globalstore short-circuit below.
+// globalstore.ListTenants("active") (the registry table). Tenant
+// creation always inserts into the registry first; the embedded-harness
+// branch (no globalstore) is preserved by the nil-globalstore short-
+// circuit below.
 
 package api
 
@@ -149,8 +147,8 @@ func (s *Server) ListTenants(
 		visible = []string{}
 	}
 
-	// Stable ascending order. Spec note: Python returns sorted glob
-	// order; explicit sort.Strings defends against future drift.
+	// Stable ascending order. Explicit sort.Strings defends against
+	// future drift.
 	sort.Strings(visible)
 
 	out := make([]*pb.TenantInfo, 0, len(visible))

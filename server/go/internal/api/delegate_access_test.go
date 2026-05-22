@@ -6,13 +6,9 @@
 // docs/go-port/rpcs/DelegateAccess.md "Implementation outline":
 //
 //  1. Admin delegates -> grant materialises after the applier picks up
-//     the WAL event. THIS is the test that proves the
-//     silent-drop bug is fixed: the Python applier had no
-//     admin_delegate_access dispatch branch, so the WAL event was
-//     appended-and-ignored. With the Go applier (W1.10) + this handler
-//     (W2) wired through an in-memory WAL + canonical store, the grant
-//     becomes a row in node_access on replay -- which is the contract
-//     Python silently breaks today.
+//     the WAL event. THIS is the test that proves the silent-drop bug
+//     is fixed: the applier's delegate_access dispatch branch
+//     materialises the grant into a node_access row on replay.
 //
 //  2. Non-admin caller -> PERMISSION_DENIED. Closes the wire-payload
 //     trust gap (privilege-escalation regression pinned by commit
@@ -162,7 +158,7 @@ func (f *delegateFixture) appendCreateNode(t *testing.T, tenantID, nodeID, owner
 }
 
 // waitForIdempKey polls until idemKey appears in applied_events for
-// tenantID, or the deadline fires. Mirrors the apply package's helper.
+// tenantID, or the deadline fires.
 func (f *delegateFixture) waitForIdempKey(t *testing.T, tenantID, idemKey string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -215,12 +211,10 @@ func (f *delegateFixture) waitForGrant(t *testing.T, tenantID, nodeID, actorID s
 //
 // Setup: alice (owner) owns two nodes in acme. carol (admin) calls
 // DelegateAccess(from=alice, to=bob, permission=read). The handler
-// emits two delegate_access ops on the WAL; the applier (W1.10
-// dispatch branch) materialises both into node_access rows.
+// emits two delegate_access ops on the WAL; the applier materialises
+// both into node_access rows.
 //
-// Pinned by docs/go-port/rpcs/DelegateAccess.md §"Open questions" item 1:
-// the Python applier silently drops admin_delegate_access events; the
-// Go applier MUST close that gap.
+// Pinned by docs/go-port/rpcs/DelegateAccess.md §"Open questions" item 1.
 func TestDelegateAccess_AdminDelegatesGrantMaterialisesAfterApply(t *testing.T) {
 	t.Parallel()
 	f := newDelegateFixture(t)
@@ -263,8 +257,7 @@ func TestDelegateAccess_AdminDelegatesGrantMaterialisesAfterApply(t *testing.T) 
 	}
 
 	// THIS is the bug-closed assertion: the applier must materialise
-	// the grant for both nodes. If the applier silently dropped the
-	// event (the Python bug), waitForGrant times out.
+	// the grant for both nodes.
 	for _, nodeID := range []string{"doc1", "doc2"} {
 		perm, exp := f.waitForGrant(t, tenantID, nodeID, "user:bob")
 		if perm != "read" {

@@ -10,13 +10,12 @@ import (
 )
 
 // Sentinel errors returned by the applier. Each wraps an internal/errs
-// sentinel so the gRPC layer maps them to the Python server's status
-// codes (see docs/go-port/shared/error-mapping.md).
+// sentinel so the gRPC layer maps them to the appropriate status codes
+// (see docs/go-port/shared/error-mapping.md).
 var (
 	// ErrPoisonEvent signals an event the applier refuses to apply
 	// because it is structurally malformed (missing required fields,
-	// unknown op-type, etc.). Halts the consumer; mirrors the Python
-	// halt_on_error=True behaviour.
+	// unknown op-type, etc.). Halts the consumer.
 	ErrPoisonEvent = fmt.Errorf("%w: poison event", errs.ErrInvalidArgument)
 
 	// ErrUnknownOpType signals an op-type the applier does not know
@@ -49,7 +48,7 @@ var (
 // the values are already in the same shape the structpb encoder
 // expects on the egress side. JSON-canonical comparison (see
 // preconditionMatches in ops_update_node.go) keeps numeric and string
-// equality consistent with the Python applier's behaviour.
+// equality consistent across JSON round-trips.
 type PreconditionFailure struct {
 	OpIndex  int
 	Field    string

@@ -1,4 +1,4 @@
-// Tests for the ListSharedWithMe RPC (W2 — EPIC #407).
+// Tests for the ListSharedWithMe RPC.
 //
 // The behaviours pinned here mirror the contract in
 // docs/go-port/rpcs/ListSharedWithMe.md.

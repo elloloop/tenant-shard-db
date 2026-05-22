@@ -1,4 +1,4 @@
-// Tests for the GetNode RPC (W2 — EPIC #407).
+// Tests for the GetNode RPC.
 //
 // Spec: docs/go-port/rpcs/GetNode.md. Four behaviours pinned here:
 //
@@ -162,9 +162,9 @@ func TestGetNode_MissingNode(t *testing.T) {
 // TestGetNode_NoPermission pins the cross-tenant gate: a non-member
 // caller (no membership row, no node_access row) sees
 // PERMISSION_DENIED, regardless of whether the node exists. The
-// global_store is wired so the membership check actually runs (Python
-// `_check_cross_tenant_read` short-circuits to "local" only when no
-// global_store is configured — spec "Open questions / risks" item 5).
+// global_store is wired so the membership check actually runs
+// (short-circuits to "local" only when no global_store is configured —
+// spec "Open questions / risks" item 5).
 //
 // We seed the tenant + a node owned by alice, then query as bob who
 // has no membership and no grants. PERMISSION_DENIED fires before the
@@ -208,8 +208,8 @@ func TestGetNode_NoPermission(t *testing.T) {
 }
 
 // TestGetNode_PayloadIsIDKeyedOnWire is the explicit invariant-#6
-// pin: the on-disk payload is keyed by field_id (Python parity, see
-// CLAUDE.md), AND the wire payload egress also stays id-keyed (the
+// pin: the on-disk payload is keyed by field_id (CLAUDE.md invariant
+// #6), AND the wire payload egress also stays id-keyed (the
 // SDK does the id->name translation client-side). This is the
 // "zero-translation egress" rule from
 // docs/go-port/shared/payload-translation.md.

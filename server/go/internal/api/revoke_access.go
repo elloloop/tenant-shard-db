@@ -35,9 +35,8 @@
 //
 // # Error contract
 //
-// Mirrors the Python contract: errors come back as
-// RevokeAccessResponse{Found:false, Error:<string>} on the response,
-// NOT as a gRPC status error. Three observable paths:
+// Errors come back as RevokeAccessResponse{Found:false, Error:<string>}
+// on the response, NOT as a gRPC status error. Three observable paths:
 //
 //	PermissionDenied Found=false, Error="permission denied: ..."
 //	WAL/append failure Found=false, Error=<err>
@@ -61,9 +60,9 @@
 //
 // Emits entdb_grpc_requests_total{method="RevokeAccess",
 // status="ok"|"denied"|"error"} via the shared metrics chokepoint.
-// Labels follow the Python convention: "denied" specifically for
-// PermissionDenied, "error" for any other failure, "ok" for the happy
-// path including idempotent revoke-not-granted.
+// Labels: "denied" specifically for PermissionDenied, "error" for any
+// other failure, "ok" for the happy path including idempotent
+// revoke-not-granted.
 
 package api
 

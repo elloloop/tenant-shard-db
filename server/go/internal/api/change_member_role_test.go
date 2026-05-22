@@ -1,7 +1,6 @@
 // Tests for ChangeMemberRole. Behavioural pins are documented in
-// docs/go-port/rpcs/ChangeMemberRole.md. The Go-side drift this file
-// enforces is the last-owner demotion protection (PLAN.md §6) — the
-// Python handler does NOT have this and the Go port adds it.
+// docs/go-port/rpcs/ChangeMemberRole.md. The last-owner demotion
+// protection (PLAN.md §6) is an improvement added in the Go port.
 
 package api_test
 
@@ -85,8 +84,7 @@ func TestChangeMemberRole_AdminPromotesMember(t *testing.T) {
 }
 
 // TestChangeMemberRole_AdminDemotesAdmin pins the demote path and
-// confirms admin role grants the privilege (not just owner — Go
-// widens the Python "owner-only" rule).
+// confirms admin role grants the privilege (not just owner).
 func TestChangeMemberRole_AdminDemotesAdmin(t *testing.T) {
 	t.Parallel()
 
@@ -127,8 +125,7 @@ func TestChangeMemberRole_AdminDemotesAdmin(t *testing.T) {
 
 // TestChangeMemberRole_NonAdminDenied pins the negative path: a plain
 // member (carol) attempting to mutate roles is rejected with
-// PERMISSION_DENIED. Mirrors the Python pin
-// `test_change_role_by_member_denied`.
+// PERMISSION_DENIED.
 func TestChangeMemberRole_NonAdminDenied(t *testing.T) {
 	t.Parallel()
 

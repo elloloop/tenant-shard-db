@@ -1,4 +1,4 @@
-// Tests for the SearchNodes RPC (W2 — EPIC #407).
+// Tests for the SearchNodes RPC.
 //
 // Spec: docs/go-port/rpcs/SearchNodes.md. Five branches pinned here, in
 // the order the spec walks them:
@@ -325,8 +325,8 @@ func TestSearchNodes_QueryTooLong(t *testing.T) {
 
 // TestSearchNodes_MalformedFTSQueryReturnsEmpty: any error after the
 // validation gates is swallowed and the handler returns codes.OK with
-// an empty node list. We pin this for parity; flipping to INTERNAL is
-// a future contract-test update.
+// an empty node list. Flipping to INTERNAL is a future contract-test
+// update.
 func TestSearchNodes_MalformedFTSQueryReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	srv, cs, tenantID := newSearchTestServer(t)
