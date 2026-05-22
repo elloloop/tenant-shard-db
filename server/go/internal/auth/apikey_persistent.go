@@ -16,7 +16,7 @@ import (
 type StoredAPIKey struct {
 	KeyID     string
 	Name      string
-	Hash      string   // argon2id PHC string
+	Hash      string // argon2id PHC string
 	Scopes    []string
 	ExpiresAt int64 // Unix seconds; 0 == never
 }
