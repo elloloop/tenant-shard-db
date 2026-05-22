@@ -93,7 +93,10 @@ func TestSetLegalHold_Release_DurablyEnqueuesLift(t *testing.T) {
 // a request-scoped goroutine. We measure the live goroutine count across
 // the OFF call: a detached `go func()` sweep would leave it elevated.
 func TestSetLegalHold_Release_SpawnsNoGoroutine(t *testing.T) {
-	t.Parallel()
+	// Deliberately NOT t.Parallel(): this test measures the process-wide
+	// goroutine count, so it must run isolated from the parallel test
+	// batch whose transient goroutines would otherwise pollute the
+	// before/after delta (the cause of past CI flakes).
 
 	f := newAdminWALFixture(t)
 	gs := f.gs
@@ -113,11 +116,20 @@ func TestSetLegalHold_Release_SpawnsNoGoroutine(t *testing.T) {
 		t.Fatalf("SetLegalHold(release): %v", err)
 	}
 
-	// A detached sweep goroutine would still be alive here. Allow brief
-	// settle for the synchronous applier-driven enqueue to finish.
-	time.Sleep(100 * time.Millisecond)
-	runtime.GC()
-	after := runtime.NumGoroutine()
+	// A detached sweep goroutine would stay alive and keep the count
+	// elevated; transient runtime/GC goroutines clear within a few
+	// milliseconds. Poll for the count to settle back to baseline so that
+	// only a genuine leak (one that persists past the deadline) fails.
+	deadline := time.Now().Add(2 * time.Second)
+	after := before
+	for {
+		runtime.GC()
+		after = runtime.NumGoroutine()
+		if after <= before+1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 	// Allow tiny scheduler noise but not a leaked long-lived sweep.
 	if after > before+1 {
 		t.Fatalf("goroutine count grew %d -> %d across the OFF RPC; "+
