@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779476757591,
+  "lastUpdate": 1779476972230,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -3780,6 +3780,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0011476271622163354",
             "extra": "mean: 6.187548050361296 msec\nrounds: 139"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2985587bf96259833da2a03d31604b8a6fde82f1",
+          "message": "test(api): de-flake TestSetLegalHold_Release_SpawnsNoGoroutine (#558)\n\nThe test snapshots runtime.NumGoroutine() before/after the OFF RPC to\nassert no detached lift goroutine is spawned, but it ran with\nt.Parallel(): the process-wide count was polluted by the concurrent\nparallel-test batch, so transient goroutines from unrelated tests\nintermittently failed it in CI (e.g. 297 -> 299).\n\nDrop t.Parallel() so the test runs isolated from the parallel batch,\nand poll for the count to settle back to baseline — a genuinely leaked\ngoroutine persists past the deadline while transient runtime/GC\ngoroutines clear. The durable-queue assertion is unchanged.",
+          "timestamp": "2026-05-22T20:06:57+01:00",
+          "tree_id": "ddec60a37da80cc9a47075ef3cb5f2c21c0a344d",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/2985587bf96259833da2a03d31604b8a6fde82f1"
+        },
+        "date": 1779476971204,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2305.027769469732,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003453706957659505",
+            "extra": "mean: 433.83425277780856 usec\nrounds: 1080"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1659.1084828388045,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000052770131569141844",
+            "extra": "mean: 602.7333416371653 usec\nrounds: 1124"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 810.3316674373547,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006106554340495511",
+            "extra": "mean: 1.2340625945947103 msec\nrounds: 740"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 702.2826226786124,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009326438597036323",
+            "extra": "mean: 1.4239281561401143 msec\nrounds: 570"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1164.3684140213943,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0017856842420919902",
+            "extra": "mean: 858.8347021079755 usec\nrounds: 1044"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1052.883906266516,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002556331071265542",
+            "extra": "mean: 949.772329169661 usec\nrounds: 1121"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1173.3443993461185,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018401518941653294",
+            "extra": "mean: 852.2646893420894 usec\nrounds: 1323"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1588.4406802373444,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010335784983568093",
+            "extra": "mean: 629.5482182252977 usec\nrounds: 1251"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1469.4551009847687,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006214332083294602",
+            "extra": "mean: 680.5243653445696 usec\nrounds: 479"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1300.0134649196198,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000047624512282671826",
+            "extra": "mean: 769.2228019052328 usec\nrounds: 1050"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1898.9383636711834,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003168189691660661",
+            "extra": "mean: 526.610035971214 usec\nrounds: 1529"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 189.45517833656248,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007987186833582156",
+            "extra": "mean: 5.278293308106493 msec\nrounds: 185"
           }
         ]
       }
