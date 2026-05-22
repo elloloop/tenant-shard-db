@@ -11,10 +11,8 @@ import (
 )
 
 // MaxGroupResolutionDepth bounds recursive group-membership expansion.
-// Mirrors canonical_store.py:_ACL_MAX_DEPTH = 10. Exceeding it yields
-// errs.ErrInvalidArgument (the Python WITH RECURSIVE … WHERE depth < 10
-// just stops expanding; we surface it as an explicit error so a
-// pathological group cycle isn't silently truncated).
+// Max ACL depth is 10. Exceeding it yields errs.ErrInvalidArgument so a
+// pathological group cycle isn't silently truncated.
 const MaxGroupResolutionDepth = 10
 
 // GroupMembershipReader is the data source for parent-group expansion.
@@ -34,8 +32,7 @@ type GroupMembershipReader interface {
 	GroupsContaining(ctx context.Context, tenantID, memberActorID string) ([]string, error)
 }
 
-// Resolver expands group principals to a flat actor list. Mirrors the
-// Python resolve_actor_groups (canonical_store.py:2828-2865).
+// Resolver expands group principals to a flat actor list.
 //
 // Behaviour:
 //

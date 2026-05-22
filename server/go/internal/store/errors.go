@@ -39,8 +39,8 @@ var (
 	ErrTenantNotOpen = fmt.Errorf("%w: tenant not opened", errs.ErrFailedPrecondition)
 
 	// ErrInvalidTenantID is returned when a tenant_id contains
-	// filesystem-unsafe characters or exceeds the length limit. Mirrors
-	// canonical_store.py:138-162. Wraps errs.ErrInvalidArgument.
+	// filesystem-unsafe characters or exceeds the length limit. Wraps
+	// errs.ErrInvalidArgument.
 	ErrInvalidTenantID = fmt.Errorf("%w: tenant_id must match [A-Za-z0-9_-]{1,128}", errs.ErrInvalidArgument)
 
 	// ErrIdempotencyViolation is returned by RecordIdempotency when the

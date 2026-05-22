@@ -71,15 +71,15 @@ func (s *Server) RemoveTenantMember(
 		metrics.RecordGRPCRequest(removeTenantMemberMethod, status, time.Since(start))
 	}()
 
-	// Registry-less deployment guard. Mirrors grpc_server.py:2500-2504.
+	// Registry-less deployment guard.
 	if s.global == nil {
 		status = "error"
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
-	// Required-field validation. Mirrors grpc_server.py:2506-2511. Note:
-	// `role` is silently ignored — the request type is shared with
-	// AddTenantMember (proto/entdb/v1/entdb.proto:909-919).
+	// Required-field validation. Note: `role` is silently ignored — the
+	// request type is shared with AddTenantMember
+	// (proto/entdb/v1/entdb.proto:909-919).
 	if req.GetActor() == "" {
 		status = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
@@ -102,9 +102,8 @@ func (s *Server) RemoveTenantMember(
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
 	// Admin/owner gate — Go HARDENS vs Python (closes the privilege-
-	// escalation gap at grpc_server.py:2492-2541). Mirrors the pattern
-	// in AddTenantMember (grpc_server.py:2466-2474) and
-	// ChangeMemberRole (grpc_server.py:2627-2634).
+	// escalation gap). Mirrors the pattern in AddTenantMember and
+	// ChangeMemberRole.
 	if !isAdminOrSystemActor(trusted) {
 		role, err := s.getTenantMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
@@ -118,8 +117,8 @@ func (s *Server) RemoveTenantMember(
 		}
 	}
 
-	// Single-pass scan: count owners and locate the target row. Matches
-	// grpc_server.py:2515-2521 — one read, no transaction wrapping.
+	// Single-pass scan: count owners and locate the target row.
+	// One read, no transaction wrapping.
 	members, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
 	if err != nil {
 		status = "error"
@@ -139,8 +138,8 @@ func (s *Server) RemoveTenantMember(
 		}
 	}
 
-	// Not-a-member: idempotent no-op. NOT a gRPC error code; Python
-	// records metric label "ok" (grpc_server.py:2523-2525).
+	// Not-a-member: idempotent no-op. NOT a gRPC error code; metric
+	// label is "ok".
 	if target == nil {
 		return &pb.TenantMemberResponse{
 			Success: false,
@@ -149,8 +148,7 @@ func (s *Server) RemoveTenantMember(
 	}
 
 	// Last-owner protection. Only "owner" is protected — "admin" is
-	// not (spec §"Last-admin nuance"). Python records metric label
-	// "error" here (grpc_server.py:2527-2532).
+	// not (spec §"Last-admin nuance"). Metric label is "error" here.
 	if *target == "owner" && ownerCount <= 1 {
 		status = "error"
 		return &pb.TenantMemberResponse{
@@ -171,16 +169,14 @@ func (s *Server) RemoveTenantMember(
 	return &pb.TenantMemberResponse{Success: true}, nil
 }
 
-// isAdminOrSystemActor mirrors grpc_server.py:2053-2069. The trusted
-// actor is admin/system iff it carries the "system:" or "admin:"
-// prefix.
+// isAdminOrSystemActor returns true when the trusted actor carries the
+// "system:" or "admin:" prefix.
 func isAdminOrSystemActor(a auth.Actor) bool {
 	return a.IsSystem() || a.IsAdmin()
 }
 
 // getTenantMemberRole returns the role of userID inside tenantID, or
-// "" if the user is not a member. Mirrors grpc_server.py:2290-2296
-// (`_get_member_role`).
+// "" if the user is not a member.
 func (s *Server) getTenantMemberRole(ctx context.Context, tenantID, userID string) (string, error) {
 	members, err := s.global.GetTenantMembers(ctx, tenantID)
 	if err != nil {

@@ -2,10 +2,9 @@
 
 package wal
 
-// Azure Service Bus WAL backend for the Go server. Ported from the
-// retired Python source (server/python/entdb_server/wal/servicebus.py).
+// Azure Service Bus WAL backend for the Go server.
 //
-// Concept mapping (mirrors the Python docstring):
+// Concept mapping:
 //
 //   - Service Bus queue   -> WAL topic. The queue MUST be
 //                            session-enabled for ordering to hold.
@@ -204,8 +203,7 @@ func (s *ServiceBus) defaultNewClient(ctx context.Context) (ServiceBusAPI, error
 }
 
 // Connect builds the client (sender). Service Bus has no cheap
-// describe; connectivity surfaces on first Send/AcceptNextSession
-// (parity with servicebus.py, which only created the client here).
+// describe; connectivity surfaces on first Send/AcceptNextSession.
 func (s *ServiceBus) Connect(ctx context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -479,8 +477,8 @@ func (s *ServiceBus) Subscribe(
 }
 
 // Commit completes (acks) the message on the receiver that owns its
-// session. Mirrors servicebus.py commit -> complete_message. Service
-// Bus settlement is link-scoped: the message must be acked on the very
+// session. Service Bus settlement is link-scoped: the message must be
+// acked on the very
 // session receiver that delivered it, which is why we resolve the
 // session by record.Key (the SessionId / tenant) rather than holding a
 // single queue-wide receiver.
@@ -495,8 +493,7 @@ func (s *ServiceBus) Commit(ctx context.Context, groupID string, record Record) 
 	if !ok || sess == nil {
 		// The session lock was already released (drained + closed, or a
 		// rebalance). The message will be redelivered on a future accept
-		// of that session; the applier dedupes (at-least-once). This
-		// mirrors the "no pending message" no-op path in servicebus.py.
+		// of that session; the applier dedupes (at-least-once).
 		return nil
 	}
 	if err := sess.Complete(ctx, record.Position.Offset); err != nil {
@@ -683,8 +680,7 @@ func (a *azServiceBusSession) Complete(ctx context.Context, sequenceNumber int64
 	}
 	a.mu.Unlock()
 	if !ok {
-		// Already completed or unknown — no-op (parity with the
-		// servicebus.py "no pending message" warning path).
+		// Already completed or unknown — no-op.
 		return nil
 	}
 	return a.receiver.CompleteMessage(ctx, msg, nil)

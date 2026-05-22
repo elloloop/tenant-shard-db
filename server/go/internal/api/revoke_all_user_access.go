@@ -7,15 +7,13 @@
 //
 // # Behavioural pins
 //
-//   - WAL-FIRST RESTORATION (Go HARDENS vs Python). The Python handler
-//     writes directly to per-tenant SQLite via `revoke_user_access`
-//     (canonical_store.py:3871) — a CLAUDE.md invariant #1 violation
-//     pinned by docs/go-port/rpcs/RevokeAllUserAccess.md "WAL invariant
-//     gap (Go port MUST fix)". The Go port appends a single
-//     `admin_revoke_access` op into the WAL; the broadened
+//   - WAL-FIRST RESTORATION (Go HARDENS vs Python). The Go port appends
+//     a single `admin_revoke_access` op into the WAL; the broadened
 //     applier (server/go/internal/apply/ops_admin_revoke_access.go)
 //     deletes from node_access AND group_users AND node_visibility for
-//     the user. PLAN.md §6.4 item 2.
+//     the user. PLAN.md §6.4 item 2. Pinned by
+//     docs/go-port/rpcs/RevokeAllUserAccess.md "WAL invariant gap (Go
+//     port MUST fix)".
 //
 //   - Trusted-actor authz. The wire `actor` field is UNTRUSTED. We
 //     rebind to the auth.Authoritative identity from ctx before any
@@ -26,12 +24,11 @@
 //
 //   - Tenant gate. checkTenant runs first (sharding redirect via the
 //     `entdb-redirect-node` trailer when this node does not own the
-//     tenant). Mirrors grpc_server.py:362.
+//     tenant).
 //
 //   - Validation order. tenant_id non-empty THEN user_id non-empty,
-//     before the auth gate. Mirrors grpc_server.py:2873-2876 — pinned
-//     by tests/python/integration/test_grpc_contract.py:584-596 and
-//     tests/python/unit/test_admin_operations.py:781-797.
+//     before the auth gate. Pinned by
+//     tests/python/integration/test_grpc_contract.py:584-596.
 //
 //   - Tally semantics. Python returns rowcounts from the synchronous
 //     SQLite delete. The Go path is WAL-first, so we read the current
@@ -81,9 +78,9 @@ const revokeAllUserAccessMethod = "RevokeAllUserAccess"
 const revokeAllUserAccessTopic = "entdb-wal"
 
 // revokeAllUserAccessSharedLimit caps the cross-tenant shared_index
-// scan. Mirrors grpc_server.py:2895 (limit=10000). Users shared on
-// more than 10k nodes won't be fully cleaned in one call — admins can
-// re-run the RPC to drain the rest. Spec "Open questions" §5.
+// scan at 10000 rows. Users shared on more than 10k nodes won't be
+// fully cleaned in one call — admins can re-run the RPC to drain the
+// rest. Spec "Open questions" §5.
 const revokeAllUserAccessSharedLimit = 10000
 
 // RevokeAllUserAccess implements entdb.v1.EntDBService/RevokeAllUserAccess.
@@ -97,8 +94,7 @@ func (s *Server) RevokeAllUserAccess(
 		metrics.RecordGRPCRequest(revokeAllUserAccessMethod, status, time.Since(start))
 	}()
 
-	// Required-field validation BEFORE auth, in the order Python uses
-	// (grpc_server.py:2873-2876).
+	// Required-field validation BEFORE auth.
 	if req.GetTenantId() == "" {
 		status = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")

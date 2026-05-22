@@ -12,7 +12,7 @@
 //  2. On success, return a well-formed empty response:
 //     items = [] (non-nil), unread_count = 0, has_more = false.
 //  3. Other exceptions inside the handler body are swallowed and the
-//     empty response is returned (matches grpc_server.py:1495-1498).
+//     empty response is returned.
 //  4. No SQLite reads, no WAL append, no ACL check, no read of
 //     request.user_id / filters / pagination — all ignored on purpose.
 //
@@ -36,10 +36,8 @@ import (
 func (s *Server) GetMailbox(ctx context.Context, req *pb.GetMailboxRequest) (*pb.GetMailboxResponse, error) {
 	start := time.Now()
 
-	// Swallow-on-panic. Mirrors the Python try/except at
-	// grpc_server.py:1495 which logs and falls through to an empty
-	// response. A panic must NOT propagate as a gRPC error to the
-	// SDK.
+	// Swallow-on-panic: log and fall through to an empty response.
+	// A panic must NOT propagate as a gRPC error to the SDK.
 	var (
 		resp *pb.GetMailboxResponse
 		err  error
@@ -64,10 +62,9 @@ func (s *Server) GetMailbox(ctx context.Context, req *pb.GetMailboxRequest) (*pb
 }
 
 // emptyMailboxResponse is the canned empty response. Items is a
-// non-nil empty slice for symmetry with grpc_server.py:1494
-// (`items=[]`); protobuf-go marshals nil and an empty slice
-// identically on the wire, but explicit `[]` keeps the Go source
-// readable.
+// non-nil empty slice (`items=[]`); protobuf-go marshals nil and an
+// empty slice identically on the wire, but explicit `[]` keeps the Go
+// source readable.
 func emptyMailboxResponse() *pb.GetMailboxResponse {
 	return &pb.GetMailboxResponse{
 		Items:       []*pb.MailboxItem{},

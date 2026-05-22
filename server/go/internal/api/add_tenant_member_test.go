@@ -1,8 +1,6 @@
-// Tests for AddTenantMember. Behavioural parity with the Python handler
-//  is pinned by
-// the cross-language contract suite at
-// tests/python/integration/test_grpc_contract.py:511-530 and the unit
-// tests at tests/python/unit/test_tenant_registry.py:404-449. This file
+// Tests for AddTenantMember. Behavioural parity is pinned by the
+// cross-language contract suite at
+// tests/python/integration/test_grpc_contract.py:511-530. This file
 // covers the four branches the spec calls out:
 //
 //   1. Admin happy path -> OK + success=true; row inserted.
@@ -86,9 +84,9 @@ func TestAddTenantMember_AdminHappyPath(t *testing.T) {
 
 // TestAddTenantMember_NonAdminPermissionDenied: a regular user without
 // owner/admin role for the target tenant gets PERMISSION_DENIED. Pins
-// the membership-based admin check (grpc_server.py:2468-2474) and
-// implicitly the trusted-actor invariant — the wire actor claims
-// "system:admin" but the interceptor-attested identity wins.
+// the membership-based admin check and implicitly the trusted-actor
+// invariant — the wire actor claims "system:admin" but the
+// interceptor-attested identity wins.
 func TestAddTenantMember_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 
@@ -130,8 +128,8 @@ func TestAddTenantMember_NonAdminPermissionDenied(t *testing.T) {
 
 // TestAddTenantMember_DuplicateSoftFailure: a second AddTenantMember
 // for the same (tenant_id, user_id) returns gRPC OK with
-// success=false and the canonical error string. Pinned by
-// grpc_server.py:2484-2487 and the SDK idempotent-replay contract.
+// success=false and the canonical error string. Pinned by the SDK
+// idempotent-replay contract.
 func TestAddTenantMember_DuplicateSoftFailure(t *testing.T) {
 	t.Parallel()
 
@@ -184,7 +182,7 @@ func TestAddTenantMember_DuplicateSoftFailure(t *testing.T) {
 // TestAddTenantMember_EmptyFieldsInvalidArgument: each of actor /
 // tenant_id / user_id, when empty, surfaces INVALID_ARGUMENT BEFORE
 // any identity work. Pinned by test_grpc_contract.py:519-523 (empty
-// actor) and grpc_server.py:2456-2461.
+// actor).
 func TestAddTenantMember_EmptyFieldsInvalidArgument(t *testing.T) {
 	t.Parallel()
 

@@ -37,8 +37,7 @@ type fakeProducerDisconnected struct{ fakeProducerNoPing }
 func (fakeProducerDisconnected) IsConnected() bool { return false }
 
 // fakeProducerPanic panics inside IsConnected. The handler MUST catch
-// and report "unknown" rather than crash the RPC (matches Python
-// grpc_server.py:1514-1515).
+// and report "unknown" rather than crash the RPC.
 type fakeProducerPanic struct{ fakeProducerNoPing }
 
 func (fakeProducerPanic) IsConnected() bool { panic("boom") }
@@ -170,7 +169,7 @@ func TestHealth_WALDisconnected(t *testing.T) {
 
 // TestHealth_WALProbePanicIsCaught pins the panic-recovery contract:
 // a panic inside IsConnected becomes "unknown", the RPC still returns
-// OK. Mirrors Python's bare-except at grpc_server.py:1514-1515.
+// OK.
 func TestHealth_WALProbePanicIsCaught(t *testing.T) {
 	t.Parallel()
 
@@ -191,9 +190,8 @@ func TestHealth_WALProbePanicIsCaught(t *testing.T) {
 	}
 }
 
-// TestHealth_MultiNodeInfoKeysDoNotGateHealth is the regression guard
-// pinned by tests/python/unit/test_cron_fixes.py:116-147. The
-// node_id / assigned_tenants info keys MUST NOT count against `healthy`.
+// TestHealth_MultiNodeInfoKeysDoNotGateHealth is the regression guard.
+// The node_id / assigned_tenants info keys MUST NOT count against `healthy`.
 //
 //	has no sharding handle on the Server struct yet, so today the
 //

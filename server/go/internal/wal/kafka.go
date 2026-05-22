@@ -89,8 +89,7 @@ type KafkaConfig struct {
 	HeartbeatIntervalMs int
 }
 
-// DefaultKafkaConfig returns a config that matches Python's defaults
-// (config.py:142-204).
+// DefaultKafkaConfig returns a config populated with sensible defaults.
 func DefaultKafkaConfig(brokers []string) KafkaConfig {
 	return KafkaConfig{
 		Brokers:             brokers,

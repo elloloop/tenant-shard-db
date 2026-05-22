@@ -1,8 +1,5 @@
-// Tests for the GetTenantMembers RPC. Behaviour parity with Python is
-// pinned by:
+// Tests for the GetTenantMembers RPC. Behaviour parity pinned by:
 //
-//   - tests/python/unit/test_tenant_registry.py:529-554 (happy path,
-//     no auth gate)
 //   - tests/python/integration/test_grpc_contract.py:489-499 (happy
 //     path + INVALID_ARGUMENT on empty actor)
 //   - sdk/go/entdb/admin_test.go:235-260 (epoch-ms preserved)
@@ -183,9 +180,8 @@ func TestGetTenantMembers_UnknownTenant(t *testing.T) {
 }
 
 // TestGetTenantMembers_EmptyTenantID: an empty tenant_id returns
-// INVALID_ARGUMENT with the exact Python message
-// `"tenant_id is required"`. The actor-check fires first
-// (grpc_server.py:2557-2560), so a non-empty actor is required to
+// INVALID_ARGUMENT with the exact message `"tenant_id is required"`.
+// The actor-check fires first, so a non-empty actor is required to
 // exercise this branch.
 func TestGetTenantMembers_EmptyTenantID(t *testing.T) {
 	t.Parallel()

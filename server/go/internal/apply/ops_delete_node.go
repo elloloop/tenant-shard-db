@@ -7,9 +7,8 @@ import (
 	"fmt"
 )
 
-// applyDeleteNode dispatches a "delete_node" op. Mirrors
-// applier.py:1109-1156. Cascades edges, visibility, node_access and
-// acl_inherit before deleting the node row.
+// applyDeleteNode dispatches a "delete_node" op. Cascades edges, visibility,
+// node_access and acl_inherit before deleting the node row.
 func (a *Applier) applyDeleteNode(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, aliases nodeAliasMap, res *Result) error {
 	nodeID := aliases.resolveRef(stringField(op, "id"))
 	if nodeID == "" {

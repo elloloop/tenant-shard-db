@@ -34,8 +34,7 @@ type IdempotencyRecord struct {
 }
 
 // CheckIdempotency reports whether (tenant_id, request_id) has already
-// been recorded. Mirrors canonical_store.py:_sync_check_idempotency
-// (1379).
+// been recorded.
 //
 // Pre-CAS callers that just want a boolean "have we seen this idem
 // key" answer remain on this method. Callers that need to distinguish
@@ -80,8 +79,7 @@ func (s *CanonicalStore) CheckIdempotencyStatus(ctx context.Context, tenantID, r
 
 // RecordIdempotency inserts a (tenant_id, request_id, stream_pos) row
 // in applied_events. Returns ErrIdempotencyViolation when the key has
-// already been recorded. Mirrors canonical_store.py:_sync_record_applied_event
-// (1409).
+// already been recorded.
 //
 // The applier calls this inside its BatchTxn (see RecordIdempotencyTx).
 func (s *CanonicalStore) RecordIdempotency(ctx context.Context, tenantID, requestID, streamPos string) error {
@@ -103,9 +101,7 @@ func (s *CanonicalStore) RecordIdempotency(ctx context.Context, tenantID, reques
 }
 
 // RecordIdempotencyTx records the idempotency key inside an already-
-// open BatchTxn with status=APPLIED. Mirrors the Python pattern at
-// canonical_store.py:1409 where the applier passes its conn into
-// _sync_record_applied_event.
+// open BatchTxn with status=APPLIED.
 func (s *CanonicalStore) RecordIdempotencyTx(ctx context.Context, b *BatchTxn, requestID, streamPos string) error {
 	_, err := b.conn.ExecContext(ctx, `
 		INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at, status)

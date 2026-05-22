@@ -7,36 +7,31 @@
 //
 //   - Request carries no actor field — there is nothing on the wire to
 //     validate. The "trusted-actor" rule has the trusted Identity
-//     established by the auth interceptor as its sole input. Pinned by
-//     tests/python/integration/test_privilege_escalation.py:386-417
-//     (claimed admin actor in metadata MUST NOT bypass membership
-//     filtering for user:eve).
+//     established by the auth interceptor as its sole input. A claimed
+//     admin actor in metadata MUST NOT bypass membership filtering for
+//     user:eve.
 //
 //   - Visibility classes:
 //
 //   - No trusted Identity on ctx (interceptor missing) →
 //     PERMISSION_DENIED, never falls open. Pinned by
-//     tests/python/unit/test_listtenants_auth.py:179-192 and
 //     tests/python/integration/test_grpc_contract.py:288-295.
 //
 //   - "__system__", "system:*", "admin:*" → all tenants this node
-//     hosts (sharding still applied). Pinned by
-//     test_listtenants_auth.py:99-111 and :200-230.
+//     hosts (sharding still applied).
 //
 //   - "user:<id>" or any other bare id → intersection of node-local
 //     tenants ∩ globalstore.GetUserTenants(<id>). Strip the "user:"
-//     prefix before the lookup. Pinned by
-//     test_listtenants_auth.py:119-137 and :157-171.
+//     prefix before the lookup.
 //
 //   - Read-only. No WAL append, no canonical_store write, no
 //     globalstore write.
 //
 //   - Swallow-as-empty. Any unhandled error path inside the handler
 //     returns &ListTenantsResponse{} with grpc.OK and metric
-//     status="error", matching the Python `except Exception` at
-//     grpc_server.py:1600-1603. Returning codes.Internal would be a
-//     contract break. PERMISSION_DENIED is the *intended* error path
-//     and MUST escape the swallow.
+//     status="error". Returning codes.Internal would be a contract
+//     break. PERMISSION_DENIED is the *intended* error path and MUST
+//     escape the swallow.
 //
 // Source-of-truth: the Go port reads its tenant inventory from
 // globalstore.ListTenants("active") (the registry table) rather than
@@ -79,8 +74,7 @@ func (s *Server) ListTenants(
 
 	// Swallow panics → empty + OK. PERMISSION_DENIED returns through
 	// the explicit `return` below, NOT via panic, so it escapes this
-	// recover unchanged. Mirrors Python's outer except at
-	// grpc_server.py:1600-1603.
+	// recover unchanged.
 	defer func() {
 		if r := recover(); r != nil {
 			stat = "error"
@@ -99,8 +93,8 @@ func (s *Server) ListTenants(
 	}
 	trusted := id.Subject
 
-	// 2. Admin classification — same prefix scheme the Python handler
-	//    uses at grpc_server.py:1568-1572.
+	// 2. Admin classification — same prefix scheme as the rest of the
+	//    handler suite.
 	isAdmin := trusted == "__system__" ||
 		strings.HasPrefix(trusted, "system:") ||
 		strings.HasPrefix(trusted, "admin:")
@@ -108,17 +102,16 @@ func (s *Server) ListTenants(
 	// 3. Node-local tenant inventory. Source of truth in the Go port
 	//    is the globalstore tenant_registry; if it isn't wired, the
 	//    embedded-harness branch below returns empty for non-admin
-	//    callers (matches test_listtenants_auth.py:238-258).
+	//    callers.
 	all, lerr := s.listLocalTenantIDs(ctx)
 	if lerr != nil {
-		// Swallow → empty + OK. Matches Python's `except Exception`
-		// at grpc_server.py:1600-1603.
+		// Swallow → empty + OK.
 		stat = "error"
 		return &pb.ListTenantsResponse{Tenants: []*pb.TenantInfo{}}, nil
 	}
 
 	// 4. Sharding filter. nil sharding == single-node default; nothing
-	//    to strip. Matches grpc_server.py:1575-1576.
+	//    to strip.
 	if s.sharding != nil && s.sharding.IsMine != nil {
 		filtered := all[:0]
 		for _, tid := range all {
@@ -153,7 +146,6 @@ func (s *Server) ListTenants(
 		}
 	default:
 		// No globalstore wired (embedded harness) — empty, not all.
-		// Matches grpc_server.py:1588-1591.
 		visible = []string{}
 	}
 

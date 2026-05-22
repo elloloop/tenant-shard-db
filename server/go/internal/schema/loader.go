@@ -1,14 +1,11 @@
 // Loader and serialiser for the cross-language schema JSON contract.
 //
-// Python's SchemaRegistry.to_json (registry.py:479-488) emits a JSON
-// document with two top-level keys, "node_types" and "edge_types",
-// each a list sorted by id. LoadFromJSON consumes that exact shape;
-// (*Registry).MarshalJSON re-emits it.
+// The schema JSON document has two top-level keys, "node_types" and
+// "edge_types", each a list sorted by id. LoadFromJSON consumes that
+// exact shape; (*Registry).MarshalJSON re-emits it.
 //
-// Field-by-field parity with NodeTypeDef.to_dict / EdgeTypeDef.to_dict
-// / FieldDef.to_dict / CompositeUniqueDef.to_dict / AclEntry.to_dict
-// is enforced by tests/schema in tests/python/unit and the
-// cross-language round-trip in tests/contract.
+// Field-by-field parity is enforced by the cross-language round-trip
+// in tests/python/integration/test_grpc_contract.py.
 
 package schema
 
@@ -69,10 +66,10 @@ func (r *Registry) MarshalJSON() ([]byte, error) {
 }
 
 // toFile is the shared lowering used by both MarshalJSON and the
-// fingerprint canonicaliser. Sorting by id mirrors Python's
-// SchemaRegistry.to_dict. Nil Fields / Props slices are normalised to
-// empty slices so the output emits `[]` not `null` (Python's to_dict
-// always emits the array, even when empty — registry.py / types.py).
+// fingerprint canonicaliser. Types are sorted by id. Nil Fields / Props
+// slices are normalised to empty slices so the output emits `[]` not
+// `null` (the schema JSON contract always emits the array, even when
+// empty).
 func (r *Registry) toFile() schemaFile {
 	doc := schemaFile{
 		NodeTypes: make([]NodeTypeDef, 0, len(r.nodes)),

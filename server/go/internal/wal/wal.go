@@ -63,8 +63,7 @@ var (
 // HeaderIdempotencyKey is the reserved header key under which Append
 // implementations look for the application-layer idempotency key.
 // Producers wishing to use Append's idempotent-retry guarantee MUST
-// set this header (mirrors the Python applier-layer dedupe in
-// applier.py:765 against TransactionEvent.idempotency_key).
+// set this header.
 const HeaderIdempotencyKey = "idempotency-key"
 
 // Producer is the producer half of the WAL stream. The Append byte

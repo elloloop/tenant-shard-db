@@ -2,13 +2,8 @@
 
 // Tests for the SetLegalHold RPC. Spec: docs/go-port/rpcs/SetLegalHold.md.
 //
-// Behavioural pins (mirror Python):
+// Behavioural pins:
 //
-//   - tests/python/unit/test_admin_operations.py:594-609 — happy-path
-//     enable; status flips to "legal_hold".
-//   - :611-624 — disable returns to "active".
-//   - :626-638 — non-admin / non-owner -> PERMISSION_DENIED.
-//   - :860-868 — empty tenant_id -> INVALID_ARGUMENT.
 //   - tests/python/integration/test_grpc_contract.py:573-583 — wire-level sweep.
 //
 //  deviations (intentional, documented in set_legal_hold.go header):
@@ -202,8 +197,7 @@ func TestSetLegalHold_Release_ReEnqueueKeepsEarliestAge(t *testing.T) {
 
 // TestSetLegalHold_AdminEnable_HappyPath: admin actor sets the hold; the
 // response carries success=true + status="legal_hold" and the
-// tenant_registry row is flipped accordingly. Pinned by
-// test_admin_operations.py:594-609.
+// tenant_registry row is flipped accordingly.
 func TestSetLegalHold_AdminEnable_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -276,8 +270,7 @@ func TestSetLegalHold_SystemEnable_HappyPath(t *testing.T) {
 }
 
 // TestSetLegalHold_Clear_TogglesBackToActive: enable then clear leaves
-// the registry status back at "active". Pinned by
-// test_admin_operations.py:611-624.
+// the registry status back at "active".
 func TestSetLegalHold_Clear_TogglesBackToActive(t *testing.T) {
 	t.Parallel()
 
@@ -318,8 +311,7 @@ func TestSetLegalHold_Clear_TogglesBackToActive(t *testing.T) {
 }
 
 // TestSetLegalHold_NonAdminPermissionDenied: a user: actor (no
-// admin/system prefix) is rejected. Pinned by
-// test_admin_operations.py:626-638.
+// admin/system prefix) is rejected.
 func TestSetLegalHold_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 
@@ -391,7 +383,7 @@ func TestSetLegalHold_EmptyActor(t *testing.T) {
 }
 
 // TestSetLegalHold_EmptyTenantID: empty tenant_id surfaces as
-// INVALID_ARGUMENT. Pinned by test_admin_operations.py:860-868.
+// INVALID_ARGUMENT.
 func TestSetLegalHold_EmptyTenantID(t *testing.T) {
 	t.Parallel()
 

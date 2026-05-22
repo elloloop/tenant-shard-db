@@ -7,8 +7,7 @@ import (
 	"fmt"
 )
 
-// ShareNodeInput is the input shape of ShareNode. Mirrors
-// canonical_store.py:_sync_share_node (2962). Capability fields are
+// ShareNodeInput is the input shape of ShareNode. Capability fields are
 // optional; if CoreCaps is nil and Permission is set, the applier (W1.10)
 // is responsible for back-filling — this package stores whatever it is
 // given.
@@ -24,9 +23,8 @@ type ShareNodeInput struct {
 	ExtCapIDs  []int32
 }
 
-// ShareNode upserts an ACL grant for (node_id, actor_id). Mirrors
-// canonical_store.py:_sync_share_node (2962). INSERT OR REPLACE
-// semantics — re-sharing overwrites the prior grant.
+// ShareNode upserts an ACL grant for (node_id, actor_id). INSERT OR
+// REPLACE semantics — re-sharing overwrites the prior grant.
 func (s *CanonicalStore) ShareNode(ctx context.Context, tenantID string, in ShareNodeInput) error {
 	if in.NodeID == "" || in.ActorID == "" {
 		return fmt.Errorf("store: ShareNode: node_id and actor_id required")
@@ -65,8 +63,7 @@ func (s *CanonicalStore) ShareNode(ctx context.Context, tenantID string, in Shar
 }
 
 // RevokeAccess removes the (node_id, actor_id) ACL grant. Returns
-// nil even if no grant existed (idempotent revoke). Mirrors
-// canonical_store.py:_sync_revoke_access (3240).
+// nil even if no grant existed (idempotent revoke).
 func (s *CanonicalStore) RevokeAccess(ctx context.Context, tenantID, nodeID, actorID string) (bool, error) {
 	var existed bool
 	err := s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
@@ -86,16 +83,15 @@ func (s *CanonicalStore) RevokeAccess(ctx context.Context, tenantID, nodeID, act
 
 // DelegateAccess is conceptually identical to ShareNode (insert into
 // node_access) but with the delegating actor recorded as granted_by.
-// Mirrors canonical_store.py:_sync_delegate_access (3774). The semantic
-// distinction (an actor can only delegate caps they themselves have)
-// is enforced in W1.9 acl, not here.
+// The semantic distinction (an actor can only delegate caps they
+// themselves have) is enforced in W1.9 acl, not here.
 func (s *CanonicalStore) DelegateAccess(ctx context.Context, tenantID string, in ShareNodeInput) error {
 	return s.ShareNode(ctx, tenantID, in)
 }
 
 // TransferOwnership reassigns owner_actor on a node and refreshes the
-// node_visibility index. Mirrors canonical_store.py:_sync_transfer_ownership
-// (3631). Returns ErrNodeNotFound if the node does not exist.
+// node_visibility index. Returns ErrNodeNotFound if the node does not
+// exist.
 func (s *CanonicalStore) TransferOwnership(ctx context.Context, tenantID, nodeID, newOwner string) error {
 	if newOwner == "" {
 		return fmt.Errorf("store: TransferOwnership: new_owner required")
@@ -136,9 +132,8 @@ func (s *CanonicalStore) TransferOwnership(ctx context.Context, tenantID, nodeID
 }
 
 // RevokeUserAccess deletes every node_access grant + group_users
-// membership for a given user_id, plus their visibility rows. Mirrors
-// canonical_store.py:_sync_revoke_user_access (3871). Returns the count
-// of (revoked grants, revoked group memberships).
+// membership for a given user_id, plus their visibility rows. Returns
+// the count of (revoked grants, revoked group memberships).
 func (s *CanonicalStore) RevokeUserAccess(ctx context.Context, tenantID, userID string) (revokedGrants, revokedGroups int64, err error) {
 	err = s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		gres, err := conn.ExecContext(ctx,
@@ -167,7 +162,7 @@ func (s *CanonicalStore) RevokeUserAccess(ctx context.Context, tenantID, userID 
 }
 
 // AddGroupMember inserts (or replaces) a (group_id, member_actor_id)
-// row. Mirrors canonical_store.py:_sync_add_group_member (3497).
+// row.
 func (s *CanonicalStore) AddGroupMember(ctx context.Context, tenantID, groupID, memberActorID, role string) error {
 	if groupID == "" || memberActorID == "" {
 		return fmt.Errorf("store: AddGroupMember: group_id and member_actor_id required")
@@ -191,8 +186,7 @@ func (s *CanonicalStore) AddGroupMember(ctx context.Context, tenantID, groupID, 
 }
 
 // RemoveGroupMember deletes the (group_id, member_actor_id) row.
-// Returns true if the row existed. Mirrors canonical_store.py:
-// _sync_remove_group_member (3533).
+// Returns true if the row existed.
 func (s *CanonicalStore) RemoveGroupMember(ctx context.Context, tenantID, groupID, memberActorID string) (bool, error) {
 	var existed bool
 	err := s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
@@ -244,8 +238,7 @@ type GroupNodeAccess struct {
 }
 
 // ListNodeAccessForGroup returns the (node_id, permission) rows where
-// actor_id == groupID and actor_type == "group". Mirrors
-// canonical_store.py:_sync_list_node_access_for_group used by
+// actor_id == groupID and actor_type == "group". Used by
 // RemoveGroupMember to snapshot which shared_index rows to delete BEFORE
 // the membership delete (per spec ordering invariant: read after delete
 // observes the already-removed edge and undercounts).

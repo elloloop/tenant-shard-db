@@ -2,9 +2,9 @@
 // Spec: docs/go-port/rpcs/ListSharedWithMe.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:100 (rpc), :757-766
-// (request/response). Reference Python:
+// (request/response).
 //
-// Semantics (preserved from the Python handler):
+// Semantics:
 //
 //   - Read-only. The caller is the IMPLICIT recipient — the actor
 //     identity in the wire payload is UNTRUSTED and is overwritten by
@@ -28,8 +28,7 @@
 //     return up to 2*limit rows. Documented limitation; see spec
 //     "Pagination semantics".
 //   - `has_more` is `len(nodes) >= limit` AFTER the cross-tenant
-//     append, which over-reports `true`. Bug-compatible with Python
-//     (grpc_server.py:1939). Spec "Open questions / risks" #2.
+//     append, which over-reports `true`. Spec "Open questions / risks" #2.
 //   - Cross-tenant aggregation reads OTHER tenants' SQLite files via
 //     store.GetNode(source_tenant, node_id). This is the ONE allowed
 //     cross-tenant read in EntDB (CLAUDE.md invariant 4) and is only
@@ -37,16 +36,14 @@
 //     ShareNode wrote a `node_access` grant in the source tenant that
 //     authorises this read.
 //   - Stale entries (source tenant unloaded, node deleted, permission
-//     revoked but global index lagging) are silently skipped — bare
-//     `except` parity (grpc_server.py:1929-1931). They are
+//     revoked but global index lagging) are silently skipped. They are
 //     eventual-consistency artefacts, not errors.
 //   - Globalstore failures degrade gracefully: log + return per-tenant
-//     results only. Python parity (grpc_server.py:1932-1933).
+//     results only.
 //   - Per-tenant SQLite errors are also swallowed — the handler returns
 //     `nodes=[]` with status OK rather than surfacing the fault. This
-//     is hostile to debugging but load-bearing for parity
-//     (grpc_server.py:1941-1944); flagged for tightening in a separate
-//     issue.
+//     is hostile to debugging but load-bearing for parity; flagged for
+//     tightening in a separate issue.
 //   - Hardening delta vs Python: limit clamped to [0, 1000]; default
 //     when zero is 100 (matches Python). Negative limit/offset clamped
 //     to 0 instead of being passed through to SQLite (where negative
@@ -62,8 +59,7 @@
 // source_tenant, node). When the per-tenant group resolver lands, swap
 // in `acl.Resolver.ExpandIDs(ctx, tenant, actor)` here.
 //
-// NOT modified by this PR: tests/python/integration/_go_parity.py and
-// server/go/internal/api/server.go (per task statement).
+// NOT modified by this PR: server/go/internal/api/server.go (per task statement).
 
 package api
 
@@ -112,10 +108,9 @@ func (s *Server) ListSharedWithMe(
 	actor := auth.Authoritative(ctx, claimed)
 	actorStr := actor.String()
 	if actorStr == "" {
-		// No identity available at all — Python parity treats this as
-		// "no shares" rather than an error (grpc_server.py:1893-1894
-		// returns whatever the actor string evaluates to; an empty
-		// string yields zero rows from both indexes).
+		// No identity available at all — treat as "no shares" rather
+		// than an error (an empty actor string yields zero rows from
+		// both indexes).
 		return emptyListSharedWithMeResponse(), nil
 	}
 
@@ -135,8 +130,7 @@ func (s *Server) ListSharedWithMe(
 
 	// 1. Per-tenant query against node_access. Group resolution is a
 	//    no-op for now (see file header). The bare actor is passed as
-	//    a single-element list. Errors are swallowed for parity with
-	//    grpc_server.py:1941-1944.
+	//    a single-element list. Errors are swallowed for parity.
 	var nodes []*store.Node
 	if s.store != nil {
 		got, err := s.store.ListSharedWithMe(ctx, tenantID, []string{actorStr}, int(limit), int(offset))
@@ -175,9 +169,7 @@ func (s *Server) ListSharedWithMe(
 				if err != nil || n == nil {
 					// Stale shared_index entry: source tenant unloaded,
 					// node deleted, etc. Silently skip — these are
-					// eventual-consistency artefacts (spec "Side
-					// effects" / Python bare except at
-					// grpc_server.py:1929-1931).
+					// eventual-consistency artefacts (spec "Side effects").
 					if err != nil && !errors.Is(err, store.ErrNodeNotFound) {
 						log.Printf("ListSharedWithMe: skip stale shared_index (%s/%s): %v",
 							e.SourceTenant, e.NodeID, err)

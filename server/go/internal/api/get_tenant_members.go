@@ -10,10 +10,9 @@
 //     append, no per-tenant SQLite touch (CLAUDE.md invariant #4 —
 //     globalstore is the legitimate cross-tenant path).
 //   - No `_check_tenant` gate, no `_check_cross_tenant_read`, no
-//     capability lookup. The Python handler is absent from
-//     auth/capability_registry.py and has no membership gate beyond
-//     non-empty argument validation. Preserved for parity — flagged for
-//     follow-up in the EPIC's open-questions section.
+//     capability lookup; no membership gate beyond non-empty argument
+//     validation. Preserved for parity — flagged for follow-up in the
+//     EPIC's open-questions section.
 //   - Trusted-actor rebinding via auth.Authoritative is applied at the
 //     top, even though the Python source reads `request.actor` directly
 //     today. This closes the privilege-escalation gap addressed by
@@ -26,15 +25,14 @@
 //     that string-match these errors stay green.
 //   - Unknown tenant -> empty list + OK (the SELECT returns 0 rows).
 //   - Internal globalstore failures are silently swallowed: the handler
-//     returns an empty members slice with grpc.OK, matching the bare
-//     `except` at grpc_server.py:2567-2570. This is hostile to debugging
-//     but load-bearing for parity; flagged for tightening in a separate
-//     issue.
+//     returns an empty members slice with grpc.OK. This is hostile to
+//     debugging but load-bearing for parity; flagged for tightening in
+//     a separate issue.
 //
-// joined_at is epoch milliseconds (matching `int(time.time()*1000)` in
-// global_store.py and the Go SDK pin at sdk/go/entdb/admin_test.go:240).
-// The globalstore.Member.JoinedAt field already carries ms; no
-// conversion is required at the boundary.
+// joined_at is epoch milliseconds (matching `int(time.time()*1000)`,
+// Go SDK pin at sdk/go/entdb/admin_test.go:240). The
+// globalstore.Member.JoinedAt field already carries ms; no conversion
+// is required at the boundary.
 
 package api
 
@@ -64,9 +62,9 @@ func (s *Server) GetTenantMembers(
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
-	// Argument validation. Order is load-bearing: Python checks actor
-	// before tenant_id (grpc_server.py:2557-2560), and the SDK contract
-	// tests rely on the exact INVALID_ARGUMENT messages.
+	// Argument validation. Order is load-bearing: actor is checked before
+	// tenant_id, and the SDK contract tests rely on the exact
+	// INVALID_ARGUMENT messages.
 	if req.GetActor() == "" {
 		metrics.RecordGRPCRequest(getTenantMembersMethod, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
@@ -85,10 +83,10 @@ func (s *Server) GetTenantMembers(
 
 	rows, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
 	if err != nil {
-		// Python-parity silent-swallow (grpc_server.py:2567-2570). The
-		// handler never surfaces an internal globalstore failure; SDK
-		// callers cannot distinguish "no members" from "DB blew up".
-		// Flagged in the EPIC's open-questions for tightening.
+		// Silent-swallow: the handler never surfaces an internal
+		// globalstore failure; SDK callers cannot distinguish "no
+		// members" from "DB blew up". Flagged in the EPIC's
+		// open-questions for tightening.
 		metrics.RecordGRPCRequest(getTenantMembersMethod, "error", time.Since(start))
 		return &pb.GetTenantMembersResponse{Members: []*pb.TenantMemberInfo{}}, nil
 	}

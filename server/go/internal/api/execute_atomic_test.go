@@ -3,20 +3,17 @@
 // Coverage targets the Python contract pins listed in
 // docs/go-port/rpcs/ExecuteAtomic.md "Contract tests pinning behavior":
 //
-//   - Empty op list -> INVALID_ARGUMENT (grpc_server.py:637).
+//   - Empty op list -> INVALID_ARGUMENT.
 //   - Required fields -> INVALID_ARGUMENT (tenant_id, actor, type_id, id).
-//   - Missing actor -> INVALID_ARGUMENT (grpc_server.py:635).
+//   - Missing actor -> INVALID_ARGUMENT.
 //   - Single create_node -> receipt PENDING returns immediately, applier
 //                           catches up and CheckIdempotency reports true.
 //   - Multiple ops -> all created node IDs surface, in op order.
 //   - Idempotent retry -> same idempotency_key returns the same receipt.
-//   - Schema mismatch -> in-band success=false, error_code=SCHEMA_MISMATCH
-//                           (test_grpc_schema_mismatch_metric.py).
+//   - Schema mismatch -> in-band success=false, error_code=SCHEMA_MISMATCH.
 //   - Field-id encoding -> wire payload arrives as id-keyed JSON in the
-//                           WAL event (CLAUDE.md invariant #6, pinned by
-//                           test_grpc_wire_format.py:172,202).
-//   - Permission denied -> non-member actor cannot write
-//                           (test_tenant_roles.py:524-651).
+//                           WAL event (CLAUDE.md invariant #6).
+//   - Permission denied -> non-member actor cannot write.
 
 package api_test
 
@@ -190,8 +187,8 @@ func newValue(t *testing.T, v any) *structpb.Value {
 	return out
 }
 
-// TestExecuteAtomic_EmptyOpsRejected pins Python grpc_server.py:637:
-// missing operations -> INVALID_ARGUMENT.
+// TestExecuteAtomic_EmptyOpsRejected pins that missing operations return
+// INVALID_ARGUMENT.
 func TestExecuteAtomic_EmptyOpsRejected(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
@@ -206,7 +203,7 @@ func TestExecuteAtomic_EmptyOpsRejected(t *testing.T) {
 	}
 }
 
-// TestExecuteAtomic_MissingActorRejected pins grpc_server.py:635.
+// TestExecuteAtomic_MissingActorRejected pins that a missing actor returns INVALID_ARGUMENT.
 func TestExecuteAtomic_MissingActorRejected(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
@@ -374,8 +371,7 @@ func TestExecuteAtomic_IdempotentRetry(t *testing.T) {
 	}
 }
 
-// TestExecuteAtomic_SchemaMismatchInBand pins the
-// test_grpc_schema_mismatch_metric.py contract: a request that pins a
+// TestExecuteAtomic_SchemaMismatchInBand pins that a request that pins a
 // fingerprint different from the server's gets success=false +
 // error_code=SCHEMA_MISMATCH back, with the gRPC status STILL OK.
 func TestExecuteAtomic_SchemaMismatchInBand(t *testing.T) {
@@ -465,9 +461,8 @@ func TestExecuteAtomic_PayloadIsFieldIDKeyed(t *testing.T) {
 }
 
 // TestExecuteAtomic_UnknownFieldNameDropped: an unknown name on the
-// wire is silently dropped (matches Python ingress permissiveness;
-// pinned by test_grpc_wire_format.py:355-389). The WAL event keeps the
-// known field only.
+// wire is silently dropped (matches Python ingress permissiveness). The
+// WAL event keeps the known field only.
 func TestExecuteAtomic_UnknownFieldNameDropped(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
@@ -655,9 +650,8 @@ func TestExecuteAtomic_NameOnlyPreconditionRejectedWithoutSchemaRegistry(t *test
 	}
 }
 
-// TestExecuteAtomic_PermissionDenied_NonMember pins
-// test_tenant_roles.py:524-651: a member-less actor cannot write,
-// even when the tenant exists.
+// TestExecuteAtomic_PermissionDenied_NonMember verifies a member-less
+// actor cannot write, even when the tenant exists.
 func TestExecuteAtomic_PermissionDenied_NonMember(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -829,9 +823,8 @@ func tenantShardingDeny() *tenant.Sharding {
 // INVALID_ARGUMENT instead of poisoning the applier.
 // =============================================================================
 
-// aliasRefEdge is the shape grpc_server.py:_convert_node_ref produces
-// for an alias_ref-typed NodeRef. We hand-roll the op so tests don't
-// need a registered edge type in the schema.
+// aliasRefEdge builds an alias_ref-typed NodeRef operation. We hand-roll
+// the op so tests don't need a registered edge type in the schema.
 func aliasRefEdge(edgeID int32, fromAlias, toAlias string) *pb.Operation {
 	return &pb.Operation{Op: &pb.Operation_CreateEdge{
 		CreateEdge: &pb.CreateEdgeOp{
@@ -1198,7 +1191,7 @@ func TestExecuteAtomic_AliasResolution_DeleteEdgeAlias(t *testing.T) {
 
 // TestExecuteAtomic_AliasResolution_DottedFormSupported pins the
 // Python-parity dotted-alias form: "$alice.id" resolves the same as
-// "$alice". applier.py:_resolve_ref splits on "." for legacy reasons.
+// "$alice". The dotted form is supported for legacy reasons.
 func TestExecuteAtomic_AliasResolution_DottedFormSupported(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)

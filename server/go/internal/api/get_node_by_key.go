@@ -9,7 +9,7 @@
 //   - Read-only. No WAL append, no global_store touch.
 //   - tenant_id / actor are TOP-LEVEL on this RPC (no
 //     RequestContext wrapper; this RPC predates the wrapper). Don't
-//     "fix" — wire-compat pin at test_unique_keys.py:692-704.
+//     "fix" — wire-compat pin preserved.
 //   - `actor` is UNTRUSTED on the wire. Resolve identity via
 //     auth.Authoritative (the privilege-escalation choke point) and
 //     ignore the body claim for any auth decision.
@@ -21,10 +21,8 @@
 //     wire drift; spec "after_offset type drift" warns against
 //     unifying without a wire-compat plan.
 //   - Lookup miss → IN-BAND `found=false` with codes.OK. NOT
-//     codes.NotFound. The implemented contract pins to the Python
-//     handler's behaviour, NOT the unique_keys decision text — see
-//     spec "Quirk to preserve / fix" and the Go SDK's
-//     `(nil, nil)` mapping at sdk/go/entdb/client.go:341-344.
+//     codes.NotFound. See spec "Quirk to preserve / fix" and the Go
+//     SDK's `(nil, nil)` mapping at sdk/go/entdb/client.go:341-344.
 //   - Lookup HIT but caller lacks ACL → codes.PermissionDenied.
 //     This is the deliberate asymmetry: "key not in index" stays
 //     `found=false`, but "key resolved & actor blocked" is a
@@ -63,8 +61,8 @@ import (
 const getNodeByKeyMethod = "GetNodeByKey"
 
 // waitForOffsetTimeout is the fixed wait budget for read-after-write
-// consistency. The request has no wait_timeout_ms field (unlike
-// GetNode), so we hard-code Python's default at grpc_server.py:1089.
+// consistency. The request has no wait_timeout_ms field (unlike GetNode),
+// so we use a hard-coded 30s default.
 const waitForOffsetTimeout = 30 * time.Second
 
 // GetNodeByKey resolves a node via a declared unique field and runs the
@@ -182,14 +180,12 @@ func unwrapStructpbValue(v *structpb.Value) any {
 // checkNodeACL runs the per-node ACL gate. Owner short-circuits; an
 // explicit DENY row for the actor or the same-tenant wildcard
 // (`tenant:*`) produces PermissionDenied. Empty / unparseable ACL
-// JSON is treated as "no restriction" (matches the canonical_store
-// fallback when acl_blob is "[]" or NULL).
+// JSON is treated as "no restriction" (fallback when acl_blob is
+// "[]" or NULL).
 //
 // This is intentionally a thin same-tenant gate: cross-tenant reads
 // require the cross-tenant grant lookup that lives behind GetNode
-// proper (Python grpc_server.py:1031-1045). When the Go GetNode RPC
-// lands it'll consume the same store readers and we'll consolidate
-// here. For W2 the deny-only contract pins the
+// proper. For W2 the deny-only contract pins the
 // "ACL_DENIED → PERMISSION_DENIED" branch the spec calls out.
 func checkNodeACL(ownerActor, aclJSON, actor string) error {
 	if actor == "" {

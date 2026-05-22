@@ -4,25 +4,22 @@
 //
 // Behavioral contract:
 //
-//   - global_store == nil → codes.Unimplemented "User registry not configured"
-//     (grpc_server.py:3022-3023).
+//   - global_store == nil → codes.Unimplemented "User registry not configured".
 //   - actor / user_id required (codes.InvalidArgument), in that
-//     validation order (grpc_server.py:3024-3027).
+//     validation order.
 //   - Trusted-actor pattern: the privilege decision uses
 //     auth.Authoritative(ctx, claimed) — the wire-supplied actor is
 //     IGNORED for the self-or-admin gate. Allowed identities: the user
 //     themselves, or an admin: / system: caller. Anyone else →
-//     codes.PermissionDenied with the exact Python message
-//     (grpc_server.py:3028-3032).
+//     codes.PermissionDenied.
 //   - Cross-tenant walk: enumerate via globalstore.GetUserTenants and
 //     query each tenant's SQLite with its own connection — never a
 //     cross-tenant transaction (CLAUDE.md invariant #4).
 //   - Per-tenant collector failures are SWALLOWED (logged, tenant
 //     omitted from `tenants[]`) so one corrupt tenant cannot block the
-//     bundle (grpc_server.py:3048-3053).
-//   - Bundle shape pinned by tests/python/unit/test_gdpr_engine.py:678-692:
-//     {"user_id", "generated_at", "tenants": [{"tenant_id", "nodes":
-//     [{"tenant_id","node_id","type_id","payload","created_at",
+//     bundle.
+//   - Bundle shape: {"user_id", "generated_at", "tenants": [{"tenant_id",
+//     "nodes": [{"tenant_id","node_id","type_id","payload","created_at",
 //     "updated_at","owner_actor","data_policy"}]}]}.
 //   - `payload` stays field-id-keyed (CLAUDE.md invariant #6) — the
 //     handler does not translate to field names.
@@ -80,12 +77,12 @@ func (s *Server) ExportUserData(
 		metrics.RecordGRPCRequest(exportUserDataMethod, outcome, time.Since(start))
 	}()
 
-	// Configuration gate. Python: grpc_server.py:3022-3023.
+	// Configuration gate.
 	if s.global == nil {
 		outcome = "error"
 		return nil, status.Error(codes.Unimplemented, "User registry not configured")
 	}
-	// Required-field aborts. Python: grpc_server.py:3024-3027.
+	// Required-field aborts.
 	if req.GetActor() == "" {
 		outcome = "error"
 		return nil, status.Error(codes.InvalidArgument, "actor is required")
@@ -99,8 +96,7 @@ func (s *Server) ExportUserData(
 	// Trusted-actor resolution. The wire `actor` is UNTRUSTED — the
 	// interceptor installs the verified Identity on ctx and
 	// auth.Authoritative collapses to the trusted Actor when one is
-	// present. Mirrors `_is_self_or_admin(actor, user_id)` at
-	// grpc_server.py:2071-2086 + the `get_authoritative_actor` indirection.
+	// present.
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 	if !isSelfOrAdmin(trusted, userID) {
 		outcome = "error"
@@ -110,15 +106,13 @@ func (s *Server) ExportUserData(
 
 	memberships, err := s.global.GetUserTenants(ctx, userID)
 	if err != nil {
-		// Python's bare-except envelope at grpc_server.py:3065-3070
-		// returns success=false in-band on this failure mode (membership
-		// lookup throws). Preserve the wire shape — the SDK pins it.
+		// Returns success=false in-band on membership lookup failure.
+		// Preserve the wire shape — the SDK pins it.
 		outcome = "error"
 		return &pb.ExportUserDataResponse{Success: false, Error: err.Error()}, nil
 	}
 
 	// Per-tenant nodes store owner_actor as the `user:<id>` principal.
-	// Python: grpc_server.py:3036-3040.
 	principal := userID
 	if !strings.HasPrefix(principal, "user:") {
 		principal = "user:" + userID
@@ -127,7 +121,7 @@ func (s *Server) ExportUserData(
 	tenants := make([]store.TenantExport, 0, len(memberships))
 	for _, m := range memberships {
 		// Per-tenant exception swallow — one corrupted DB must not fail
-		// the whole bundle. Python: grpc_server.py:3048-3053.
+		// the whole bundle.
 		export, perr := s.store.ExportUserData(ctx, m.TenantID, principal, s.registry)
 		if perr != nil {
 			log.Printf("ExportUserData tenant %q failed: %v", m.TenantID, perr)
@@ -136,9 +130,8 @@ func (s *Server) ExportUserData(
 		tenants = append(tenants, export)
 	}
 
-	// Bundle shape pinned by test_gdpr_engine.py:678-692. `tenants` is
-	// always a list (never null) so the JSON shape matches Python's
-	// `[]` on the empty path.
+	// Bundle shape: `tenants` is always a list (never null) so the JSON
+	// shape matches the empty-path `[]` contract.
 	bundle := map[string]any{
 		"user_id":      userID,
 		"generated_at": time.Now().Unix(),
@@ -149,8 +142,7 @@ func (s *Server) ExportUserData(
 		// Genuine internal error — the only Marshal failure mode that
 		// can fire here is an unsupported type smuggled through a
 		// payload, which the canonical store has already validated. Use
-		// the in-band failure shape (success=false, error=…) for parity
-		// with the Python except branch at grpc_server.py:3065-3070.
+		// the in-band failure shape (success=false, error=…).
 		outcome = "error"
 		return &pb.ExportUserDataResponse{Success: false, Error: err.Error()}, nil
 	}

@@ -1,8 +1,7 @@
 // Tests for GetTenantQuota. Behavioural pins:
 //
 //  1. Owner happy path — a user with role=owner sees configured quota +
-//     usage. Matches Python `_require_admin_or_owner` at
-//     grpc_server.py:2685.
+//     usage.
 //  2. Admin-role happy path — a tenant user with role=admin succeeds.
 //  3. Plain member → PERMISSION_DENIED. The handler is admin/owner-only;
 //     tenant role=member is NOT enough (matches Python contract test
@@ -105,8 +104,7 @@ func TestGetTenantQuota_Owner_HappyPath(t *testing.T) {
 }
 
 // TestGetTenantQuota_Admin_HappyPath: a tenant user with role=admin
-// succeeds, parity with role=owner. Matches the `role in ("owner",
-// "admin")` check at grpc_server.py:2685.
+// succeeds, parity with role=owner.
 func TestGetTenantQuota_Admin_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -231,7 +229,7 @@ func TestGetTenantQuota_EmptyTenantID_InvalidArgument(t *testing.T) {
 
 // TestGetTenantQuota_PlainMember_PermissionDenied: a tenant user whose
 // role is "member" (not owner / not admin) is rejected. Pins the
-// Python contract test row at test_grpc_contract.py:483-486
+// contract test row at test_grpc_contract.py:483-486
 // (actor=user:bob, role=member → permission_denied).
 func TestGetTenantQuota_PlainMember_PermissionDenied(t *testing.T) {
 	t.Parallel()

@@ -6,15 +6,15 @@ import (
 	"fmt"
 )
 
-// schemaDDL mirrors canonical_store.py:1037-1200 _create_schema. Every
-// table is IF NOT EXISTS so that running initSchema twice is a no-op.
+// schemaDDL defines every table the store needs. Every table is
+// IF NOT EXISTS so that running initSchema twice is a no-op.
 //
-// Tables omitted from the cut (kept in Python today):
+// Tables omitted from this set:
 //
 //   - notifications, read_cursors: stubs only (notifications.go)
 //   - audit_log: superseded by S3 Object Lock (CLAUDE.md invariant #2)
 //   - type_metadata: deferred to W1.10 (applier responsibility)
-//   - schema_version: kept here for forward-compat with Python read paths
+//   - schema_version: kept here for forward-compat
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS schema_version (
     version    INTEGER PRIMARY KEY,
@@ -129,8 +129,7 @@ INSERT OR IGNORE INTO schema_version (version, applied_at)
 `
 
 // initSchema creates every table the store package needs. Idempotent.
-// Mirrors canonical_store.py:_create_schema (1037-1200) minus the
-// deprecated/ legacy tables (audit_log, notifications, read_cursors,
+// Omits deprecated/legacy tables (audit_log, notifications, read_cursors,
 // type_metadata) — those are either superseded (CLAUDE.md invariant #2)
 // or out-of-scope.
 func initSchema(ctx context.Context, db *sql.DB) error {

@@ -9,14 +9,12 @@
 //   - WAL-FIRST. The per-tenant ownership change is appended to the WAL
 //     as one (or more, see below) `admin_transfer_content` events.
 //     Direct canonical-store writes from this handler are FORBIDDEN
-//     (CLAUDE.md invariant #1, pinned by
-//     tests/python/unit/test_admin_ops.py:373-407).
+//     (CLAUDE.md invariant #1).
 //
 //   - Trusted-actor. The wire `actor` is UNTRUSTED. We rebind to the
 //     trusted actor returned by auth.Authoritative before any privilege
 //     check. A claimed `actor="system:admin"` from a non-admin trusted
-//     identity MUST PERMISSION_DENY *and* MUST NOT append to the WAL
-//     (test_privilege_escalation.py:344-365).
+//     identity MUST PERMISSION_DENY *and* MUST NOT append to the WAL.
 //
 //   - Auth: trusted-actor must be system:* / admin:*, OR have role
 //     "owner" / "admin" in tenant_members for tenantID. Anything else
@@ -26,8 +24,7 @@
 //     unknown / archived / wrong-region tenants reject cleanly.
 //
 //   - INVALID_ARGUMENT validation. tenant_id, from_user, to_user, and
-//     the wire actor must all be non-empty BEFORE the auth substitution
-//     (mirrors :2701-2706 — non-empty `actor` quirk preserved).
+//     the wire actor must all be non-empty BEFORE the auth substitution.
 //
 //   - Side effects: each tenant WAL event carries both
 //     `admin_transfer_content` and the global `access_transferred`
@@ -50,9 +47,8 @@
 //     ACL grants survive — only owner_actor changes.
 //
 //   - WAL encode/append failures return gRPC OK with `success=false`,
-//     `error=<msg>` (matches Python's :2740-2745 catch-all). Missing
-//     structural dependencies and wait-applied failures use gRPC
-//     status errors.
+//     `error=<msg>`. Missing structural dependencies and wait-applied
+//     failures use gRPC status errors.
 
 package api
 
@@ -90,8 +86,7 @@ const (
 	transferUserContentChunkSize = 1000
 
 	// transferUserContentTopic is the WAL topic used for tenant-scoped
-	// transaction events. Matches Python's `self.topic` default
-	// ("entdb-wal", grpc_server.py:2718-2724).
+	// transaction events. Matches the server's default topic ("entdb-wal").
 	transferUserContentTopic = "entdb-wal"
 )
 
@@ -116,8 +111,7 @@ func (s *Server) TransferUserContent(
 	}
 
 	// INVALID_ARGUMENT validation. The non-empty `actor` check runs
-	// BEFORE the trusted-actor substitution to mirror the Python quirk
-	// (spec "Open questions" §6, test_admin_operations.py:806-820).
+	// BEFORE the trusted-actor substitution (spec "Open questions" §6).
 	if req.GetActor() == "" {
 		statusLabel = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
@@ -136,7 +130,7 @@ func (s *Server) TransferUserContent(
 	}
 
 	// Tenant gate. Catches unknown / archived tenants and wrong-region
-	// requests before any side effect. Mirrors grpc_server.py:2700.
+	// requests before any side effect.
 	if err := s.checkTenant(ctx, req.GetTenantId()); err != nil {
 		statusLabel = "error"
 		return nil, err

@@ -2,10 +2,9 @@
 
 package wal
 
-// AWS Kinesis Data Streams WAL backend for the Go server. Ported from
-// the retired Python source (server/python/entdb_server/wal/kinesis.py).
+// AWS Kinesis Data Streams WAL backend for the Go server.
 //
-// Concept mapping (mirrors the Python docstring):
+// Concept mapping:
 //
 //   - Kinesis stream  -> WAL topic (--wal-topic / config.StreamName).
 //   - Shard           -> partition. The StreamPos.Partition field holds
@@ -18,12 +17,11 @@ package wal
 //                         headers under HeaderKinesisSeq so Commit /
 //                         iterator re-creation use the lossless value.
 //   - ExplicitHashKey  -> per-tenant routing. We hash the Append `key`
-//                         (tenant_id) the same way memory.go /
-//                         kinesis.py do (md5, first 4 bytes) so the same
-//                         tenant always lands on the same shard, giving
-//                         per-tenant total order.
+//                         (tenant_id) via md5 (first 4 bytes) so the
+//                         same tenant always lands on the same shard,
+//                         giving per-tenant total order.
 //
-// Durability knobs (parity with kinesis.py):
+// Durability knobs:
 //
 //   - PutRecord with ExplicitHashKey; the call returns only after the
 //     record is durably replicated across the stream's shards.
@@ -81,8 +79,8 @@ type KinesisAPI interface {
 	GetRecords(ctx context.Context, in *kinesis.GetRecordsInput, optFns ...func(*kinesis.Options)) (*kinesis.GetRecordsOutput, error)
 }
 
-// KinesisConfig captures the Kinesis-specific knobs. Mirrors the Python
-// KinesisConfig (region, endpoint, stream name, iterator type, batch).
+// KinesisConfig captures the Kinesis-specific knobs (region, endpoint,
+// stream name, iterator type, batch).
 type KinesisConfig struct {
 	// StreamName is the Kinesis data stream name. Defaults to the WAL
 	// topic when empty (set at Append time from the topic arg).
@@ -92,7 +90,7 @@ type KinesisConfig struct {
 	// EndpointURL overrides the AWS endpoint (LocalStack / testing).
 	EndpointURL string
 	// IteratorType is "TRIM_HORIZON" (default, replay from the start)
-	// or "LATEST". Matches kinesis.py config.iterator_type.
+	// or "LATEST".
 	IteratorType string
 	// MaxRecordsPerGet bounds a single GetRecords call. Kinesis caps
 	// this at 10000; Python default is 100.
@@ -176,8 +174,8 @@ func (k *Kinesis) streamName(topic string) string {
 	return topic
 }
 
-// Connect builds the client and verifies the stream exists (parity
-// with kinesis.py describe_stream on connect).
+// Connect builds the client and verifies the stream exists via
+// DescribeStream.
 func (k *Kinesis) Connect(ctx context.Context) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -240,9 +238,8 @@ func (k *Kinesis) Append(
 	k.mu.Unlock()
 
 	stream := k.streamName(topic)
-	// Embed headers in the value the same way kinesis.py does so a
-	// pure-Kinesis record (no native header support) round-trips
-	// headers through Subscribe/PollBatch.
+	// Embed headers in the value so a pure-Kinesis record (no native
+	// header support) round-trips headers through Subscribe/PollBatch.
 	payload := wrapHeaders(value, headers)
 	explicitHash := explicitHashKey(key)
 
@@ -312,7 +309,7 @@ func (k *Kinesis) PollBatch(
 			return out, nil
 		}
 		if len(recs) == 0 {
-			// Avoid a tight poll loop; mirrors kinesis.py asyncio.sleep(0.2).
+			// Avoid a tight poll loop with a 200ms back-off.
 			if !sleepCtx(ctx, 200*time.Millisecond, deadline) {
 				return out, nil
 			}
@@ -370,8 +367,8 @@ func (k *Kinesis) Subscribe(
 
 // Commit records the per-shard checkpoint so an expired iterator can be
 // rebuilt AFTER_SEQUENCE_NUMBER. Kinesis has no server-side consumer
-// group; this in-memory checkpoint is the same model kinesis.py used
-// (production deployments persist it to DynamoDB; out of scope here).
+// group; this in-memory checkpoint covers the WAL contract (production
+// deployments may persist it to DynamoDB).
 func (k *Kinesis) Commit(ctx context.Context, groupID string, record Record) error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
@@ -589,7 +586,7 @@ func storeIdemp(m map[string]map[string]map[string]StreamPos, topic, key, idemp 
 	byKey[idemp] = pos
 }
 
-// explicitHashKey mirrors kinesis.py: md5(key)[:8] hex -> int -> str.
+// explicitHashKey: md5(key)[:8] as unsigned 32-bit int, decimal string.
 // Same tenant -> same hash -> same shard -> per-tenant total order.
 func explicitHashKey(key string) string {
 	sum := md5.Sum([]byte(key))
@@ -598,7 +595,7 @@ func explicitHashKey(key string) string {
 }
 
 // parseShardNumber extracts the trailing integer from a shard id like
-// "shardId-000000000003" -> 3. Mirrors kinesis.py _parse_shard_number.
+// "shardId-000000000003" -> 3.
 func parseShardNumber(shardID string) int32 {
 	if shardID == "" {
 		return 0

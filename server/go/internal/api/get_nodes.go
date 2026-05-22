@@ -9,9 +9,8 @@
 //   - Tenant gate first via Server.checkTenant (NOT_FOUND /
 //     UNAVAILABLE / FAILED_PRECONDITION on miss).
 //   - Trusted-actor rebinding (auth.Authoritative). The wire actor is
-//     UNTRUSTED for any auth decision -- the trusted identity from the
-//     gRPC interceptor wins. Pinned by
-//     tests/python/integration/test_privilege_escalation.py:213-228.
+//     UNTRUSTED for any auth decision — the trusted identity from the
+//     gRPC interceptor wins.
 //   - Cross-tenant role check is BATCH-LEVEL: if the actor is neither a
 //     tenant member nor a system actor and has no node_access grants,
 //     the whole call aborts PERMISSION_DENIED. There is NO per-id
@@ -19,20 +18,19 @@
 //   - Per-id missing OR cross-tenant denied are MERGED into
 //     missing_ids -- a deliberate information-leak guard so a foreign
 //     actor cannot probe whether a node exists vs whether they lack
-//     access (spec "Auth", Python grpc_server.py:1262-1271).
-//   - The proto's `type_id` field is silently ignored (Python iterates
-//     the ids and trusts whatever type_id is on disk; preserved for
+//     access (spec "Auth").
+//   - The proto's `type_id` field is silently ignored (the ids are
+//     iterated and the type_id on disk is trusted; preserved for
 //     parity, spec "Wire contract" #2).
 //   - Duplicate node_ids are NOT deduped; each lookup runs
 //     independently. Order of `nodes` follows request order minus
 //     missing/denied (gaps closed, indexes are NOT parallel to
 //     `node_ids`).
 //   - `after_offset` fences the read against the applier (default
-//     30s). Python's bare-except swallows a fence timeout as
-//     "everything missing"; we preserve that behaviour for v1
-//     parity (spec "Open Questions" #1).
-//   - Bare-except in Python masks any internal error (SQLite, panic)
-//     as nodes=[], missing_ids=<all input> with status OK. Preserved
+//     30s). A fence timeout is swallowed as "everything missing" for
+//     v1 parity (spec "Open Questions" #1).
+//   - Any internal error (SQLite, panic) is masked as
+//     nodes=[], missing_ids=<all input> with status OK. Preserved
 //     verbatim: this masks data-loss bugs but is the documented
 //     contract.
 //
@@ -77,8 +75,7 @@ const (
 	// with respect to Python (which is serial); only a perf knob.
 	getNodesFanout = 32
 
-	// getNodesAfterOffsetDefault matches Python's 30s default fence
-	// (grpc_server.py:1236-1240).
+	// getNodesAfterOffsetDefault is the 30s default fence timeout.
 	getNodesAfterOffsetDefault = 30 * time.Second
 )
 
@@ -122,13 +119,10 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 		}, nil
 	}
 
-	// Cross-tenant role check (BATCH-LEVEL). Mirrors Python
-	// _check_cross_tenant_read at grpc_server.py:561-618. The shared
-	// helper isn't yet ported; we inline a parity-faithful version
-	// here. Returns one of: roleLocal (no global), roleMember
-	// (member or system actor), roleCrossTenant (non-member with
-	// node_access grants), or PERMISSION_DENIED (non-member, no
-	// grants).
+	// Cross-tenant role check (BATCH-LEVEL). Returns one of: roleLocal
+	// (no global), roleMember (member or system actor), roleCrossTenant
+	// (non-member with node_access grants), or PERMISSION_DENIED
+	// (non-member, no grants).
 	role, err := s.checkCrossTenantRead(ctx, tenantID, trusted)
 	if err != nil {
 		resultStatus = "error"

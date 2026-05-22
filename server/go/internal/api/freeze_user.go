@@ -12,35 +12,28 @@
 // Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
-//     codes.Unimplemented "User registry not configured" — mirrors
-//     grpc_server.py:3080-3081.
+//     codes.Unimplemented "User registry not configured".
 //   - actor and user_id are required (codes.InvalidArgument).
 //   - Trusted-actor pattern: the privilege decision uses
 //     auth.Authoritative(ctx, claimed) — when the interceptor has
 //     installed an Identity on ctx, the request-payload actor is
-//     ignored. Self-or-admin gate matches Python's _is_self_or_admin
-//     at grpc_server.py:2071-2086 (admin/system, or the user
+//     ignored. Self-or-admin gate (admin/system, or the user
 //     themselves).
 //   - No tenant scope. FreezeUser is a global-store operation;
-//     CheckTenant is NOT called. Mirrors the Python handler which
-//     delegates only to global_store.set_user_status.
+//     CheckTenant is NOT called.
 //   - WAL-first global mutation. The handler appends a global
 //     `user_frozen` op and waits for the applier to set the
 //     user-registry status flag.
 //   - User-not-found is reported in-band: success=false,
-//     error="User not found" (no NOT_FOUND status; mirrors
-//     grpc_server.py:3094-3096).
+//     error="User not found" (no NOT_FOUND status).
 //   - Idempotency: freezing an already-frozen user (or unfreezing an
 //     already-active one) returns success=true with the new status,
 //     because SetUserStatus UPDATEs unconditionally and rowcount > 0
-//     iff a row matched. Pinned by the Python
-//     test_unfreeze_user_handler contract test
-//     (test_gdpr_engine.py:721-731).
+//     iff a row matched.
 //
 // The freeze flag is consulted by the freeze gate
 // (auth.CheckUserNotFrozen) on every subsequent mutating RPC; this
-// handler only sets the bit. Reads remain allowed under freeze
-// (test_frozen_user_can_still_read at test_gdpr_engine.py:754-767).
+// handler only sets the bit. Reads remain allowed under freeze.
 
 package api
 
@@ -68,13 +61,13 @@ func (s *Server) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb
 		metrics.RecordGRPCRequest(freezeUserMethod, outcome, time.Since(start))
 	}()
 
-	// Configuration gate. Mirrors Python grpc_server.py:3080-3081.
+	// Configuration gate.
 	if s.global == nil {
 		outcome = "error"
 		return nil, status.Error(codes.Unimplemented, "User registry not configured")
 	}
 
-	// Required-field aborts. Mirrors grpc_server.py:3082-3085.
+	// Required-field aborts.
 	if req.GetActor() == "" {
 		outcome = "error"
 		return nil, status.Error(codes.InvalidArgument, "actor is required")
@@ -88,7 +81,6 @@ func (s *Server) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb
 	// Trusted-actor resolution. The request payload is UNTRUSTED — the
 	// interceptor installs the verified Identity on ctx and
 	// auth.Authoritative ignores the wire claim when one is present.
-	// Self-or-admin gate mirrors grpc_server.py:3086-3090.
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 	if !isSelfOrAdmin(trusted, userID) {
 		outcome = "error"
@@ -96,8 +88,7 @@ func (s *Server) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb
 			"FreezeUser requires the user themselves or an admin actor")
 	}
 
-	// Translate enabled bool → status string. Mirrors
-	// grpc_server.py:3092 ("frozen" if request.enabled else "active").
+	// Translate enabled bool → status string: "frozen" if enabled else "active".
 	newStatus := "active"
 	if req.GetEnabled() {
 		newStatus = "frozen"
@@ -109,8 +100,7 @@ func (s *Server) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb
 		return &pb.FreezeUserResponse{Success: false, Error: err.Error()}, nil
 	}
 	if user == nil {
-		// In-band not-found. Same metric label ("ok") as Python — no
-		// abort fires. Mirrors grpc_server.py:3094-3096.
+		// In-band not-found. Same metric label ("ok") — no abort fires.
 		return &pb.FreezeUserResponse{Success: false, Error: "User not found"}, nil
 	}
 	_, _, err = s.appendGlobalAdminOp(ctx, trusted.String(), map[string]any{

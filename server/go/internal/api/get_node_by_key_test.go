@@ -5,12 +5,11 @@
 //
 //  1. Happy round-trip: a node carrying a unique value resolves and
 //     returns Found=true with the wire shape preserved (mirrors
-//     test_unique_keys.py:597-623, test_grpc_contract.py:614-626).
+//     test_grpc_contract.py:614-626).
 //
 //  2. Missing key: no row matches the (type, field, value) tuple ->
 //     Found=false, codes.OK. NOT codes.NotFound — preserves the
-//     Python implementation contract over the unique_keys.md
-//     decision text (mirrors test_unique_keys.py:625-640).
+//     implementation contract over the unique_keys.md decision text.
 //
 //  3. ACL denied: a row exists but its acl_blob carries an explicit
 //     DENY for the trusted actor -> codes.PermissionDenied. The deny

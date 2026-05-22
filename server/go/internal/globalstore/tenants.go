@@ -171,7 +171,7 @@ func (g *GlobalStore) ArchiveTenant(ctx context.Context, tenantID string) (bool,
 // SetLegalHoldStatus toggles the tenant_registry.status flag between
 // 'legal_hold' and 'active'. This is the *gating* flag — the
 // `legal_holds` table (see legalhold.go) records the *informational*
-// audit trail. Mirrors `set_legal_hold` (global_store.py:528).
+// audit trail.
 func (g *GlobalStore) SetLegalHoldStatus(ctx context.Context, tenantID string, enabled bool) (bool, error) {
 	status := "active"
 	if enabled {

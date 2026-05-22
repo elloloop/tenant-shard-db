@@ -184,8 +184,7 @@ func (f *revokeAllFixture) seedTenantMembership(tenantID, userID, role string) {
 // TestRevokeAllUserAccess_AdminHappyPath: an admin: trusted actor
 // revokes a user with grants and group memberships. The WAL event
 // is appended, the applier drains node_access + group_users, and the
-// response tallies match. Mirrors the contract pinned by
-// test_admin_operations.py:711-734 (Python rowcount semantics).
+// response tallies match.
 func TestRevokeAllUserAccess_AdminHappyPath(t *testing.T) {
 	t.Parallel()
 	f := newRevokeAllFixture(t)
@@ -248,8 +247,7 @@ func TestRevokeAllUserAccess_AdminHappyPath(t *testing.T) {
 	// per-tenant SQLite is fully drained for bob.
 	f.waitDrained(tenantID, target)
 
-	// Other-tenant shared_index row must survive — pinned by
-	// test_admin_operations.py:776-779.
+	// Other-tenant shared_index row must survive.
 	rows, err := f.global.ListSharedToUser(ctx, target, 100, 0)
 	if err != nil {
 		t.Fatalf("ListSharedToUser: %v", err)
@@ -323,8 +321,7 @@ func TestRevokeAllUserAccess_WALEventCarriesSharedIndexCleanup(t *testing.T) {
 
 // TestRevokeAllUserAccess_NonAdminDenied: a regular member calling
 // against another user is rejected with PERMISSION_DENIED. No WAL
-// event is appended, no SQLite state changes. Pinned by
-// test_admin_operations.py:735-751.
+// event is appended, no SQLite state changes.
 func TestRevokeAllUserAccess_NonAdminDenied(t *testing.T) {
 	t.Parallel()
 	f := newRevokeAllFixture(t)
@@ -371,7 +368,7 @@ func TestRevokeAllUserAccess_NonAdminDenied(t *testing.T) {
 // TestRevokeAllUserAccess_NoGrantsIdempotent: revoking a user with
 // zero grants/groups returns success=true with all-zero tallies. The
 // WAL event is still appended (the applier dedupes); the response is
-// the parity-clean idempotent shape pinned by test_admin_ops.py:223-264.
+// the idempotent shape.
 func TestRevokeAllUserAccess_NoGrantsIdempotent(t *testing.T) {
 	t.Parallel()
 	f := newRevokeAllFixture(t)
@@ -424,7 +421,7 @@ func TestRevokeAllUserAccess_NoGrantsIdempotent(t *testing.T) {
 
 // TestRevokeAllUserAccess_RequiredFields: empty tenant_id / user_id
 // surface as INVALID_ARGUMENT before the auth gate. Pinned by
-// test_grpc_contract.py:593-595 + test_admin_operations.py:781-797.
+// test_grpc_contract.py:593-595.
 func TestRevokeAllUserAccess_RequiredFields(t *testing.T) {
 	t.Parallel()
 	f := newRevokeAllFixture(t)

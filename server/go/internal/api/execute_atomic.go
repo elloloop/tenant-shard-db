@@ -5,8 +5,7 @@
 // Spec: docs/go-port/rpcs/ExecuteAtomic.md. This is the central write
 // path for the entire system: every mutation enters via this handler,
 // is appended to the WAL, and is later materialised into per-tenant
-// SQLite by the applier. Source-of-truth Python:
-// server/python/entdb_server/api/grpc_server.py:620-828.
+// SQLite by the applier.
 //
 // CLAUDE.md invariants enforced here:
 //
@@ -25,7 +24,7 @@
 //     records the trusted actor only. Privilege-escalation pin.
 //   - Schema-fingerprint mismatch is in-band: success=false,
 //     error_code="SCHEMA_MISMATCH", gRPC status remains OK. NOT an
-//     abort. Pinned by test_grpc_schema_mismatch_metric.py.
+//     abort.
 //   - WAL append failure is in-band: success=false,
 //     error_code="INTERNAL", gRPC status remains OK.
 //   - Empty create_node.id is server-filled with a UUIDv4 BEFORE WAL
@@ -61,10 +60,9 @@ const (
 	executeAtomicMethod    = "ExecuteAtomic"
 	executeAtomicDefaultMs = 30_000
 
-	// Internal op-string constants. Mirror the Python applier dispatch
-	// keys at apply/applier.py:929-1248. Kept local rather than imported
-	// from apply to avoid pulling that package's heavyweight deps into
-	// the api binary just for two strings.
+	// Internal op-string constants. Kept local rather than imported from
+	// apply to avoid pulling that package's heavyweight deps into the api
+	// binary just for two strings.
 	opCreateNode  = "create_node"
 	opUpdateNode  = "update_node"
 	opDeleteNode  = "delete_node"
@@ -93,7 +91,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		return nil, err
 	}
 
-	// Required-field validation. Order matches Python at grpc_server.py:632-637.
+	// Required-field validation.
 	if tenantID == "" {
 		outcome = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
@@ -111,12 +109,12 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	// fallback for the no-interceptor path; when the AuthInterceptor
 	// populated ctx, that identity wins regardless. Rebind the local var
 	// — never re-read req.GetContext().GetActor() past this line.
-	// (PR #168 invariant; pinned by test_privilege_escalation.py:266,287.)
+	// (PR #168 invariant.)
 	trustedActor := auth.Authoritative(ctx, auth.ParseActor(rctx.GetActor()))
 
-	// Idempotency key — server-generated UUIDv4 if empty
-	// (grpc_server.py:648). Generated here so retries in the in-band
-	// INTERNAL path can still observe a stable receipt.
+	// Idempotency key — server-generated UUIDv4 if empty. Generated here
+	// so retries in the in-band INTERNAL path can still observe a stable
+	// receipt.
 	idem := req.GetIdempotencyKey()
 	if idem == "" {
 		idem = uuid.NewString()
@@ -124,7 +122,6 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 
 	// Schema fingerprint check. In-band failure when the request claims a
 	// fingerprint that disagrees with the server's. NOT an abort.
-	// Pinned by test_grpc_schema_mismatch_metric.py:51-90.
 	srvFP := ""
 	if s.registry != nil {
 		srvFP = s.registry.Fingerprint()
@@ -215,7 +212,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	}
 
 	// Build the WAL event. The persisted actor is the trusted identity,
-	// not the wire claim — audit-truth invariant (grpc_server.py:780).
+	// not the wire claim — audit-truth invariant.
 	event := wal.Event{
 		TenantID:          tenantID,
 		Actor:             trustedActor.String(),
@@ -242,7 +239,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	pos, err := s.producer.Append(ctx, s.topic, tenantID, payloadBytes, headers)
 	if err != nil {
 		// In-band INTERNAL channel — gRPC status stays OK, error_code
-		// signals failure. Mirrors grpc_server.py:818-825.
+		// signals failure.
 		outcome = "error"
 		return &pb.ExecuteAtomicResponse{
 			Success:   false,
@@ -258,8 +255,8 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		StreamPosition: posStr,
 	}
 
-	// Optional apply-wait. Default 30s when wait_timeout_ms is zero
-	// (grpc_server.py:805). Honour ctx cancellation.
+	// Optional apply-wait. Default 30s when wait_timeout_ms is zero.
+	// Honour ctx cancellation.
 	appliedStatus := pb.ReceiptStatus_RECEIPT_STATUS_PENDING
 	var preFailure *pb.PreconditionFailure
 	if req.GetWaitApplied() && posStr != "" && s.store != nil {
@@ -389,8 +386,7 @@ func decodePreconditionFailureJSON(blob string) *pb.PreconditionFailure {
 
 // streamPosString renders a wal.StreamPos in the wire form the client
 // expects. Returns "" when pos is the zero value (no record was
-// written) — matches the Python `str(stream_pos) if stream_pos else ""`
-// behaviour at grpc_server.py:799.
+// written).
 func streamPosString(pos wal.StreamPos) string {
 	if pos == (wal.StreamPos{}) {
 		return ""
@@ -401,7 +397,7 @@ func streamPosString(pos wal.StreamPos) string {
 // convertOperations translates wire Operations to internal id-keyed
 // op dicts. The schema-aware translation lives in
 // payload.StructToPayload; everything else is mechanical proto-to-map
-// boilerplate matching grpc_server.py:_convert_operations.
+// boilerplate.
 func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(operations))
 
@@ -698,9 +694,8 @@ func convertACL(in []*pb.AclEntry) []any {
 //   - string ""          → missing ref; surfaced as INVALID_ARGUMENT.
 //   - string "id"        → returned as-is (bare-id; no $-prefix).
 //   - {"ref":"$a"}       → resolved against aliasMap; unresolved → error.
-//     Supports "$a" and "$a.id" (Python parity, see
-//     applier.py:_resolve_ref); only the dotted
-//     prefix before the first "." is the alias name.
+//     Supports "$a" and "$a.id"; only the dotted prefix before the
+//     first "." is the alias name.
 //   - {"type_id":N,"id"} → returned as the id string (typed lookup is a
 //     read-time concern, not a write-time one).
 //
@@ -743,7 +738,7 @@ func resolveEdgeRef(raw any, aliasMap map[string]string) (string, error) {
 // resolveAlias looks up "$alias" or "$alias.id" against the per-
 // transaction alias map. Returns INVALID_ARGUMENT-shaped error when
 // the alias was never published by an earlier create_node in this
-// transaction. Mirrors applier.py:_resolve_ref's "." split.
+// transaction.
 func resolveAlias(ref string, aliasMap map[string]string) (string, error) {
 	if !strings.HasPrefix(ref, "$") {
 		// Defensive: caller already type-switched, but if we ever
@@ -764,10 +759,9 @@ func resolveAlias(ref string, aliasMap map[string]string) (string, error) {
 	return id, nil
 }
 
-// convertNodeRef mirrors grpc_server.py:_convert_node_ref. The
-// applier's create_edge / delete_edge handlers consume one of three
-// shapes: a bare id string, {"ref": <alias>}, or
-// {"type_id": N, "id": "X"}.
+// convertNodeRef translates a proto NodeRef to the internal shape the
+// applier's create_edge / delete_edge handlers consume: a bare id
+// string, {"ref": <alias>}, or {"type_id": N, "id": "X"}.
 func convertNodeRef(ref *pb.NodeRef) any {
 	if ref == nil {
 		return nil
@@ -786,8 +780,7 @@ func convertNodeRef(ref *pb.NodeRef) any {
 	return nil
 }
 
-// storageModeName mirrors the proto-enum -> internal-string map at
-// grpc_server.py:865-871.
+// storageModeName maps a proto StorageMode enum to its internal string.
 func storageModeName(m pb.StorageMode) string {
 	switch m {
 	case pb.StorageMode_STORAGE_MODE_USER_MAILBOX:
@@ -811,9 +804,8 @@ func structToMap(s *structpb.Struct) map[string]any {
 }
 
 // checkTenantWriteAccess enforces the membership + role + tenant-status
-// gates the Python handler runs at grpc_server.py:758. Skips when no
-// globalstore is wired or the actor is system/admin (which bypass
-// per grpc_server.py:498-499).
+// gates. Skips when no globalstore is wired or the actor is system/admin
+// (which bypass these checks).
 //
 // The gate is finer-grained than CheckTenant: where CheckTenant only
 // asserts existence + ownership + region, this asserts the caller is

@@ -8,9 +8,8 @@ import (
 )
 
 // SearchNodes runs an FTS5 MATCH query over the searchable fields of
-// typeID. Mirrors canonical_store.py:_sync_search_nodes (2101). Returns
-// up to limit nodes ordered by FTS rank. Lazy-creates the FTS table on
-// first call.
+// typeID. Returns up to limit nodes ordered by FTS rank. Lazy-creates
+// the FTS table on first call.
 //
 // query is a raw FTS5 match expression. The string is bound as a
 // parameter — no concatenation — so SQL injection is impossible at the
@@ -61,10 +60,9 @@ func (s *CanonicalStore) SearchNodes(ctx context.Context, tenantID string, typeI
 }
 
 // FTSInsert indexes one node's searchable fields into the per-type FTS5
-// virtual table. Mirrors canonical_store.py:_sync_fts_insert (2039).
-// Called by the applier on CreateNode. payload is the field-id-keyed
-// map; missing fields are inserted as empty strings (FTS5 requires the
-// column to be present).
+// virtual table. Called by the applier on CreateNode. payload is the
+// field-id-keyed map; missing fields are inserted as empty strings
+// (FTS5 requires the column to be present).
 func (s *CanonicalStore) FTSInsert(ctx context.Context, tenantID string, typeID int32, nodeID string, payload map[string]any, searchableFieldIDs []uint32) error {
 	if len(searchableFieldIDs) == 0 {
 		return nil
@@ -97,7 +95,6 @@ func (s *CanonicalStore) FTSInsert(ctx context.Context, tenantID string, typeID 
 }
 
 // FTSDelete removes a node's row from the per-type FTS5 virtual table.
-// Mirrors canonical_store.py:_sync_fts_delete (2059).
 func (s *CanonicalStore) FTSDelete(ctx context.Context, tenantID string, typeID int32, nodeID string) error {
 	return s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		_, err := conn.ExecContext(ctx,

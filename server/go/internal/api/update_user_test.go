@@ -19,8 +19,7 @@ import (
 
 // TestUpdateUser_Self_HappyPath: alice updates her own row (only
 // `name` set; truthy-only gating means `email` and `status` are not
-// forwarded). Mirrors test_user_registry.py:255-271 and the contract
-// pin at test_grpc_contract.py:448-453.
+// forwarded). The contract pin is at test_grpc_contract.py:448-453.
 func TestUpdateUser_Self_HappyPath(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -60,7 +59,6 @@ func TestUpdateUser_Self_HappyPath(t *testing.T) {
 
 // TestUpdateUser_Admin_UpdatesOther: an admin: trusted identity can
 // update any user. Only `status` is set (truthy-only gating again).
-// Mirrors test_user_registry.py:273-290.
 func TestUpdateUser_Admin_UpdatesOther(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -124,8 +122,7 @@ func TestUpdateUser_DuplicateEmail_InBandFailure(t *testing.T) {
 // TestUpdateUser_NonAdmin_OtherDenied: alice trying to update bob is
 // the privilege-escalation guard. The handler MUST consult ctx for
 // the trusted identity and ignore the request payload's claim of
-// `admin:root`. Mirrors test_user_registry.py:292-309 and the contract
-// pin at test_grpc_contract.py:454-458.
+// `admin:root`. The contract pin is at test_grpc_contract.py:454-458.
 func TestUpdateUser_NonAdmin_OtherDenied(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -163,8 +160,7 @@ func TestUpdateUser_NonAdmin_OtherDenied(t *testing.T) {
 
 // TestUpdateUser_NoFields_InBandFailure: omitting all three mutable
 // fields short-circuits to success=false, error="No fields to update"
-// IN-BAND — no codes.InvalidArgument abort. Mirrors
-// test_user_registry.py:330-345.
+// IN-BAND — no codes.InvalidArgument abort.
 func TestUpdateUser_NoFields_InBandFailure(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -193,7 +189,7 @@ func TestUpdateUser_NoFields_InBandFailure(t *testing.T) {
 
 // TestUpdateUser_NotFound_InBandFailure: trying to update a missing
 // user_id returns success=false, error="User not found" in-band. No
-// NOT_FOUND status code — mirrors test_user_registry.py:311-328.
+// NOT_FOUND status code.
 func TestUpdateUser_NotFound_InBandFailure(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -223,8 +219,7 @@ func TestUpdateUser_NotFound_InBandFailure(t *testing.T) {
 }
 
 // TestUpdateUser_GlobalstoreUnset_Unimplemented: a Server with no
-// globalstore wired aborts with codes.Unimplemented. Mirrors the
-// configuration gate at grpc_server.py:2192-2196.
+// globalstore wired aborts with codes.Unimplemented.
 func TestUpdateUser_GlobalstoreUnset_Unimplemented(t *testing.T) {
 	t.Parallel()
 	srv := api.New() // no WithGlobalStore

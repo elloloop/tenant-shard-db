@@ -7,9 +7,9 @@
 // Symmetric inverse of GetEdgesFrom: returns edges whose `to_node_id`
 // matches the requested node, scoped to a single tenant. Cross-tenant
 // fan-in is structurally impossible because the edges PRIMARY KEY
-// includes tenant_id (canonical_store.py:1068), so even a forged
-// node_id that happens to exist in another tenant cannot leak through
-// the `WHERE tenant_id = ? AND to_node_id = ?` filter.
+// includes tenant_id, so even a forged node_id that happens to exist
+// in another tenant cannot leak through the
+// `WHERE tenant_id = ? AND to_node_id = ?` filter.
 //
 // Semantics (preserved from the Python handler):
 //
@@ -22,17 +22,12 @@
 //     pins the trust boundary so a future tightening has a single
 //     chokepoint.
 //   - limit==0 ⇒ default 100; has_more is computed AFTER fetching
-//     limit+1 rows (Python parity at grpc_server.py:1444-1446 fetches
-//     all rows then slices in memory; we ask SQLite for limit+1 to
-//     bound memory at the storage layer while still emitting the same
-//     wire shape).
-//   - offset is currently UNUSED (parity with Python; flagged in the
-//     spec "Open questions").
+//     limit+1 rows (we ask SQLite for limit+1 to bound memory at the
+//     storage layer while still emitting the same wire shape).
+//   - offset is currently UNUSED (flagged in the spec "Open questions").
 //   - Internal storage errors are SWALLOWED into an empty
-//     GetEdgesResponse with codes.OK. Same `except Exception` ->
-//     GetEdgesResponse(edges=[]) collapse the Python handler does at
-//     grpc_server.py:1454. Metric label is "error" so the swallow does
-//     not inflate the ok counter.
+//     GetEdgesResponse with codes.OK. Metric label is "error" so the
+//     swallow does not inflate the ok counter.
 
 package api
 
@@ -77,10 +72,7 @@ func (s *Server) GetEdgesTo(
 	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
 
 	// Storage path requires the per-tenant CanonicalStore. If no store
-	// is wired, fall through to the swallow-and-empty path — the
-	// Python handler degrades the same way when canonical_store is
-	// missing (it raises and the `except Exception` collapse takes
-	// over).
+	// is wired, fall through to the swallow-and-empty path.
 	if s.store == nil {
 		outcome = "error"
 		return &pb.GetEdgesResponse{}, nil
@@ -100,17 +92,13 @@ func (s *Server) GetEdgesTo(
 	}
 
 	// Fetch limit+1 so a single trailing row distinguishes
-	// "exactly limit" from "more available". Mirrors the Python
-	// `len(edges) > limit` slice trick at grpc_server.py:1445-1446
-	// without materialising the full result set in memory for
-	// high-fan-in targets.
+	// "exactly limit" from "more available", without materialising the
+	// full result set in memory for high-fan-in targets.
 	rows, err := s.store.GetEdgesTo(ctx, tenantID, req.GetNodeId(), edgeType, limit+1)
 	if err != nil {
-		// Python's bare `except Exception` swallows ALL internal
-		// errors into edges=[] with grpc.OK (grpc_server.py:1454).
-		// We mirror that for parity. Operators can still tell the
-		// "no edges" case apart from "store fault" via the metric
-		// label, which is set to "error" here.
+		// Swallow ALL internal errors into edges=[] with grpc.OK.
+		// Operators can still tell the "no edges" case apart from
+		// "store fault" via the metric label, which is "error" here.
 		outcome = "error"
 		return &pb.GetEdgesResponse{}, nil
 	}

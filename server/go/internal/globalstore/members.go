@@ -56,7 +56,6 @@ func (g *GlobalStore) RemoveTenantMember(ctx context.Context, tenantID, userID s
 }
 
 // GetTenantMembers lists all members of a tenant, ordered by joined_at.
-// Mirrors `_sync_get_members` (global_store.py:606).
 func (g *GlobalStore) GetTenantMembers(ctx context.Context, tenantID string) ([]*Member, error) {
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT tenant_id, user_id, role, joined_at
@@ -82,7 +81,7 @@ func (g *GlobalStore) GetTenantMembers(ctx context.Context, tenantID string) ([]
 }
 
 // GetUserTenants lists all tenants a user belongs to, ordered by
-// joined_at. Mirrors `_sync_get_user_tenants` (global_store.py:622).
+// joined_at.
 func (g *GlobalStore) GetUserTenants(ctx context.Context, userID string) ([]*Member, error) {
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT tenant_id, user_id, role, joined_at
@@ -125,7 +124,7 @@ func (g *GlobalStore) ChangeMemberRole(ctx context.Context, tenantID, userID, ro
 }
 
 // IsMember is the hot-path membership check used by ExecuteAtomic and
-// ListTenants. Mirrors `_sync_is_member` (global_store.py:660).
+// ListTenants.
 func (g *GlobalStore) IsMember(ctx context.Context, tenantID, userID string) (bool, error) {
 	var one int
 	err := g.db.QueryRowContext(ctx,
@@ -144,8 +143,7 @@ func (g *GlobalStore) IsMember(ctx context.Context, tenantID, userID string) (bo
 
 // RemoveAllMembershipsForUser deletes every tenant_members row whose
 // user_id matches. Returns the number of rows deleted. Used by GDPR
-// account deletion. Mirrors `_sync_remove_all_memberships_for_user`
-// (global_store.py:914).
+// account deletion.
 func (g *GlobalStore) RemoveAllMembershipsForUser(ctx context.Context, userID string) (int64, error) {
 	res, err := g.db.ExecContext(ctx,
 		`DELETE FROM tenant_members WHERE user_id = ?`,
@@ -163,9 +161,8 @@ func (g *GlobalStore) RemoveAllMembershipsForUser(ctx context.Context, userID st
 
 // TransferUserContent ensures `toUser` is a member of `tenantID` (adds
 // with role='member' if absent) and reports whether a new membership
-// was created. Mirrors `_sync_transfer_user_content`
-// (global_store.py:941). Note: this only touches tenant_members; the
-// canonical_store-level node ownership transfer is a separate call.
+// was created. Note: this only touches tenant_members; the per-tenant
+// node ownership transfer is a separate call.
 func (g *GlobalStore) TransferUserContent(ctx context.Context, tenantID, fromUser, toUser string) (*TransferResult, error) {
 	tx, err := g.db.BeginTx(ctx, nil)
 	if err != nil {

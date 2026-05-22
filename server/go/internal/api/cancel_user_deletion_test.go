@@ -21,8 +21,8 @@ import (
 )
 
 // TestCancelUserDeletion_Self_HappyPath: alice cancels her own pending
-// deletion within the grace window. Mirrors test_gdpr_engine.py:489-495
-// (store-level pin) and test_grpc_contract.py:676-681 (wire pin).
+// deletion within the grace window. Pinned by
+// test_grpc_contract.py:676-681 (wire pin).
 //
 // Verifies BOTH legs of the handler chain:
 //  1. CancelDeletion removes the deletion_queue row (GetDeletionEntry
@@ -36,10 +36,9 @@ func TestCancelUserDeletion_Self_HappyPath(t *testing.T) {
 	if _, err := gs.CreateUser(ctx, "alice", "alice@example.com", "Alice"); err != nil {
 		t.Fatalf("seed CreateUser: %v", err)
 	}
-	// Simulate a prior DeleteUser: queue + flip status. The Python
-	// DeleteUser handler does these two writes (grpc_server.py:2925-2981);
-	// we reproduce them at the store layer here so this test does not
-	// depend on the not-yet-ported DeleteUser RPC.
+	// Simulate a prior DeleteUser: queue + flip status. We reproduce
+	// these writes at the store layer so this test does not depend on
+	// the not-yet-ported DeleteUser RPC.
 	if _, err := gs.QueueDeletion(ctx, "alice", 30); err != nil {
 		t.Fatalf("seed QueueDeletion: %v", err)
 	}
@@ -149,8 +148,7 @@ func TestCancelUserDeletion_PastNoReturn_SilentNoOp(t *testing.T) {
 // TestCancelUserDeletion_NonAdmin_OtherDenied: alice trying to cancel
 // bob's pending deletion is the trusted-actor escalation guard. The
 // handler MUST consult ctx (not the wire `actor`) for the privilege
-// decision — post-#168 invariant. Mirrors the auth gate at
-// grpc_server.py:2997-3001.
+// decision — post-#168 invariant.
 func TestCancelUserDeletion_NonAdmin_OtherDenied(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)

@@ -50,18 +50,15 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 		metrics.RecordGRPCRequest("CreateTenant", resultStatus, time.Since(start))
 	}()
 
-	// Step 1a: globalstore must be wired. Mirrors Python's
-	// `if not self.global_store: abort(UNIMPLEMENTED, ...)`
-	// (grpc_server.py:2312-2316).
+	// Step 1a: globalstore must be wired.
 	if s.global == nil {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
-	// Step 1b: required-field validation. Matches the three INVALID_ARGUMENT
-	// aborts in Python (grpc_server.py:2318-2323). The wire `actor` MUST be
-	// non-empty even though we ignore it for the auth decision — this keeps
-	// the wire contract identical so existing SDK callers don't break.
+	// Step 1b: required-field validation. The wire `actor` MUST be non-empty
+	// even though we ignore it for the auth decision — this keeps the wire
+	// contract identical so existing SDK callers don't break.
 	if req.GetActor() == "" {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
@@ -87,9 +84,7 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 	}
 
 	// Step 1d: resolve region. Empty → server's served region → final
-	// fallback "us-east-1" (globalstore.DefaultRegion). Mirrors Python's
-	// `request.region or self.served_region or "us-east-1"`
-	// (grpc_server.py:2334).
+	// fallback "us-east-1" (globalstore.DefaultRegion).
 	region := req.GetRegion()
 	if region == "" {
 		region = s.region

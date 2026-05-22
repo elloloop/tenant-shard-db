@@ -9,9 +9,8 @@ import "context"
 // top, with the actor claimed in the request payload, and rebind the
 // local variable to the result.
 //
-// The behavioural pin is
-// tests/python/integration/test_privilege_escalation.py (34 cases
-// across 8 RPCs).
+// The behavioural pin is tests/python/integration/test_grpc_contract.py
+// (privilege-escalation cases).
 //
 // Resolution rules, in order:
 //
@@ -25,8 +24,7 @@ import "context"
 //     The trusted Subject is normalised to an Actor:
 //     - If it already starts with user:, system:, or admin:, ParseActor
 //     gives us the right kind verbatim.
-//     - Otherwise it is wrapped as user:<subject>. This matches Python's
-//     fall-through at auth_interceptor.py:108-115: a JWT
+//     - Otherwise it is wrapped as user:<subject>. A JWT
 //     sub: "alice" becomes user:alice; a session for
 //     user_id: "user:alice" stays user:alice.
 //
@@ -38,16 +36,14 @@ import "context"
 //     exists to plug. See docs/go-port/shared/auth-interceptor.md
 //     "Trusted-actor contract" final paragraph.
 //
-// Special case: the literal "__system__" Python identity is not modelled
-// here because it is the bootstrap/replay actor used by the Applier and
-// never appears on the wire (auth_interceptor.py:111-112). The Go
-// Applier will construct that actor directly via a dedicated constant
-// rather than route it through Authoritative.
+// Special case: the literal "__system__" bootstrap actor used by the Applier
+// never appears on the wire. The Applier constructs that actor directly via a
+// dedicated constant rather than routing it through Authoritative.
 //
 // Defence in depth: subsequent helpers (admin checks, tenant-access
 // checks, cross-tenant-read checks) also re-call Authoritative to
-// re-derive the trusted actor from ctx -- mirroring the Python belt-and-
-// suspenders pattern at grpc_server.py:493 / 586-588 / 2671-2673.
+// re-derive the trusted actor from ctx -- a belt-and-suspenders pattern
+// to guard against any path that skips the top-of-handler call.
 func Authoritative(ctx context.Context, claimed Actor) Actor {
 	id, ok := IdentityFromContext(ctx)
 	if !ok {
@@ -62,7 +58,7 @@ func Authoritative(ctx context.Context, claimed Actor) Actor {
 		parsed.Kind() == KindAdmin {
 		return parsed
 	}
-	// No recognised prefix -- wrap as user:<subject>. This matches the
-	// JWT sub: "alice" -> user:alice path in the Python source.
+	// No recognised prefix -- wrap as user:<subject>. Handles the JWT
+	// sub: "alice" -> user:alice case.
 	return User(id.Subject)
 }

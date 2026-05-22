@@ -4,8 +4,7 @@
 // Spec: docs/go-port/rpcs/QueryNodes.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:61 (rpc), :424-452
-// (request/response), :675-690 (FieldFilter / FilterOp). Reference
-// Python handler.
+// (request/response), :675-690 (FieldFilter / FilterOp).
 //
 // Behavior parity with the Python handler, with one DELIBERATE behavior
 // fix flagged by the spec:
@@ -27,16 +26,13 @@
 //     the bulk VisibleNodeIDs JOIN already implemented in
 //     store.GetVisibleNodeIDs and exposed through acl.Filter.
 //  6. Response: id-keyed payload Struct (PayloadToStruct) — pinned by
-//     tests/python/unit/test_payload_wire_format.py:219. has_more is
-//     the cheap (len == limit) heuristic Python uses; we preserve it
-//     verbatim for parity (the cross-tenant ACL post-filter makes it
+//     the contract suite. has_more is the cheap (len == limit) heuristic
+//     preserved verbatim (the cross-tenant ACL post-filter makes it
 //     leakier but EPIC #407 explicitly defers a fix).
 //
 // BEHAVIOR CHANGE flagged in the spec ("Error contract" / "Open
-// questions" §5): Python's handler swallows ALL exceptions and returns
-// an empty QueryNodesResponse with codes.OK (grpc_server.py:1379-1382).
-// The Go port MUST surface gRPC errors so unsupported filters,
-// missing tenants, etc. reach the SDK. Verified by
+// questions" §5): the Go port MUST surface gRPC errors so unsupported
+// filters, missing tenants, etc. reach the SDK. Verified by
 // TestQueryNodes_UnsupportedFilterRejected.
 
 package api
@@ -58,8 +54,7 @@ import (
 
 const queryNodesMethod = "QueryNodes"
 
-// defaultQueryLimit mirrors the Python `request.limit or 100` fallback
-// at grpc_server.py:1337.
+// defaultQueryLimit is the fallback when request.limit is zero or negative.
 const defaultQueryLimit = 100
 
 // QueryNodes implements entdb.v1.EntDBService/QueryNodes.
@@ -151,9 +146,8 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		return nil, err
 	}
 
-	// Convert store.Node -> pb.Node. Payload stays id-keyed on the wire
-	// (test_payload_wire_format.py:219 pin); ACL JSON unmarshalled to
-	// repeated AclEntry.
+	// Convert store.Node -> pb.Node. Payload stays id-keyed on the wire;
+	// ACL JSON unmarshalled to repeated AclEntry.
 	protoNodes := make([]*pb.Node, 0, len(nodes))
 	for _, n := range nodes {
 		pn, err := s.storeNodeToProto(typeName, n)
@@ -345,10 +339,8 @@ func inlinedFilterOps(v any) ([]inlinedFilterOp, bool) {
 	return out, true
 }
 
-// applyQueryACLFilter is the cross-tenant post-filter. It mirrors the
-// canonical_store.can_access loop at grpc_server.py:1344-1358 but uses
-// the bulk acl.Filter pattern (single VisibleNodeIDs JOIN, not N+1
-// per-row checks).
+// applyQueryACLFilter is the cross-tenant post-filter. It uses the bulk
+// acl.Filter pattern (single VisibleNodeIDs JOIN, not N+1 per-row checks).
 //
 // The filter is a no-op when the actor is the system bypass, when the
 // actor is empty (no auth), or when no canonical store is wired up.

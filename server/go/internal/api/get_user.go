@@ -2,14 +2,13 @@
 // Spec: docs/go-port/rpcs/GetUser.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:113 (rpc), :816-824
-// (request/response), :793-800 (UserInfo). Reference Python handler:
+// (request/response), :793-800 (UserInfo).
 //
 // Semantics (preserved from the Python handler):
 //
 //   - Authenticated, but unrestricted. Any authenticated actor may
-//     read any user's profile. NO self/admin gate -- Python's
-//     `_is_self_or_admin` helper exists at grpc_server.py:2080-2086 but
-//     is intentionally NOT called from GetUser (spec "Auth").
+//     read any user's profile. NO self/admin gate — the handler
+//     intentionally omits any self/admin check (spec "Auth").
 //   - Wire `actor` is UNTRUSTED. The trusted-actor invariant
 //     (CLAUDE.md, commit fece3fb) means we resolve identity via
 //     auth.Authoritative and ignore the wire claim for any auth
@@ -22,11 +21,9 @@
 //     NOT upgrade to NOT_FOUND -- existing SDK clients branch on
 //     `response.Found`.
 //   - When the global store is not wired, return codes.Unimplemented
-//     ("User registry not configured"), matching Python's `:2157-2161`
-//     guard.
+//     ("User registry not configured").
 //   - Catch-all internal errors are swallowed into `found=false` with
-//     codes.OK to match Python's bare `except Exception` at
-//     `:2179-2182`. The status metric is recorded as "error" so the
+//     codes.OK. The status metric is recorded as "error" so the
 //     swallow doesn't inflate the ok counter.
 //
 // No WAL append, no SQLite write, no ACL check. Pure read off
@@ -58,9 +55,8 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 		metrics.RecordGRPCRequest(getUserMethod, resultStatus, time.Since(start))
 	}()
 
-	// Guard the optional global_store dep. Python raises
-	// UNIMPLEMENTED("User registry not configured"); pinned by
-	// tests/python/unit/test_user_registry.py:433-444.
+	// Guard the optional global_store dep. Returns
+	// UNIMPLEMENTED("User registry not configured").
 	if s.global == nil {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.Unimplemented, "User registry not configured")
@@ -91,9 +87,8 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 	// Python's `dict | None` contract.
 	user, err := s.global.GetUser(ctx, req.GetUserId())
 	if err != nil {
-		// Python's bare `except Exception` swallows internal errors
-		// into found=false with codes.OK (`:2179-2182`). We mirror
-		// that for parity but record the metric as "error" so the
+		// Internal errors are swallowed into found=false with codes.OK
+		// for parity, but the metric is recorded as "error" so the
 		// swallow doesn't inflate the ok counter.
 		resultStatus = "error"
 		return &pb.GetUserResponse{Found: false}, nil

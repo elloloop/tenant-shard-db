@@ -1,15 +1,11 @@
 // Tests for the CreateUser RPC. Spec: docs/go-port/rpcs/CreateUser.md.
 //
-// Behavioural pins from the Python suite this port must satisfy:
+// Behavioural pins:
 //
-//   - tests/python/unit/test_user_registry.py:68-97 — happy path with
-//     actor="system:admin".
-//   - tests/python/unit/test_user_registry.py:126-145 — non-admin caller
-//     returns PERMISSION_DENIED and the store is NOT touched.
-//   - tests/python/unit/test_user_registry.py:147-169 — duplicate user
-//     surfaces as a uniqueness collision.
-//   - tests/python/unit/test_user_registry.py:171-187 — empty required
-//     field aborts with INVALID_ARGUMENT.
+//   - Happy path with actor="system:admin".
+//   - Non-admin caller returns PERMISSION_DENIED and the store is NOT touched.
+//   - Duplicate user surfaces as a uniqueness collision.
+//   - Empty required field aborts with INVALID_ARGUMENT.
 //
 // The Go port deliberately upgrades the duplicate-key path to
 // codes.AlreadyExists (the Python handler returns OK+success=false). The
@@ -78,9 +74,8 @@ func TestCreateUser_HappyPath_AdminActor(t *testing.T) {
 	}
 }
 
-// TestCreateUser_HappyPath_SystemActor pins parity with the Python case
-// at test_user_registry.py:99-124: system:* trusted actors are equally
-// privileged.
+// TestCreateUser_HappyPath_SystemActor pins that system:* trusted actors
+// are equally privileged.
 func TestCreateUser_HappyPath_SystemActor(t *testing.T) {
 	t.Parallel()
 
@@ -166,11 +161,9 @@ func TestCreateUser_DuplicateEmail(t *testing.T) {
 }
 
 // TestCreateUser_NonAdminActor_PermissionDenied pins the privilege gate.
-// The Python regression test at test_privilege_escalation.py:321-341
-// covers the harder case where the wire claims admin but the trusted
-// identity is a regular user; here we cover the simpler path where the
-// wire itself does not claim admin (no interceptor on ctx, so claimed
-// passes through Authoritative unchanged).
+// Here we cover the simpler path where the wire itself does not claim
+// admin (no interceptor on ctx, so claimed passes through Authoritative
+// unchanged).
 func TestCreateUser_NonAdminActor_PermissionDenied(t *testing.T) {
 	t.Parallel()
 
@@ -202,8 +195,7 @@ func TestCreateUser_NonAdminActor_PermissionDenied(t *testing.T) {
 
 // TestCreateUser_EmptyRequiredField pins validation. Each empty
 // non-optional field aborts with INVALID_ARGUMENT before the store is
-// touched. Mirrors the parametric Python test at
-// test_user_registry.py:171-187 over actor / user_id / email / name.
+// touched.
 func TestCreateUser_EmptyRequiredField(t *testing.T) {
 	t.Parallel()
 

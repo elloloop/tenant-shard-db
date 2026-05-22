@@ -11,10 +11,9 @@ import (
 	"reflect"
 )
 
-// applyUpdateNode dispatches an "update_node" op. Mirrors
-// applier.py:1020-1107. The patch is field-id-keyed and merged onto the
-// existing payload by string key (rename-free per CLAUDE.md invariant
-// #6). storage_mode is immutable — any attempt to set it is a
+// applyUpdateNode dispatches an "update_node" op. The patch is field-id-keyed
+// and merged onto the existing payload by string key (rename-free per CLAUDE.md
+// invariant #6). storage_mode is immutable — any attempt to set it is a
 // poison-event.
 //
 // GitHub issue #500 (CAS): when the op carries a "precondition" map
@@ -50,7 +49,7 @@ func (a *Applier) applyUpdateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 	var existingJSON string
 	if err := row.Scan(&existingJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			// Mirror the Python applier: missing target is a no-op.
+			// Missing target is a no-op.
 			// A precondition on a missing node is treated as a miss
 			// (observed=null, field_present=false) to keep the CAS
 			// surface honest — see GitHub issue #500.

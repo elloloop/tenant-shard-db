@@ -31,7 +31,7 @@ type nodeAliasMap map[string]string
 
 // resolveRef resolves a node-id reference, expanding "$alias" into the
 // concrete node_id assigned earlier in the same event. Bare ids pass
-// through unchanged. Mirrors applier.py:_resolve_ref (760-770).
+// through unchanged.
 func (m nodeAliasMap) resolveRef(ref string) string {
 	if strings.HasPrefix(ref, "$") {
 		if id, ok := m[ref[1:]]; ok {
@@ -42,7 +42,7 @@ func (m nodeAliasMap) resolveRef(ref string) string {
 }
 
 // resolveNodeRef is a convenience for the create_edge/delete_edge ops
-// that always resolve the ref before use. Mirrors applier.py:_resolve_node_ref.
+// that always resolve the ref before use.
 func (m nodeAliasMap) resolveNodeRef(ref string) string {
 	return m.resolveRef(ref)
 }

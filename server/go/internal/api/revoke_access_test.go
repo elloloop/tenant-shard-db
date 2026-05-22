@@ -1,8 +1,6 @@
 // Tests for RevokeAccess. Behavioural parity with the Python handler
-//  is pinned
-// by the cross-language contract suite at
-// tests/python/integration/test_grpc_contract.py:351-361 and the unit
-// tests at tests/python/unit/test_acl_v2.py:443-452. This file covers
+// is pinned by the cross-language contract suite at
+// tests/python/integration/test_grpc_contract.py:351-361. This file covers
 // the three branches the spec calls out:
 //
 //  1. Happy revoke -> OK + Found=true; WAL event durably appended.
@@ -57,8 +55,7 @@ func newRevokeAccessServer(t *testing.T) (*api.Server, *wal.InMemory) {
 
 // TestRevokeAccess_HappyRevoke: a trusted admin: actor revokes a grant
 // on a node; handler returns OK + Found=true and a "revoke_access" op
-// is durably appended to the WAL. Mirrors the Python contract pin at
-// test_acl_v2.py:443-448.
+// is durably appended to the WAL.
 func TestRevokeAccess_HappyRevoke(t *testing.T) {
 	t.Parallel()
 
@@ -120,9 +117,7 @@ func TestRevokeAccess_HappyRevoke(t *testing.T) {
 // never existed returns OK + Found=true (success=true, no-op at apply
 // time). Two back-to-back revokes for the same (node, actor) collapse
 // to one WAL record via the deterministic idempotency key — matching
-// the Python pin at test_acl_v2.py:450-452 (revoke without prior grant
-// returns no-error) and the spec's idempotency contract (§"Open
-// questions" item 2).
+// the spec's idempotency contract (§"Open questions" item 2).
 func TestRevokeAccess_IdempotentRevokeNotGranted(t *testing.T) {
 	t.Parallel()
 
@@ -183,7 +178,7 @@ func TestRevokeAccess_IdempotentRevokeNotGranted(t *testing.T) {
 // actor=admin:root — the handler MUST ignore the wire claim.
 //
 // Note: the response-error convention (no gRPC status) is preserved
-// from Python (grpc_server.py:1849-1851) for client compatibility.
+// for client compatibility.
 func TestRevokeAccess_NonAdminPermissionDenied(t *testing.T) {
 	t.Parallel()
 

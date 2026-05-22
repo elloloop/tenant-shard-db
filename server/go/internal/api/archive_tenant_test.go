@@ -2,16 +2,14 @@
 
 // Tests for the ArchiveTenant RPC. Spec: docs/go-port/rpcs/ArchiveTenant.md.
 //
-// Behavioural pins (mirror Python):
+// Behavioural pins:
 //   - tests/python/integration/test_grpc_contract.py:683-693 — admin actor
 //     happy path returns success=true; empty actor returns INVALID_ARGUMENT.
-//   - tests/python/unit/test_tenant_registry.py:347-391 — admin succeeds
-//     without membership; non-admin / non-owner is PERMISSION_DENIED.
 //   - Spec "Open questions" item 6 — re-archiving is idempotent
 //     (UPDATE still matches the row → success=true).
-//   - Python `:2431-2433` — unknown tenant returns OK + success=false
-//     with error="Tenant not found"; this is an intentional asymmetry
-//     vs. validation/auth which abort with a status code.
+//   - Unknown tenant returns OK + success=false with error="Tenant not found";
+//     this is an intentional asymmetry vs. validation/auth which abort with
+//     a status code.
 
 package api_test
 
@@ -134,8 +132,8 @@ func TestArchiveTenant_NonAdminPermissionDenied(t *testing.T) {
 
 // TestArchiveTenant_UnknownTenant: an admin call against a tenant id that
 // is not in the registry returns OK + success=false + error="Tenant not
-// found". Python parity (`grpc_server.py:2431-2433`) — this is asymmetric
-// vs. validation/auth which abort with a status code.
+// found". This is asymmetric vs. validation/auth which abort with a status
+// code.
 func TestArchiveTenant_UnknownTenant(t *testing.T) {
 	t.Parallel()
 
@@ -218,7 +216,7 @@ func TestArchiveTenant_EmptyActorInvalidArgument(t *testing.T) {
 }
 
 // TestArchiveTenant_EmptyTenantIDInvalidArgument: empty tenant_id must
-// also surface INVALID_ARGUMENT. Pinned by Python `:2413-2414`.
+// also surface INVALID_ARGUMENT.
 func TestArchiveTenant_EmptyTenantIDInvalidArgument(t *testing.T) {
 	t.Parallel()
 
@@ -238,8 +236,7 @@ func TestArchiveTenant_EmptyTenantIDInvalidArgument(t *testing.T) {
 }
 
 // TestArchiveTenant_GlobalStoreNotConfigured: when the optional global_store
-// dep is absent, the handler returns UNIMPLEMENTED. Pinned by Python
-// `:2406-2409`.
+// dep is absent, the handler returns UNIMPLEMENTED.
 func TestArchiveTenant_GlobalStoreNotConfigured(t *testing.T) {
 	t.Parallel()
 

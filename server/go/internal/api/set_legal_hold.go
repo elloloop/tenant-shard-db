@@ -39,8 +39,7 @@
 //   - non-admin / non-system caller -> PERMISSION_DENIED "SetLegalHold requires admin or owner role"
 //
 // On success the response carries `success=true` and `status` set to
-// "legal_hold" (when enabled) or "active" (when cleared) — pinned by
-// tests/python/unit/test_admin_operations.py:594-624.
+// "legal_hold" (when enabled) or "active" (when cleared).
 
 package api
 
@@ -61,8 +60,7 @@ const (
 	grpcMethodSetLegalHold = "SetLegalHold"
 
 	// statusActive / statusLegalHold are the two literals that
-	// tenant_registry.status takes for this RPC. Pinned by
-	// test_admin_operations.py:607,624.
+	// tenant_registry.status takes for this RPC.
 	statusActive    = "active"
 	statusLegalHold = "legal_hold"
 )
@@ -80,18 +78,18 @@ func (s *Server) SetLegalHold(
 		metrics.RecordGRPCRequest(grpcMethodSetLegalHold, resultStatus, time.Since(start))
 	}()
 
-	// Optional-store guard. Mirrors Python `:2816-2820` which aborts with
-	// UNIMPLEMENTED when the global_store dep is not configured. This
-	// runs BEFORE the auth check (spec §"Auth": ordering preserved).
+	// Optional-store guard. Returns UNIMPLEMENTED when the global_store
+	// dep is not configured. Runs BEFORE the auth check (spec §"Auth":
+	// ordering preserved).
 	if s.global == nil {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
 	// Required-arg validation. Empty actor / tenant_id surface as
-	// INVALID_ARGUMENT before any privilege decision (parity with
-	// `:2821-2822`). The wire `actor` is required even though we rebind
-	// it below — the wire contract pin is preserved (test_grpc_contract.py:579-583).
+	// INVALID_ARGUMENT before any privilege decision. The wire `actor`
+	// is required even though we rebind it below — the wire contract pin
+	// is preserved (test_grpc_contract.py:579-583).
 	if req.GetActor() == "" {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")

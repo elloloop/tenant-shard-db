@@ -5,10 +5,9 @@
 // Contract pins (must not regress):
 //
 //   - actor / user_id presence-checked. Empty actor or user_id ->
-//     INVALID_ARGUMENT (mirrors grpc_server.py:2586-2589). Validation
-//     order: actor first, then user_id, matching Python.
+//     INVALID_ARGUMENT. Validation order: actor first, then user_id.
 //   - global_store == nil -> UNIMPLEMENTED with the exact message
-//     "Tenant registry not configured" (grpc_server.py:2580-2584).
+//     "Tenant registry not configured".
 //   - The trusted-actor invariant is honoured: the wire-claimed actor
 //     is run through auth.Authoritative so the interceptor's identity
 //     wins over any payload-claimed identity. Per the Python parity
@@ -24,8 +23,7 @@
 //   - Catch-all parity: any error from globalstore (or a panic inside
 //     the handler body after validation) collapses to OK with
 //     memberships=[]. We MUST NOT propagate codes.Internal — the
-//     contract test relies on the empty-OK degradation
-//     (grpc_server.py:2596-2599).
+//     contract test relies on the empty-OK degradation.
 //
 // Metrics: emits entdb_grpc_requests_total{method="GetUserTenants",
 // status="ok"|"error"} via the shared metrics chokepoint. Matching
@@ -54,8 +52,7 @@ func (s *Server) GetUserTenants(
 	req *pb.GetUserTenantsRequest,
 ) (resp *pb.GetUserTenantsResponse, err error) {
 	// Pre-validation guards run BEFORE the metrics defer is armed,
-	// matching the Python handler which short-circuits before the
-	// record_grpc_request call site (grpc_server.py:2580-2589 vs :2594).
+	// short-circuiting before the record_grpc_request call site.
 	if s.global == nil {
 		return nil, status.Error(
 			codes.Unimplemented, "Tenant registry not configured")
@@ -69,9 +66,8 @@ func (s *Server) GetUserTenants(
 
 	start := time.Now()
 	outcome := "ok"
-	// Empty-OK degradation on panic: mirror Python's bare `except
-	// Exception` at grpc_server.py:2596-2599. The handler MUST NOT
-	// surface codes.Internal; contract tests pin the empty-OK shape.
+	// Empty-OK degradation on panic. The handler MUST NOT surface
+	// codes.Internal; contract tests pin the empty-OK shape.
 	defer func() {
 		if r := recover(); r != nil {
 			outcome = "error"

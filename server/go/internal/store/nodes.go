@@ -71,8 +71,8 @@ func (s *CanonicalStore) GetNode(ctx context.Context, tenantID, nodeID string) (
 	return n, nil
 }
 
-// GetNodeByKey resolves a node via its declared unique field. Mirrors
-// canonical_store.py:_sync_get_node_by_key (2177). Returns (nil, nil)
+// GetNodeByKey resolves a node via its declared unique field. Returns
+// (nil, nil)
 // when no row matches the (tenant, type, field, value) tuple — the
 // miss is signalled in-band so the caller can decide between
 // PERMISSION_DENIED, NOT_FOUND, or in-band found=false (the
@@ -115,8 +115,7 @@ func (s *CanonicalStore) GetNodeByKey(ctx context.Context, tenantID string, type
 }
 
 // GetNodeByCompositeKey resolves a node via a multi-field composite
-// unique tuple. Mirrors canonical_store.py:_sync_get_node_by_composite_key
-// (2229). Same byte-exact contract as GetNodeByKey. Returns
+// unique tuple. Same byte-exact contract as GetNodeByKey. Returns
 // (nil, nil) on miss; (nil, error) only on infra failure.
 //
 // fieldIDs and values must be the same non-zero length; an empty or
@@ -283,9 +282,7 @@ func CompileQueryFilters(filters []QueryFilter) (clauses []string, params []any)
 	return clauses, params
 }
 
-// QueryNodesArgs is the input to QueryNodes. Mirrors
-// canonical_store.py:_sync_query_nodes (2394) signature minus the
-// MongoDB filter (deferred to W1.10 query_filter port).
+// QueryNodesArgs is the input to QueryNodes.
 type QueryNodesArgs struct {
 	TenantID string
 	TypeID   int32
@@ -379,10 +376,9 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 }
 
 // CreateNodeRaw inserts a node row using a field-id-keyed payload.
-// Mirrors canonical_store.py:create_node_raw (1291). Caller is expected
-// to be the applier; the payload must already be id-keyed (CLAUDE.md
-// invariant #6). updates the node_visibility index for owner + ACL
-// principals.
+// Caller is expected to be the applier; the payload must already be
+// id-keyed (CLAUDE.md invariant #6). Updates the node_visibility index
+// for owner + ACL principals.
 //
 // CreatedAt defaults to s.now() when zero.
 func (s *CanonicalStore) CreateNodeRaw(ctx context.Context, tenantID string, in NodeInput) (*Node, error) {
@@ -448,9 +444,9 @@ func (s *CanonicalStore) CreateNodeRaw(ctx context.Context, tenantID string, in 
 	}, nil
 }
 
-// UpdateNode applies a PATCH-style partial payload merge. Mirrors
-// canonical_store.py:_sync_update_node (1612). Returns ErrNodeNotFound
-// if the row does not exist. patch is field-id-keyed (string keys).
+// UpdateNode applies a PATCH-style partial payload merge. Returns
+// ErrNodeNotFound if the row does not exist. patch is field-id-keyed
+// (string keys).
 func (s *CanonicalStore) UpdateNode(ctx context.Context, tenantID, nodeID string, patch map[string]any) (*Node, error) {
 	if patch == nil {
 		patch = map[string]any{}
@@ -516,8 +512,7 @@ func (s *CanonicalStore) UpdateNode(ctx context.Context, tenantID, nodeID string
 }
 
 // DeleteNode removes a node row, cascades edges, visibility, and ACL
-// rows. Mirrors canonical_store.py:_sync_delete_node (1688). Returns
-// ErrNodeNotFound if the row did not exist.
+// rows. Returns ErrNodeNotFound if the row did not exist.
 func (s *CanonicalStore) DeleteNode(ctx context.Context, tenantID, nodeID string) error {
 	return s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx,
@@ -560,11 +555,10 @@ func (s *CanonicalStore) DeleteNode(ctx context.Context, tenantID, nodeID string
 // CountOwnedNodes returns the number of `nodes` rows where
 // `owner_actor = ownerActor` inside `tenantID`. Read-only — used by
 // TransferUserContent to compute the pre-apply count returned to the
-// caller (mirrors grpc_server.py:2727-2736).
+// caller.
 //
 // On a missing tenant DB the function returns (0, nil) — the user
-// transparently owns nothing in a tenant we have not seen — matching
-// the Python handler's "swallow + return 0" failure mode.
+// transparently owns nothing in a tenant we have not seen.
 func (s *CanonicalStore) CountOwnedNodes(ctx context.Context, tenantID, ownerActor string) (int32, error) {
 	if tenantID == "" || ownerActor == "" {
 		return 0, nil
@@ -620,8 +614,7 @@ func (s *CanonicalStore) ListOwnedNodeIDs(ctx context.Context, tenantID, ownerAc
 }
 
 // TenantExportNode is one row in the per-tenant export bundle assembled
-// by ExportUserData. Mirrors the dict shape returned by Python
-// _sync_export_user_data (canonical_store.py:5223-5234):
+// by ExportUserData. Shape:
 //
 //	{ tenant_id, node_id, type_id, payload, created_at, updated_at,
 //	  owner_actor, data_policy }
@@ -640,8 +633,7 @@ type TenantExportNode struct {
 }
 
 // TenantExport is the per-tenant slice of the cross-tenant
-// ExportUserData bundle. Mirrors `{tenant_id, nodes}` returned by
-// canonical_store.export_user_data_for_tenant (canonical_store.py:5236).
+// ExportUserData bundle.
 type TenantExport struct {
 	TenantID string             `json:"tenant_id"`
 	Nodes    []TenantExportNode `json:"nodes"`
@@ -649,15 +641,14 @@ type TenantExport struct {
 
 // ExportUserData collects every node in `tenantID` that the caller
 // owns or is the subject of, excluding `data_policy=audit` types.
-// Port of canonical_store.py:_sync_export_user_data (5174-5236).
 //
 // `principal` is the per-tenant principal form (`user:<id>`). `reg` is
 // the schema registry used for data-policy / subject-field lookups; nil
-// is permitted and triggers the same fall-back as Python's KeyError
-// branch (DataPolicyPersonal, no subject field).
+// is permitted and falls back to DataPolicyPersonal with no subject
+// field.
 //
 // The returned `Nodes` slice is non-nil even when empty — JSON consumers
-// expect `[]`, not `null`, to match the Python `json.dumps([])` shape.
+// expect `[]`, not `null`.
 func (s *CanonicalStore) ExportUserData(
 	ctx context.Context,
 	tenantID, principal string,
@@ -689,7 +680,6 @@ func (s *CanonicalStore) ExportUserData(
 		}
 
 		// Schema lookups: missing type → PERSONAL, no subject field.
-		// Mirrors the KeyError fallback at canonical_store.py:5206-5208.
 		var (
 			policy       schema.DataPolicy = schema.DataPolicyPersonal
 			subjectField string
@@ -709,19 +699,16 @@ func (s *CanonicalStore) ExportUserData(
 		payload := map[string]any{}
 		if payloadJSON != "" {
 			// Best-effort parse: a malformed payload becomes {} rather
-			// than failing the whole export — matches Python's
-			// json.JSONDecodeError swallow at canonical_store.py:5212-5213.
+			// than failing the whole export.
 			_ = json.Unmarshal([]byte(payloadJSON), &payload)
 		}
 
 		isOwner := owner == principal
 		isSubject := false
 		if subjectField != "" {
-			// Latent-bug parity: Python compares payload[subject_field]
-			// to the *user_id* (bare, e.g. "alice"), not the principal
-			// (`user:alice`). See canonical_store.py:5216 and the spec's
-			// Open Question #6. We replicate exactly: strip the
-			// `user:` prefix from `principal` before comparing.
+			// Strip the `user:` prefix from `principal` before
+			// comparing to the subject field value (which stores the
+			// bare user_id, e.g. "alice", not the principal form).
 			subjectID := principal
 			if len(subjectID) > 5 && subjectID[:5] == "user:" {
 				subjectID = subjectID[5:]

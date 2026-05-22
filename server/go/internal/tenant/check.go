@@ -8,17 +8,13 @@
 //     the owning node id (so SDK redirect caches can retry there).
 //  3. Region pinning — tenant_registry.region != this node's region
 //     -> codes.FailedPrecondition (permanent for this node;
-//     UNAVAILABLE would invite retries, see Python comment at
-//     api/grpc_server.py:399).
+//     UNAVAILABLE would invite retries).
 //
 // Spec: docs/go-port/shared/error-mapping.md, plus the per-RPC specs
-// in docs/go-port/rpcs/* (Health.md, GetMailbox.md). Source-of-truth
-// (`_check_tenant`) and sharding.py.
+// in docs/go-port/rpcs/* (Health.md, GetMailbox.md).
 //
 // Single-node default: an unset Sharding ({}) is treated as
-// "always-mine" — every tenant is owned by this node. This matches the
-// Python ShardingConfig with empty assigned_tenants
-// (sharding.py:85-97).
+// "always-mine" — every tenant is owned by this node.
 
 package tenant
 
@@ -50,8 +46,8 @@ type Sharding struct {
 	AssignedTenants []string
 
 	// IsMine reports whether this node owns the given tenant. nil is
-	// treated as "always true" (matches sharding.py:95-97 — empty
-	// assigned_tenants accepts every tenant).
+	// treated as "always true" — the single-node default accepts every
+	// tenant.
 	IsMine func(tenantID string) bool
 
 	// Owner returns the node id that owns the given tenant, or "" if
@@ -91,12 +87,10 @@ type Options struct {
 // error. For the sharding-mismatch case it also calls
 // errs.SetRedirectTrailer to attach the entdb-redirect-node trailer
 // (the trailer must be set before the handler returns the error;
-// grpc-go flushes trailers with the closing status — same contract the
-// Python comment at api/grpc_server.py:390 documents).
+// grpc-go flushes trailers with the closing status).
 //
-// gs may be nil; in that case the region check is skipped (matches the
-// Python guard at api/grpc_server.py:400 — region pinning only fires
-// when global_store is wired up).
+// gs may be nil; in that case the region check is skipped — region
+// pinning only fires when global_store is wired up.
 func CheckTenant(ctx context.Context, tenantID string, gs *globalstore.GlobalStore, sh *Sharding, opts Options) error {
 	if tenantID == "" {
 		return errs.Errorf(codes.InvalidArgument, "tenant: empty tenant_id")

@@ -8,21 +8,20 @@
 // Behavioural parity with Python is preserved deliberately, including the
 // known gap below. The handler:
 //
-//   - Returns UNIMPLEMENTED when global_store is not wired (parity with
-//     `grpc_server.py:2406-2409`).
-//   - Returns INVALID_ARGUMENT for empty actor / tenant_id (`:2411-2414`).
+//   - Returns UNIMPLEMENTED when global_store is not wired.
+//   - Returns INVALID_ARGUMENT for empty actor / tenant_id.
 //   - Resolves the trusted actor via auth.Authoritative (CLAUDE.md
 //     trusted-actor invariant — see docs/go-port/shared/auth-interceptor.md).
 //   - narrowing: only system: / admin: actors may archive. The
 //     Python handler additionally lets the tenant "owner" archive after a
-//     member-role lookup (`:2421-2427`); the Go port restricts this to
-//     admin-only for now. The owner branch will land alongside the WAL-
-//     first restoration (see "Known gaps" below).
+//     member-role lookup; the Go port restricts this to admin-only for now.
+//     The owner branch will land alongside the WAL-first restoration (see
+//     "Known gaps" below).
 //   - Appends a global `tenant_archived` WAL op and waits for the applier
 //     to set tenant_registry.status = "archived". Re-archiving an already-
 //     archived tenant is idempotent and returns success=true.
 //   - Returns OK + success=false + error="Tenant not found" when the row is
-//     missing (`:2431-2433`). Asymmetric error contract preserved.
+//     missing. Asymmetric error contract preserved.
 //
 // Known gaps:
 //
@@ -61,18 +60,17 @@ func (s *Server) ArchiveTenant(
 		metrics.RecordGRPCRequest(archiveTenantMethod, status, time.Since(start))
 	}()
 
-	// Optional-store guard. Mirrors Python `:2406-2409` which aborts with
-	// UNIMPLEMENTED when the global_store dep is not configured.
+	// Optional-store guard. Aborts with UNIMPLEMENTED when the global_store
+	// dep is not configured.
 	if s.global == nil {
 		status = "error"
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
 	// Required-arg validation. Empty actor / tenant_id surface as
-	// INVALID_ARGUMENT before any privilege decision (parity with
-	// `:2411-2414`). We MUST validate the wire actor non-empty even though
-	// the trusted actor below comes from the interceptor — this is a
-	// wire-contract pin (test_grpc_contract.py:690-693).
+	// INVALID_ARGUMENT before any privilege decision. We MUST validate the
+	// wire actor non-empty even though the trusted actor below comes from
+	// the interceptor — wire-contract pin (test_grpc_contract.py:690-693).
 	if req.GetActor() == "" {
 		status = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
@@ -103,8 +101,7 @@ func (s *Server) ArchiveTenant(
 		return &pb.ArchiveTenantResponse{Success: false, Error: err.Error()}, nil
 	} else if existing == nil {
 		// Tenant id not found in registry. Asymmetric contract: OK +
-		// success=false rather than a NOT_FOUND status code (parity
-		// with `:2431-2433`).
+		// success=false rather than a NOT_FOUND status code.
 		return &pb.ArchiveTenantResponse{Success: false, Error: "Tenant not found"}, nil
 	}
 

@@ -18,7 +18,7 @@ import (
 
 // schemaDDL is the canonical CREATE TABLE script. Every table is IF NOT
 // EXISTS so concurrent first-open from sibling processes (test fixtures)
-// is a no-op. Mirrors `_create_schema` in
+// is a no-op.
 const schemaDDL = `
 CREATE TABLE IF NOT EXISTS user_registry (
     user_id     TEXT PRIMARY KEY,
@@ -138,8 +138,7 @@ func initSchema(ctx context.Context, db *sql.DB) error {
 }
 
 // migrateTenantRegistryRegion adds the region column to tenant_registry
-// when a pre-region database is opened. Mirrors
-// `_migrate_tenant_registry_region` in global_store.py:187.
+// when a pre-region database is opened.
 func migrateTenantRegistryRegion(ctx context.Context, db *sql.DB) error {
 	cols, err := tableColumns(ctx, db, "tenant_registry")
 	if err != nil {
@@ -158,8 +157,7 @@ func migrateTenantRegistryRegion(ctx context.Context, db *sql.DB) error {
 }
 
 // migrateTenantQuotas adds the Phase 2/3 token-bucket columns when a
-// pre-Phase-2 database is opened. Mirrors `_migrate_tenant_quotas` in
-// global_store.py:280.
+// pre-Phase-2 database is opened.
 func migrateTenantQuotas(ctx context.Context, db *sql.DB) error {
 	cols, err := tableColumns(ctx, db, "tenant_quotas")
 	if err != nil {

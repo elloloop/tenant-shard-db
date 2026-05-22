@@ -46,7 +46,7 @@ func TestParsePermission(t *testing.T) {
 	}
 }
 
-// TestPermissionImplies pins the hierarchy table at acl.py:190-210.
+// TestPermissionImplies pins the permission implication hierarchy.
 func TestPermissionImplies(t *testing.T) {
 	cases := []struct {
 		grant, need acl.Permission
@@ -90,8 +90,7 @@ func TestPermissionImplies(t *testing.T) {
 	}
 }
 
-// TestLegacyToCoreCaps pins the migration table in
-// docs/decisions/acl.md:138 and capability_registry.py:357-389.
+// TestLegacyToCoreCaps pins the migration table in docs/decisions/acl.md.
 func TestLegacyToCoreCaps(t *testing.T) {
 	cases := []struct {
 		in   acl.Permission

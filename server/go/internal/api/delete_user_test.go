@@ -36,7 +36,7 @@ import (
 const secondsPerDay = int64(86400)
 
 // TestDeleteUser_Self_HappyPath: alice queues her own erasure with a
-// 7-day grace. Mirrors test_gdpr_engine.py:625-633.
+// 7-day grace.
 func TestDeleteUser_Self_HappyPath(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -182,8 +182,7 @@ func TestDeleteUser_LegalHold_Blocks(t *testing.T) {
 }
 
 // TestDeleteUser_Idempotent_ReturnsExisting: re-queueing returns the
-// existing requested_at / execute_at unchanged. Pinned by
-// test_gdpr_engine.py:637-643.
+// existing requested_at / execute_at unchanged.
 func TestDeleteUser_Idempotent_ReturnsExisting(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)
@@ -233,7 +232,7 @@ func TestDeleteUser_Idempotent_ReturnsExisting(t *testing.T) {
 
 // TestDeleteUser_NonAdmin_OtherDenied: alice tries to delete bob with
 // a forged admin:root claim on the wire — the trusted identity wins
-// and the request is denied. Mirrors test_gdpr_engine.py:646-654.
+// and the request is denied.
 func TestDeleteUser_NonAdmin_OtherDenied(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
@@ -271,7 +270,6 @@ func TestDeleteUser_NonAdmin_OtherDenied(t *testing.T) {
 
 // TestDeleteUser_NotFound_InBandFailure: unknown user_id returns
 // success=false, error="User not found" IN-BAND (no NOT_FOUND code).
-// Mirrors test_gdpr_engine.py:658-662.
 func TestDeleteUser_NotFound_InBandFailure(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)

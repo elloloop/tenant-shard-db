@@ -380,7 +380,7 @@ func (a *Applier) Stop() {
 
 // applyRecord is the per-record entry point. Decodes the WAL record,
 // opens a BatchTxn, dispatches every op, and finalises with the
-// idempotency probe (inside-txn check). Mirrors applier.py:1349-1392.
+// idempotency probe (inside-txn check).
 func (a *Applier) applyRecord(ctx context.Context, rec Record) Result {
 	res := Result{Position: rec.Position}
 	ev, err := wal.DecodeEvent(rec.Value)

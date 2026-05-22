@@ -22,10 +22,10 @@ type walPinger interface {
 }
 
 // storagePinger is the optional probe contract a CanonicalStore may
-// implement. Today no Go store has a Health hook (Python doesn't probe
-// SQLite either, see docs/go-port/rpcs/Health.md "storage='healthy' is a
-// lie"), so this lives here only to keep the door open for a future
-// PRAGMA quick_check probe behind a flag.
+// implement. Today no Go store has a Health hook (see
+// docs/go-port/rpcs/Health.md "storage='healthy' is a lie"), so this
+// lives here only to keep the door open for a future PRAGMA quick_check
+// probe behind a flag.
 type storagePinger interface {
 	Health(ctx context.Context) error
 }
@@ -41,7 +41,7 @@ type storagePinger interface {
 //   - `healthy` is true iff components["wal"] == "healthy" AND
 //     components["storage"] == "healthy". The multi-node info keys
 //     (node_id, assigned_tenants) are informational and MUST NOT gate
-//     healthy. Pinned by tests/python/unit/test_cron_fixes.py:116-147.
+//     healthy.
 //   - Always returns OK; an internal panic is the only path to INTERNAL.
 func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthResponse, error) {
 	start := time.Now()
@@ -77,14 +77,11 @@ func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthRes
 		components["storage"] = probeStorage(ctx, s.store)
 	}
 
-	// Multi-node sharding info keys (node_id, assigned_tenants) are
-	// emitted by the Python handler when sharding is multi-node.
-	// has no Go sharding package yet, so we skip them here. Crucially,
-	// when they DO land, they MUST be appended to `components` AFTER
-	// the `healthy` gate below — the info keys MUST NOT count against
-	// health. Regression pinned by
-	// tests/python/unit/test_cron_fixes.py:116-147 and the Go test
-	// TestHealth_MultiNodeInfoKeysDoNotGateHealth.
+	// Multi-node sharding info keys (node_id, assigned_tenants) are not
+	// emitted yet — no Go sharding package is wired. Crucially, when they
+	// DO land, they MUST be appended to `components` AFTER the `healthy`
+	// gate below — the info keys MUST NOT count against health. Regression
+	// pinned by TestHealth_MultiNodeInfoKeysDoNotGateHealth.
 
 	healthy := components["wal"] == "healthy" && components["storage"] == "healthy"
 
@@ -121,10 +118,9 @@ func probeWAL(p any) (result string) {
 }
 
 // probeStorage returns the storage component string. Caller must
-// guarantee st is non-nil. Today has no SQLite probe, so we
-// report "healthy" by default (mirrors Python's unconditional "healthy"
-// when a store is present). If the store ever grows a Health(ctx) hook,
-// it's consulted here.
+// guarantee st is non-nil. Today has no SQLite probe, so we report
+// "healthy" by default when a store is present. If the store ever
+// grows a Health(ctx) hook, it's consulted here.
 func probeStorage(ctx context.Context, st any) (result string) {
 	defer func() {
 		if r := recover(); r != nil {

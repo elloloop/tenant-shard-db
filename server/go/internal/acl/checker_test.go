@@ -257,7 +257,7 @@ func TestCheckerCrossTenantGrant(t *testing.T) {
 
 func TestCheckerOpWithoutDefaultAllows(t *testing.T) {
 	// CreateNode is intentionally absent from DefaultOpRequirements —
-	// no per-node check applies (capability_registry.py:60-61).
+	// no per-node check applies.
 	nodes := &fakeNodes{meta: map[string]acl.NodeMeta{
 		"t1/n1": {OwnerActor: "user:alice", TypeID: 0},
 	}}

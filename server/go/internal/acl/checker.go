@@ -35,8 +35,7 @@ type GrantReader interface {
 
 // CrossTenantGrantReader is the cross-tenant slice. It is consulted
 // only when the same-tenant Checker.Check fails AND the actor is
-// foreign (different tenant than nodeTenant). Mirrors the
-// global_store.shared_index lookup at grpc_server.py:338,1892-1933.
+// foreign (different tenant than nodeTenant).
 //
 // Returns the typed permission for (foreignActor, sourceTenant, nodeID)
 // or (PermDeny, false) when the row is absent. The Checker treats a
@@ -159,8 +158,8 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) error {
 		resolved = []Actor{req.Actor, TenantWildcardForTenant(req.ActorTenantID)}
 	}
 
-	// Owner short-circuit (canonical_store.py:2920) — owner_actor in
-	// the resolved set means allow. Compare via canonical string form.
+	// Owner short-circuit — owner_actor in the resolved set means allow.
+	// Compare via canonical string form.
 	if meta.OwnerActor != "" {
 		for _, a := range resolved {
 			if a.String() == meta.OwnerActor {
@@ -175,8 +174,7 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) error {
 		ChildType:  req.ChildType,
 	})
 	if requiredCore == CoreCapUnspecified && requiredExt == 0 {
-		// No requirement registered — allow. This matches the Python
-		// (None, None) → allow contract at capability_registry.py:267.
+		// No requirement registered — allow.
 		return nil
 	}
 
@@ -189,13 +187,13 @@ func (c *Checker) Check(ctx context.Context, req CheckRequest) error {
 	for _, a := range resolved {
 		resolvedSet[a.String()] = struct{}{}
 	}
-	// tenant:* matches any same-tenant caller (acl.py:127-129).
+	// tenant:* matches any same-tenant caller.
 	if sameTenant {
 		resolvedSet[TenantWildcard().String()] = struct{}{}
 	}
 
 	now := c.now()
-	// First pass: explicit DENY wins (acl.py:243-264, canonical_store.py:2893).
+	// First pass: explicit DENY wins.
 	for _, g := range grants {
 		if !g.IsDeny() {
 			continue

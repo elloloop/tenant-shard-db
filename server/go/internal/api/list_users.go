@@ -1,18 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// ListUsers is a global-plane read of the user_registry table. It mirrors
-// the Python handler
-// (port spec: docs/go-port/rpcs/ListUsers.md).
+// ListUsers is a global-plane read of the user_registry table.
+// Port spec: docs/go-port/rpcs/ListUsers.md.
 //
 // Parity warts preserved verbatim (file follow-up tickets, do NOT "fix"
 // here):
 //
 //   - No admin-scope check: any authenticated caller passes once
-//     request.actor is non-empty. Python's docstring claims admin-only,
-//     but the handler only checks the wire field is non-empty.
+//     request.actor is non-empty.
 //   - Silent error swallow: an internal globalstore error returns
-//     codes.OK with users=[]. Mirrors grpc_server.py:2262-2265 so
-//     contract tests pass.
+//     codes.OK with users=[].
 //   - SEC-4 (#135): the historic "No upper cap on limit; negative limit
 //     flows through as unlimited (SQLite LIMIT -1)" wart is closed. Any
 //     non-positive limit now coerces to the 100 default (was: only ==0),
@@ -40,15 +37,14 @@ import (
 
 // ListUsers implements entdb.v1.EntDBService/ListUsers.
 //
-// Contract pins (Python source-of-truth → Go parity):
+// Contract pins:
 //
-//   - global_store == nil -> codes.Unimplemented "User registry not configured"
-//     (grpc_server.py:2239-2243).
+//   - global_store == nil -> codes.Unimplemented "User registry not configured".
 //   - request.actor == "" -> codes.InvalidArgument "actor is required"
-//     (grpc_server.py:2245-2246, test_grpc_contract.py:423-427).
-//   - empty status -> coerce to "active" (grpc_server.py:2248).
-//   - zero limit -> coerce to 100 (grpc_server.py:2249).
-//   - any internal error -> codes.OK with users=[] (grpc_server.py:2262-2265).
+//     (test_grpc_contract.py:423-427).
+//   - empty status -> coerce to "active".
+//   - zero limit -> coerce to 100.
+//   - any internal error -> codes.OK with users=[].
 func (s *Server) ListUsers(
 	ctx context.Context,
 	req *pb.ListUsersRequest,

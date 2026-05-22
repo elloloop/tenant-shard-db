@@ -172,7 +172,7 @@ func TestInterceptor_SessionInvalid(t *testing.T) {
 
 // TestInterceptor_OrderBearerBeatsAPIKey pins the priority chain:
 // when both Authorization (with a JWT shape) and x-api-key are
-// present, the bearer path is taken. Mirrors auth_interceptor.py:243-264.
+// present, the bearer path is taken.
 func TestInterceptor_OrderBearerBeatsAPIKey(t *testing.T) {
 	secret := []byte("s")
 	v := NewMemoryOAuthValidator("iss", "aud")
@@ -196,10 +196,9 @@ func TestInterceptor_OrderBearerBeatsAPIKey(t *testing.T) {
 	}
 }
 
-// TestInterceptor_NonJWTBearerFallsThrough pins the _is_jwt heuristic:
+// TestInterceptor_NonJWTBearerFallsThrough pins the isJWT heuristic:
 // an opaque (non-JWT) authorization value must NOT be treated as a JWT
-// and the chain must fall through to API-key / session. Mirrors
-// auth_interceptor.py:246 / :278-281.
+// and the chain must fall through to API-key / session.
 func TestInterceptor_NonJWTBearerFallsThrough(t *testing.T) {
 	keys := NewMemoryAPIKeyManager()
 	keys.Add("api-secret", "ci-bot", nil)

@@ -8,14 +8,9 @@ import (
 )
 
 // indexCache is the process-local cache of (db_path, type_id) ->
-// {ensured-index-kinds}. Mirrors canonical_store.py:439-451 plus the
-// FTS table cache (:447). Keyed by the physical DB path rather than
-// tenant_id so mailbox / public stores (which multiplex tenants onto
-// one file in Python) only emit one CREATE INDEX per type per file.
-//
-// keeps one DB per tenant so the path-vs-tenant_id distinction
-// is moot, but mirroring the Python shape simplifies any future
-// re-introduction of shared physical files.
+// {ensured-index-kinds}. Keyed by the physical DB path rather than
+// tenant_id so any future re-introduction of shared physical files
+// only emits one CREATE INDEX per type per file.
 type indexCache struct {
 	mu            sync.Mutex
 	uniqueDone    map[indexKey]struct{}
@@ -42,7 +37,7 @@ func newIndexCache() *indexCache {
 // (type_id, field_id) pair on demand. Idempotent at both the SQL level
 // (IF NOT EXISTS) and the in-memory cache level.
 //
-// Mirrors canonical_store.py:_ensure_unique_indexes (1721). Index name:
+// Index name:
 //
 //	idx_unique_t<type>_f<field>
 //	  ON nodes(tenant_id, json_extract(payload_json, '$."<field>"'))
@@ -84,8 +79,7 @@ func (s *CanonicalStore) EnsureUniqueIndex(ctx context.Context, tenantID string,
 }
 
 // EnsureCompositeUniqueIndex creates partial composite-unique expression
-// indexes. Each constraint is (constraint_name, field_ids...). Mirrors
-// canonical_store.py:_ensure_composite_unique_indexes (1800).
+// indexes. Each constraint is (constraint_name, field_ids...).
 func (s *CanonicalStore) EnsureCompositeUniqueIndex(ctx context.Context, tenantID string, typeID int32, constraints []CompositeUnique) error {
 	if len(constraints) == 0 {
 		return nil
@@ -131,8 +125,7 @@ func (s *CanonicalStore) EnsureCompositeUniqueIndex(ctx context.Context, tenantI
 }
 
 // EnsureQueryIndex creates non-unique partial expression indexes for
-// fields declared (entdb.field).indexed = true. Mirrors
-// canonical_store.py:_ensure_query_indexes (1876).
+// fields declared (entdb.field).indexed = true.
 func (s *CanonicalStore) EnsureQueryIndex(ctx context.Context, tenantID string, typeID int32, fieldIDs []uint32) error {
 	if len(fieldIDs) == 0 {
 		return nil
@@ -167,9 +160,8 @@ func (s *CanonicalStore) EnsureQueryIndex(ctx context.Context, tenantID string, 
 }
 
 // EnsureFTSIndex creates an FTS5 virtual table for typeID with one
-// column per searchable field_id. Mirrors canonical_store.py:
-// _ensure_fts_table (1993). tokenize='porter unicode61' for stemming +
-// Unicode handling.
+// column per searchable field_id. tokenize='porter unicode61' for
+// stemming + Unicode handling.
 func (s *CanonicalStore) EnsureFTSIndex(ctx context.Context, tenantID string, typeID int32, fieldIDs []uint32) error {
 	if len(fieldIDs) == 0 {
 		return nil
@@ -217,7 +209,6 @@ type CompositeUnique struct {
 }
 
 // safeIdent strips characters that are not valid in a SQL identifier.
-// Mirrors canonical_store.py:1862.
 func safeIdent(name string) string {
 	var b strings.Builder
 	b.Grow(len(name))
@@ -237,8 +228,8 @@ func safeIdent(name string) string {
 }
 
 // ensureFieldIndexes is the convenience wrapper used by writers before
-// CreateNode / UpdateNode. Mirrors canonical_store.py:_ensure_field_indexes
-// (1942). Skips silently when no schema.Registry is configured.
+// CreateNode / UpdateNode. Skips silently when no schema.Registry is
+// configured.
 func (s *CanonicalStore) ensureFieldIndexes(ctx context.Context, tenantID string, typeID int32) error {
 	if s.registry == nil {
 		return nil

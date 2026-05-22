@@ -7,8 +7,7 @@
 // Semantics:
 //
 //   - Globalstore must be configured. If not, abort with
-//     codes.Unimplemented "User registry not configured" — mirrors
-//     grpc_server.py:2991-2992.
+//     codes.Unimplemented "User registry not configured".
 //   - actor and user_id are required (codes.InvalidArgument).
 //   - Trusted-actor self/admin gate via auth.Authoritative + the shared
 //     isSelfOrAdmin helper (defined in update_user.go). The wire
@@ -57,13 +56,13 @@ func (s *Server) CancelUserDeletion(ctx context.Context, req *pb.CancelUserDelet
 		metrics.RecordGRPCRequest(cancelUserDeletionMethod, outcome, time.Since(start))
 	}()
 
-	// Configuration gate. Mirrors Python grpc_server.py:2991-2992.
+	// Configuration gate.
 	if s.global == nil {
 		outcome = "error"
 		return nil, status.Error(codes.Unimplemented, "User registry not configured")
 	}
 
-	// Required-field aborts. Mirrors grpc_server.py:2993-2996.
+	// Required-field aborts.
 	if req.GetActor() == "" {
 		outcome = "error"
 		return nil, status.Error(codes.InvalidArgument, "actor is required")

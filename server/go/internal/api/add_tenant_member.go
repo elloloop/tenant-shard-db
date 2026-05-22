@@ -80,10 +80,9 @@ func (s *Server) AddTenantMember(
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
-	// Mirror grpc_server.py:2456-2461: required-arg validation BEFORE
-	// any identity work. Empty actor is INVALID_ARGUMENT even when the
-	// interceptor has attested a stronger identity on ctx — Python pins
-	// this in test_grpc_contract.py:519-523.
+	// Required-arg validation BEFORE any identity work. Empty actor is
+	// INVALID_ARGUMENT even when the interceptor has attested a stronger
+	// identity on ctx — pinned by test_grpc_contract.py:519-523.
 	if req.GetActor() == "" {
 		status = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
@@ -99,21 +98,17 @@ func (s *Server) AddTenantMember(
 
 	// Trusted-actor rebind. From this point on, req.GetActor() is
 	// strictly informational — every authorization branch consults
-	// `trusted`. Mirrors grpc_server.py:2466 self._trusted_actor(...)
-	// and the privilege-escalation regression fix in commit fece3fb.
+	// `trusted`. Privilege-escalation regression fix in commit fece3fb.
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
-	// Admin / system bypass: same predicate as
-	// grpc_server.py:2053-2069 _is_admin_or_system. group: actors are
-	// not valid callers and never reach this branch.
+	// Admin / system bypass. group: actors are not valid callers and
+	// never reach this branch.
 	if !(trusted.IsAdmin() || trusted.IsSystem()) {
 		// Membership-based admin: caller must be owner or admin of
-		// the target tenant. Python uses _get_member_role
-		// (grpc_server.py:2290-2296) which is an O(N) scan over
-		// tenant_members; we mirror that with GetTenantMembers since
-		// the dataset is tiny per tenant. Filing a hardening ticket
-		// to expose a typed MemberRole helper in globalstore is
-		// tracked in the spec's "Implementation outline" notes.
+		// the target tenant. We use GetTenantMembers since the dataset
+		// is tiny per tenant. Filing a hardening ticket to expose a
+		// typed MemberRole helper in globalstore is tracked in the
+		// spec's "Implementation outline" notes.
 		role, err := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
 			status = "error"

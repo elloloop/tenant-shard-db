@@ -15,8 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// validateTenantID is the Go port of canonical_store.py:_validate_filesystem_id
-// (138-162). The id MUST match [A-Za-z0-9_-]{1,128}; anything else is
+// validateTenantID enforces [A-Za-z0-9_-]{1,128}; anything else is
 // rejected outright. The cost of a false reject (an exotic id) is much
 // smaller than the cost of a false accept (two ids collapsing to the
 // same file and leaking data across tenants — CLAUDE.md invariant #4).
@@ -82,8 +81,6 @@ type poolEntry struct {
 	readDB *sql.DB
 	// writeMu serializes writers on this tenant's DB. Readers do NOT
 	// take it; SQLite WAL mode + per-connection isolation handles them.
-	// This matches canonical_store.py:_get_tenant_lock (642) which only
-	// guards the single-pooled-writer path in Python.
 	writeMu sync.Mutex
 }
 
@@ -161,7 +158,7 @@ func newPool(opts poolOptions) (*pool, error) {
 }
 
 // dbPath returns the absolute path of tenant_<id>.db inside the pool's
-// rootDir. Mirrors canonical_store.py _get_db_path (683).
+// rootDir.
 func (p *pool) dbPath(tenantID string) string {
 	return filepath.Join(p.rootDir, "tenant_"+tenantID+".db")
 }
