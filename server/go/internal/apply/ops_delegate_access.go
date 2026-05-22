@@ -11,17 +11,15 @@ import (
 
 // applyDelegateAccess dispatches a "delegate_access" op.
 //
-// CRITICAL FIX (PLAN.md §6.4 item 1): the Python applier has no
-// dispatch branch for admin_delegate_access events; the WAL event is
-// silently dropped on replay. The Python tests only pass because the
-// handler also writes node_access directly. The Go applier closes that
-// gap by materialising the grant in the same row shape that
+// CRITICAL FIX (PLAN.md §6.4 item 1): delegate_access events were
+// previously silently dropped on replay. This applier branch closes
+// that gap by materialising the grant in the same row shape that
 // share_node uses.
 //
 // Semantically delegate_access is identical to share_node — the
 // "delegating actor must already hold the cap" check happens at the
-// gRPC handler / acl checker layer (W1.9), not here. Storing the grant
-// is the applier's only job.
+// gRPC handler / acl checker layer, not here. Storing the grant is
+// the applier's only job.
 //
 // op shape: same as share_node, but the granted_by field is recorded
 // as event.actor (the delegator).

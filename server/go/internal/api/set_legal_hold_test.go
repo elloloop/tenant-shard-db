@@ -8,9 +8,9 @@
 //
 //  deviations (intentional, documented in set_legal_hold.go header):
 //
-//   - Unknown tenant -> NOT_FOUND (Python: OK + success=false). All
-//     mutating RPCs converge on the status-code form.
-//   - Owner role bypass deferred — admin-only. Mirrors ArchiveTenant.
+//   - Unknown tenant -> NOT_FOUND (all mutating RPCs converge on the
+//     status-code form).
+//   - Owner role bypass deferred — admin-only, matching ArchiveTenant.
 
 package api_test
 
@@ -415,10 +415,7 @@ func TestSetLegalHold_GlobalStoreNotConfigured(t *testing.T) {
 }
 
 // TestSetLegalHold_UnknownTenantNotFound: an admin call against a tenant
-// not in the registry returns NOT_FOUND (via checkTenant). This is the
-//
-//	deviation from Python's OK + success=false response — see
-//
+// not in the registry returns NOT_FOUND (via checkTenant). See
 // set_legal_hold.go header note.
 func TestSetLegalHold_UnknownTenantNotFound(t *testing.T) {
 	t.Parallel()
@@ -440,7 +437,7 @@ func TestSetLegalHold_UnknownTenantNotFound(t *testing.T) {
 // TestSetLegalHold_AppendsWALEvent_WhenProducerWired: when the WAL
 // producer is wired, the handler appends a `set_legal_hold` op to the
 // configured topic. This is the WAL-first restoration the Go port
-// adds on top of Python parity (CLAUDE.md invariant #1).
+// adds on top of the WAL-first invariant (CLAUDE.md invariant #1).
 //
 // The applier (apply/ops_set_legal_hold.go) consumes the op and writes
 // a globalstore.legal_holds row; that side of the contract is covered

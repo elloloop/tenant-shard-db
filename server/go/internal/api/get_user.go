@@ -4,7 +4,7 @@
 // Wire contract: proto/entdb/v1/entdb.proto:113 (rpc), :816-824
 // (request/response), :793-800 (UserInfo).
 //
-// Semantics (preserved from the Python handler):
+// Semantics:
 //
 //   - Authenticated, but unrestricted. Any authenticated actor may
 //     read any user's profile. NO self/admin gate — the handler
@@ -83,8 +83,7 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 	// trusted-actor pattern documented in CLAUDE.md / commit fece3fb.
 	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
-	// Read globalstore.user_registry. (nil, nil) on miss mirrors
-	// Python's `dict | None` contract.
+	// Read globalstore.user_registry. (nil, nil) on miss.
 	user, err := s.global.GetUser(ctx, req.GetUserId())
 	if err != nil {
 		// Internal errors are swallowed into found=false with codes.OK

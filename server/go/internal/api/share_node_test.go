@@ -407,8 +407,8 @@ func TestShareNode_NoProducerUnimplemented(t *testing.T) {
 // shareNodeFixtureWithStore is shareNodeFixture but also returns the
 // underlying *store.CanonicalStore so tests can seed node_access rows
 // directly (the path normally taken by the applier). Used by the
-// Phase 4A.2 grant-based ADMIN tests where we want bob to have a
-// pre-existing ADMIN row before the gRPC call.
+// grant-based ADMIN tests where we want bob to have a pre-existing
+// ADMIN row before the gRPC call.
 func shareNodeFixtureWithStore(t *testing.T) (*api.Server, *store.CanonicalStore, *wal.InMemory, context.Context) {
 	t.Helper()
 	ctx := context.Background()
@@ -452,11 +452,10 @@ func shareNodeFixtureWithStore(t *testing.T) (*api.Server, *store.CanonicalStore
 
 // TestShareNode_NonOwnerWithAdminGrant: a user that is NOT the node
 // owner but holds an explicit ADMIN grant on the node can re-share.
-// Phase 4A.2 expansion: before this change the handler enforced an
-// owner-only branch that rejected this case. The acl.Checker handles
-// owner short-circuit + grant-based ADMIN; wiring it in restores the
-// "ADMIN means I can delegate" semantic that every adjacent system
-// uses (see .claude/triage/sharenode-owner-share-analysis.md §3 #3).
+// The acl.Checker handles owner short-circuit + grant-based ADMIN;
+// wiring it in restores the "ADMIN means I can delegate" semantic that
+// every adjacent system uses (see
+// .claude/triage/sharenode-owner-share-analysis.md §3 #3).
 func TestShareNode_NonOwnerWithAdminGrant(t *testing.T) {
 	t.Parallel()
 
@@ -507,9 +506,8 @@ func TestShareNode_NonOwnerWithAdminGrant(t *testing.T) {
 }
 
 // TestShareNode_NonOwnerWithReadGrant: a user with ONLY a READ grant
-// on the node cannot re-share. Phase 4A.2: pin the lower bound of the
-// acl.Checker grant-walk — READ does not satisfy CORE_CAP_ADMIN, so
-// the soft-fail "permission denied" path fires and NO WAL record is
+// on the node cannot re-share. READ does not satisfy CORE_CAP_ADMIN,
+// so the soft-fail "permission denied" path fires and NO WAL record is
 // written.
 func TestShareNode_NonOwnerWithReadGrant(t *testing.T) {
 	t.Parallel()
@@ -548,9 +546,8 @@ func TestShareNode_NonOwnerWithReadGrant(t *testing.T) {
 }
 
 // TestShareNode_EmptyNodeOrActorSoftFail: empty node_id or actor_id
-// surface as soft-fail success=false rather than INVALID_ARGUMENT —
-// matches Python's "no shape validation" behaviour (spec §Error-
-// contract: "Python doesn't validate node_id/actor_id shape today").
+// surface as soft-fail success=false rather than INVALID_ARGUMENT
+// (spec §Error-contract: no shape validation on node_id/actor_id).
 func TestShareNode_EmptyNodeOrActorSoftFail(t *testing.T) {
 	t.Parallel()
 

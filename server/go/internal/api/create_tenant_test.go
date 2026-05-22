@@ -95,8 +95,8 @@ func TestCreateTenant_AdminHappyPath(t *testing.T) {
 	if len(members) != 1 {
 		t.Fatalf("members: got %d, want 1 (%+v)", len(members), members)
 	}
-	// The admin's bare ID (without the "admin:" prefix) is what's stored
-	// as the user_id, mirroring _actor_user_id in the Python source.
+	// The admin's bare ID (without the "admin:" prefix) is stored as
+	// the user_id.
 	if members[0].UserID != "root" {
 		t.Fatalf("owner user_id: got %q, want %q", members[0].UserID, "root")
 	}
@@ -157,10 +157,8 @@ func TestCreateTenant_NonAdminPermissionDenied(t *testing.T) {
 }
 
 // TestCreateTenant_DuplicateAlreadyExists: a second CreateTenant with the
-// same tenant_id surfaces as ALREADY_EXISTS. ( deviates from
-// Python's success=false channel for typed-error ergonomics; spec note
-// in CreateTenant.md "Error contract" allows the deviation in the Go
-// port.)
+// same tenant_id surfaces as ALREADY_EXISTS (spec note in
+// CreateTenant.md "Error contract").
 func TestCreateTenant_DuplicateAlreadyExists(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t, api.WithRegion("us-east-1"))

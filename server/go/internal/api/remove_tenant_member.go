@@ -7,12 +7,11 @@
 //
 // # Behavioural pins
 //
-//   - Auth (Go HARDENS vs Python): the Python handler skips the
-//     admin/owner role check entirely (a latent privilege escalation —
-//     any authenticated caller can remove any member). The Go port
-//     closes that gap mirroring AddTenantMember/ChangeMemberRole:
-//     non-admin callers must be the tenant's "owner" or "admin" role,
-//     otherwise PERMISSION_DENIED.
+//   - Auth: the handler gates on admin/owner role, closing the latent
+//     privilege escalation gap (any authenticated caller removing any
+//     member). Non-admin callers must be the tenant's "owner" or
+//     "admin" role, otherwise PERMISSION_DENIED. Mirrors
+//     AddTenantMember/ChangeMemberRole.
 //
 //     The actor on the wire is UNTRUSTED. We rebind to the trusted
 //     actor returned by auth.Authoritative before any privilege check,
@@ -35,14 +34,14 @@
 //
 //   - Last-OWNER protection: removing the only "owner" returns
 //     success=false with error="Cannot remove the last owner of a
-//     tenant" (NOT a gRPC error code — this is a domain-level "no-op"
-//     per Python's contract). "admin" is NOT protected — only "owner".
+//     tenant" (NOT a gRPC error code — domain-level "no-op").
+//     "admin" is NOT protected — only "owner".
 //     Do NOT add an admin guard without an ADR (spec §"Last-admin
 //     nuance").
 //
 //   - Idempotent removal of a non-member: success=false,
 //     error="Member not found", gRPC code OK. Metric label = "ok"
-//     (Python's distribution: dashboards depend on it).
+//     (dashboards depend on it).
 
 package api
 
@@ -97,12 +96,10 @@ func (s *Server) RemoveTenantMember(
 	// auth interceptor (when enabled) installs a verified Identity on
 	// ctx; auth.Authoritative substitutes it for the wire claim. In
 	// no-auth dev/test mode (no interceptor) the claim flows through
-	// unchanged — same behaviour as Python's
-	// auth_interceptor.get_authoritative_actor.
+	// unchanged.
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
-	// Admin/owner gate — Go HARDENS vs Python (closes the privilege-
-	// escalation gap). Mirrors the pattern in AddTenantMember and
+	// Admin/owner gate. Mirrors the pattern in AddTenantMember and
 	// ChangeMemberRole.
 	if !isAdminOrSystemActor(trusted) {
 		role, err := s.getTenantMemberRole(ctx, req.GetTenantId(), trusted.ID())

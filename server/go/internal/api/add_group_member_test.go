@@ -1,22 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for AddGroupMember. The Go handler diverges from the Python
-// source on two CLAUDE.md-flagged invariants — see
+// Tests for AddGroupMember. Two CLAUDE.md-flagged invariants — see
 // add_group_member.go's package-level doc:
 //
-//  1. WAL-first restoration. The Python handler writes group_users
-//     directly via canonical_store, bypassing the WAL. The Go handler
-//     appends an `add_group_member` op to the per-tenant WAL and lets
-//     the Applier materialize the row. Tests assert on what landed on
-//     the WAL — they do NOT poke at SQLite, because the apply path is
-//     covered separately in apply/ops_add_group_member.go's tests.
+//  1. WAL-first restoration. The handler appends an `add_group_member`
+//     op to the per-tenant WAL and lets the Applier materialize the
+//     row. Tests assert on what landed on the WAL — they do NOT poke at
+//     SQLite, because the apply path is covered separately in
+//     apply/ops_add_group_member.go's tests.
 //
-//  2. Trusted-actor substitution. The Python handler honours the
-//     wire-claimed actor; the Go handler ignores it and resolves
-//     identity via auth.Authoritative. The non-admin denial test below
-//     pins the privilege-escalation regression (commit fece3fb): a
-//     bob-authenticated session that claims admin:root in the request
-//     body is rejected as user:bob.
+//  2. Trusted-actor substitution. The handler ignores the wire-claimed
+//     actor and resolves identity via auth.Authoritative. The non-admin
+//     denial test below pins the privilege-escalation regression
+//     (commit fece3fb): a bob-authenticated session that claims
+//     admin:root in the request body is rejected as user:bob.
 //
 // Coverage:
 //

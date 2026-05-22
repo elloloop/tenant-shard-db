@@ -192,8 +192,8 @@ func TestFreezeUser_Unfreeze_Idempotent(t *testing.T) {
 }
 
 // TestFreezeUser_Self_HappyPath: alice can freeze herself (the "self"
-// arm of _is_self_or_admin). Spec flags this as debatable for GDPR
-// Article 18 but matches Python today.
+// arm of the self-or-admin gate). Spec flags this as debatable for
+// GDPR Article 18.
 func TestFreezeUser_Self_HappyPath(t *testing.T) {
 	t.Parallel()
 	f := newAdminWALFixture(t)

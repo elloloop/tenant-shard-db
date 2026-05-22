@@ -662,8 +662,7 @@ func schemaRegistryForProfile(profile string) (*schema.Registry, error) {
 }
 
 // splitBrokers parses a comma-separated broker list and returns
-// non-empty entries. Mirrors the way Python passes brokers as a single
-// string via KAFKA_BROKERS.
+// non-empty entries.
 func splitBrokers(s string) []string {
 	out := []string{}
 	for _, b := range strings.Split(s, ",") {

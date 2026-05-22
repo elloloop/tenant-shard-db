@@ -50,12 +50,11 @@ const getConnectedNodesMethod = "GetConnectedNodes"
 
 // MaxConnectedDepth caps BFS traversal depth. The wire proto exposes no
 // depth field today; the effective depth=1 contract joins one level only.
-// Raising it is a behaviour change — track via EPIC #407 before flipping.
+// Raising it is a behaviour change — consider carefully before flipping.
 const MaxConnectedDepth = 1
 
-// MaxConnectedResultLimit caps the per-call result size. The Python
-// handler has no upper bound (open question 1 in the spec); the Go port
-// clamps at 1000 to match the convention used elsewhere in the server.
+// MaxConnectedResultLimit caps the per-call result size at 1000, matching
+// the convention used elsewhere in the server (open question 1 in the spec).
 // Limits ≤ 0 coerce to defaultConnectedLimit.
 const MaxConnectedResultLimit = 1000
 
@@ -73,7 +72,6 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 
 	tenantID := req.GetContext().GetTenantId()
 	if err := s.checkTenant(ctx, tenantID); err != nil {
-		// Tighter than Python (which collapses every error to nodes=[]).
 		// Spec "Error contract" recommends propagating PERMISSION_DENIED
 		// from the tenant gate; we follow that recommendation.
 		resultStatus = "error"
@@ -97,26 +95,25 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 		offset = 0
 	}
 
-	// Empty source short-circuits to []. Matches Python's "vacuous query"
-	// semantics (an empty node_id never matches any edge row).
+	// Empty source short-circuits to [] — an empty node_id never matches
+	// any edge row.
 	if req.GetNodeId() == "" {
 		return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
 	}
 
-	// Without a store, we cannot resolve any traversal. Match the
-	// Python swallow: empty response, status="error".
+	// Without a store, we cannot resolve any traversal: return empty
+	// response, status="error".
 	if s.store == nil {
 		resultStatus = "error"
 		return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
 	}
 
 	// Build a per-call ACL filter. The Resolver is created with a nil
-	// GroupMembershipReader because the W2 CanonicalStore does not yet
-	// expose GroupsContaining (group expansion lands in W1.10 alongside
-	// the store-side ResolveActorGroups port). Trivial expansion —
-	// returning [actor] — is the correct fallback for the unit cases
-	// pinned today; once group expansion ships, swap in a reader-backed
-	// Resolver via a Server option without rewriting this handler.
+	// GroupMembershipReader because the CanonicalStore does not yet
+	// expose GroupsContaining. Trivial expansion — returning [actor] —
+	// is the correct fallback; once group expansion ships, swap in a
+	// reader-backed Resolver via a Server option without rewriting this
+	// handler.
 	resolver := acl.NewResolver(nil)
 	filter := acl.NewFilter(resolver, storeVisibilityAdapter{s: s.store})
 
@@ -136,9 +133,8 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 	edgeTypeID := req.GetEdgeTypeId()
 	collected, err := s.bfsConnected(ctx, tenantID, req.GetNodeId(), edgeTypeID, aclActor, filter, limit, offset)
 	if err != nil {
-		// Python `except Exception` -> nodes=[]. We mirror; the metric
-		// is recorded as "error" so the swallow doesn't inflate the
-		// success counter.
+		// Collapse internal errors to nodes=[]; the metric is recorded
+		// as "error" so the swallow doesn't inflate the success counter.
 		resultStatus = "error"
 		return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
 	}
@@ -147,9 +143,8 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 	for _, n := range collected {
 		pn, perr := s.storeNodeToProto("", n)
 		if perr != nil {
-			// A single bad row collapses the whole response to empty —
-			// matches Python's broad except. Recording as error so the
-			// metric reflects the swallow.
+			// A single bad row collapses the whole response to empty.
+			// Recording as error so the metric reflects the swallow.
 			resultStatus = "error"
 			return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
 		}
@@ -179,9 +174,9 @@ func (s *Server) bfsConnected(
 	limit, offset int32,
 ) ([]*store.Node, error) {
 	// Visited starts with the source so we never yield the source itself
-	// (Python's SQL JOIN matches `e.from_node_id = node_id` and the
-	// returned rows are the `to_node_id` side — the source never appears
-	// in the result).
+	// (the SQL JOIN matches `e.from_node_id = node_id`; the returned
+	// rows are the `to_node_id` side — the source never appears in the
+	// result).
 	visited := map[string]struct{}{sourceID: {}}
 	frontier := []string{sourceID}
 

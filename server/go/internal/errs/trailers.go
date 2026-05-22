@@ -66,9 +66,8 @@ func SetRedirectTrailer(ctx context.Context, ownerNode string) error {
 }
 
 // SetRetryAfter attaches the retry-after trailer with the given duration,
-// rounded UP to the nearest second (zero rounds to 1; matches the Python
-// quota interceptor's str(int(math.ceil(seconds))) shape -- the SDK uses
-// the value as a sleep target, so rounding down would cause an immediate
+// rounded UP to the nearest second (zero rounds to 1; the SDK uses the
+// value as a sleep target, so rounding down would cause an immediate
 // re-hit on the rate limiter).
 //
 // Negative durations are clamped to 1 second.
@@ -86,9 +85,8 @@ func SetRetryAfter(ctx context.Context, d time.Duration) error {
 	return grpc.SetTrailer(ctx, md)
 }
 
-// SetRetryAfterSeconds is the integer-seconds form, matching the Python
-// quota interceptor's call site exactly. Provided so the auth/quota
-// interceptor port can be a one-line change.
+// SetRetryAfterSeconds is the integer-seconds form of SetRetryAfter.
+// Provided so the auth/quota interceptor can use a direct integer.
 //
 // seconds < 1 is clamped to 1 (see SetRetryAfter rationale).
 func SetRetryAfterSeconds(ctx context.Context, seconds int) error {

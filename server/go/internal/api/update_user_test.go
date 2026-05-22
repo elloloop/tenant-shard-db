@@ -1,8 +1,7 @@
-// Tests for the UpdateUser RPC. The seven Python contract pins enumerated
-// in docs/go-port/rpcs/UpdateUser.md ("Contract tests pinning behavior")
-// reduce to five behaviours in the Go port — happy self-update, happy
-// admin-other, non-admin-other denied, no-fields in-band failure, and
-// not-found in-band failure. Each test below covers one of those arms.
+// Tests for the UpdateUser RPC. Five behaviours are pinned here:
+// happy self-update, happy admin-other, non-admin-other denied,
+// no-fields in-band failure, and not-found in-band failure.
+// Each test below covers one of those arms.
 
 package api_test
 

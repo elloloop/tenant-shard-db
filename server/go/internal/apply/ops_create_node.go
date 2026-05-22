@@ -8,9 +8,9 @@ import (
 	"fmt"
 )
 
-// applyCreateNode dispatches a "create_node" op. Mirrors
+// applyCreateNode dispatches a "create_node" op.
 //
-// The op shape (field-id-keyed payload, per CLAUDE.md invariant #6):
+// Op shape (field-id-keyed payload, per CLAUDE.md invariant #6):
 //
 //	{
 //	  "op": "create_node",
@@ -23,9 +23,7 @@ import (
 //
 // owner_actor comes from the surrounding event.actor. Per the spec, the
 // applier never generates node ids — caller-supplied ids are required
-// (the Python applier accepts a missing id and asks canonical_store to
-// generate one; the Go port rejects it so determinism doesn't depend on
-// the UUID source).
+// so determinism doesn't depend on the UUID source.
 func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, aliases nodeAliasMap, res *Result) error {
 	nodeID := stringField(op, "id")
 	if nodeID == "" {

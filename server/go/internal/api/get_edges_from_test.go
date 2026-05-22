@@ -1,7 +1,6 @@
-// Tests for GetEdgesFrom RPC (EPIC #407).
+// Tests for GetEdgesFrom RPC.
 //
-// Contract pins (mirrored from docs/go-port/rpcs/GetEdgesFrom.md and
-// the Python contract suite):
+// Contract pins (from docs/go-port/rpcs/GetEdgesFrom.md):
 //
 //   - Empty seed: test_grpc_contract.py:241-247 — call succeeds,
 //                     edges == [].
@@ -10,7 +9,7 @@
 //                     ACL filter on destinations — preserved parity gap;
 //                     see GetEdgesFrom.md §"Auth").
 //   - Missing source: unknown from_node_id returns empty edges, no
-//                     error (no special-case path in Python).
+//                     error (no NOT_FOUND special-case).
 //   - Type filter: edge_type_id != 0 narrows the result set;
 //                     edge_type_id == 0 returns every type.
 //   - Internal error: store fault (tenant DB never opened) collapses
@@ -174,8 +173,7 @@ func TestGetEdgesFrom_MultipleEdgesAllReturned(t *testing.T) {
 }
 
 // TestGetEdgesFrom_MissingSourceReturnsEmpty: an unknown from_node_id
-// returns an empty edge list with no error — Python does not special-
-// case missing nodes here (no NOT_FOUND).
+// returns an empty edge list with no error (no NOT_FOUND).
 func TestGetEdgesFrom_MissingSourceReturnsEmpty(t *testing.T) {
 	t.Parallel()
 	srv, cs := newEdgesServer(t, "tenant-miss")

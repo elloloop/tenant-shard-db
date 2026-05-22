@@ -5,7 +5,7 @@ package auth
 import "context"
 
 // Identity is the verified caller's claims as established by the
-// interceptor. It mirrors AuthContext in
+// interceptor.
 //
 // Subject is the raw verified identifier (JWT sub, API-key name, or
 // session user_id). It is NOT prefix-normalised here; normalisation to a
@@ -19,8 +19,7 @@ import "context"
 // methods. It is a generic map so handlers don't take a hard dependency on
 // any particular JWT library.
 type Identity struct {
-	// Method is "oauth" | "api_key" | "session" | "mtls". Constants below match
-	// the Python AuthContext.method values verbatim.
+	// Method is "oauth" | "api_key" | "session" | "mtls". Constants below.
 	Method   string
 	Subject  string
 	Scopes   []string
@@ -28,9 +27,8 @@ type Identity struct {
 	Metadata map[string]any
 }
 
-// Auth method names. These strings are part of the public contract --
-// metrics and logs key off them, mirroring the Python AuthContext.method
-// field.
+// Auth method names. These strings are part of the public contract —
+// metrics and logs key off them.
 const (
 	MethodOAuth   = "oauth"
 	MethodAPIKey  = "api_key"
@@ -57,10 +55,8 @@ var identityKey = contextKey{}
 // WithIdentity returns a new context that carries id as the trusted
 // Identity. The interceptor calls this exactly once per request, after
 // successful authentication. Tests that need to simulate an authenticated
-// request also call this directly -- there is no global ContextVar
-// equivalent in Go (and ContextVars are exactly what the Python port is
-// trying to leave behind, see
-// docs/go-port/shared/auth-interceptor.md "Wire-level mechanics" tail).
+// request also call this directly. See
+// docs/go-port/shared/auth-interceptor.md "Wire-level mechanics".
 func WithIdentity(ctx context.Context, id Identity) context.Context {
 	return context.WithValue(ctx, identityKey, id)
 }

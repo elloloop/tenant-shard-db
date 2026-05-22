@@ -9,10 +9,8 @@ import (
 
 // applyAdminRevokeAccess dispatches an "admin_revoke_access" op.
 //
-// PLAN.md §6.4 item 2: the Python applier only deletes from
-// node_visibility, leaving node_access and group_users intact. The
-// Go applier broadens this to revoke every grant + group membership
-// AND every visibility row for the user, matching the behaviour the
+// PLAN.md §6.4 item 2: revokes every grant + group membership AND
+// every visibility row for the user, matching the behaviour the
 // RevokeAllUserAccess handler intends to deliver.
 //
 // op shape:

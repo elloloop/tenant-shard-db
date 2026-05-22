@@ -18,8 +18,7 @@ import (
 // CrossTenantGrantReader, VisibilityReader, GroupMembershipReader),
 // backed by store.CanonicalStore + globalstore.GlobalStore.
 //
-// W1.9 (acl) deferred this adapter to W1.10 (apply) on the theory that
-// the applier owns the read-after-write consistency story — the same
+// The applier owns the read-after-write consistency story — the same
 // adapter is used by the gRPC read RPCs.
 //
 // All methods are safe for concurrent goroutine use to the extent the
@@ -100,13 +99,11 @@ func (r *StoreReaders) GrantsForNode(ctx context.Context, tenantID, nodeID strin
 		// acl.PermDeny is the zero value of Permission, which makes
 		// IsDeny() flag any grant whose permission column is empty /
 		// unparseable as an explicit DENY — wrong for typed-cap-only
-		// rows (the Go ShareNode handler accepts an empty permission
-		// when CoreCaps is set). Default to PermRead for non-deny
-		// rows so the deny-pass in acl.Checker doesn't fire on a
-		// well-formed typed-cap grant. Mirrors the Python
-		// AclManager.check_permission contract where an unset
-		// permission column never means "deny" — only the literal
-		// "deny" string does.
+		// rows (the ShareNode handler accepts an empty permission when
+		// CoreCaps is set). Default to PermRead for non-deny rows so
+		// the deny-pass in acl.Checker doesn't fire on a well-formed
+		// typed-cap grant. An unset permission column never means
+		// "deny" — only the literal "deny" string does.
 		if perm, ok := acl.ParsePermission(permStr); ok {
 			g.Permission = perm
 		} else {
@@ -150,8 +147,7 @@ func (r *StoreReaders) CrossTenantGrant(ctx context.Context, sourceTenant, nodeI
 		return acl.PermDeny, false, nil
 	}
 	// foreignActor is "kind:id"; the shared_index keys on the bare
-	// user_id (no kind prefix). Mirror the Python lookup behaviour by
-	// stripping the "user:" prefix when present.
+	// user_id (no kind prefix). Strip the "user:" prefix when present.
 	userID := foreignActor
 	if len(userID) > 5 && userID[:5] == "user:" {
 		userID = userID[5:]

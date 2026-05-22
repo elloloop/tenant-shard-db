@@ -8,9 +8,7 @@ import (
 )
 
 // Enforcer is the top-level ACL facade. One Enforcer per server; it
-// owns the Registry, Resolver, Checker and Filter. Mirrors the role
-// of AclManager + CapabilityRegistry + canonical_store ACL helpers in
-// the Python server.
+// owns the Registry, Resolver, Checker and Filter.
 //
 // Handlers in server/go/internal/api do not call Resolver / Checker /
 // Filter directly — they go through Enforcer so the (registry,

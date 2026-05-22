@@ -1,5 +1,4 @@
-// tenant_quotas + tenant_usage CRUD. Mirrors the Python helpers at
-// through :1333 (reset_period).
+// tenant_quotas + tenant_usage CRUD.
 //
 // IMPORTANT: tenant_usage.period_start_ms is the start of the current
 // UTC calendar month in MILLISECONDS. Every other timestamp in

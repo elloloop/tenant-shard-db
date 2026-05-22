@@ -1,6 +1,6 @@
 // Compatibility engine for entdb-schema check / diff.
 //
-// Mirrors the deleted Python compat.py engine. Compares two *Registry
+// Compares two *Registry
 // instances and reports every per-rule difference, classifying each as
 // breaking (block PR) or non-breaking (informational) per the rules
 // documented on each ChangeKind constant.
@@ -896,8 +896,7 @@ func normaliseOnExit(v OnSubjectExit) OnSubjectExit {
 
 // dataPolicyRank orders data policies from "weakest" (lowest leakage
 // risk if downgraded) to "strongest". Used to classify
-// tightening vs loosening. The ordering mirrors the Python
-// data_policy.py downgrade table and is documented on each constant:
+// tightening vs loosening. The ordering is documented on each constant:
 //
 //	ephemeral < business < personal < healthcare < financial < audit
 //

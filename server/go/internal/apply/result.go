@@ -4,12 +4,12 @@ package apply
 
 import "github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 
-// Status mirrors the receipt status the Python applier returns from
-// ExecuteAtomic (see docs/go-port/shared/applier.md "Receipt
-// construction"). APPLIED means the event committed; SKIPPED means the
-// idempotency-key probe inside the txn matched a prior row;
-// FAILED is the catch-all error path; FAILED_PRECONDITION is the
-// CAS-miss path that aborts the batch but advances the WAL offset.
+// Status is the receipt status returned from ExecuteAtomic (see
+// docs/go-port/shared/applier.md "Receipt construction"). APPLIED
+// means the event committed; SKIPPED means the idempotency-key probe
+// inside the txn matched a prior row; FAILED is the catch-all error
+// path; FAILED_PRECONDITION is the CAS-miss path that aborts the
+// batch but advances the WAL offset.
 type Status uint8
 
 const (
@@ -26,8 +26,7 @@ const (
 )
 
 // String returns the wire form ("APPLIED" / "SKIPPED" / "FAILED" /
-// "FAILED_PRECONDITION"). Mirrors the Python ApplyResult.status enum
-// values with the CAS extension.
+// "FAILED_PRECONDITION").
 func (s Status) String() string {
 	switch s {
 	case StatusApplied:
@@ -43,8 +42,7 @@ func (s Status) String() string {
 	}
 }
 
-// Result is the outcome of applying one event. Mirrors the Python
-// ApplyResult struct.
+// Result is the outcome of applying one event.
 //
 // Position is the WAL position the event came from; on a successful
 // apply this is the receipt the SDK returns to clients.

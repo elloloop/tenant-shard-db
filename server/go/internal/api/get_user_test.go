@@ -1,4 +1,4 @@
-// Tests for the GetUser RPC (W2 — EPIC #407).
+// Tests for the GetUser RPC.
 //
 // Spec: docs/go-port/rpcs/GetUser.md. Three branches pinned here, one
 // per contract test referenced by the spec:

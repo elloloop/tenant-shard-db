@@ -29,7 +29,7 @@ type Options struct {
 	GroupID  string
 
 	// BatchSize is the max records PollBatch returns per iteration.
-	// Defaults to 32 (matches the Python applier batch_size default).
+	// Defaults to 32.
 	BatchSize int
 
 	// PollTimeout is how long PollBatch blocks waiting for records.
@@ -45,10 +45,9 @@ type Options struct {
 	FanoutHook func(ctx context.Context, ev *Event, res *Result)
 
 	// HaltOnPoison toggles halt-on-error behaviour. Defaults to true
-	// (production parity with Python halt_on_error=True). Tests that
-	// want to explore skip-and-continue paths can flip it; the contract
-	// pinned by docs/go-port/shared/applier.md is that production must
-	// halt.
+	// (production must halt). Tests that want to explore
+	// skip-and-continue paths can flip it; the contract is pinned by
+	// docs/go-port/shared/applier.md.
 	HaltOnPoison *bool
 
 	// MaxApplyConcurrency caps how many distinct tenants' records the
@@ -318,8 +317,7 @@ func (a *Applier) finalizeBatch(ctx context.Context, records []Record, results [
 				// be re-delivered after restart.
 				return res.Err
 			}
-			// skip-and-continue: still commit the offset (mirrors
-			// Python halt_on_error=False) and move on.
+			// skip-and-continue: still commit the offset and move on.
 		}
 		// ADR-027 invariant 3 (load-bearing): the WAL/consumer-group
 		// offset commit and the persisted per-tenant offset advance

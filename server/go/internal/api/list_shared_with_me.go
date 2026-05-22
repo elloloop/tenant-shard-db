@@ -44,20 +44,20 @@
 //     `nodes=[]` with status OK rather than surfacing the fault. This
 //     is hostile to debugging but load-bearing for parity; flagged for
 //     tightening in a separate issue.
-//   - Hardening delta vs Python: limit clamped to [0, 1000]; default
-//     when zero is 100 (matches Python). Negative limit/offset clamped
-//     to 0 instead of being passed through to SQLite (where negative
-//     LIMIT means "unlimited" — undefined behaviour).
+//   - Limit is clamped to [0, 1000]; default when zero is 100.
+//     Negative limit/offset are clamped to 0 rather than passed
+//     through to SQLite (where negative LIMIT means "unlimited" —
+//     undefined behaviour).
 //
 // Note on group resolution: this implementation does NOT yet expand
 // groups for the per-tenant query (group_users-backed
-// `acl.Resolver.Expand` is wired only in W1.10). The bare actor is
-// passed as a single-element actor list, which is parity with the
-// "user has no groups" steady state. Group-share inclusion is covered
-// by the cross-tenant path because ShareNode fans out group → members
-// at write time and writes one `shared_index` row per (member,
-// source_tenant, node). When the per-tenant group resolver lands, swap
-// in `acl.Resolver.ExpandIDs(ctx, tenant, actor)` here.
+// `acl.Resolver.Expand`). The bare actor is passed as a single-element
+// actor list, matching the "user has no groups" steady state. Group-
+// share inclusion is covered by the cross-tenant path because ShareNode
+// fans out group → members at write time and writes one `shared_index`
+// row per (member, source_tenant, node). When the per-tenant group
+// resolver lands, swap in `acl.Resolver.ExpandIDs(ctx, tenant, actor)`
+// here.
 //
 // NOT modified by this PR: server/go/internal/api/server.go (per task statement).
 
@@ -114,8 +114,7 @@ func (s *Server) ListSharedWithMe(
 		return emptyListSharedWithMeResponse(), nil
 	}
 
-	// Limit/offset clamping. Python passes raw values through to
-	// SQLite; the Go port hardens this — see file header.
+	// Limit/offset clamping — see file header for the rationale.
 	limit := req.GetLimit()
 	if limit <= 0 {
 		limit = listSharedWithMeDefaultLimit
@@ -161,8 +160,7 @@ func (s *Server) ListSharedWithMe(
 				if s.store == nil {
 					// No store wired — we can't fetch the full Node,
 					// so the cross-tenant path is unusable. Skip
-					// silently (matches the Python "no global_store"
-					// graceful degrade applied in reverse).
+					// silently.
 					continue
 				}
 				n, err := s.store.GetNode(ctx, e.SourceTenant, e.NodeID)
@@ -208,7 +206,7 @@ func (s *Server) ListSharedWithMe(
 }
 
 // emptyListSharedWithMeResponse is the canned empty response. Nodes is
-// a non-nil empty slice for symmetry with Python's `nodes=[]`.
+// a non-nil empty slice (non-nil repeated-field default).
 func emptyListSharedWithMeResponse() *pb.ListSharedWithMeResponse {
 	return &pb.ListSharedWithMeResponse{
 		Nodes:   []*pb.Node{},

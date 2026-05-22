@@ -1,4 +1,4 @@
-// Python exception -> gRPC code translation table.
+// Exception-class-name -> gRPC code translation table.
 //
 // Source of truth: docs/go-port/shared/error-mapping.md, "Exception -> code
 // mapping".
@@ -8,7 +8,7 @@
 // FromGoError (sentinel-keyed). Handlers should prefer building errors with
 // errs.Errorf or returning a sentinel directly; this map exists for the
 // applier's swallow / re-raise decision and for cross-language contract
-// tests that replay Python error fixtures.
+// tests that replay error fixtures by class name.
 
 package errs
 
@@ -17,10 +17,10 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// pythonExceptionCodes is the canonical Python-class-name -> gRPC code
-// table. Keys are the Python class names exactly as they appear in the
-// source (`raise FooError(...)`); values are the gRPC code the server
-// eventually emits. See error-mapping.md for the full catalogue.
+// pythonExceptionCodes is the canonical exception-class-name -> gRPC code
+// table. Keys are the class names exactly as they appear in the source
+// (`raise FooError(...)`); values are the gRPC code the server eventually
+// emits. See error-mapping.md for the full catalogue.
 var pythonExceptionCodes = map[string]codes.Code{
 	// AccessDeniedError -> PERMISSION_DENIED.
 	"AccessDeniedError": codes.PermissionDenied,
@@ -94,21 +94,19 @@ var pythonExceptionCodes = map[string]codes.Code{
 	"ValidationError":           codes.InvalidArgument,
 	"SchemaFingerprintMismatch": codes.FailedPrecondition,
 
-	// PermissionError (Python builtin) swallowed inside admin paths.
+	// PermissionError (builtin) swallowed inside admin paths.
 	// Route to PermissionDenied.
 	"PermissionError": codes.PermissionDenied,
 }
 
-// FromPythonException returns the gRPC code that the Python server emits
-// (or would emit, modulo swallow patterns) for the given Python exception
-// class name. Returns codes.Unknown if the class name is not in the table;
-// callers should treat Unknown as "swallow / in-band" -- mirroring the
-// Python broad-except behavior.
+// FromPythonException returns the gRPC code the server emits (or would emit,
+// modulo swallow patterns) for the given exception class name. Returns
+// codes.Unknown if the class name is not in the table; callers should treat
+// Unknown as "swallow / in-band".
 //
-// Cross-language contract tests use this to replay Python error fixtures:
-// the test harness sends the exception class name over the wire and the Go
-// server's classifier produces the same status code the Python server
-// would have produced.
+// Cross-language contract tests use this to replay error fixtures by class
+// name: the test harness sends the exception class name over the wire and
+// the server's classifier produces the corresponding status code.
 func FromPythonException(name string) codes.Code {
 	if c, ok := pythonExceptionCodes[name]; ok {
 		return c

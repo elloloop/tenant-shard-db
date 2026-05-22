@@ -10,9 +10,8 @@ import (
 )
 
 // applyShareNode dispatches a "share_node" op. Restores the WAL-first
-// invariant flagged in PLAN.md §6.1 — the Python ShareNode handler
-// writes node_access directly today, bypassing the WAL. This applier
-// branch makes the grant survive a full WAL rebuild.
+// invariant flagged in PLAN.md §6.1 — this applier branch makes the
+// grant survive a full WAL rebuild.
 //
 // op shape:
 //

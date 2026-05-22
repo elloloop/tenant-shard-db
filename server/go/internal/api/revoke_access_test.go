@@ -1,5 +1,5 @@
-// Tests for RevokeAccess. Behavioural parity with the Python handler
-// is pinned by the cross-language contract suite at
+// Tests for RevokeAccess. Behavioural parity is pinned by the
+// cross-language contract suite at
 // tests/python/integration/test_grpc_contract.py:351-361. This file covers
 // the three branches the spec calls out:
 //

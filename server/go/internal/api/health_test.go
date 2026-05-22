@@ -123,8 +123,7 @@ func TestHealth_NoDepsWired(t *testing.T) {
 
 // TestHealth_WALProducerWithoutIsConnected pins the in-memory-backend
 // branch: a Producer that doesn't implement the optional IsConnected
-// probe is treated as healthy. Mirrors Python's
-// `hasattr(self.wal, "is_connected")` shim returning False.
+// probe is treated as healthy.
 func TestHealth_WALProducerWithoutIsConnected(t *testing.T) {
 	t.Parallel()
 

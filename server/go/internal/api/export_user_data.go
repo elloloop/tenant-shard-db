@@ -23,24 +23,20 @@
 //     "updated_at","owner_actor","data_policy"}]}]}.
 //   - `payload` stays field-id-keyed (CLAUDE.md invariant #6) — the
 //     handler does not translate to field names.
-//   - Read-only RPC: no WAL append, no SQLite writes. Python's open
-//     question #3 (audit-record the export itself via WAL) is left as
-//     a follow-up — preserving current behavior keeps parity tight.
+//   - Read-only RPC: no WAL append, no SQLite writes. Audit-recording
+//     the export itself via WAL is left as a follow-up (open question
+//     #3 in the spec).
 //   - Streaming export is deferred to Phase 2 (open question #1 in the
 //     spec): the bundle is built in-memory and returned inline as
-//     `export_json`. A 10M-node user will OOM the server today; the
-//     port matches that pathology rather than silently changing the
-//     wire shape.
-//   - Go-port delta vs Python: aborts use real status.Errorf returns
-//     rather than the Python try/except envelope. The
-//     `success=false, error=…` in-band branch only fires for genuine
-//     internal errors (json.Marshal of the bundle), matching the spec's
-//     "real aborts" note.
+//     `export_json`. A 10M-node user will OOM the server today.
+//   - Aborts use real status.Errorf returns. The `success=false,
+//     error=…` in-band branch only fires for genuine internal errors
+//     (json.Marshal of the bundle), matching the spec's "real aborts"
+//     note.
 //
 // Metrics: emits entdb_grpc_requests_total{method="ExportUserData",
 // status="ok"|"error"} via the shared chokepoint, on every code path
-// (including aborts) — matches the Python handler which always records
-// before re-raising.
+// (including aborts).
 
 package api
 

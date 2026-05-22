@@ -5,18 +5,15 @@
 //
 // Wire contract: proto/entdb/v1/entdb.proto:120 (rpc), :890-898 (messages).
 //
-// Behavioural parity with Python is preserved deliberately, including the
-// known gap below. The handler:
+// The handler:
 //
 //   - Returns UNIMPLEMENTED when global_store is not wired.
 //   - Returns INVALID_ARGUMENT for empty actor / tenant_id.
 //   - Resolves the trusted actor via auth.Authoritative (CLAUDE.md
 //     trusted-actor invariant — see docs/go-port/shared/auth-interceptor.md).
-//   - narrowing: only system: / admin: actors may archive. The
-//     Python handler additionally lets the tenant "owner" archive after a
-//     member-role lookup; the Go port restricts this to admin-only for now.
-//     The owner branch will land alongside the WAL-first restoration (see
-//     "Known gaps" below).
+//   - narrowing: only system: / admin: actors may archive. The owner
+//     branch will land alongside the WAL-first restoration (see "Known
+//     gaps" below).
 //   - Appends a global `tenant_archived` WAL op and waits for the applier
 //     to set tenant_registry.status = "archived". Re-archiving an already-
 //     archived tenant is idempotent and returns success=true.
@@ -26,10 +23,9 @@
 // Known gaps:
 //
 //  1. No archiver / cold-storage handoff, no member or API-key revocation.
-//     Mirrors Python's no-op-after-flag behaviour.
 //  2. Legal-hold collision: `archived` and `legal_hold` share one status
 //     column. Spec "Open questions" item 1 flags this. We do not gate on
-//     current status here — Python doesn't either.
+//     current status here.
 
 package api
 
@@ -84,12 +80,11 @@ func (s *Server) ArchiveTenant(
 	// rebind to the interceptor-bound identity before any authz decision.
 	// In no-auth deployments / unit tests with no Identity on ctx, the
 	// claimed actor is returned as-is (auth.Authoritative documented
-	// fallback) — matching the Python ContextVar fall-through.
+	// fallback).
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
-	//  narrowing: admin-only. The Python handler also allows the
-	// tenant owner via a member-role lookup; owner-allowed archive remains
-	// a separate authz follow-up.
+	//  narrowing: admin-only. Owner-allowed archive remains a separate
+	// authz follow-up.
 	if !trusted.IsAdmin() && !trusted.IsSystem() {
 		status = "error"
 		return nil, errs.Errorf(codes.PermissionDenied,

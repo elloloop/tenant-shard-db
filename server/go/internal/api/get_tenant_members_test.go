@@ -9,11 +9,8 @@
 //  1. Empty members list for a tenant with no members.
 //  2. Single-member round-trip (fields populated, joined_at preserved).
 //  3. Multi-member round-trip (rows ordered by joined_at ascending).
-//  4. Unknown tenant -> empty list (no NOT_FOUND, parity with Python).
+//  4. Unknown tenant -> empty list (no NOT_FOUND — no tenant gate runs).
 //  5. Empty tenant_id -> INVALID_ARGUMENT.
-//
-// The Python handler also rejects empty actor with INVALID_ARGUMENT;
-// covered alongside (5) for ordering parity.
 
 package api_test
 
@@ -29,8 +26,7 @@ import (
 )
 
 // TestGetTenantMembers_EmptyTenant: a tenant that exists but has no
-// members returns members=[] with OK. The slice is non-nil (matches
-// Python's `members=[]` default for a repeated field).
+// members returns members=[] with OK. The slice is non-nil.
 func TestGetTenantMembers_EmptyTenant(t *testing.T) {
 	t.Parallel()
 
@@ -152,9 +148,9 @@ func TestGetTenantMembers_MultipleMembers(t *testing.T) {
 }
 
 // TestGetTenantMembers_UnknownTenant: an unknown tenant_id returns an
-// empty list with OK (parity with Python — no NOT_FOUND because the
-// handler never calls _check_tenant). This is a behavioural pin: a
-// future tightening that adds a tenant gate would break this contract.
+// empty list with OK — no NOT_FOUND because the handler never calls
+// _check_tenant. This is a behavioural pin: a future tightening that
+// adds a tenant gate would break this contract.
 func TestGetTenantMembers_UnknownTenant(t *testing.T) {
 	t.Parallel()
 

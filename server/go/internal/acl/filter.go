@@ -6,7 +6,7 @@ import (
 	"context"
 )
 
-// VisibilityReader is the bulk read-path predicate. Mirrors the SQL
+// VisibilityReader is the bulk read-path predicate. Implements the SQL
 // JOIN against node_visibility post-filter pattern documented in
 // docs/go-port/shared/acl.md "Post-read filtering / SQL JOIN".
 //
@@ -29,8 +29,8 @@ type VisibilityReader interface {
 //
 // The Filter does NOT enforce typed-capability requirements beyond
 // READ; richer per-row checks (capability_mappings on field reads)
-// belong on the Checker single-node path. The Python server uses the
-// same split: SQL JOIN for read filtering, _check_capability for
+// belong on the Checker single-node path. The design uses a split:
+// SQL JOIN for read filtering, single-node capability check for
 // per-row authorization.
 type Filter struct {
 	resolver *Resolver

@@ -5,9 +5,8 @@
 //     (over-the-wire empty request without auth interceptor →
 //     PERMISSION_DENIED).
 //
-// The Go port maps these onto auth.WithIdentity(ctx, ...) instead of
-// the Python ContextVar, but the visibility classes and error contract
-// are identical.
+// The Go port maps these onto auth.WithIdentity(ctx, ...). The
+// visibility classes and error contract are identical.
 
 package api_test
 

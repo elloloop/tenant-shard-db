@@ -1,6 +1,6 @@
 // Tests for the deprecated GetMailbox stub.
 //
-// The Python contract test at
+// The contract test at
 // tests/python/integration/test_grpc_contract.py:274-280 pins the
 // happy-path shape (`items == [] and unread_count == 0`). The Go
 // unit tests below pin the same shape plus the tenant-gate
@@ -23,8 +23,8 @@ import (
 
 // TestGetMailbox_HappyPath: with a registered tenant, the stub
 // returns an empty, well-formed response — `items == []`,
-// `unread_count == 0`, `has_more == false`. Mirrors the Python
-// contract pin at test_grpc_contract.py:274-280.
+// `unread_count == 0`, `has_more == false`. Mirrors the contract
+// pin at test_grpc_contract.py:274-280.
 func TestGetMailbox_HappyPath(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)

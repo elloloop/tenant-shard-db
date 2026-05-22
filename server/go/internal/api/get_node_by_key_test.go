@@ -1,4 +1,4 @@
-// Tests for the GetNodeByKey RPC (W2 — EPIC #407).
+// Tests for the GetNodeByKey RPC.
 //
 // Spec: docs/go-port/rpcs/GetNodeByKey.md. The four cases pinned here
 // match the contract bullets the spec calls out:
@@ -248,7 +248,7 @@ func TestGetNodeByCompositeKey_StoreLevel(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed a Task node with a (owner_id=alice, title="finish go port")
-	// composite tuple. Field ids 2 and 1 (Python sample).
+	// composite tuple. Field ids 2 and 1.
 	seedNodeByKey(t, cs, gnbkTenant, "task-1", "user:alice",
 		map[string]any{
 			"1": "finish go port",

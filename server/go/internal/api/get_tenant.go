@@ -2,33 +2,30 @@
 // Spec: docs/go-port/rpcs/GetTenant.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:119 (rpc), :880-883
-// (request), :885-888 (response), :853-863 (TenantDetail). Reference
+// (request), :885-888 (response), :853-863 (TenantDetail).
 //
-// Semantics (preserved byte-for-byte from the Python handler):
+// Semantics:
 //
 //   - Read-only on globalstore.tenant_registry. No WAL append, no
 //     per-tenant SQLite touch (CLAUDE.md invariants #1 / #4 satisfied
 //     trivially — the registry is the cross-tenant exception).
 //   - NO membership / admin gate. Any authenticated caller can read any
 //     tenant's metadata. This cross-tenant metadata leak is preserved
-//     for parity and is REQUIRED, not a bug we're free to fix here.
-//     Flagged as a follow-up in the spec "Open questions / risks"
-//     section.
+//     and is REQUIRED, not a bug we're free to fix here. Flagged as a
+//     follow-up in the spec "Open questions / risks" section.
 //   - Authoritative actor is still resolved via auth.Authoritative so
 //     the privilege-escalation fix (commit fece3fb) holds: a malicious
 //     caller cannot claim `actor: "system:admin"` and expect the
 //     handler to honour the body claim. The actor is then NOT consulted
-//     for any authorization decision — this matches Python's posture.
+//     for any authorization decision.
 //   - Argument validation (`actor == ""` / `tenant_id == ""`) returns
 //     `INVALID_ARGUMENT` cleanly via status.Error, BEFORE the recover
 //     block. The contract test at test_grpc_contract.py:472-476
 //     accepts either form. See spec "Error contract".
 //   - All other unexpected errors / panics degrade to
-//     `&GetTenantResponse{Found: false}, nil` with metric label
-//     "error". Mirrors Python's catch-all at :2392-2395.
+//     `&GetTenantResponse{Found: false}, nil` with metric label "error".
 //   - `s.global == nil` returns `UNIMPLEMENTED` (defensive — no test
-//     pins this path but it guards against partial deployments;
-//     mirrors :2370-2374).
+//     pins this path but it guards against partial deployments).
 
 package api
 
@@ -78,16 +75,15 @@ func (s *Server) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (resp 
 	}
 
 	// Resolve the trusted actor. The result is intentionally NOT used
-	// for any membership/admin check — Python posture is "any
-	// authenticated caller may read any tenant's row". We still call
-	// Authoritative so the call shape matches every other registry RPC
-	// (defence in depth: if a future hardening pass adds a gate here,
-	// it gets the trusted identity, not the wire claim).
+	// for any membership/admin check — any authenticated caller may
+	// read any tenant's row. We still call Authoritative so the call
+	// shape matches every other registry RPC (defence in depth: if a
+	// future hardening pass adds a gate here, it gets the trusted
+	// identity, not the wire claim).
 	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
 	// Defer recover AFTER input validation so a panic in the lookup
-	// degrades to `found=false` (Python parity, :2392-2395) without
-	// swallowing INVALID_ARGUMENT.
+	// degrades to `found=false` without swallowing INVALID_ARGUMENT.
 	defer func() {
 		if r := recover(); r != nil {
 			status = "error"
@@ -99,18 +95,16 @@ func (s *Server) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (resp 
 
 	tenant, lookupErr := s.global.GetTenant(ctx, req.GetTenantId())
 	if lookupErr != nil {
-		// Python's outer except catches every SQLite / runtime error
-		// and returns found=false with OK status. Do NOT propagate as
-		// codes.Internal — that would break the contract test at
-		// test_grpc_contract.py:466-471 which only accepts
-		// `r.found is False` on the negative path.
+		// Return found=false with OK status. Do NOT propagate as
+		// codes.Internal — the contract test at
+		// test_grpc_contract.py:466-471 only accepts `r.found is False`
+		// on the negative path.
 		status = "error"
 		return &pb.GetTenantResponse{Found: false}, nil
 	}
 	if tenant == nil {
-		// Genuine not-found. Python returns found=false with OK status
-		// (:2383-2385). Metric label stays "ok" — this is the success
-		// path for a well-formed lookup.
+		// Genuine not-found. Metric label stays "ok" — this is the
+		// success path for a well-formed lookup.
 		return &pb.GetTenantResponse{Found: false}, nil
 	}
 

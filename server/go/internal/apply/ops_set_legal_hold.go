@@ -29,8 +29,7 @@ import (
 //	}
 func (a *Applier) applySetLegalHold(ctx context.Context, ev *Event, op map[string]any) error {
 	if a.global == nil {
-		// Global store not wired; skip silently. This is the same
-		// trade-off the Python server makes — if globalstore isn't
+		// Global store not wired; skip silently. When globalstore isn't
 		// available, set_legal_hold is a no-op.
 		return nil
 	}

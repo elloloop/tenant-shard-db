@@ -2,27 +2,25 @@
 // Spec: docs/go-port/rpcs/GetTenantMembers.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:125 (rpc), :921-928
-// (request/response), :902-907 (TenantMemberInfo). Reference Python:
+// (request/response), :902-907 (TenantMemberInfo).
 //
-// Semantics (preserved byte-for-byte from the Python handler):
+// Semantics:
 //
 //   - Read-only. One SELECT against globalstore.tenant_members; no WAL
 //     append, no per-tenant SQLite touch (CLAUDE.md invariant #4 —
 //     globalstore is the legitimate cross-tenant path).
 //   - No `_check_tenant` gate, no `_check_cross_tenant_read`, no
 //     capability lookup; no membership gate beyond non-empty argument
-//     validation. Preserved for parity — flagged for follow-up in the
-//     EPIC's open-questions section.
+//     validation. Flagged for follow-up in the spec's open-questions
+//     section.
 //   - Trusted-actor rebinding via auth.Authoritative is applied at the
-//     top, even though the Python source reads `request.actor` directly
-//     today. This closes the privilege-escalation gap addressed by
-//     commit fece3fb (issue #168) for free, and the rebinding has no
-//     observable effect on the response because there is no member-only
-//     gate.
-//   - INVALID_ARGUMENT messages and ordering match Python verbatim:
-//     actor-check fires before tenant-check, with the exact strings
-//     `"actor is required"` and `"tenant_id is required"`. SDK callers
-//     that string-match these errors stay green.
+//     top. This closes the privilege-escalation gap addressed by commit
+//     fece3fb (issue #168) for free, and the rebinding has no observable
+//     effect on the response because there is no member-only gate.
+//   - INVALID_ARGUMENT messages and ordering: actor-check fires before
+//     tenant-check, with the exact strings `"actor is required"` and
+//     `"tenant_id is required"`. SDK callers that string-match these
+//     errors stay green.
 //   - Unknown tenant -> empty list + OK (the SELECT returns 0 rows).
 //   - Internal globalstore failures are silently swallowed: the handler
 //     returns an empty members slice with grpc.OK. This is hostile to

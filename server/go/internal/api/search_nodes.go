@@ -18,11 +18,11 @@
 //     coarse RPC-level check.
 //   - ACL post-filter is applied ONLY when the actor is classified
 //     "cross_tenant" (i.e. not a tenant member, not a system identity).
-//     In-tenant members see the unfiltered FTS result set — same as
-//     Python QueryNodes. Tightening this requires its own decision doc.
-//   - Order of operations matches Python exactly: tenant -> validate
-//     query -> searchable lookup -> SQL -> ACL trim -> proto convert.
-//     Swapping any two breaks at least one contract test.
+//     In-tenant members see the unfiltered FTS result set. Tightening
+//     this requires its own decision doc.
+//   - Order of operations: tenant -> validate query -> searchable
+//     lookup -> SQL -> ACL trim -> proto convert. Swapping any two
+//     breaks at least one contract test.
 //
 // Error contract:
 //
@@ -108,8 +108,7 @@ func (s *Server) SearchNodes(
 	//    etc.) is swallowed and reported as an empty result with codes.OK.
 	//    See spec lines 63-66.
 	if s.store == nil {
-		// No store wired — same contract as the Python "no canonical
-		// store" path: empty result, codes.OK.
+		// No store wired — empty result, codes.OK.
 		return &pb.SearchNodesResponse{Nodes: []*pb.Node{}}, nil
 	}
 
@@ -125,15 +124,14 @@ func (s *Server) SearchNodes(
 	rows, ferr := s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit, offset)
 	if ferr != nil {
 		// Swallow + empty + log "error" outcome. Operators see the
-		// elevated metric label; clients see codes.OK. Matches Python
-		// blanket except.
+		// elevated metric label; clients see codes.OK.
 		outcome = "error"
 		return &pb.SearchNodesResponse{Nodes: []*pb.Node{}}, nil
 	}
 
 	// 5. ACL post-filter — only when the actor is classified
 	//    "cross_tenant". In-tenant members and system actors see the
-	//    unfiltered set (parity with QueryNodes; see spec line 42).
+	//    unfiltered set (see spec line 42).
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 	if s.isCrossTenantReader(ctx, tenantID, trusted) {
 		rows = filterNodesByActor(rows, trusted)
@@ -169,9 +167,8 @@ func (s *Server) isCrossTenantReader(ctx context.Context, tenantID string, trust
 	}
 	if trusted.IsZero() {
 		// No identity at all — treat as cross-tenant so the ACL filter
-		// drops everything not explicitly shared. Matches the spirit of
-		// the Python PD branch which becomes an empty response via the
-		// outer swallow.
+		// drops everything not explicitly shared, producing an empty
+		// response via the outer swallow.
 		return true
 	}
 	member, err := s.global.IsMember(ctx, tenantID, trusted.ID())
@@ -191,12 +188,10 @@ func (s *Server) isCrossTenantReader(ctx context.Context, tenantID string, trust
 //   - any ACL entry on the row grants the trusted actor (matching the
 //     legacy `principal` field or the newer `grantee`).
 //
-// This is the minimal can_access shape in scope for W2 — the full
-// group-expansion + capability-typed grant evaluation lives in
-// internal/acl and will be wired in a later wave (see spec
-// "Open questions / risks: ACL trim cost"). For parity, an actor with
-// no matching grants sees zero rows — the Python PD-via-swallow path
-// produces the same empty-set outcome.
+// This is the minimal can_access shape; the full group-expansion +
+// capability-typed grant evaluation lives in internal/acl and will be
+// wired in a later change (see spec "Open questions / risks: ACL trim
+// cost"). An actor with no matching grants sees zero rows.
 func filterNodesByActor(rows []*store.Node, trusted auth.Actor) []*store.Node {
 	if len(rows) == 0 {
 		return rows

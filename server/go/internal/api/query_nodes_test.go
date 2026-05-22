@@ -1,4 +1,4 @@
-// Tests for the QueryNodes RPC (W2 — EPIC #407).
+// Tests for the QueryNodes RPC.
 //
 // Spec: docs/go-port/rpcs/QueryNodes.md.
 //
@@ -9,14 +9,14 @@
 //     pages.
 //  3. ACL post-filter excludes nodes the cross-tenant caller cannot
 //     read; nodes with a direct grant survive.
-//  4. Unsupported FilterOp (GTE) -> codes.InvalidArgument. This is the
-//     deliberate behaviour FIX over Python's silent exception swallow
-//     called out in the spec "Open questions" §5.
+//  4. Unsupported FilterOp (GTE) -> codes.InvalidArgument. The handler
+//     surfaces errors so unsupported filters reach the SDK (spec
+//     "Open questions" §5).
 //  5. Inlined-operator value (Op=EQ, Value={"$gte":, ...}) -> codes.
-//     InvalidArgument. Same parity-fix rationale as (4).
+//     InvalidArgument. Same rationale as (4).
 //  6. Sort by node_id ascending returns rows in lexical order.
 //
-// Tests live in `package api_test` per the W2 task brief.
+// Tests live in `package api_test`.
 
 package api_test
 
@@ -257,8 +257,8 @@ func TestQueryNodes_RangeOperatorsANDed(t *testing.T) {
 }
 
 // TestQueryNodes_UnsupportedOperator pins the still-rejected operators.
-// CONTAINS and IN remain INVALID_ARGUMENT pending the W1.10 queryfilter
-// package; issue #501 explicitly scoped them out.
+// CONTAINS and IN remain INVALID_ARGUMENT; issue #501 explicitly scoped
+// them out.
 func TestQueryNodes_UnsupportedOperator(t *testing.T) {
 	t.Parallel()
 	f := newQueryNodesFixture(t)
@@ -405,10 +405,8 @@ func TestQueryNodes_ACLPostFilter(t *testing.T) {
 }
 
 // TestQueryNodes_InlinedOperator pins the inlined-operator shape: a
-// Struct value carrying “$gte“ / “$lt“ / ...keys fans into one
-// store filter per inlined entry. This is the wire shape the Python
-// SDK has historically emitted; issue #501 wires the server to accept
-// it natively.
+// Struct value carrying “$gte” / “$lt” / ...keys fans into one store
+// filter per inlined entry (issue #501).
 func TestQueryNodes_InlinedOperator(t *testing.T) {
 	t.Parallel()
 	f := newQueryNodesFixture(t)

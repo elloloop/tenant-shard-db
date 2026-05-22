@@ -23,23 +23,23 @@ const (
 	// "deny" in node_access.permission. The zero value is DENY, NOT
 	// "unspecified", matching the behaviour of an unset grant.
 	PermDeny Permission = iota
-	// PermRead — implies READ. Python "read".
+	// PermRead — implies READ. Stored as "read".
 	PermRead
-	// PermComment — implies READ, COMMENT. Python "comment".
+	// PermComment — implies READ, COMMENT. Stored as "comment".
 	PermComment
-	// PermWrite — implies READ, COMMENT, WRITE. Python "write".
+	// PermWrite — implies READ, COMMENT, WRITE. Stored as "write".
 	PermWrite
-	// PermShare — implies READ, COMMENT, WRITE, SHARE. Python "share".
+	// PermShare — implies READ, COMMENT, WRITE, SHARE. Stored as "share".
 	PermShare
 	// PermDelete — implies READ, COMMENT, WRITE, DELETE (NOT SHARE).
-	// Python "delete".
+	// Stored as "delete".
 	PermDelete
-	// PermAdmin — implies every positive permission. Python "admin".
+	// PermAdmin — implies every positive permission. Stored as "admin".
 	PermAdmin
 )
 
 // String returns the canonical lowercase form stored in
-// node_access.permission. Mirrors Permission.value in the Python enum.
+// node_access.permission.
 func (p Permission) String() string {
 	switch p {
 	case PermDeny:

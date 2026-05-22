@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for RemoveTenantMember. The Go port closes
-// the auth-parity gap against Python — see RemoveTenantMember.md
+// Tests for RemoveTenantMember. See RemoveTenantMember.md
 // "Auth (admin only; trusted-actor)".
 
 package api_test
@@ -87,9 +86,8 @@ func TestRemoveTenantMember_AdminHappyPath(t *testing.T) {
 }
 
 // TestRemoveTenantMember_NonAdminDenied: a regular member trying to
-// remove another member is rejected with PERMISSION_DENIED. This is
-// the auth-parity-gap fix — Python lets this succeed (latent privilege
-// escalation; spec §"Auth").
+// remove another member is rejected with PERMISSION_DENIED (latent
+// privilege escalation closed; spec §"Auth").
 func TestRemoveTenantMember_NonAdminDenied(t *testing.T) {
 	t.Parallel()
 	gs := newGlobalStore(t)
