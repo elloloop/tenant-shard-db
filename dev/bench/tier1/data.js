@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779473271999,
+  "lastUpdate": 1779473408150,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -3564,6 +3564,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00016657552894478453",
             "extra": "mean: 6.942135122138199 msec\nrounds: 131"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1afe64e0f1b71ed16fcdb52b36fea5f7dce72483",
+          "message": "chore(go): drop conceptual Python references and port-era annotations (#557)\n\nWith the Python server retired (ADR-017) and the EPIC #407 Go port\ncomplete, comments across server/go still framed behavior against the\ndead Python implementation (\"Mirrors the Python enum\", \"the Python\nhandler does X\", `Python \"read\"`) and carried port-era tags (\"W2 —\",\n\"W2.03 —\", \"EPIC #407\", \"Phase 4A.2\"). Remove them.\n\nConcrete facts are preserved, re-attributed to the current system\n(e.g. `Python \"read\"` -> `Stored as \"read\"` for the stored\nnode_access.permission values), and behavioral-divergence rationale is\nkept, rephrased to describe the current invariant. Live references\n(tests/python/integration/*, docs/ADR paths, GDPR articles, CLAUDE.md\ninvariants) and the ADR-024 rate-limit \"Phase 1/2/3\" terms are left\nintact. Comment-only — no behavior change (go vet/build/test, Go SDK,\nruff, and the 103-case Python contract suite all pass).\n\nBuilds on the citation cleanup in #554.",
+          "timestamp": "2026-05-22T19:07:23+01:00",
+          "tree_id": "eaa6fe3c8dca97140b7ae81665ab0b4ddf99d22c",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/1afe64e0f1b71ed16fcdb52b36fea5f7dce72483"
+        },
+        "date": 1779473407057,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3040.8126092220587,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027530017427009355",
+            "extra": "mean: 328.8594624237083 usec\nrounds: 1477"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2067.6999349291686,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000366499912726184",
+            "extra": "mean: 483.62916838523586 usec\nrounds: 1164"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 965.9287704520381,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000103407997112973",
+            "extra": "mean: 1.0352730248753408 msec\nrounds: 603"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 779.8025314302226,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008811710396282906",
+            "extra": "mean: 1.2823759345406547 msec\nrounds: 718"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1840.6328318917729,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010876262839542437",
+            "extra": "mean: 543.2914064518865 usec\nrounds: 1705"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1780.2351731911995,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013095853156090215",
+            "extra": "mean: 561.7235380241523 usec\nrounds: 1407"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1890.846352215692,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009916002632309857",
+            "extra": "mean: 528.863701076611 usec\nrounds: 1579"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1912.2542059946934,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007162023243618813",
+            "extra": "mean: 522.9430254958346 usec\nrounds: 1059"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1673.1345081031304,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003116054732947399",
+            "extra": "mean: 597.6805780748149 usec\nrounds: 301"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1480.8311313068423,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005742966997554274",
+            "extra": "mean: 675.2964459340438 usec\nrounds: 1193"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2519.727724164052,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003353283612533382",
+            "extra": "mean: 396.8682768419994 usec\nrounds: 2077"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 156.58073746432103,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00026304247060027983",
+            "extra": "mean: 6.386481608108808 msec\nrounds: 148"
           }
         ]
       }
