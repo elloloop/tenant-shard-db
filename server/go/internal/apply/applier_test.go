@@ -359,9 +359,8 @@ func TestApplier_GlobalExactReplayRemainsApplied(t *testing.T) {
 }
 
 // TestApplier_DelegateAccessFix is the contract-pinning regression for
-// PLAN.md §6.4 item 1 — the Python applier silently drops
-// admin_delegate_access events. The Go applier MUST materialise the
-// node_access grant on replay.
+// PLAN.md §6.4 item 1 — admin_delegate_access events MUST be
+// materialised as node_access grants on replay.
 func TestApplier_DelegateAccessFix(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -402,8 +401,7 @@ func TestApplier_DelegateAccessFix(t *testing.T) {
 		"doc1",
 	).Scan(&actor, &perm)
 	if err != nil {
-		t.Fatalf("delegate-access did not materialise a node_access row: %v "+
-			"(this is the Python bug — the Go applier MUST close it)", err)
+		t.Fatalf("delegate-access did not materialise a node_access row: %v", err)
 	}
 	if actor != "user:bob" || perm != "read" {
 		t.Fatalf("delegate-access wrong row: actor=%q perm=%q (want user:bob/read)", actor, perm)
@@ -723,8 +721,8 @@ func TestApplier_GroupMembership(t *testing.T) {
 }
 
 // TestApplier_AdminRevokeAccessBroadens confirms PLAN.md §6.4 item 2:
-// admin_revoke_access deletes node_access AND group_users (Python only
-// deletes node_visibility).
+// admin_revoke_access deletes node_access AND group_users AND
+// node_visibility.
 func TestApplier_AdminRevokeAccessBroadens(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -770,7 +768,7 @@ func TestApplier_AdminRevokeAccessBroadens(t *testing.T) {
 		var n int
 		_ = db.QueryRowContext(context.Background(), q.sql, q.args...).Scan(&n)
 		if n != 0 {
-			t.Errorf("admin_revoke_access did not clean up %s (n=%d) — Python parity bug not closed", q.name, n)
+			t.Errorf("admin_revoke_access did not clean up %s (n=%d)", q.name, n)
 		}
 	}
 }

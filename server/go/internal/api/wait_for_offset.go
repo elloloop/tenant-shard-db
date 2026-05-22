@@ -18,16 +18,14 @@ import (
 // least the requested WAL stream position into the per-tenant SQLite
 // view, or the per-RPC deadline elapses, or the context is cancelled.
 //
-// Spec: docs/go-port/rpcs/WaitForOffset.md. The Go
-// port uses the store-level sync.Cond watcher implemented in W1.8
-// (store/offset.go) so the handler parks on a single select and does not
-// burn a goroutine on a busy-loop.
+// Spec: docs/go-port/rpcs/WaitForOffset.md. Uses the store-level
+// sync.Cond watcher (store/offset.go) so the handler parks on a
+// single select and does not burn a goroutine on a busy-loop.
 //
 // Differences from the original handler:
 //   - The original swallowed all internal errors and returned OK + reached=false.
-//     The Go port honours ctx cancellation as a real gRPC status
-//     (DEADLINE_EXCEEDED) — this matches grpc-go idiom and is the
-//     contract pinned by the W2 task spec.
+//     This handler honours ctx cancellation as a real gRPC status
+//     (DEADLINE_EXCEEDED) — consistent with grpc-go idiom.
 //   - Topic/partition prefix in stream_position is ignored: split on last `:`,
 //     parse trailing int; non-numeric → 0.
 func (s *Server) WaitForOffset(ctx context.Context, req *pb.WaitForOffsetRequest) (*pb.WaitForOffsetResponse, error) {
@@ -103,9 +101,8 @@ func (s *Server) currentAppliedPosition(ctx context.Context, tenantID, requested
 	topic, partition := parseStreamTopicPartition(requested)
 	off, err := s.store.GetAppliedOffset(ctx, tenantID, topic, partition)
 	if err != nil || off == 0 {
-		// 0 here means either no row, or applier genuinely at offset 0.
-		// Python collapses the latter to "" via `or ""` truthiness; we
-		// mirror that to keep contract tests deterministic.
+		// 0 means either no row, or applier genuinely at offset 0;
+		// collapse to "" to keep contract tests deterministic.
 		return ""
 	}
 	if topic == "" {

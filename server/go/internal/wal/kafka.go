@@ -28,8 +28,7 @@ package wal
 //
 // Idempotent retry: like InMemory, we cache (topic, key, idempotency-key)
 // -> StreamPos so a retried Append within the lifetime of the producer
-// returns the original receipt without writing a duplicate record. This
-// mirrors memory.go and the Python applier's apply-time dedupe; the
+// returns the original receipt without writing a duplicate record; the
 // sarama idempotent producer config also prevents broker-side
 // duplicates on retry within a single producer session.
 //
@@ -59,28 +58,26 @@ type KafkaConfig struct {
 	// metrics. Defaults to "entdb-server-go" when empty.
 	ClientID string
 	// Acks is the producer ack level. We default to "all"
-	// (sarama.WaitForAll) to match Python's default. Any non-"all"
-	// value falls back to leader-only acks (matches the Python
-	// `int(acks)` path for "1"/"0").
+	// (sarama.WaitForAll). Any non-"all" value falls back to
+	// leader-only acks ("1"/"0").
 	Acks string
 	// EnableIdempotence enables the broker-side idempotent producer
 	// (prevents duplicates on retry within a producer session).
 	EnableIdempotence bool
 	// MaxInFlight is the producer's max in-flight requests per
-	// connection. Python defaults to 5; sarama requires this to be 1
-	// when idempotence is enabled, so we cap appropriately at Connect
-	// time.
+	// connection. Defaults to 5; sarama requires this to be 1 when
+	// idempotence is enabled, so we cap appropriately at Connect time.
 	MaxInFlight int
 	// LingerMs is the batch-collection window for the producer.
 	LingerMs int
 	// RequestTimeoutMs bounds a single produce request.
 	RequestTimeoutMs int
-	// AutoOffsetReset controls where a new consumer group starts.
-	// "earliest" (default, matches Python) or "latest".
+	// AutoOffsetReset controls where a new consumer group starts:
+	// "earliest" (default) or "latest".
 	AutoOffsetReset string
 	// EnableAutoCommit toggles the broker-side auto-commit loop.
-	// Python defaults this to FALSE (manual commit per record); the Go
-	// backend MUST match so re-delivery semantics align.
+	// Must be false (manual commit per record) so re-delivery semantics
+	// align with the applier's at-least-once contract.
 	EnableAutoCommit bool
 	// SessionTimeoutMs is the consumer-group session timeout.
 	SessionTimeoutMs int
@@ -198,18 +195,15 @@ func (k *Kafka) producerConfig() *sarama.Config {
 	case "0":
 		config.Producer.RequiredAcks = sarama.NoResponse
 	default:
-		// "1" or anything else: leader-only ack. Mirrors Python's
-		// int(acks) path for non-"all" values.
+		// "1" or anything else: leader-only ack.
 		config.Producer.RequiredAcks = sarama.WaitForLocal
 	}
 
 	config.Producer.Idempotent = k.config.EnableIdempotence
 	if k.config.EnableIdempotence {
 		// sarama requires MaxOpenRequests == 1 when Idempotent is on
-		// (otherwise NewSyncProducer returns an error). aiokafka /
-		// franz-go cap to 5 internally; matching to 1 here is the
-		// safest interpretation and still gives the durability story
-		// the Python path documents.
+		// (otherwise NewSyncProducer returns an error); matching to 1
+		// is the safest interpretation.
 		config.Net.MaxOpenRequests = 1
 	} else {
 		config.Net.MaxOpenRequests = k.config.MaxInFlight
@@ -223,13 +217,12 @@ func (k *Kafka) producerConfig() *sarama.Config {
 	// across partitions. Matches aiokafka's DefaultPartitioner and
 	// the franz-go default.
 	config.Producer.Partitioner = sarama.NewHashPartitioner
-	// 10 MiB. aiokafka's max_request_size default is ~1 MiB but
-	// Python overrides via config; matching the franz-go side's
-	// implicit ceiling and our applied-event payload budget.
+	// 10 MiB — matching the franz-go side's implicit ceiling and our
+	// applied-event payload budget.
 	config.Producer.MaxMessageBytes = 10 << 20
 	config.Producer.Timeout = time.Duration(k.config.RequestTimeoutMs) * time.Millisecond
 	// linger.ms equivalent: sarama batches via Flush.Frequency on the
-	// SyncProducer. Keep small to match Python's 5ms.
+	// SyncProducer (5ms default).
 	config.Producer.Flush.Frequency = time.Duration(k.config.LingerMs) * time.Millisecond
 
 	return config
@@ -246,8 +239,7 @@ func (k *Kafka) consumerConfig() *sarama.Config {
 	} else {
 		config.Consumer.Offsets.Initial = sarama.OffsetOldest
 	}
-	// Manual commit. Python sets enable_auto_commit=False; we match
-	// by disabling sarama's auto-commit loop.
+	// Manual commit: disable sarama's auto-commit loop.
 	config.Consumer.Offsets.AutoCommit.Enable = false
 	config.Consumer.Group.Session.Timeout = time.Duration(k.config.SessionTimeoutMs) * time.Millisecond
 	config.Consumer.Group.Heartbeat.Interval = time.Duration(k.config.HeartbeatIntervalMs) * time.Millisecond

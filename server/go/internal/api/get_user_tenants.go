@@ -1,4 +1,4 @@
-// W2 — GetUserTenants RPC (Python -> Go server port, EPIC #407).
+// GetUserTenants RPC.
 //
 // Spec: docs/go-port/rpcs/GetUserTenants.md.
 //
@@ -10,25 +10,23 @@
 //     "Tenant registry not configured".
 //   - The trusted-actor invariant is honoured: the wire-claimed actor
 //     is run through auth.Authoritative so the interceptor's identity
-//     wins over any payload-claimed identity. Per the Python parity
-//     contract today, the resolved actor is NOT used for an authz
-//     decision (any authenticated caller may read any user's
-//     memberships). The privilege-boundary gap is documented in the
-//     spec and tracked as a follow-up; do NOT plug it here without
-//     coordinated proto/contract-test changes (see spec "Auth"
-//     section).
+//     wins over any payload-claimed identity. The resolved actor is NOT
+//     used for an authz decision (any authenticated caller may read any
+//     user's memberships). The privilege-boundary gap is documented in
+//     the spec and tracked as a follow-up; do NOT plug it here without
+//     coordinated proto/contract-test changes (see spec "Auth" section).
 //   - Memberships are returned in joined_at ASC order, sourced from
 //     globalstore.GetUserTenants. Empty list when the user has no
 //     memberships.
-//   - Catch-all parity: any error from globalstore (or a panic inside
-//     the handler body after validation) collapses to OK with
+//   - Catch-all: any error from globalstore (or a panic inside the
+//     handler body after validation) collapses to OK with
 //     memberships=[]. We MUST NOT propagate codes.Internal — the
 //     contract test relies on the empty-OK degradation.
 //
 // Metrics: emits entdb_grpc_requests_total{method="GetUserTenants",
-// status="ok"|"error"} via the shared metrics chokepoint. Matching
-// Python, the validation and UNIMPLEMENTED short-circuits do NOT emit
-// metrics — only the post-validation success-or-degraded path does.
+// status="ok"|"error"} via the shared metrics chokepoint. The
+// validation and UNIMPLEMENTED short-circuits do NOT emit metrics —
+// only the post-validation success-or-degraded path does.
 
 package api
 
@@ -80,15 +78,15 @@ func (s *Server) GetUserTenants(
 	}()
 
 	// Trusted-actor resolution. The result is intentionally not used
-	// for an authz decision (Python parity); the call exists so the
-	// interceptor's identity always wins over any payload-claimed
-	// actor (defence in depth — see the spec's "privilege-boundary
-	// gap" note and the comment block above).
+	// for an authz decision; the call exists so the interceptor's
+	// identity always wins over any payload-claimed actor (defence in
+	// depth — see the spec's "privilege-boundary gap" note and the
+	// comment block above).
 	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
 
 	rows, qerr := s.global.GetUserTenants(ctx, req.GetUserId())
 	if qerr != nil {
-		// Python silently swallows and returns memberships=[] OK.
+		// Silently swallows and returns memberships=[] OK.
 		outcome = "error"
 		return &pb.GetUserTenantsResponse{
 			Memberships: []*pb.TenantMemberInfo{},

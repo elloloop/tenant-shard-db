@@ -9,10 +9,8 @@
 //     state; response.found = true.
 //   - Non-owner caller is rejected with codes.PermissionDenied — even
 //     when the caller is "system:" or holds an ACL grant on the node.
-//     This is a Go-side hardening over the Python handler (which only
-//     calls _check_tenant). See package-level doc on transfer_ownership.go.
-//   - Missing node returns codes.NotFound (Go hardens vs. Python's
-//     "found=false, error=''" soft fail).
+//     See package-level doc on transfer_ownership.go.
+//   - Missing node returns codes.NotFound.
 //   - Recipient sees the node post-apply: store.GetNode reports the new
 //     owner; node_visibility row exists for the recipient.
 //
@@ -179,7 +177,6 @@ func TestTransferOwnership_RecipientSeesNode(t *testing.T) {
 // TestTransferOwnership_NonOwner_PermissionDenied: a caller who is not
 // the current owner gets PermissionDenied — regardless of whether they
 // are a tenant member, hold an ACL grant, or are even a system: actor.
-// This is the Go-side hardening over the Python handler's no-auth path.
 func TestTransferOwnership_NonOwner_PermissionDenied(t *testing.T) {
 	t.Parallel()
 	f := newXferFixture(t)
@@ -237,8 +234,7 @@ func TestTransferOwnership_PrivilegeEscalation_IgnoresClaimedActor(t *testing.T)
 }
 
 // TestTransferOwnership_MissingNode_NotFound: the node_id does not
-// exist in the tenant → codes.NotFound. Hardens the Python "found=false,
-// error=”" soft-fail per spec §"Error contract".
+// exist in the tenant → codes.NotFound, per spec §”Error contract”.
 func TestTransferOwnership_MissingNode_NotFound(t *testing.T) {
 	t.Parallel()
 	f := newXferFixture(t)
@@ -315,8 +311,7 @@ func TestTransferOwnership_InvalidArgument_EmptyFields(t *testing.T) {
 }
 
 // TestTransferOwnership_InvalidActorString: a tenant-qualified or bare
-// principal in new_owner is rejected with InvalidArgument (the Python
-// handler accepted any string).
+// principal in new_owner is rejected with InvalidArgument.
 func TestTransferOwnership_InvalidActorString(t *testing.T) {
 	t.Parallel()
 	f := newXferFixture(t)

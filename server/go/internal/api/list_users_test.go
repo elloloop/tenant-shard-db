@@ -1,14 +1,14 @@
 // Behavioural tests for ListUsers. Spec is docs/go-port/rpcs/ListUsers.md.
 //
-// The four cases below cover the parity shape Python pins:
+// The four cases below cover the contract shape:
 //
 //  1. Empty registry -> users=[], OK.
 //  2. Multi-row round-trip -> proto fields preserved, ordered by
 //     created_at (the underlying globalstore.ListUsers contract).
 //  3. Default limit=100 + status="active" applied when the request
 //     omits them.
-//  4. Internal globalstore error -> codes.OK with users=[]. Python
-//     swallows; the Go port mirrors verbatim.
+//  4. Internal globalstore error -> codes.OK with users=[] (silent
+//     swallow for parity).
 //
 // Wart-tracking: cases 1 and 2 also exercise the "no admin scope"
 // behaviour by passing a plain user:<id> actor; today this is allowed.
@@ -30,7 +30,7 @@ import (
 
 // TestListUsers_EmptyRegistry: a fresh globalstore with no user_registry
 // rows returns ListUsersResponse{users: []} and codes.OK. The Users
-// slice MUST be non-nil to mirror the Python repeated-field default.
+// slice MUST be non-nil (non-nil repeated-field default).
 func TestListUsers_EmptyRegistry(t *testing.T) {
 	t.Parallel()
 
@@ -47,7 +47,7 @@ func TestListUsers_EmptyRegistry(t *testing.T) {
 		t.Fatalf("ListUsers: response is nil")
 	}
 	if resp.Users == nil {
-		t.Fatalf("ListUsers: Users is nil; want empty slice (parity pin)")
+		t.Fatalf("ListUsers: Users is nil; want empty slice")
 	}
 	if len(resp.Users) != 0 {
 		t.Fatalf("ListUsers: len(Users) = %d; want 0", len(resp.Users))
@@ -220,7 +220,7 @@ func userIDFromIndex(i int) string {
 }
 
 // TestListUsers_EmptyActorInvalidArgument pins the wire-validation
-// branch: actor=="" -> codes.InvalidArgument. Python pin:
+// branch: actor=="" -> codes.InvalidArgument. Contract pin:
 // tests/python/integration/test_grpc_contract.py:423-427.
 func TestListUsers_EmptyActorInvalidArgument(t *testing.T) {
 	t.Parallel()
@@ -282,7 +282,7 @@ func TestListUsers_InternalErrorSwallowed(t *testing.T) {
 		t.Fatalf("ListUsers: response is nil; want empty Users slice")
 	}
 	if resp.Users == nil {
-		t.Fatalf("ListUsers: Users is nil; want non-nil empty slice (parity pin)")
+		t.Fatalf("ListUsers: Users is nil; want non-nil empty slice")
 	}
 	if len(resp.Users) != 0 {
 		t.Fatalf("ListUsers: len(Users) = %d; want 0 on swallowed error", len(resp.Users))

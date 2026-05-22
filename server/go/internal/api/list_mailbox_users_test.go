@@ -21,8 +21,7 @@ import (
 
 // TestListMailboxUsers_EmptyForValidTenant pins the deprecated-stub
 // contract: a tenant that passes the gate returns an empty user_ids
-// list. The slice must be non-nil — matches Python's
-// `ListMailboxUsersResponse(user_ids=[])` repeated-field default.
+// list. The slice must be non-nil (non-nil repeated-field default).
 func TestListMailboxUsers_EmptyForValidTenant(t *testing.T) {
 	t.Parallel()
 

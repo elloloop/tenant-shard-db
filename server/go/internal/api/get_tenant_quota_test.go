@@ -4,7 +4,7 @@
 //     usage.
 //  2. Admin-role happy path — a tenant user with role=admin succeeds.
 //  3. Plain member → PERMISSION_DENIED. The handler is admin/owner-only;
-//     tenant role=member is NOT enough (matches Python contract test
+//     tenant role=member is NOT enough (contract pin:
 //     test_grpc_contract.py:483-486).
 //  4. Non-member → PERMISSION_DENIED, even with claimed actor on the
 //     wire (privilege-escalation pin).

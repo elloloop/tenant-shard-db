@@ -22,8 +22,7 @@ import (
 )
 
 // Sentinel errors returned by store methods. Each wraps an internal/errs
-// sentinel so the gRPC layer maps them to the same codes the Python
-// server emits.
+// sentinel so the gRPC layer maps them to the correct codes.
 var (
 	// ErrNodeNotFound is returned when GetNode / UpdateNode / DeleteNode
 	// targets a node that does not exist. Wraps errs.ErrNotFound.

@@ -2,7 +2,7 @@
 // Spec: docs/go-port/rpcs/GetTenantQuota.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:142 (rpc), :1063-1068 (request),
-// :1070-1085 (response). Reference Python:
+// :1070-1085 (response).
 //
 // Semantics:
 //
@@ -132,10 +132,8 @@ func (s *Server) GetTenantQuota(
 
 // nextCalendarMonthStartMs returns the Unix-millisecond timestamp of the
 // start of the UTC calendar month immediately following the one
-// containing t. Kept local to this file to avoid adding new exported
-// helpers / fields per the W2 task constraints; the equivalent for the
-// start-of-current-month lives in the globalstore package as
-// calendarMonthStartMs.
+// containing t. The equivalent for the start-of-current-month lives in
+// the globalstore package as calendarMonthStartMs.
 func nextCalendarMonthStartMs(t time.Time) int64 {
 	t = t.UTC()
 	year, month := t.Year(), t.Month()

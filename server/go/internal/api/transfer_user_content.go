@@ -76,13 +76,11 @@ const (
 	// owner_actor inside one SQLite write transaction; without a chunk
 	// cap a 10M-owned-node tenant would hold the per-tenant write lock
 	// for the duration of the UPDATE, blocking other writers.
-	//
-	// The Python handler emits exactly ONE event regardless of size —
-	// see spec "Open questions" §2 for the documented risk. Chunking is
-	// the Go-side mitigation. Chunk size is conservative; the Applier
-	// op handler accepts both the un-chunked form (no node_ids field —
-	// rewrite all rows for `from_user`) and the chunked form (explicit
-	// node_ids list) so behaviour is identical for small batches.
+	// See spec "Open questions" §2 for the documented risk. Chunk size
+	// is conservative; the Applier op handler accepts both the
+	// un-chunked form (no node_ids field — rewrite all rows for
+	// `from_user`) and the chunked form (explicit node_ids list) so
+	// behaviour is identical for small batches.
 	transferUserContentChunkSize = 1000
 
 	// transferUserContentTopic is the WAL topic used for tenant-scoped
@@ -156,8 +154,8 @@ func (s *Server) TransferUserContent(
 		}
 	}
 
-	// Tenant WAL append. Source of truth for the ownership rename. The
-	// op shape mirrors apply/ops_admin_transfer_content.go (W1.10).
+	// Tenant WAL append. Source of truth for the ownership rename.
+	// Op shape: apply/ops_admin_transfer_content.go.
 	//
 	// Chunking: when the producer is wired AND a canonical store is
 	// available we enumerate owned node_ids first and split into
@@ -195,8 +193,8 @@ func (s *Server) TransferUserContent(
 			"to_user":   req.GetToUser(),
 		}
 		if len(chunk) > 0 {
-			// Convert []string -> []any so JSON marshalling preserves
-			// the ordering Python's json.dumps emits.
+			// Convert []string -> []any so JSON marshalling produces
+			// a stable array encoding.
 			ids := make([]any, 0, len(chunk))
 			for _, id := range chunk {
 				ids = append(ids, id)
@@ -256,8 +254,7 @@ func (s *Server) TransferUserContent(
 // `tenantID` and returns them split into chunks of size
 // transferUserContentChunkSize. When the canonical store is unwired
 // (or returns no rows / errors) it returns a single empty chunk so the
-// caller still emits exactly one un-chunked event (parity with the
-// Python single-event shape).
+// caller still emits exactly one un-chunked event.
 func (s *Server) transferUserContentChunks(
 	ctx context.Context, tenantID, fromUser string,
 ) [][]string {
@@ -280,10 +277,9 @@ func (s *Server) transferUserContentChunks(
 }
 
 // randHex16 returns a 32-char lowercase hex string. Used as the random
-// suffix on the idempotency key. The Python handler uses uuid4 hex
-// (32 chars) — same alphabet, same length. Falls back to a
-// nanosecond-timestamp on rand failure (defensive — crypto/rand on
-// Linux has not failed in production memory).
+// suffix on the idempotency key (32 chars, lowercase hex). Falls back
+// to a nanosecond-timestamp on rand failure (defensive — crypto/rand
+// on Linux has not failed in production memory).
 func randHex16() string {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

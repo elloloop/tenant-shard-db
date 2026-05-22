@@ -60,8 +60,8 @@ type SqsAPI interface {
 	GetQueueAttributes(ctx context.Context, in *sqs.GetQueueAttributesInput, optFns ...func(*sqs.Options)) (*sqs.GetQueueAttributesOutput, error)
 }
 
-// SqsConfig captures the SQS-specific knobs (parity with the Python
-// SqsConfig: queue url, region, endpoint, visibility, long-poll wait).
+// SqsConfig captures the SQS-specific knobs: queue url, region,
+// endpoint, visibility, long-poll wait.
 type SqsConfig struct {
 	// QueueURL is the FIFO queue URL (must end in ".fifo"). Falls back
 	// to the Append/Poll topic arg when empty.
@@ -72,14 +72,14 @@ type SqsConfig struct {
 	EndpointURL string
 	// MaxMessages bounds a ReceiveMessage call. SQS hard-caps at 10.
 	MaxMessages int32
-	// WaitTimeSeconds is the long-poll wait (0-20). Python default 1.
+	// WaitTimeSeconds is the long-poll wait (0-20). Default 1.
 	WaitTimeSeconds int32
 	// VisibilityTimeout seconds an in-flight message is hidden before
-	// redelivery if not committed (deleted). Python default 30.
+	// redelivery if not committed (deleted). Default 30.
 	VisibilityTimeout int32
 }
 
-// DefaultSqsConfig returns a config matching the Python defaults.
+// DefaultSqsConfig returns a config with sensible defaults.
 func DefaultSqsConfig(queueURL, region string) SqsConfig {
 	return SqsConfig{
 		QueueURL:          queueURL,

@@ -88,8 +88,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb
 	}
 
 	if req.GetEmail() == "" && req.GetName() == "" && req.GetStatus() == "" {
-		// In-band failure (no abort). Python returns "ok" metric here;
-		// we do the same.
+		// In-band failure (no abort); "ok" metric label.
 		return &pb.UpdateUserResponse{Success: false, Error: "No fields to update"}, nil
 	}
 
@@ -99,8 +98,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb
 		return &pb.UpdateUserResponse{Success: false, Error: err.Error()}, nil
 	}
 	if user == nil {
-		// In-band not-found. Same metric label ("ok") as Python — no
-		// abort fires.
+		// In-band not-found; "ok" metric label, no abort.
 		return &pb.UpdateUserResponse{Success: false, Error: "User not found"}, nil
 	}
 

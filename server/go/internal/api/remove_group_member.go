@@ -6,25 +6,22 @@
 //
 // # Behavioural pins
 //
-//   - WAL-first restoration. The Go port routes the membership delete
-//     through wal.Append as a `remove_group_member` op (W1.10 applier
-//     handler at server/go/internal/apply/ops_remove_group_member.go),
-//     so a replay-from-empty-WAL reconstructs the same group_users
-//     state. The group-derived shared_index cleanup is represented as a
-//     paired WAL op and applied best-effort by the applier, not by the
+//   - WAL-first restoration. The membership delete routes through
+//     wal.Append as a `remove_group_member` op (applier handler at
+//     server/go/internal/apply/ops_remove_group_member.go), so a
+//     replay-from-empty-WAL reconstructs the same group_users state.
+//     The group-derived shared_index cleanup is represented as a paired
+//     WAL op and applied best-effort by the applier, not by the
 //     handler.
 //
-//   - Auth (Go HARDENS vs Python). The Go port gates the RPC behind
-//     admin/system trusted actors OR a tenant "owner"/"admin" membership
-//     row, matching AddTenantMember / ChangeMemberRole / RemoveTenantMember.
-//     There is no "group owner" concept in the schema today; v1 rule is
-//     tenant-admin.
+//   - Auth. The RPC is gated behind admin/system trusted actors OR a
+//     tenant "owner"/"admin" membership row, matching AddTenantMember /
+//     ChangeMemberRole / RemoveTenantMember. There is no "group owner"
+//     concept in the schema today; v1 rule is tenant-admin.
 //
 //   - Trusted-actor rebind. The wire `actor` is UNTRUSTED. Privilege
 //     decisions consult auth.Authoritative(ctx) only. The privilege-
-//     escalation regression pinned by commit fece3fb applies here too
-//     even though Python does not invoke `_trusted_actor` for this
-//     RPC.
+//     escalation regression pinned by commit fece3fb applies here too.
 //
 //   - Cascade scope. Per spec §"Side effects" item 6.2: only group-
 //     derived shared_index entries are cleaned up. Direct grants on
@@ -36,8 +33,8 @@
 //     undercounts (spec ordering invariant).
 //
 //   - Idempotency. Removing a non-existent (group, member) returns
-//     success=false, error="" with code OK (parity with Python and
-//     spec §"Error contract"). Repeats are safe — the op is a
+//     success=false, error="" with code OK (spec §"Error contract").
+//     Repeats are safe — the op is a
 //     DELETE with no rows-affected tracking on the apply path, the
 //     pre-read is a SELECT, and the shared_index cleanup op is
 //     delete-if-exists.
@@ -116,10 +113,10 @@ func (s *Server) RemoveGroupMember(
 	claimed := auth.ParseActor(req.GetContext().GetActor())
 	trusted := auth.Authoritative(ctx, claimed)
 
-	// Capability check — Go HARDENS vs Python (spec §"Open questions"
-	// item 6 latent privilege escalation). System / admin prefixed trusted
-	// actors bypass; otherwise the caller must be a tenant owner/admin,
-	// mirroring AddTenantMember / ChangeMemberRole / RemoveTenantMember.
+	// Capability check (spec §"Open questions" item 6). System / admin
+	// prefixed trusted actors bypass; otherwise the caller must be a
+	// tenant owner/admin, mirroring AddTenantMember / ChangeMemberRole /
+	// RemoveTenantMember.
 	if !(trusted.IsSystem() || trusted.IsAdmin()) {
 		if s.global == nil {
 			status = "error"
@@ -143,8 +140,7 @@ func (s *Server) RemoveGroupMember(
 	//   1. `found` — was the (group, member) pair a row in group_users?
 	//      The WAL DELETE is rows-affected-agnostic at the applier
 	//      layer (ops_remove_group_member.go just runs the DELETE);
-	//      the response.success flag mirrors Python's canonical_store
-	//      return value, so we read it here.
+	//      we read the membership state here to populate response.success.
 	//
 	//   2. `groupAccess` — node_access rows where actor_id == groupID
 	//      and actor_type == 'group'. Pre-read ordering is load-
@@ -173,7 +169,7 @@ func (s *Server) RemoveGroupMember(
 	}
 
 	// WAL append — restores CLAUDE.md §1. Op shape is the contract the
-	// W1.10 applier handler reads at apply/ops_remove_group_member.go.
+	// applier handler reads at apply/ops_remove_group_member.go.
 	idempKey, err := newIdempotencyKey()
 	if err != nil {
 		status = "error"

@@ -5,9 +5,7 @@ package auth
 import "strings"
 
 // Kind is the prefix-encoded category of an Actor identity.
-//
-// Mirrors the prefix scheme documented in
-// docs/go-port/shared/auth-interceptor.md "Trusted-actor contract":
+// See docs/go-port/shared/auth-interceptor.md "Trusted-actor contract":
 //
 //   - user:<id> -- a real authenticated user.
 //   - system:<svc> -- internal service identity; bypasses tenant-membership
@@ -36,7 +34,7 @@ const (
 )
 
 // String returns the canonical prefix for the kind without the trailing
-// colon. Mirrors the Python prefix strings used in
+// colon.
 func (k Kind) String() string {
 	switch k {
 	case KindUser:
@@ -53,21 +51,20 @@ func (k Kind) String() string {
 }
 
 // Actor is a prefix-encoded caller identity. It is a value type whose
-// String form (kind:id) is exactly what the Python server stores in the WAL
+// String form (kind:id) is exactly what the server stores in the WAL
 // and in ACL subjects.
 //
 // Construct via User / System / Admin / Group. Parse via ParseActor for
 // strings coming off the wire or out of the WAL.
 //
 // The zero value is the "unknown" actor and is never equal to a valid one;
-// callers should treat it the way the Python server treats a None
-// identity -- no claimed prefix, no privileges.
+// callers should treat it as carrying no claimed prefix and no privileges.
 type Actor struct {
 	kind Kind
 	id   string
 }
 
-// User returns a user:<id> actor. Mirrors Actor.user(id) in the Python SDK.
+// User returns a user:<id> actor.
 func User(id string) Actor { return Actor{kind: KindUser, id: id} }
 
 // System returns a system:<id> actor.

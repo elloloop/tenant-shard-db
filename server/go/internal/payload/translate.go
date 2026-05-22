@@ -49,9 +49,8 @@ import (
 //   - String key matching a field name is translated to its id
 //     (back-compat for pre-fix SDKs; new SDKs send id-keyed and
 //     skip this path).
-//   - Unknown name keys are dropped silently (Python parity:
-//     ingress is permissive so legacy clients sending deprecated
-//     fields don't break writes).
+//   - Unknown name keys are dropped silently (ingress is permissive
+//     so legacy clients sending deprecated fields don't break writes).
 //   - Field-kind coercion (only when schema is known):
 //   - BYTES: structpb has no bytes type; the wire carries base64
 //     strings. Decode to []byte for storage.
@@ -131,8 +130,7 @@ func StructToPayload(reg *schema.Registry, nodeTypeName string, s *structpb.Stru
 
 		f := nameToField[key]
 		if f == nil {
-			// Unknown name: drop silently. Matches Python
-			// name_to_id_keys (ingress is permissive).
+			// Unknown name: drop silently (ingress is permissive).
 			continue
 		}
 		coerced, err := coerceForKind(f, value)
@@ -177,7 +175,7 @@ func PayloadToStruct(reg *schema.Registry, nodeTypeName string, p map[uint32]any
 				v, err = encodeForKind(f, raw)
 			} else {
 				// Unknown id on egress is preserved verbatim
-				// (forward-compat) — matches Python id_to_name_keys.
+				// (forward-compat).
 				v, err = newValue(raw)
 			}
 		} else {
@@ -203,8 +201,7 @@ func PayloadToStruct(reg *schema.Registry, nodeTypeName string, p map[uint32]any
 //     client bug and should surface as INVALID_ARGUMENT — silently
 //     dropping it would change the result set.
 //
-// Mirrors translate_filter_name_to_id in the Python port, with the
-// stricter unknown-key behavior the Go server enforces (see
+// Unknown filter keys are an error, not a silent drop (see
 // docs/go-port/shared/payload-translation.md "QueryNodes filter").
 func FilterNamesToIDs(reg *schema.Registry, nodeTypeName string, filter map[string]any) (map[uint32]any, error) {
 	if len(filter) == 0 {
@@ -253,8 +250,6 @@ func FilterNamesToIDs(reg *schema.Registry, nodeTypeName string, filter map[stri
 //
 // Unknown ids are preserved verbatim (as their decimal string) so a
 // row written by a future schema revision is not lossy on read.
-// Unknown ids preserved as decimal-string keys is identical to the
-// Python id_to_name_keys fallthrough.
 //
 // When reg / nodeTypeName resolves to no schema, every id is rendered
 // as its decimal string.
@@ -317,9 +312,8 @@ func parseFieldID(s string) (uint32, bool) {
 // wrong wire value (e.g. BYTES field carrying a non-string).
 //
 // Nil or NullValue is preserved as nil so callers can distinguish "key
-// present, value null" from "key absent" — matches the Python contract
-// where FieldDef.validate_value treats None as "not provided" (and the
-// applier silently no-ops on it).
+// present, value null" from "key absent" (the applier silently no-ops
+// on null).
 func coerceForKind(f *schema.FieldDef, v *structpb.Value) (any, error) {
 	if v == nil {
 		return nil, nil

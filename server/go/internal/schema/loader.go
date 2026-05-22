@@ -22,8 +22,8 @@ type schemaFile struct {
 	EdgeTypes []EdgeTypeDef `json:"edge_types"`
 }
 
-// LoadFromJSON parses the Python-emitted SchemaRegistry.to_json shape
-// into a fresh, mutable *Registry. The returned registry is not yet
+// LoadFromJSON parses the SchemaRegistry JSON shape into a fresh,
+// mutable *Registry. The returned registry is not yet
 // frozen — callers (typically server boot) call Freeze() once all
 // supplemental registrations are done.
 //
@@ -53,10 +53,10 @@ func LoadFromJSON(data []byte) (*Registry, error) {
 	return r, nil
 }
 
-// MarshalJSON emits the registry in Python SchemaRegistry.to_dict order
-// (node_types sorted by type_id, edge_types sorted by edge_id). The
-// output is suitable for round-tripping through LoadFromJSON and as
-// input to the fingerprint canonicaliser.
+// MarshalJSON emits the registry in canonical order (node_types sorted
+// by type_id, edge_types sorted by edge_id). The output is suitable
+// for round-tripping through LoadFromJSON and as input to the
+// fingerprint canonicaliser.
 //
 // MarshalJSON is also implicitly called by encoding/json so callers can
 // json.Marshal(reg) directly.
@@ -97,7 +97,7 @@ func (r *Registry) toFile() schemaFile {
 		if e.Props == nil {
 			e.Props = []FieldDef{}
 		}
-		// Python always emits on_subject_exit (defaults to "both").
+		// on_subject_exit is always emitted (defaults to "both").
 		if e.OnSubjectExit == "" {
 			e.OnSubjectExit = OnSubjectExitBoth
 		}

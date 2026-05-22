@@ -3,15 +3,15 @@
 // and tests/python/e2e/) expect to find on a freshly-booted server.
 //
 // The harness contract is documented in docs/go-port/shared/test-harness.md
-// (the `--seed-tenant` and `--seed-profile` rows). The Python in-process
-// fixture for the contract suite lives at tests/python/integration/conftest.py
+// (the `--seed-tenant` and `--seed-profile` rows). The in-process fixture
+// for the contract suite lives at tests/python/integration/conftest.py
 // and seeds the same shape via direct globalstore/canonicalstore writes +
 // a follow-up ExecuteAtomic call. This package reproduces that state for
 // the Go subprocess harness.
 //
 // Profiles:
 //   - "contract": User/Task/AssignedTo schema + alice/bob users +
-//     seed node + seed-1 receipt. Mirrors the Python contract fixture.
+//     seed node + seed-1 receipt.
 //   - "e2e": User/Product/Order schema (typeIDs 8001/8002/8003) + edge
 //     types (Purchased/PlacedOrder/OrderContains, 8101/8102/8103) +
 //     a single `e2e-runner` user as tenant owner. No seed node — the
@@ -219,7 +219,7 @@ func RegisterE2ESchema(reg *schema.Registry) error {
 const seedWaitTimeout = 30 * time.Second
 
 // SeedTenantContract applies the contract-fixture seed for tenantID.
-// Order mirrors the Python conftest:
+// Steps:
 //
 //  1. tenant_registry row (tenantID, "Acme Corp", region default).
 //  2. user_registry rows: alice + bob.

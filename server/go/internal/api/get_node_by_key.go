@@ -2,9 +2,9 @@
 // Spec: docs/go-port/rpcs/GetNodeByKey.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:144 (rpc), :1087-1120
-// (request/response). Reference Python:
+// (request/response).
 //
-// Semantics (preserved from the Python handler):
+// Semantics:
 //
 //   - Read-only. No WAL append, no global_store touch.
 //   - tenant_id / actor are TOP-LEVEL on this RPC (no
@@ -37,8 +37,8 @@
 //     collation. Caller (SDK) owns normalisation.
 //
 // Catch-all internal errors degrade to `found=false` with metric
-// label "error" (Python parity, :1125-1128). Exception: tenant-gate
-// errors (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND) propagate
+// label "error". Exception: tenant-gate errors
+// (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND) propagate
 // unchanged so SDKs can react to the redirect trailer.
 
 package api
@@ -91,21 +91,19 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	}
 
 	// 3. Optional read-after-write wait. Best-effort: timeouts are
-	//    swallowed to match Python's `_wait_for_offset` semantics
-	//    (logs + falls through). int64 → store API takes int64 too.
-	//    Spec "after_offset type drift": Python stringifies; Go keeps
-	//    it native because the store's WaitForOffset signature is
-	//    `int64`. The wire format is unchanged — this is a server-
-	//    internal type alignment.
+	//    swallowed (logs + falls through). int64 → store API takes int64
+	//    too. Spec "after_offset type drift": the server keeps the native
+	//    int64 because the store's WaitForOffset signature requires it.
+	//    The wire format is unchanged — this is a server-internal type
+	//    alignment.
 	if req.GetAfterOffset() != 0 {
 		waitCtx, cancel := context.WithTimeout(ctx, waitForOffsetTimeout)
 		_ = s.store.WaitForOffset(waitCtx, req.GetTenantId(), req.GetAfterOffset())
 		cancel()
 	}
 
-	// 4. Unwrap the typed Value to a native scalar. Python uses
-	//    json_format.MessageToDict; the structpb Go API exposes
-	//    AsInterface which returns the same shape (string/float64/
+	// 4. Unwrap the typed Value to a native scalar. structpb.AsInterface
+	//    returns the same shape as a JSON decode (string/float64/
 	//    bool/nil/[]any/map[string]any).
 	rawValue := unwrapStructpbValue(req.GetValue())
 
@@ -118,13 +116,13 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 		rawValue,
 	)
 	if err != nil {
-		// Catch-all parity (:1125-1128). Don't propagate Internal —
+		// Catch-all: degrade to found=false. Don't propagate Internal —
 		// SDK clients branch on resp.Found.
 		resultStatus = "error"
 		return &pb.GetNodeByKeyResponse{Found: false}, nil
 	}
 	if node == nil {
-		// In-band miss. status=ok (Python parity at :1105).
+		// In-band miss. status=ok.
 		return &pb.GetNodeByKeyResponse{Found: false}, nil
 	}
 
@@ -146,9 +144,8 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	// 8. Translate to the wire shape. payload_json is field-id-keyed
 	//    on disk (CLAUDE.md invariant #6); GetNodeByKey does not do
 	//    name translation here — the SDK consumer pairs the response
-	//    with its registered proto schema. Emitting it as a Struct
-	//    with string-int keys preserves the shape Python emits via
-	//    `_dict_to_struct`.
+	//    with its registered proto schema. Keys are emitted as
+	//    stringified field_ids.
 	resp := &pb.GetNodeByKeyResponse{
 		Found: true,
 		Node: &pb.Node{
@@ -167,9 +164,7 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 
 // unwrapStructpbValue returns the native Go scalar carried by a
 // google.protobuf.Value. nil / NullValue → nil; the SQLite binder
-// treats nil as SQL NULL, which matches Python's json_format
-// MessageToDict when the field was unset (returns {} → unwrapped to
-// None at the call site).
+// treats nil as SQL NULL (equivalent to the field being unset).
 func unwrapStructpbValue(v *structpb.Value) any {
 	if v == nil {
 		return nil
@@ -185,7 +180,7 @@ func unwrapStructpbValue(v *structpb.Value) any {
 //
 // This is intentionally a thin same-tenant gate: cross-tenant reads
 // require the cross-tenant grant lookup that lives behind GetNode
-// proper. For W2 the deny-only contract pins the
+// proper. The deny-only contract pins the
 // "ACL_DENIED → PERMISSION_DENIED" branch the spec calls out.
 func checkNodeACL(ownerActor, aclJSON, actor string) error {
 	if actor == "" {

@@ -5,16 +5,12 @@
 //
 // Wire contract: proto/entdb/v1/entdb.proto:132 (rpc), :982-992 (messages).
 //
-// Behavioural parity with Python is preserved on the wire shape. Three
-// PLAN.md §6 drifts are folded in here:
+// Three PLAN.md §6 drifts are folded in here:
 //
 //  1. WAL-first restoration (CLAUDE.md invariant #1, spec "Open questions"
-//     item 1). The Python handler writes the status flip directly to
-//     globalstore SQLite — a WAL replay against a blank globalstore
-//     loses the hold. The Go port closes that gap by appending a
-//     `legal_hold_set` op to the global WAL scope. The applier
-//     materialises the op against globalstore.legal_holds and flips
-//     tenant_registry.status before the handler returns.
+//     item 1). A `legal_hold_set` op is appended to the global WAL scope.
+//     The applier materialises the op against globalstore.legal_holds and
+//     flips tenant_registry.status before the handler returns.
 //
 //  2. Compliance-officer trusted-actor gate (spec §"Auth"). Today only
 //     admin: / system: actors may set or clear a hold. The "compliance
@@ -101,11 +97,8 @@ func (s *Server) SetLegalHold(
 
 	// Tenant gate: sharding ownership + registry existence + region pin.
 	// CheckTenant returns NOT_FOUND when the tenant is missing from
-	// tenant_registry. This is a Go-port tightening over the Python
-	// handler (which returns OK + success=false + error="Tenant not
-	// found"); the Python asymmetry is hostile to SDK callers and
-	// every other mutating RPC has converged on the
-	// status-code form.
+	// tenant_registry. Every mutating RPC converges on the status-code
+	// form.
 	if err := s.checkTenant(ctx, req.GetTenantId()); err != nil {
 		resultStatus = "error"
 		return nil, err
@@ -115,14 +108,13 @@ func (s *Server) SetLegalHold(
 	// interceptor-bound identity before any authz decision. In
 	// no-auth deployments / unit tests with no Identity on ctx, the
 	// claimed actor is returned as-is (auth.Authoritative documented
-	// fallback) — matching the Python ContextVar fall-through.
+	// fallback).
 	claimed := auth.ParseActor(req.GetActor())
 	trusted := auth.Authoritative(ctx, claimed)
 
 	// Compliance-officer gate. Today admin: / system: stand in for
 	// the not-yet-wired "compliance officer" role (spec "Open questions"
-	// item 5). The owner branch in the Python handler is deferred to
-	// match other RPCs (e.g. ArchiveTenant) — admin-only.
+	// item 5) — admin-only, matching ArchiveTenant.
 	if !(trusted.IsAdmin() || trusted.IsSystem()) {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.PermissionDenied,

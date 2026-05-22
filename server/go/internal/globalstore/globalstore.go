@@ -4,19 +4,17 @@
 // tenant_usage. It is the only place CLAUDE.md invariant #4 permits
 // cross-tenant state to be read or written.
 //
-// Spec: docs/go-port/shared/global-store.md. Source-of-truth Python:
+// Spec: docs/go-port/shared/global-store.md.
 //
 // # Carve-out from invariant #1 ("all writes go through the WAL")
 //
-// `globalstore` has no WAL. The Python implementation also reflects
-// this — `global.db` is the durable record for cross-tenant state.
-// Don't add WAL coupling here; the carve-out is documented in the spec
-// and in PLAN.md §6.
+// `globalstore` has no WAL. `global.db` is the durable record for
+// cross-tenant state. Don't add WAL coupling here; the carve-out is
+// documented in the spec and in PLAN.md §6.
 //
 // # Concurrency
 //
-// MaxOpenConns(1) is non-negotiable: it mirrors the Python
-// single-thread executor (one writer, no contention) and avoids
+// MaxOpenConns(1) is non-negotiable: one writer, no contention, avoids
 // SQLITE_BUSY retry loops in hot paths. SetMaxIdleConns matches so the
 // pool never closes the lone connection between calls.
 //
@@ -116,9 +114,9 @@ func New(opts Options) (*GlobalStore, error) {
 		return nil, fmt.Errorf("globalstore: open %q: %w", path, err)
 	}
 
-	// MaxOpenConns(1) is the parity-with-Python invariant. SetMaxIdleConns
-	// matches so the connection survives between calls; ConnMaxLifetime=0
-	// keeps it alive for the process lifetime.
+	// MaxOpenConns(1): single writer, serialized at the connection level.
+	// SetMaxIdleConns matches so the connection survives between calls;
+	// ConnMaxLifetime=0 keeps it alive for the process lifetime.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)

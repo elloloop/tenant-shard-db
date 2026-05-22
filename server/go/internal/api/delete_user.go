@@ -34,15 +34,14 @@
 //     and flip user_registry.status to "pending_deletion" in one
 //     globalstore transaction.
 //
-// Legal-hold gate (NEW behavior, behind a flag):
+// Legal-hold gate (behind a flag):
 //
-// The Python handler does not check legal hold at queue time. Per spec
-// "Side effects" / "Open questions" §4 the Go port adds an explicit
-// FAILED_PRECONDITION gate: before queueing, walk
-// globalstore.GetUserTenants and reject if any tenant has a legal_holds
-// row (globalstore.IsLegalHoldSet). The check is gated on
-// Server.WithLegalHoldOnDelete(true) so day-zero parity tests pass with
-// the gate disabled; production deployments MUST flip this on once a
+// Per spec "Side effects" / "Open questions" §4, before queueing the
+// handler walks globalstore.GetUserTenants and rejects with
+// FAILED_PRECONDITION if any tenant has a legal_holds row
+// (globalstore.IsLegalHoldSet). The check is gated on
+// Server.WithLegalHoldOnDelete(true) so bring-up tests pass with the
+// gate disabled; production deployments MUST flip this on once a
 // contract test has pinned the new behavior.
 //
 // DeleteUser is a global WAL mutation. The actual erasure events emitted
@@ -114,9 +113,8 @@ func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb
 			"DeleteUser requires the user themselves or an admin actor")
 	}
 
-	// Existence check. The Python handler returns OK + success=false on
-	// a missing user — keep that asymmetric contract for SDK parity. Do
-	// NOT promote to NOT_FOUND.
+	// Existence check. A missing user is reported in-band: success=false,
+	// error="User not found". Do NOT promote to NOT_FOUND.
 	user, err := s.global.GetUser(ctx, userID)
 	if err != nil {
 		outcome = "error"
@@ -137,10 +135,9 @@ func (s *Server) DeleteUser(ctx context.Context, req *pb.DeleteUserRequest) (*pb
 		}, nil
 	}
 
-	// Optional legal-hold gate (Go-port addition). Walk the user's
-	// tenants and reject with FAILED_PRECONDITION if any is held. The
-	// gate is off by default to keep day-zero parity with Python; flip
-	// via api.WithLegalHoldOnDelete(true).
+	// Optional legal-hold gate. Walk the user's tenants and reject with
+	// FAILED_PRECONDITION if any is held. The gate is off by default;
+	// flip via api.WithLegalHoldOnDelete(true).
 	if s.legalHoldOnDelete {
 		members, mErr := s.global.GetUserTenants(ctx, userID)
 		if mErr != nil {

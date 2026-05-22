@@ -11,9 +11,7 @@ import (
 )
 
 // applyTransferOwnership dispatches a "transfer_ownership" op.
-// Restores the WAL-first invariant flagged in PLAN.md §6.1 — the
-// Python TransferOwnership handler updates nodes.owner_actor directly
-// today.
+// Restores the WAL-first invariant flagged in PLAN.md §6.1.
 //
 // Refreshes node_visibility for the new owner so the visibility index
 // stays consistent (PLAN.md §6.4 item 3 calls out the
@@ -37,8 +35,7 @@ func (a *Applier) applyTransferOwnership(ctx context.Context, tx *BatchTxn, ev *
 		ev.TenantID, nodeID,
 	).Scan(&aclJSON)
 	if errors.Is(err, sql.ErrNoRows) {
-		// Missing target: no-op (matches the Python soft-no-target
-		// pattern; halts only on infra errors).
+		// Missing target: no-op; halt only on infra errors.
 		return nil
 	}
 	if err != nil {

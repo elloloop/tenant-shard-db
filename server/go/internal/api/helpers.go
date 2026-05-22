@@ -85,7 +85,7 @@ func (s *Server) lookupMemberRole(ctx context.Context, tenantID, userID string) 
 }
 
 // readRole captures the outcome of the cross-tenant read-membership
-// check. Mirrors the Python `_check_cross_tenant_read` sentinels.
+// check.
 //
 // Consolidated from per-handler duplicates (get_node.go's readRole and
 // get_nodes.go's crossTenantRole — same semantics, different names).
@@ -182,8 +182,8 @@ func edgeToProto(e *store.Edge) *pb.Edge {
 
 // edgePropsToStruct parses a stored props_json column into a typed
 // Struct. Empty / invalid input lowers to an empty Struct, never nil:
-// the Python wire shape always emits the field so SDK consumers can
-// rely on `edge.props.fields` being addressable without a nil check.
+// the wire shape always emits the field so SDK consumers can rely on
+// `edge.props.fields` being addressable without a nil check.
 func edgePropsToStruct(propsJSON string) *structpb.Struct {
 	if propsJSON == "" {
 		s, _ := structpb.NewStruct(map[string]any{})
@@ -312,9 +312,8 @@ func parsePayloadFieldID(s string) (uint32, bool) {
 // authActorToACLActor bridges the auth.Actor (caller identity admitted
 // by the interceptor) and the acl.Actor (ACL grant subject). user /
 // system translate directly; admin maps to system because admins
-// bypass ACL on the read path (matches Python's "admin can read
-// everything" handler-level convention — expressing admin as system:
-// here picks up the same bypass in acl.Filter.FilterReadable).
+// bypass ACL on the read path — expressing admin as system: here picks
+// up the same bypass in acl.Filter.FilterReadable.
 //
 // Consolidated from query_nodes.go and get_connected_nodes.go. Picks
 // the defensive form: IsZero short-circuits, admin -> system to
@@ -339,9 +338,8 @@ func authActorToACLActor(a auth.Actor) acl.Actor {
 
 // storeVisibilityAdapter satisfies acl.VisibilityReader by forwarding
 // to CanonicalStore.GetVisibleNodeIDs. The store method is named
-// GetVisibleNodeIDs (renamed from the Python _get_visible_nodes); the
-// acl interface uses the unprefixed name. Both signatures are
-// otherwise identical.
+// GetVisibleNodeIDs; the acl interface uses the unprefixed name. Both
+// signatures are otherwise identical.
 type storeVisibilityAdapter struct {
 	s *store.CanonicalStore
 }

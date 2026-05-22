@@ -1,9 +1,9 @@
-// Tests for the GetNodes RPC (W2 — EPIC #407).
+// Tests for the GetNodes RPC.
 //
 // Spec: docs/go-port/rpcs/GetNodes.md. Coverage targets the contract
 // pins enumerated there:
 //
-//   - Empty node_ids -> nodes=[] missing_ids=[] OK (Python parity).
+//   - Empty node_ids -> nodes=[] missing_ids=[] OK.
 //   - Single id round-trip: existing id surfaces as a Node; unknown id
 //     surfaces in missing_ids.
 //   - Multi-id round-trip: multiple existing ids preserve request order
@@ -12,7 +12,7 @@
 //     into missing_ids; the cross-tenant denied case must NOT be
 //     distinguishable from not-found (spec "Auth").
 //   - Oversize batch (> maxBatchNodeIDs) -> RESOURCE_EXHAUSTED before
-//     any I/O. Hardening delta vs Python (no Python equivalent).
+//     any I/O. Go-server hardening; no equivalent in the old server.
 //   - Unknown tenant -> NOT_FOUND from the tenant gate
 //     (CheckTenant / globalstore.GetTenant).
 
@@ -166,7 +166,7 @@ func TestGetNodes_SingleMiss(t *testing.T) {
 //   - Order: nodes in request order, gaps closed (denied/missing
 //     are absent, not nil-padded).
 //   - Duplicates: requesting the same id twice yields the node twice
-//     (Python iterates verbatim — spec "Batch semantics" #5).
+//     (spec "Batch semantics" #5).
 func TestGetNodes_MultiPreservesOrderAndDuplicates(t *testing.T) {
 	t.Parallel()
 	const tenantID = "acme"
@@ -266,10 +266,10 @@ func TestGetNodes_MissingAndDeniedMergedIntoMissingIds(t *testing.T) {
 	}
 }
 
-// TestGetNodes_OversizeBatchRejected pins the Go-port hardening
-// delta: above maxBatchNodeIDs (1000) the handler aborts
-// RESOURCE_EXHAUSTED before any tenant / store I/O. Python has no
-// such cap; the cap is documented in the spec "Open Questions" #4.
+// TestGetNodes_OversizeBatchRejected pins the server hardening:
+// above maxBatchNodeIDs (1000) the handler aborts
+// RESOURCE_EXHAUSTED before any tenant / store I/O. The cap is
+// documented in the spec "Open Questions" #4.
 func TestGetNodes_OversizeBatchRejected(t *testing.T) {
 	t.Parallel()
 	const tenantID = "acme"

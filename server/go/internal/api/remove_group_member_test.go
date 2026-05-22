@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// Tests for RemoveGroupMember (EPIC #407, — WAL-first restoration).
+// Tests for RemoveGroupMember (WAL-first).
 //
 // Behaviour pinned here:
 //
-//   1. Admin happy path — admin trusted actor removes an existing
-//      member; WAL records the `remove_group_member` op, the
-//      shared_index cascade clears the member's group-derived rows,
-//      and direct grants on individual nodes survive untouched.
-//   2. Non-admin → PERMISSION_DENIED (Go HARDENS vs Python; the
-//      Python handler skips the capability check entirely).
-//   3. Idempotent remove-not-member: a (group, member) pair that
-//      isn't a row returns success=false, error="" with code OK and
-//      still appends a WAL record (the applier's DELETE is a no-op).
-//   4. Direct grants preserved: a node_access row whose actor_id is
-//      the member (NOT the group) is left in place after the cascade.
+//  1. Admin happy path — admin trusted actor removes an existing
+//     member; WAL records the `remove_group_member` op, the
+//     shared_index cascade clears the member's group-derived rows,
+//     and direct grants on individual nodes survive untouched.
+//  2. Non-admin → PERMISSION_DENIED (the handler gates on admin/owner
+//     role; callers without it are rejected).
+//  3. Idempotent remove-not-member: a (group, member) pair that
+//     isn't a row returns success=false, error="" with code OK and
+//     still appends a WAL record (the applier's DELETE is a no-op).
+//  4. Direct grants preserved: a node_access row whose actor_id is
+//     the member (NOT the group) is left in place after the cascade.
 
 package api_test
 
@@ -306,9 +306,8 @@ func TestRemoveGroupMember_AdminHappyPath_WALAndCascade(t *testing.T) {
 }
 
 // TestRemoveGroupMember_NonAdminDenied: a regular tenant member (role
-// "member") is rejected with PERMISSION_DENIED. This is the Go-side
-// hardening of the Python parity gap (capability_registry has no entry
-// for RemoveGroupMember).
+// "member") is rejected with PERMISSION_DENIED. The handler gates on
+// admin/owner role; callers with only "member" are rejected.
 func TestRemoveGroupMember_NonAdminDenied(t *testing.T) {
 	t.Parallel()
 	f := newRGMFixture(t, "acme")
@@ -366,8 +365,7 @@ func TestRemoveGroupMember_NonAdminDenied(t *testing.T) {
 // TestRemoveGroupMember_IdempotentRemoveNotMember: removing a (group,
 // member) pair that does not exist returns success=false, error="" and
 // still appends a WAL record so a replay observes the (idempotent)
-// DELETE. Mirrors test_acl_v2.py:590-591 and the spec idempotency
-// contract (§"Open questions" item 2).
+// DELETE (spec idempotency contract §"Open questions" item 2).
 func TestRemoveGroupMember_IdempotentRemoveNotMember(t *testing.T) {
 	t.Parallel()
 	f := newRGMFixture(t, "acme")

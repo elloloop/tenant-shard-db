@@ -1,9 +1,9 @@
 // Package errs is the typed-error chokepoint for the Go gRPC server.
 //
 // Every handler that needs to emit a gRPC status code MUST do so through this
-// package, so the Python -> Go contract stays in one place. The exported
-// sentinels each implement GRPCStatus() *status.Status, so they round-trip
-// through google.golang.org/grpc/status.FromError and
+// package, so the error contract stays in one place. The exported sentinels
+// each implement GRPCStatus() *status.Status, so they round-trip through
+// google.golang.org/grpc/status.FromError and
 // google.golang.org/grpc/status.Code without the caller needing to know the
 // concrete type.
 //
@@ -12,10 +12,10 @@
 // docs/go-port/rpcs/*.md reference this file for code semantics; do not
 // duplicate the mapping there.
 //
-// Out-of-scope (deliberate parity with Python):
+// Out-of-scope (intentional):
 //
-//   - google.rpc.ErrorInfo / google.rpc.RetryInfo proto details. The Python
-//     server does not emit these; adding them would de-sync the contract.
+//   - google.rpc.ErrorInfo / google.rpc.RetryInfo proto details. The server
+//     does not emit these; adding them would de-sync the contract.
 //   - codes.Unknown. If a contract test ever observes Unknown it is a P0
 //     bug -- see error-mapping.md "Open questions / risks" item 4.
 package errs
@@ -82,11 +82,10 @@ func (e *codeError) Is(target error) bool {
 	return e.code == t.code
 }
 
-// Sentinel errors. One per gRPC code currently emitted by the Python server
+// Sentinel errors. One per gRPC code currently emitted by the server
 // (per docs/go-port/shared/error-mapping.md "Code catalogue"). Codes the
-// Python server does not raise (OUT_OF_RANGE, CANCELLED, ABORTED, DATA_LOSS)
-// are intentionally not declared here; if a future RPC needs them, add them
-// in the same row as the Python source mapping.
+// server does not raise (OUT_OF_RANGE, CANCELLED, ABORTED, DATA_LOSS) are
+// intentionally not declared here; add them when a future RPC needs them.
 //
 // ErrInternal and ErrDeadlineExceeded are listed in the spec as "not raised
 // by the server today" but are exported here because handlers may need to
@@ -146,7 +145,7 @@ var (
 )
 
 // Errorf builds a status-bearing error in one call. Use this in handlers
-// instead of status.Errorf so the Python -> Go contract stays in one place.
+// instead of status.Errorf so the error contract stays in one place.
 //
 // The returned error implements GRPCStatus() and Is(*codeError), so the
 // caller's tests can do errors.Is(err, errs.ErrNotFound).
@@ -176,9 +175,9 @@ func Code(err error) codes.Code {
 	return status.Code(err)
 }
 
-// PreserveStatusOrSwallow mirrors the Python "re-raise gRPC aborts, swallow
-// the rest" pattern documented in docs/go-port/shared/error-mapping.md
-// "Swallow patterns" item 1.
+// PreserveStatusOrSwallow is the "re-raise gRPC aborts, swallow the rest"
+// chokepoint documented in docs/go-port/shared/error-mapping.md "Swallow
+// patterns" item 1.
 //
 // Behavior:
 //
@@ -189,8 +188,7 @@ func Code(err error) codes.Code {
 //   - err is a naked Go error (no status, i.e. status.Code(err) ==
 //     codes.Unknown) -> write err.Error() into dst via dst.SetError, return
 //     nil. The handler then returns its zero/empty response with the gRPC
-//     status implicitly OK -- matching the Python ResponseProto(success=
-//     false, error=str(e)) shape.
+//     status implicitly OK (ResponseProto success=false, error=msg shape).
 //
 // dst MUST be the response proto being returned (it has SetError generated
 // by go-protobuf for any message with an `error` string field). If dst is

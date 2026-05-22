@@ -104,8 +104,7 @@ func TestGetTenant_UnknownTenantInBandFalse(t *testing.T) {
 
 // TestGetTenant_EmptyTenantIDInvalidArgument pins
 // test_grpc_contract.py:472-476: an empty tenant_id yields
-// INVALID_ARGUMENT. The Go port returns this cleanly via status.Error
-// (Python's argument-validation-vs-catch-all wart is fixed here; spec
+// INVALID_ARGUMENT returned cleanly via status.Error (spec
 // "Error contract").
 func TestGetTenant_EmptyTenantIDInvalidArgument(t *testing.T) {
 	t.Parallel()

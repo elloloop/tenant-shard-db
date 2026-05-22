@@ -30,8 +30,7 @@ import (
 // mutatingMethods is the allow-list of gRPC full method names that
 // trigger the freeze gate. Reads (Get*, List*, Search*, Query*,
 // Health, GetSchema, GetReceiptStatus, WaitForOffset, ExportUserData)
-// are intentionally absent — `_check_tenant_access(require_write=False)`
-// returns the role even for frozen users.
+// are intentionally absent — read access is permitted even for frozen users.
 //
 // Self-targeted admin RPCs (FreezeUser unfreeze, CancelUserDeletion,
 // DeleteUser) are also absent because they MUST remain callable
@@ -111,10 +110,8 @@ func (s *Server) checkFreezeGate(ctx context.Context, fullMethod string) error {
 		return errs.Internal(ctx, "freeze-gate: lookup user", err)
 	}
 	if user == nil {
-		// Unknown user — fail closed (Python does the same: an
-		// unknown user has no membership, so `_check_tenant_access`
-		// aborts PERMISSION_DENIED). The exact message differs from
-		// Python; keep it precise.
+		// Unknown user — fail closed. An unknown user has no
+		// membership; deny.
 		return status.Errorf(codes.PermissionDenied, "freeze-gate: user %q not found", trusted.ID())
 	}
 	if isFrozenStatus(user.Status) {

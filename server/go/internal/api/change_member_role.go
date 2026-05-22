@@ -4,24 +4,18 @@
 //
 // Port spec: docs/go-port/rpcs/ChangeMemberRole.md.
 //
-// Behaviour parity vs. the Python handler is preserved on the wire shape
-// (request/response, error code asymmetry between auth-failure and
-// missing-row), but two PLAN.md §6 drifts are folded in here:
+// Two PLAN.md §6 improvements are folded in here:
 //
 //  1. WAL-first global mutation. The handler appends a global
 //     `member_role_changed` op and waits for the applier to update the
 //     tenant_members row; it does not write globalstore directly.
 //
-//  2. Last-owner demotion protection. The Python handler (spec §"Open
-//     questions" item 2) lets the sole owner demote themselves and
-//     brick the tenant. The Go port adds an explicit check: if the
+//  2. Last-owner demotion protection. An explicit check: if the
 //     target user is the only "owner" row in tenant_members and
-//     new_role != "owner", reject with FAILED_PRECONDITION. This is
-//     the §6 drift the spec asked us to add on the Go side.
+//     new_role != "owner", reject with FAILED_PRECONDITION.
 //
 //  3. Region pin gap (spec §"Open questions" item 5). Not fixed here —
-//     parity preserved; the Go handler does NOT call s.checkTenant.
-//     Filed as a follow-up.
+//     the handler does NOT call s.checkTenant. Filed as a follow-up.
 
 package api
 
@@ -51,8 +45,7 @@ const grpcMethodChangeMemberRole = "ChangeMemberRole"
 //
 // Last-owner protection: if the target user is the sole "owner" of the
 // tenant and the new role is not "owner", the call is rejected with
-// codes.FailedPrecondition. This is a Go-side improvement over the
-// Python handler's silent self-brick.
+// codes.FailedPrecondition.
 func (s *Server) ChangeMemberRole(
 	ctx context.Context,
 	req *pb.ChangeMemberRoleRequest,
@@ -142,7 +135,7 @@ func (s *Server) ChangeMemberRole(
 	}
 
 	if !targetFound {
-		// Soft failure (matches Python: gRPC OK, response.success=false).
+		// Soft failure: gRPC OK, response.success=false.
 		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "ok", time.Since(start))
 		return &pb.ChangeMemberRoleResponse{Success: false, Error: "Member not found"}, nil
 	}

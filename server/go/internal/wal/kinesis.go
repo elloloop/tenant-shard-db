@@ -93,11 +93,11 @@ type KinesisConfig struct {
 	// or "LATEST".
 	IteratorType string
 	// MaxRecordsPerGet bounds a single GetRecords call. Kinesis caps
-	// this at 10000; Python default is 100.
+	// this at 10000; default is 100.
 	MaxRecordsPerGet int32
 }
 
-// DefaultKinesisConfig returns a config matching the Python defaults.
+// DefaultKinesisConfig returns a config with sensible defaults.
 func DefaultKinesisConfig(streamName, region string) KinesisConfig {
 	return KinesisConfig{
 		StreamName:       streamName,

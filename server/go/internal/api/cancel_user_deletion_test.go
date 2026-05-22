@@ -1,7 +1,5 @@
-// Tests for the CancelUserDeletion RPC. The four Python contract pins
-// in docs/go-port/rpcs/CancelUserDeletion.md ("Contract tests pinning
-// behavior") collapse to three behaviours in the Go port — happy
-// within-grace cancel, past-no-return silent no-op, and the
+// Tests for the CancelUserDeletion RPC. Three behaviours are covered:
+// happy within-grace cancel, past-no-return silent no-op, and the
 // trusted-actor escalation guard. Each test below covers one arm.
 //
 // The auth helper withTrustedUser is defined in update_user_test.go

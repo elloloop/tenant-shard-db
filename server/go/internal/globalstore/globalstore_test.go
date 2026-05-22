@@ -42,9 +42,9 @@ func newStore(t *testing.T, nowFn func() int64) *globalstore.GlobalStore {
 	return gs
 }
 
-// TestMaxOpenConns is the parity-critical assertion: the underlying
-// pool must be pinned to exactly one connection. Catches a regression
-// where someone bumps SetMaxOpenConns thinking SQLite "scales".
+// TestMaxOpenConns asserts the underlying pool is pinned to exactly one
+// connection. Catches a regression where someone bumps SetMaxOpenConns
+// thinking SQLite "scales".
 func TestMaxOpenConns(t *testing.T) {
 	gs := newStore(t, nil)
 	stats := gs.DB().Stats()
@@ -286,10 +286,9 @@ func TestTenantCRUD(t *testing.T) {
 	}
 }
 
-// TestTenantIdempotentCreate documents the Python contract: a duplicate
-// CreateTenant raises an integrity error which the gRPC layer
-// translates to ALREADY_EXISTS. We surface that directly via
-// errs.ErrAlreadyExists.
+// TestTenantIdempotentCreate documents the contract: a duplicate
+// CreateTenant raises an integrity error which the gRPC layer translates
+// to ALREADY_EXISTS, surfaced directly via errs.ErrAlreadyExists.
 func TestTenantIdempotentCreate(t *testing.T) {
 	gs := newStore(t, nil)
 	ctx := context.Background()
@@ -305,7 +304,7 @@ func TestTenantIdempotentCreate(t *testing.T) {
 // TestCreateTenantWithOwner_Atomic verifies the registry row + owner
 // membership row land in a single transaction: success leaves both, and
 // a duplicate tenant_id leaves the prior owner intact without mutating
-// state. Closes the Python-parity orphan-tenant hazard.
+// state. Closes the orphan-tenant hazard.
 func TestCreateTenantWithOwner_Atomic(t *testing.T) {
 	gs := newStore(t, nil)
 	ctx := context.Background()

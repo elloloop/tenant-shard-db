@@ -4,7 +4,7 @@
 // land in the per-tenant `notifications` table and a future FTS5-backed
 // implementation will land behind this same RPC.
 //
-// Spec: docs/go-port/rpcs/SearchMailbox.md (EPIC #407).
+// Spec: docs/go-port/rpcs/SearchMailbox.md.
 //
 // Error contract today (pinned by tests/python/integration/test_grpc_
 // contract.py:267-273):

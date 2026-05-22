@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 
-// W2 — ExecuteAtomic RPC (Python -> Go server port, EPIC #407).
+// ExecuteAtomic RPC.
 //
 // Spec: docs/go-port/rpcs/ExecuteAtomic.md. This is the central write
 // path for the entire system: every mutation enters via this handler,
@@ -15,8 +15,7 @@
 //	     for create_node.data / update_node.patch are translated to
 //	     id-keyed maps via payload.StructToPayload before WAL append.
 //
-// Key behaviours (pinned by the Python contract tests, see spec §
-// "Contract tests"):
+// Key behaviours (pinned by contract tests, see spec § "Contract tests"):
 //
 //   - The wire-claimed actor (req.context.actor) is UNTRUSTED. The
 //     handler resolves the trusted identity via auth.Authoritative and
@@ -145,8 +144,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	}
 
 	// Tenant-membership + role + status check. Best-effort: skipped when
-	// no globalstore is wired (single-node bring-up / no-auth tests),
-	// matching the Python `if self.global_store is not None` guard.
+	// no globalstore is wired (single-node bring-up / no-auth tests).
 	hasDelete := false
 	for _, op := range ops {
 		switch op["op"].(string) {
@@ -163,22 +161,21 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	// op order, and resolve in-transaction "$alias" references on edge
 	// from/to so the WAL event only ever carries concrete node ids.
 	//
-	// Why resolve at ingress (deviation from Python, which resolves at
-	// apply time): the WAL is the audit-of-record; a bare UUID is a
-	// stable, unambiguous identity, whereas "$alias" is meaningful only
-	// in the context of one in-flight transaction. Resolving here keeps
-	// the applier dispatch table free of map-shape branching for the
-	// alias_ref payload and prevents alias bugs from poisoning the
-	// consumer loop (the original symptom: "poison event: create_edge
-	// missing from/to" halted the applier for every subsequent RPC).
+	// Why resolve at ingress: the WAL is the audit-of-record; a bare
+	// UUID is a stable, unambiguous identity, whereas "$alias" is
+	// meaningful only in the context of one in-flight transaction.
+	// Resolving here keeps the applier dispatch table free of map-shape
+	// branching for the alias_ref payload and prevents alias bugs from
+	// poisoning the consumer loop (the original symptom: "poison event:
+	// create_edge missing from/to" halted the applier for every
+	// subsequent RPC).
 	//
 	// Ordering: we walk ops in declared order. Each create_node with an
 	// "as" field publishes its (server-filled) id into the alias map;
 	// subsequent edge ops referencing that alias resolve against the
 	// map. A reference to an alias that has not been previously defined
-	// in the SAME transaction is an INVALID_ARGUMENT — matches the
-	// Python applier's lookup miss (which would surface as a poison
-	// event today). Aliases never span transactions.
+	// in the SAME transaction is an INVALID_ARGUMENT. Aliases never
+	// span transactions.
 	createdNodeIDs := make([]string, 0)
 	aliasMap := make(map[string]string)
 	for _, op := range ops {
@@ -641,7 +638,7 @@ func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondit
 
 // translatePayload runs name->id translation for a create_node.data /
 // update_node.patch struct. The schema-less / unknown-type-id path is a
-// digit-key passthrough (matches Python's lazy schema fallthrough).
+// digit-key passthrough.
 //
 // The result is stored under the op's "data"/"patch" key as
 // map[string]any with stringified field-id keys — that's the shape the
@@ -665,7 +662,7 @@ func (s *Server) translatePayload(typeID int32, st *structpb.Struct) (map[string
 }
 
 // convertACL maps the wire AclEntry slice to the internal list-of-dicts
-// the applier expects. Mirrors _acl_proto_to_list in the Python handler.
+// the applier expects.
 func convertACL(in []*pb.AclEntry) []any {
 	if len(in) == 0 {
 		return nil
@@ -711,8 +708,8 @@ func resolveEdgeRef(raw any, aliasMap map[string]string) (string, error) {
 			return "", fmt.Errorf("missing node reference")
 		}
 		if strings.HasPrefix(v, "$") {
-			// Bare "$alias" string is the Python on-the-wire
-			// short-form some SDKs emit when bypassing NodeRef.
+			// Bare "$alias" string is a short-form some SDKs emit
+			// when bypassing NodeRef.
 			// Treat it identically to {"ref":"$alias"}.
 			return resolveAlias(v, aliasMap)
 		}
@@ -840,9 +837,8 @@ func (s *Server) checkTenantWriteAccess(ctx context.Context, tenantID string, ac
 	}
 
 	if !actor.IsUser() {
-		// Group / unknown actor kinds aren't valid callers — the Python
-		// gate rejects these at the auth layer; here we treat them as
-		// non-members for defensive parity.
+		// Group / unknown actor kinds aren't valid callers — treat them as
+		// non-members.
 		return errs.Errorf(codes.PermissionDenied,
 			"actor %q is not a member of tenant %q", actor.String(), tenantID)
 	}

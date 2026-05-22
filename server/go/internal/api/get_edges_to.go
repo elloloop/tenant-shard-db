@@ -2,7 +2,7 @@
 // Spec: docs/go-port/rpcs/GetEdgesTo.md.
 //
 // Wire contract: proto/entdb/v1/entdb.proto:67 (rpc), :476-491 (request /
-// response), :493-507 (Edge). Reference Python handler:
+// response), :493-507 (Edge).
 //
 // Symmetric inverse of GetEdgesFrom: returns edges whose `to_node_id`
 // matches the requested node, scoped to a single tenant. Cross-tenant
@@ -11,7 +11,7 @@
 // in another tenant cannot leak through the
 // `WHERE tenant_id = ? AND to_node_id = ?` filter.
 //
-// Semantics (preserved from the Python handler):
+// Semantics:
 //
 //   - Read-only. No WAL append, no SQLite mutation, no global_store write.
 //   - Tenant gate runs first via s.checkTenant; UNAVAILABLE /

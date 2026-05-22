@@ -71,8 +71,7 @@ type eventHubEvent struct {
 	EnqueuedMs     int64
 }
 
-// EventHubsConfig captures the Event Hubs-specific knobs (parity with
-// the Python EventHubsConfig).
+// EventHubsConfig captures the Event Hubs-specific knobs.
 type EventHubsConfig struct {
 	// ConnectionString is the Event Hubs namespace connection string.
 	ConnectionString string
@@ -80,13 +79,13 @@ type EventHubsConfig struct {
 	EventHubName string
 	// ConsumerGroup is the Event Hubs consumer group (default "$Default").
 	ConsumerGroup string
-	// MaxBatchSize bounds a single receive. Python default 100.
+	// MaxBatchSize bounds a single receive (default 100).
 	MaxBatchSize int
-	// MaxWaitTime bounds a single receive call. Python default 5s.
+	// MaxWaitTime bounds a single receive call (default 5s).
 	MaxWaitTime time.Duration
 }
 
-// DefaultEventHubsConfig returns a config matching the Python defaults.
+// DefaultEventHubsConfig returns a config with sensible defaults.
 func DefaultEventHubsConfig(connStr, hubName, consumerGroup string) EventHubsConfig {
 	if strings.TrimSpace(consumerGroup) == "" {
 		consumerGroup = azeventhubs.DefaultConsumerGroup

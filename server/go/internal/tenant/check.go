@@ -118,8 +118,7 @@ func CheckTenant(ctx context.Context, tenantID string, gs *globalstore.GlobalSto
 
 	// 2. Tenant existence + region pinning. Both require globalstore.
 	//    Missing globalstore => skip both checks (single-node bring-up
-	//    path); same as the Python `if self.global_store is not None`
-	//    guard.
+	//    path).
 	if gs == nil {
 		return nil
 	}

@@ -9,8 +9,7 @@
 //     tenant returns ListMailboxUsersResponse{user_ids: []}.
 //   - The handler MUST NOT touch the WAL, canonical SQLite, schema, ACL,
 //     audit, quota, or crypto — it is read-only and identity-independent.
-//   - An unknown tenant MUST surface NOT_FOUND via tenant.CheckTenant
-//     (mirrors the Python _check_tenant gate).
+//   - An unknown tenant MUST surface NOT_FOUND via tenant.CheckTenant.
 
 package api
 
@@ -21,9 +20,9 @@ import (
 )
 
 // ListMailboxUsers implements entdb.v1.EntDBService/ListMailboxUsers as
-// a deprecated stub: tenant gate, then an empty response. Resurrecting
-// a real implementation is intentionally out of scope for EPIC #407 —
-// see the open-questions section of the port spec.
+// a deprecated stub: tenant gate, then an empty response. See the
+// open-questions section of the port spec for resurrecting a real
+// implementation.
 func (s *Server) ListMailboxUsers(
 	ctx context.Context,
 	req *pb.ListMailboxUsersRequest,
@@ -31,8 +30,7 @@ func (s *Server) ListMailboxUsers(
 	if err := s.checkTenant(ctx, req.GetTenantId()); err != nil {
 		return nil, err
 	}
-	// UserIds is explicitly a zero-length, non-nil slice to mirror the
-	// Python `ListMailboxUsersResponse(user_ids=[])` pinned by
+	// UserIds is explicitly a zero-length, non-nil slice pinned by
 	// test_grpc_contract.py:286.
 	return &pb.ListMailboxUsersResponse{UserIds: []string{}}, nil
 }

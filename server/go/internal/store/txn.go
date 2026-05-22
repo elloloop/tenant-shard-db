@@ -12,7 +12,7 @@ import (
 //
 // We deliberately use *sql.Conn (not *sql.Tx) because database/sql's
 // BeginTx issues a plain "BEGIN" / "BEGIN DEFERRED" depending on driver
-// and we need the explicit IMMEDIATE lock-mode for parity with Python.
+// and we need the explicit IMMEDIATE lock-mode.
 //
 // Callers MUST call either Commit or Rollback exactly once. The
 // per-tenant write mutex is held for the lifetime of the BatchTxn so

@@ -71,8 +71,7 @@ type pubsubMessage struct {
 	PublishTimeMs int64
 }
 
-// PubSubConfig captures the Pub/Sub-specific knobs (parity with the
-// Python PubSubConfig).
+// PubSubConfig captures the Pub/Sub-specific knobs.
 type PubSubConfig struct {
 	// ProjectID is the GCP project.
 	ProjectID string
@@ -86,11 +85,11 @@ type PubSubConfig struct {
 	Endpoint string
 	// OrderingEnabled turns on ordering-key delivery (per-tenant order).
 	OrderingEnabled bool
-	// MaxMessages bounds a single Pull. Python default 100.
+	// MaxMessages bounds a single Pull (default 100).
 	MaxMessages int32
 }
 
-// DefaultPubSubConfig returns a config matching the Python defaults.
+// DefaultPubSubConfig returns a config with sensible defaults.
 func DefaultPubSubConfig(projectID, topicID, subscriptionID string) PubSubConfig {
 	return PubSubConfig{
 		ProjectID:       projectID,

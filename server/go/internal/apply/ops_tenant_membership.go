@@ -10,11 +10,10 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 )
 
-// Tenant-membership ops. The Python server writes these directly to
-// globalstore today (carve-out from CLAUDE.md invariant #1 documented
-// in docs/go-port/shared/global-store.md). The Go applier optionally
-// drives globalstore through the WAL too, so a stand-alone WAL replay
-// can rebuild membership audit history.
+// Tenant-membership ops. The applier optionally drives globalstore
+// through the WAL so a stand-alone WAL replay can rebuild membership
+// audit history (carve-out from CLAUDE.md invariant #1 documented in
+// docs/go-port/shared/global-store.md).
 //
 // All three branches are no-ops when a.global is nil (globalstore not
 // wired in this configuration).

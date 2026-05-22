@@ -8,9 +8,8 @@
 // The single source of truth for type metadata is the proto
 // descriptor surface (CLAUDE.md invariant #5); JSON is the bootstrap
 // channel used when the Go server does not import the proto module
-// directly. The Python SDK's SchemaRegistry serialises to the same
-// JSON shape and Fingerprint() is byte-stable across implementations
-// for the same registry contents.
+// directly. Fingerprint() is byte-stable for the same registry
+// contents across all implementations.
 package schema
 
 import (
@@ -49,8 +48,8 @@ func (k FieldKind) Valid() bool {
 	return false
 }
 
-// AclPermission mirrors schema/types.py AclPermission. Stored on
-// AclEntry; ACL evaluation lives in the acl package, not here.
+// AclPermission is the permission type for AclEntry. ACL evaluation
+// lives in the acl package, not here.
 type AclPermission string
 
 const (
@@ -60,8 +59,8 @@ const (
 	PermissionAdmin  AclPermission = "admin"
 )
 
-// OnSubjectExit mirrors schema/types.py OnSubjectExit. Drives GDPR
-// edge-cleanup behaviour when a data subject is deleted/anonymized.
+// OnSubjectExit drives GDPR edge-cleanup behaviour when a data subject
+// is deleted/anonymized.
 type OnSubjectExit string
 
 const (
@@ -70,8 +69,8 @@ const (
 	OnSubjectExitBoth OnSubjectExit = "both"
 )
 
-// DataPolicy mirrors entdb_server/data_policy.py DataPolicy. Wire
-// values match the Python enum so the JSON contract round-trips.
+// DataPolicy is the data-classification tier for a node or edge type.
+// Wire values are stable and round-trip through the JSON contract.
 type DataPolicy string
 
 const (
@@ -89,9 +88,8 @@ type AclEntry struct {
 	Permission AclPermission `json:"permission"`
 }
 
-// FieldDef is the Go counterpart of schema/types.py FieldDef. Field
-// names match the Python JSON keys (snake_case) so a Python-emitted
-// schema file boots a Go server unchanged.
+// FieldDef describes a single field on a node or edge type. JSON field
+// names use snake_case as defined by the schema JSON contract.
 //
 // Invariants enforced by Validate:
 //   - FieldID in [1, 65535]
@@ -116,7 +114,7 @@ type FieldDef struct {
 
 // Validate checks the field invariants. Returns an error rather than
 // panicking so loader callers can collect every violation in a single
-// pass (mirrors Python __post_init__ but composable with the loader).
+// pass.
 func (f *FieldDef) Validate() error {
 	if f.FieldID == 0 {
 		return fmt.Errorf("field_id must be positive, got %d", f.FieldID)
@@ -139,15 +137,14 @@ func (f *FieldDef) Validate() error {
 	return nil
 }
 
-// CompositeUniqueDef is the Go counterpart of schema/types.py
-// CompositeUniqueDef. Wire field names match the Python JSON keys so
-// the contract round-trips.
+// CompositeUniqueDef declares a named multi-field unique constraint.
+// Wire field names are stable and round-trip through the JSON contract.
 type CompositeUniqueDef struct {
 	Name     string   `json:"name"`
 	FieldIDs []uint32 `json:"field_ids"`
 }
 
-// Validate enforces the same three invariants as Python __post_init__.
+// Validate enforces the CompositeUniqueDef invariants.
 func (c *CompositeUniqueDef) Validate() error {
 	if c.Name == "" {
 		return errors.New("CompositeUniqueDef name cannot be empty")
@@ -171,12 +168,12 @@ func (c *CompositeUniqueDef) Validate() error {
 	return nil
 }
 
-// NodeTypeDef is the Go counterpart of schema/types.py NodeTypeDef.
+// NodeTypeDef describes a node type in the schema registry.
 type NodeTypeDef struct {
 	TypeID int32  `json:"type_id"`
 	Name   string `json:"name"`
-	// Fields is always emitted (even when empty) to match Python
-	// NodeTypeDef.to_dict, which always includes the "fields" key.
+	// Fields is always emitted (even when empty) — the JSON contract
+	// always includes the "fields" key.
 	Fields          []FieldDef           `json:"fields"`
 	Deprecated      bool                 `json:"deprecated,omitempty"`
 	Description     string               `json:"description,omitempty"`
@@ -187,10 +184,10 @@ type NodeTypeDef struct {
 	CompositeUnique []CompositeUniqueDef `json:"composite_unique,omitempty"`
 }
 
-// Validate checks the same invariants as Python __post_init__:
-// positive type_id, non-empty name, no duplicate field_ids/names, and
-// composite_unique constraints reference known fields with unique
-// names and unique field-id signatures.
+// Validate checks NodeTypeDef invariants: positive type_id, non-empty
+// name, no duplicate field_ids/names, and composite_unique constraints
+// reference known fields with unique names and unique field-id
+// signatures.
 func (n *NodeTypeDef) Validate() error {
 	if n.TypeID <= 0 {
 		return fmt.Errorf("type_id must be positive, got %d", n.TypeID)
@@ -273,9 +270,8 @@ func (n *NodeTypeDef) GetFieldByID(id uint32) *FieldDef {
 	return nil
 }
 
-// EdgeTypeDef is the Go counterpart of schema/types.py EdgeTypeDef.
-// JSON keys match Python's to_dict (which serialises from_type_id /
-// to_type_id, not the NodeTypeDef pointer).
+// EdgeTypeDef describes an edge type in the schema registry. JSON keys
+// use from_type_id / to_type_id (integer IDs, not NodeTypeDef pointers).
 type EdgeTypeDef struct {
 	EdgeID        int32       `json:"edge_id"`
 	Name          string      `json:"name"`
@@ -286,13 +282,13 @@ type EdgeTypeDef struct {
 	Deprecated    bool        `json:"deprecated,omitempty"`
 	Description   string      `json:"description,omitempty"`
 	DataPolicy    *DataPolicy `json:"data_policy,omitempty"`
-	// OnSubjectExit is always emitted (defaults to "both"); mirrors
-	// Python EdgeTypeDef.to_dict which writes the key unconditionally.
+	// OnSubjectExit is always emitted (defaults to "both"); the JSON
+	// contract writes this key unconditionally.
 	OnSubjectExit OnSubjectExit `json:"on_subject_exit"`
 }
 
-// Validate checks the same invariants as Python __post_init__:
-// positive edge_id, non-empty name, no duplicate prop field_ids.
+// Validate checks EdgeTypeDef invariants: positive edge_id, non-empty
+// name, no duplicate prop field_ids.
 func (e *EdgeTypeDef) Validate() error {
 	if e.EdgeID <= 0 {
 		return fmt.Errorf("edge_id must be positive, got %d", e.EdgeID)
@@ -312,8 +308,8 @@ func (e *EdgeTypeDef) Validate() error {
 		propIDs[p.FieldID] = struct{}{}
 	}
 	if e.OnSubjectExit == "" {
-		// Python defaults to BOTH; preserve that on parse but do not
-		// rewrite the source field — the loader normalises.
+		// Defaults to BOTH; do not rewrite the source field —
+		// the loader normalises.
 	}
 	return nil
 }

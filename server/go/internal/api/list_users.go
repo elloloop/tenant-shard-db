@@ -86,10 +86,9 @@ func (s *Server) ListUsers(
 
 	rows, err := s.global.ListUsers(ctx, statusFilter, limit, offset)
 	if err != nil {
-		// Mirror Python's outer `except Exception` swallow: log via the
-		// metrics label, return an empty list with codes.OK. Tracked as
-		// a parity wart for follow-up — this hides DB outages from
-		// callers and breaks pagination clients silently.
+		// Swallow: log via the metrics label, return an empty list with
+		// codes.OK. Tracked as a parity wart for follow-up — this hides
+		// DB outages from callers and breaks pagination clients silently.
 		statusLabel = "error"
 		return &pb.ListUsersResponse{Users: []*pb.UserInfo{}}, nil
 	}

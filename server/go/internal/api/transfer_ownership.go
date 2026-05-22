@@ -6,19 +6,13 @@
 //
 // # WAL-first restoration (CLAUDE.md §1)
 //
-// The Python handler bypasses the WAL and writes nodes.owner_actor
-// directly via canonical_store._sync_transfer_ownership — a long-
-// standing violation of "every mutation goes through the WAL"
-// (CLAUDE.md invariant #1, called out in PLAN.md §6.1).
-//
-// The Go port restores the invariant: the handler appends a
-// `transfer_ownership` op to the per-tenant WAL via the shared
-// wal.Producer, then synchronously materialises the change in the
-// per-tenant SQLite via store.TransferOwnership. The applier already
-// dispatches the same op on replay (see internal/apply/ops_transfer_ownership.go),
-// so a future rebuild from the WAL will reproduce the transfer
-// exactly. Idempotency-key based de-dupe in the applier keeps the
-// in-flight + replay paths from double-applying.
+// The handler appends a `transfer_ownership` op to the per-tenant WAL
+// via the shared wal.Producer, then synchronously materialises the
+// change in the per-tenant SQLite via store.TransferOwnership. The
+// applier dispatches the same op on replay (see
+// internal/apply/ops_transfer_ownership.go), so a WAL rebuild
+// reproduces the transfer exactly. Idempotency-key based de-dupe in
+// the applier keeps the in-flight + replay paths from double-applying.
 //
 // # Auth model — trusted-actor, current-owner-only
 //
@@ -34,8 +28,7 @@
 //  4. Owner-only authorization: the trusted actor MUST equal the
 //     node's current owner_actor. Non-owner callers — even those who
 //     hold an ADMIN ACL grant on the node — are rejected with
-//     PERMISSION_DENIED. This is a Go-side hardening over the Python
-//     handler, which performs no authorization beyond _check_tenant.
+//     PERMISSION_DENIED.
 //
 // # Side effects
 //
@@ -59,16 +52,9 @@
 //	PERMISSION_DENIED trusted actor is not the current owner.
 //	OK + found=true transfer applied.
 //
-// Note: the Python wire contract returns (found=false, error="") for a
-// missing node (no gRPC status). The Go port hardens this to NOT_FOUND
-// because:
-//   - It is consistent with the rest of the surface (every
-//     "row missing" path uses codes.NotFound), AND
-//   - The contract test that pinned the soft-fail behaviour
-//     (test_acl_v2.py:534-536) is being retired alongside the Python
-//     server in EPIC #407. Existing Python tests targeting
-//     TransferOwnership are pinned via the parity harness, not via this
-//     wire shape.
+// Note: this handler returns NOT_FOUND for a missing node (no gRPC
+// status soft-fail), consistent with every other "row missing" path on
+// the surface which uses codes.NotFound.
 //
 // Metrics: emits entdb_grpc_requests_total{method="TransferOwnership",
 // status="ok"|"error"} via the shared chokepoint.
@@ -93,10 +79,9 @@ import (
 
 const grpcMethodTransferOwnership = "TransferOwnership"
 
-// transferOwnershipTopic is the WAL topic the handler appends to. Mirrors
-// the per-tenant Kafka topic naming in the Python wal/kafka.py module —
-// each tenant key partitions onto its own slot so total order is
-// preserved per-tenant. The applier consumes from the same topic name.
+// transferOwnershipTopic is the WAL topic the handler appends to. Each
+// tenant key partitions onto its own slot so total order is preserved
+// per-tenant. The applier consumes from the same topic name.
 const transferOwnershipTopic = "entdb-wal"
 
 // TransferOwnership reassigns nodes.owner_actor and refreshes node_visibility.
@@ -111,8 +96,7 @@ func (s *Server) TransferOwnership(
 		metrics.RecordGRPCRequest(grpcMethodTransferOwnership, statusLabel, time.Since(start))
 	}()
 
-	// 1. Validation. Mirror the Python required-arg checks plus the
-	//    Go-side hardening called out in spec §"Wire contract".
+	// 1. Validation. Required-arg checks per spec §"Wire contract".
 	if req.GetContext() == nil || req.GetContext().GetTenantId() == "" {
 		statusLabel = "error"
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
@@ -167,10 +151,10 @@ func (s *Server) TransferOwnership(
 	// 5. Current-owner-only authorization. The trusted actor's full
 	//    "kind:id" form must match the stored owner_actor verbatim.
 	//    system: callers are NOT bypassed here — TransferOwnership is a
-	//    user-initiated handoff, not an admin override (the Python
-	//    bulk-reassign handler `TransferUserContent` covers the admin
-	//    path). Group ownership is technically representable on disk
-	//    but a group cannot be a caller, so it cannot pass this gate.
+	//    user-initiated handoff, not an admin override (TransferUserContent
+	//    covers the admin path). Group ownership is technically
+	//    representable on disk but a group cannot be a caller, so it
+	//    cannot pass this gate.
 	if trusted.IsZero() || trusted.String() != current.OwnerActor {
 		statusLabel = "error"
 		return nil, errs.Errorf(codes.PermissionDenied,
@@ -229,8 +213,8 @@ func (s *Server) TransferOwnership(
 }
 
 // isValidActorString reports whether s is a kind:id-prefixed actor string
-// the spec accepts for `new_owner`. Mirrors auth.ParseActor's prefix
-// table (user:/group:/system:/admin:) and rejects KindUnknown so a bare
+// the spec accepts for `new_owner`. Uses auth.ParseActor's prefix table
+// (user:/group:/system:/admin:) and rejects KindUnknown so a bare
 // "alice" or a tenant-qualified "tenant_a:user:alice" is refused with
 // INVALID_ARGUMENT.
 //

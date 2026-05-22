@@ -8,8 +8,7 @@ import (
 )
 
 // applyRevokeAccess dispatches a "revoke_access" op. Restores the WAL-
-// first invariant flagged in PLAN.md §6.1 — the Python RevokeAccess
-// handler deletes node_access directly today.
+// first invariant flagged in PLAN.md §6.1.
 //
 // op shape:
 //

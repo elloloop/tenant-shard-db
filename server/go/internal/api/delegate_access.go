@@ -8,17 +8,10 @@
 //
 // # Closes the silent-drop bug
 //
-// The Python handler appended an `admin_delegate_access` event to the WAL
-// but the applier had NO dispatch branch for it — events were silently
-// dropped on replay. The Python handler also direct-wrote via
-// canonical_store, bypassing the WAL (CLAUDE.md invariant #1 violation).
-//
-// W1.10 closed the applier-side gap on Go (apply/ops_delegate_access.go).
 // This handler closes the gRPC-side gap by emitting a per-node
 // `delegate_access` op for every node owned by `from_user`, so the
-// applier can materialise each grant. With W1.10 + W2.DelegateAccess in
-// place, an admin's bulk delegation survives a WAL replay — which is
-// the contract Python silently breaks.
+// applier (apply/ops_delegate_access.go) can materialise each grant.
+// An admin's bulk delegation now survives a WAL replay.
 //
 // # Behavioural pins
 //
@@ -33,7 +26,7 @@
 //     are persisted but filtered at read time by the visibility joins.
 //   - WAL-first (CLAUDE.md invariant #1): we emit one
 //     `delegate_access` op per node owned by from_user inside a single
-//     TransactionEvent. The applier (W1.10) materialises each into a
+//     TransactionEvent. The applier materialises each into a
 //     node_access row keyed (node_id, actor_id) with granted_by =
 //     trusted-actor.
 //   - `delegated` echo: the count of nodes the owner held at handler-call
@@ -214,7 +207,7 @@ func (s *Server) DelegateAccess(
 
 // listNodesByOwner returns every node_id whose owner_actor matches
 // fromUser inside tenantID. The silent-drop bug meant this SELECT was
-// not run on replay; W1.10 closed that gap.
+// not run on replay; the applier fix closed that gap.
 //
 // We open the tenant DB lazily so a fresh tenant with no nodes still
 // returns an empty slice rather than a "tenant not open" error.

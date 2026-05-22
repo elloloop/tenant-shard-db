@@ -15,9 +15,8 @@ import (
 )
 
 // AddTenantMember inserts a (tenant_id, user_id, role) row. Empty role
-// defaults to "member" (matches Python). Returns ErrAlreadyExists if
-// the membership already exists — Python lets the IntegrityError
-// bubble; the Go boundary code wants a typed error.
+// defaults to "member". Returns ErrAlreadyExists if the membership
+// already exists.
 func (g *GlobalStore) AddTenantMember(ctx context.Context, tenantID, userID, role string) error {
 	if role == "" {
 		role = "member"

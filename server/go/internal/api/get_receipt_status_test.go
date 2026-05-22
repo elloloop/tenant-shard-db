@@ -1,6 +1,6 @@
-// Tests for the GetReceiptStatus RPC (W2.03 — EPIC #407).
+// Tests for the GetReceiptStatus RPC.
 //
-// Pinning these three cases mirrors the Python contract tests at
+// Pinning these three cases covers the contract tests at
 // tests/python/integration/test_grpc_contract.py:313-326 (APPLIED for
 // a recorded key, PENDING for an unknown key) and the spec error
 // contract at docs/go-port/rpcs/GetReceiptStatus.md (any store fault
@@ -71,8 +71,8 @@ func TestGetReceiptStatus_AppliedKeyReturnsApplied(t *testing.T) {
 }
 
 // Case 2: receipt for a key never recorded returns PENDING + empty
-// error. Pinned by spec "Error contract" row 5 and the Python contract
-// test's "never-issued" assertion (test_grpc_contract.py:325-326).
+// error. Pinned by spec "Error contract" row 5 and the contract test's
+// "never-issued" assertion (test_grpc_contract.py:325-326).
 func TestGetReceiptStatus_UnknownKeyReturnsPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -99,8 +99,8 @@ func TestGetReceiptStatus_UnknownKeyReturnsPending(t *testing.T) {
 // Case 3: a store-internal error (here: the tenant DB has never been
 // opened, so the read-side pool lookup returns ErrTenantNotOpen) must
 // surface as status=UNKNOWN + error=<msg> with NO gRPC error. This is
-// the Python `except Exception` -> UNKNOWN collapse documented in the
-// spec "Error contract" row 4.
+// the exception-to-UNKNOWN collapse documented in the spec "Error
+// contract" row 4.
 func TestGetReceiptStatus_StoreErrorReturnsUnknownNotGRPC(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -118,11 +118,11 @@ func TestGetReceiptStatus_StoreErrorReturnsUnknownNotGRPC(t *testing.T) {
 		t.Fatalf("status: got %v, want UNKNOWN", resp.GetStatus())
 	}
 	if resp.GetError() == "" {
-		t.Fatalf("error: got empty, want non-empty (Python populates `error` on UNKNOWN)")
+		t.Fatalf("error: got empty, want non-empty")
 	}
 	// Sanity-check that the error message refers to the underlying
-	// fault rather than being a generic placeholder. We don't pin the
-	// exact string — the Python contract is just "non-empty".
+	// fault rather than being a generic placeholder. The contract only
+	// requires "non-empty".
 	if !strings.Contains(resp.GetError(), tenantID) && !strings.Contains(resp.GetError(), "tenant") {
 		t.Logf("error message: %q (no tenant context; allowed but worth noting)", resp.GetError())
 	}

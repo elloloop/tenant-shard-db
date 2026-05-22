@@ -65,12 +65,12 @@ func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthRes
 		components["wal"] = probeWAL(s.producer)
 	}
 
-	// Storage probe. Python never actually opens an SQLite cursor and
-	// returns "healthy" unconditionally; we preserve that contract but
-	// still report "unknown" when no store handle is wired so a
-	// misconfigured server doesn't silently report healthy. The nil
-	// check is on the concrete *store.CanonicalStore pointer to avoid
-	// the typed-nil-in-interface trap.
+	// Storage probe. The contract is "healthy" when a store handle is
+	// wired (no live SQLite cursor check is performed); still report
+	// "unknown" when no store handle is wired so a misconfigured server
+	// doesn't silently report healthy. The nil check is on the concrete
+	// *store.CanonicalStore pointer to avoid the typed-nil-in-interface
+	// trap.
 	if s.store == nil {
 		components["storage"] = "unknown"
 	} else {
@@ -97,7 +97,6 @@ func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthRes
 // in the Health handler so this helper can stay simple).
 // Contract:
 //   - producer w/o IsConnected() (e.g. in-memory) -> "healthy"
-//     (matches Python hasattr() fall-through)
 //   - IsConnected() panics -> "unknown"
 //   - IsConnected() == true -> "healthy"
 //   - IsConnected() == false -> "unhealthy"

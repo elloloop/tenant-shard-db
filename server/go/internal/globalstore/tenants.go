@@ -15,13 +15,11 @@ import (
 )
 
 // DefaultRegion is the region pin assigned when CreateTenant is called
-// with an empty Region. Matches the Python signature
-// `create_tenant(... region: str = "us-east-1")`.
+// with an empty Region.
 const DefaultRegion = "us-east-1"
 
 // CreateTenant inserts a new tenant_registry row. Returns
-// ErrAlreadyExists on duplicate tenant_id (matches Python's
-// IntegrityError → ALREADY_EXISTS at the gRPC boundary).
+// ErrAlreadyExists on duplicate tenant_id.
 //
 // Empty `region` is filled with DefaultRegion.
 func (g *GlobalStore) CreateTenant(ctx context.Context, tenantID, name, region string) (*Tenant, error) {
@@ -52,9 +50,9 @@ func (g *GlobalStore) CreateTenant(ctx context.Context, tenantID, name, region s
 
 // CreateTenantWithOwner atomically inserts the tenant_registry row and
 // the creator's tenant_members owner row in a single SQLite transaction.
-// Either both land or neither does — the orphan-tenant hazard that the
-// Python parity port carried (registry row written without an owner if
-// the process crashed between the two INSERTs) is closed here.
+// Either both land or neither does — the orphan-tenant hazard
+// (registry row written without an owner if the process crashed between
+// the two INSERTs) is closed here.
 //
 // Returns ErrAlreadyExists on duplicate tenant_id; the membership insert
 // is not attempted in that case. Empty `region` is filled with
@@ -118,8 +116,7 @@ func (g *GlobalStore) GetTenant(ctx context.Context, tenantID string) (*Tenant, 
 }
 
 // ListTenants returns all tenants with the given status, ordered by
-// created_at. No pagination — matches the Python signature
-// `list_tenants(status='active') -> list[dict]`.
+// created_at. No pagination.
 func (g *GlobalStore) ListTenants(ctx context.Context, status string) ([]*Tenant, error) {
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT tenant_id, name, status, created_at, region
