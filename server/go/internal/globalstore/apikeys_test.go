@@ -95,10 +95,10 @@ func TestAPIKeyListActiveFiltersRevokedAndExpired(t *testing.T) {
 			t.Fatalf("PutAPIKey %s: %v", id, err)
 		}
 	}
-	mustPut("ek_live", 0)               // never expires
-	mustPut("ek_future", clock+10_000)  // not yet expired
-	mustPut("ek_expired", clock-1)      // already expired
-	mustPut("ek_revoked", 0)            // will be revoked below
+	mustPut("ek_live", 0)              // never expires
+	mustPut("ek_future", clock+10_000) // not yet expired
+	mustPut("ek_expired", clock-1)     // already expired
+	mustPut("ek_revoked", 0)           // will be revoked below
 
 	flipped, err := gs.RevokeAPIKey(ctx, "ek_revoked")
 	if err != nil {

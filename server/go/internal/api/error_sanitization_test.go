@@ -75,11 +75,11 @@ func captureSlog(t *testing.T) *syncBuffer {
 // leakSubstrings are fragments of the underlying driver/store error that
 // MUST NOT appear in any client-visible message.
 var leakSubstrings = []string{
-	"sql:",          // database/sql sentinel text
+	"sql:", // database/sql sentinel text
 	"database is closed",
-	"sqlite",        // driver name / table-name fingerprinting
-	"globalstore:",  // internal package context
-	"get user",      // internal op label (logged, never sent)
+	"sqlite",       // driver name / table-name fingerprinting
+	"globalstore:", // internal package context
+	"get user",     // internal op label (logged, never sent)
 }
 
 // TestCreateUser_InternalErrorIsSanitized is the SEC-5 regression pin.
