@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
@@ -194,6 +195,54 @@ func TestStructToPayload_TimestampOutOfRange(t *testing.T) {
 	_, err := StructToPayload(reg, "User", s)
 	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
 		t.Fatalf("expected INVALID_ARGUMENT for out-of-range timestamp, got %v", err)
+	}
+}
+
+// TestPayload_Int64Spectrum_BugC characterizes the int64 data-integrity
+// landmine (Bug C). A typed INTEGER payload value MUST survive the wire
+// round-trip (PayloadToStruct -> StructToPayload) exactly, across the
+// full int64 range. Today the wire carrier is google.protobuf.Struct,
+// whose numbers are IEEE-754 doubles, so:
+//
+//   - 2^53+1 silently rounds to 2^53 and slips PAST the safe-range guard
+//     (translate.go:347 only rejects > 2^53), so it is stored corrupted;
+//   - larger magnitudes (10^16+1, 2^62+1, MaxInt64) are rejected outright
+//     by the guard, i.e. a value the client legitimately wrote cannot be
+//     stored at all.
+//
+// Either way the value read back is not the value written. The fix (a
+// typed field_id->Value wire carrier that holds a real int64; ADR
+// pending) must make every case round-trip exactly and drop the guard.
+//
+// LANDED RED on purpose (Bug C characterization). Skipped so CI stays
+// green; remove the t.Skip when the typed-value carrier lands.
+func TestPayload_Int64Spectrum_BugC(t *testing.T) {
+	t.Skip("Bug C: int64 payload corruption via google.protobuf.Struct (double-backed); un-skip when the typed field_id->Value wire carrier lands — ADR pending")
+	reg := fixtureRegistry(t)
+	// field_id 3 == "age", schema.KindInteger.
+	cases := []int64{
+		(1 << 53) + 1,          // 9007199254740993 — first unsafe odd int
+		10_000_000_000_000_001, // 10^16 + 1
+		(1 << 62) + 1,          // large but well within int64
+		math.MaxInt64 - 1,      // sentinel-adjacent
+		math.MaxInt64,          // MaxInt64 sentinel
+		-(1 << 53) - 1,         // negative side of the boundary
+	}
+	for _, want := range cases {
+		s, err := PayloadToStruct(reg, "User", map[uint32]any{3: want})
+		if err != nil {
+			t.Errorf("PayloadToStruct(age=%d): %v", want, err)
+			continue
+		}
+		got, err := StructToPayload(reg, "User", s)
+		if err != nil {
+			t.Errorf("StructToPayload(age=%d): %v — a legitimate int64 was rejected, not stored", want, err)
+			continue
+		}
+		if got[3] != any(want) {
+			t.Errorf("age round-trip: wrote %d, read back %v (%T) — int64 corrupted via Struct (Bug C)",
+				want, got[3], got[3])
+		}
 	}
 }
 
