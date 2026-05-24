@@ -583,9 +583,14 @@ message QueryNodesRequest {
     reserved 3;
     reserved "filter_json";
 
-    // Pagination
+    // Pagination.
+    //
+    // `limit`/`offset` are the legacy LIMIT/OFFSET shape. `offset` is
+    // DEPRECATED (ADR-029): it is O(n) to skip and skips/duplicates rows
+    // under concurrent writes. New code uses keyset cursor pagination via
+    // `page_size` + `page_token` below.
     int32 limit = 4;
-    int32 offset = 5;
+    int32 offset = 5 [deprecated = true];
 
     // Sort order
     string order_by = 6;
@@ -597,12 +602,32 @@ message QueryNodesRequest {
     // Wait for this stream position to be applied before reading
     string after_offset = 10;
     int32 wait_timeout_ms = 11;
+
+    // Keyset cursor pagination (ADR-029, AIP-158).
+    //
+    // `page_size` bounds one page (defaults to 100, clamped to 1000); it
+    // is an alias for `limit` and takes precedence when both are set.
+    // `page_token` is the opaque `next_page_token` from a prior response;
+    // it encodes a keyset seek over `(order_by, node_id)` plus a
+    // fingerprint of the query, so the server resumes exactly after the
+    // last row without skip/duplicate under concurrent writes. A token
+    // presented against a different query (type_id / filters / order_by)
+    // is rejected with INVALID_ARGUMENT, as is mixing `page_token` with
+    // the deprecated `offset`.
+    int32 page_size = 12;
+    string page_token = 13;
 }
 
 message QueryNodesResponse {
     repeated Node nodes = 1;
     int32 total_count = 2;
     bool has_more = 3;
+
+    // Opaque keyset cursor for the next page (ADR-029). Empty when the
+    // last page has been reached. A non-empty value MUST be followed to
+    // retrieve the remainder — a response that omits rows always sets it,
+    // so reads never silently truncate.
+    string next_page_token = 4;
 }
 
 message Node {

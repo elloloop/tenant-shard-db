@@ -1,19 +1,25 @@
 # ADR-029: Keyset cursor pagination for reads (`page_token` / `next_page_token`)
 
-**Status:** Accepted — design frozen 2026-05-23; **implementation pending.**
-Characterization test landed (strict `xfail`) pinning the post-fix
-contract:
-`tests/python/integration/test_query_range.py::test_query_does_not_silently_truncate`.
+**Status:** Accepted — design frozen 2026-05-23. **QueryNodes server
+implemented** (#564): keyset cursor with `page_size` / `page_token` →
+`next_page_token`, fingerprint-bound tokens, seek-not-skip continuation.
+The characterization test
+`tests/python/integration/test_query_range.py::test_query_does_not_silently_truncate`
+is now green (un-xfailed). **Remaining (tracked):** SDK helper
+auto-follow (both SDKs together) and the same cursor on `SearchNodes`,
+`GetEdgesFrom`/`GetEdgesTo`, and the `List*` RPCs — rolled out reusing the
+shared `pagetoken`/keyset machinery.
 **Decided:** 2026-05-23
 **Tags:** api, pagination, query, sdk, consistency, read-path
 **Complements:** [ADR-023](023-declarative-query-indexes.md) (declarative
 query indexes — the index that backs `order_by` also backs keyset seeks)
 and [ADR-025](025-single-shape-sdk-api.md) (single-shape SDK API — the
 cursor lives behind the same helpers).
-**Implementation:** pending — `proto/entdb/v1/entdb.proto` (read
-request/response messages), `server/go/internal/api/{query_nodes,
-get_edges_from,get_edges_to,search_nodes,...}.go`,
-`server/go/internal/store/`, `sdk/go/entdb/`, `sdk/python/entdb_sdk/`.
+**Implementation:** QueryNodes done — `proto/entdb/v1/entdb.proto`,
+`server/go/internal/api/{pagetoken,query_nodes}.go`,
+`server/go/internal/store/nodes.go`. Pending — `sdk/go/entdb/`,
+`sdk/python/entdb_sdk/` (auto-follow), and
+`server/go/internal/api/{get_edges_from,get_edges_to,search_nodes,list_*}.go`.
 Both SDKs ship together.
 
 ## Decision

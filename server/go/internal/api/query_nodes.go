@@ -125,12 +125,38 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		return nil, err
 	}
 
-	limit := int(req.GetLimit())
-	if limit <= 0 {
-		limit = defaultQueryLimit
+	// Page size: prefer the AIP-158 page_size, fall back to the legacy
+	// limit, then the default. Clamp to MaxPageSize (SEC-4 #135).
+	pageSize := int(req.GetPageSize())
+	if pageSize <= 0 {
+		pageSize = int(req.GetLimit())
 	}
-	// SEC-4 (#135): cap oversized page requests before building protos.
-	limit = clampPageSize(limit)
+	if pageSize <= 0 {
+		pageSize = defaultQueryLimit
+	}
+	pageSize = clampPageSize(pageSize)
+
+	// Keyset cursor (ADR-029). page_token encodes a seek anchor bound to
+	// this exact query via a fingerprint; a token from a different query
+	// or mixed with the deprecated offset is INVALID_ARGUMENT.
+	fingerprint := queryFingerprint(typeID, req.GetOrderBy(), req.GetDescending(), storeFilters)
+	var cursor *store.QueryCursor
+	if tok := req.GetPageToken(); tok != "" {
+		if req.GetOffset() != 0 {
+			resultStatus = "error"
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"page_token and the deprecated offset are mutually exclusive; use one")
+		}
+		c, derr := decodePageToken(tok, fingerprint, req.GetDescending())
+		if derr != nil {
+			resultStatus = "error"
+			return nil, derr
+		}
+		cursor = &store.QueryCursor{
+			OrderValue: cursorOrderValue(req.GetOrderBy(), c.OrderValue),
+			NodeID:     c.NodeID,
+		}
+	}
 
 	// Read-after-write barrier (#121). QueryNodesRequest carries
 	// after_offset / wait_timeout_ms (proto fields 10/11) but the handler
@@ -153,8 +179,9 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		Filters:    storeFilters,
 		OrderBy:    req.GetOrderBy(),
 		Descending: req.GetDescending(),
-		Limit:      limit,
+		Limit:      pageSize,
 		Offset:     int(req.GetOffset()),
+		Cursor:     cursor,
 	})
 	if err != nil {
 		resultStatus = "error"
@@ -165,6 +192,23 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 			return nil, errs.Errorf(c, "QueryNodes: %v", err)
 		}
 		return nil, errs.Internal(ctx, "store: query nodes", err)
+	}
+
+	// Mint the next-page cursor BEFORE the ACL post-filter so the anchor
+	// is the last row the store actually returned (the keyset seek runs in
+	// DB order; the ACL filter merely drops rows from the page). A full
+	// page (storeReturned == pageSize) means more rows may exist, so emit
+	// a token; a short page is the last page. This guarantees ADR-029
+	// invariant 3 — a response that omits rows always carries a token.
+	var nextPageToken string
+	if len(nodes) == pageSize && pageSize > 0 {
+		last := nodes[len(nodes)-1]
+		nextPageToken = encodePageToken(pageCursor{
+			Fingerprint: fingerprint,
+			OrderValue:  store.NodeOrderValue(last, req.GetOrderBy()),
+			NodeID:      last.NodeID,
+			Descending:  req.GetDescending(),
+		})
 	}
 
 	// ACL post-filter (cross-tenant readers). Same-tenant member access
@@ -190,8 +234,9 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	}
 
 	return &pb.QueryNodesResponse{
-		Nodes:   protoNodes,
-		HasMore: len(nodes) == limit,
+		Nodes:         protoNodes,
+		HasMore:       nextPageToken != "",
+		NextPageToken: nextPageToken,
 	}, nil
 }
 
