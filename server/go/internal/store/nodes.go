@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 )
 
@@ -473,9 +474,10 @@ func (s *CanonicalStore) UpdateNode(ctx context.Context, tenantID, nodeID string
 		if err != nil {
 			return fmt.Errorf("store: select-for-update node: %w", err)
 		}
-		// Merge payload.
-		merged := map[string]any{}
-		if err := json.Unmarshal([]byte(payloadJSON), &merged); err != nil {
+		// Merge payload. Canonical decode (jsonnum) so int64 fields in the
+		// existing payload survive the read-modify-write (ADR-028).
+		merged, err := jsonnum.Decode([]byte(payloadJSON))
+		if err != nil {
 			return fmt.Errorf("store: parse existing payload: %w", err)
 		}
 		for k, v := range patch {
@@ -696,12 +698,9 @@ func (s *CanonicalStore) ExportUserData(
 			continue
 		}
 
-		payload := map[string]any{}
-		if payloadJSON != "" {
-			// Best-effort parse: a malformed payload becomes {} rather
-			// than failing the whole export.
-			_ = json.Unmarshal([]byte(payloadJSON), &payload)
-		}
+		// Best-effort canonical parse: a malformed payload becomes {}
+		// rather than failing the whole export; int64 survives (ADR-028).
+		payload, _ := jsonnum.Decode([]byte(payloadJSON))
 
 		isOwner := owner == principal
 		isSubject := false

@@ -54,6 +54,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"google.golang.org/protobuf/types/known/structpb"
 )
@@ -146,17 +147,28 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	//    name translation here — the SDK consumer pairs the response
 	//    with its registered proto schema. Keys are emitted as
 	//    stringified field_ids.
+	// Typed payload (ADR-028): canonical decode so an int64 unique-key
+	// row's fields round-trip losslessly.
+	idKeyed, derr := decodeIDKeyedPayload(node.PayloadJSON)
+	if derr != nil {
+		return nil, errs.Internal(ctx, "GetNodeByKey: decode payload", derr)
+	}
+	typedPayload, derr := payload.PayloadToTyped(s.registry, payloadTypeName(s.registry, node.TypeID), idKeyed)
+	if derr != nil {
+		return nil, errs.Internal(ctx, "GetNodeByKey: typed payload", derr)
+	}
 	resp := &pb.GetNodeByKeyResponse{
 		Found: true,
 		Node: &pb.Node{
-			TenantId:   node.TenantID,
-			NodeId:     node.NodeID,
-			TypeId:     node.TypeID,
-			CreatedAt:  node.CreatedAt,
-			UpdatedAt:  node.UpdatedAt,
-			OwnerActor: node.OwnerActor,
-			Payload:    payloadJSONToStruct(node.PayloadJSON),
-			Acl:        aclJSONToProto(node.ACLJSON),
+			TenantId:     node.TenantID,
+			NodeId:       node.NodeID,
+			TypeId:       node.TypeID,
+			CreatedAt:    node.CreatedAt,
+			UpdatedAt:    node.UpdatedAt,
+			OwnerActor:   node.OwnerActor,
+			Payload:      payloadJSONToStruct(node.PayloadJSON),
+			TypedPayload: typedPayload,
+			Acl:          aclJSONToProto(node.ACLJSON),
 		},
 	}
 	return resp, nil

@@ -35,6 +35,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
@@ -178,7 +179,37 @@ func edgeToProto(e *store.Edge) *pb.Edge {
 		ToNodeId:   e.ToNodeID,
 		CreatedAt:  e.CreatedAt,
 		Props:      edgePropsToStruct(e.PropsJSON),
+		TypedProps: edgePropsToTyped(e.PropsJSON),
 	}
+}
+
+// edgePropsToTyped lowers stored props_json into the typed EntValue map
+// (ADR-028) so int64 edge props round-trip losslessly. Schema-less: the
+// edge converter has no registry, so EntValue inference keeps integers as
+// int_value. Empty/invalid input yields nil (callers tolerate a nil map).
+func edgePropsToTyped(propsJSON string) map[uint32]*pb.EntValue {
+	idKeyed, err := decodeIDKeyedPayload(propsJSON)
+	if err != nil || len(idKeyed) == 0 {
+		return nil
+	}
+	typed, err := payload.PayloadToTyped(nil, "", idKeyed)
+	if err != nil {
+		return nil
+	}
+	return typed
+}
+
+// payloadTypeName resolves a node type's name for schema-aware payload
+// translation, or "" when the registry is absent or the type is unknown
+// (schema-less passthrough).
+func payloadTypeName(reg *schema.Registry, typeID int32) string {
+	if reg == nil {
+		return ""
+	}
+	if nt := reg.NodeTypeByID(typeID); nt != nil {
+		return nt.Name
+	}
+	return ""
 }
 
 // edgePropsToStruct parses a stored props_json column into a typed
