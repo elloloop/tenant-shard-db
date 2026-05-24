@@ -331,6 +331,32 @@ KMS ciphertext blob under `-data-dir`, and decrypts it on later boots.
 `-kms-provider=vault` uses Vault Transit data keys with `VAULT_ADDR`,
 `VAULT_TOKEN`, and optional `VAULT_NAMESPACE`.
 
+### Kafka transport security (SASL / TLS)
+
+Authenticated brokers (Confluent Cloud, MSK, self-managed Kafka, Azure
+Event Hubs over the Kafka protocol) need TLS and/or SASL. These flags
+apply to both the producer and consumer connections:
+
+```bash
+/entdb-server \
+  -wal-backend=kafka \
+  -wal-brokers="$KAFKA_BROKERS" \
+  -wal-kafka-tls=true \
+  -wal-kafka-sasl-mechanism=PLAIN \           # or SCRAM-SHA-256 / SCRAM-SHA-512
+  -wal-kafka-sasl-username="$KAFKA_USER" \
+  -wal-kafka-sasl-password="$KAFKA_PASSWORD"
+```
+
+- `-wal-kafka-tls` enables TLS (the "SSL" in `SASL_SSL`). With no CA
+  file the host's system roots are used — correct for managed brokers.
+  `-wal-kafka-tls-ca-file` adds a private CA bundle;
+  `-wal-kafka-tls-cert-file` + `-wal-kafka-tls-key-file` enable mutual
+  TLS. `-wal-kafka-tls-insecure` skips verification (testing only).
+- `-wal-kafka-sasl-mechanism` selects `PLAIN` (Confluent Cloud API
+  key/secret, Event Hubs connection string) or `SCRAM-SHA-256` /
+  `SCRAM-SHA-512` (self-managed, MSK SCRAM). Leaving it empty disables
+  SASL. For `SASL_SSL` set both `-wal-kafka-tls=true` and a mechanism.
+
 ### Secrets
 
 Store sensitive values in AWS Secrets Manager:
