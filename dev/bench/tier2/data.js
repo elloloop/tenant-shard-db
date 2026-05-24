@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779476972230,
+  "lastUpdate": 1779584327778,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -3888,6 +3888,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0007987186833582156",
             "extra": "mean: 5.278293308106493 msec\nrounds: 185"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2ab9934498f1367800e40950fc9962d2701db1c7",
+          "message": "fix(api): lazy-open tenant on read RPCs; stop misreporting not-open tenants (#560)\n\nA per-tenant SQLite handle is a materialized view of the WAL (ADR-016);\n\"tenant not opened\" just means the applier hasn't materialized the\ntenant in-process yet, not a client error. Previously QueryNodes\nclobbered it to Internal, and GetEdgesFrom/GetEdgesTo/SearchNodes/\nGetNodes silently returned an empty result, so a valid tenant could be\nreported as empty or as an opaque internal error.\n\nLazy-open the tenant on every per-tenant read RPC (as GetNode already\ndid); genuine open failures (region pin / crypto-shred -> FailedPrecondition,\nIO -> Internal) surface their real typed code. Also wire QueryNodes'\nalready-declared after_offset/wait_timeout_ms read-your-writes fence,\nwhich the handler had been ignoring.\n\nTests rewritten to prove lazy-open reads persisted rows (seed -> close ->\nreopen fresh -> read) rather than asserting the old swallow-to-empty.",
+          "timestamp": "2026-05-24T01:56:16+01:00",
+          "tree_id": "8b7bfe166631866818d6acb927d5e6d82a9eba54",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/2ab9934498f1367800e40950fc9962d2701db1c7"
+        },
+        "date": 1779584326819,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2291.6728359004305,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004170561014402355",
+            "extra": "mean: 436.3624616631134 usec\nrounds: 1226"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1646.5255375830047,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005254320300548057",
+            "extra": "mean: 607.3395019842429 usec\nrounds: 1008"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 802.8049135782713,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005997759041964945",
+            "extra": "mean: 1.245632635135214 msec\nrounds: 814"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 684.8956436494456,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013103941533986222",
+            "extra": "mean: 1.4600764499997847 msec\nrounds: 600"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1126.200944945468,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002096659114963615",
+            "extra": "mean: 887.9410059884306 usec\nrounds: 1169"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1064.1242288116275,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0024877787970900957",
+            "extra": "mean: 939.7399034103012 usec\nrounds: 1408"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1135.3336003096736,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002018383670690798",
+            "extra": "mean: 880.7983836004148 usec\nrounds: 1439"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1570.1468358155398,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000694582436870007",
+            "extra": "mean: 636.8831100312963 usec\nrounds: 1236"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1479.430094440844,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000031094483266441354",
+            "extra": "mean: 675.9359592302694 usec\nrounds: 417"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1289.7953012503617,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004869426255051865",
+            "extra": "mean: 775.3168266550308 usec\nrounds: 1148"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1872.244183044028,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000039665360156953184",
+            "extra": "mean: 534.1183639700934 usec\nrounds: 1632"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 161.49076862856256,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0011314065853995057",
+            "extra": "mean: 6.192304417722189 msec\nrounds: 158"
           }
         ]
       }
