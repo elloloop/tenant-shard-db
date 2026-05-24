@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779604324909,
+  "lastUpdate": 1779604337337,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -5184,6 +5184,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0005194848238562469",
             "extra": "mean: 6.4699205244716556 msec\nrounds: 143"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "db1d8462c5b17b659182be06e64a49af07c9c75f",
+          "message": "feat(server): keyset cursor pagination for QueryNodes — no silent truncation (#564) (#578)\n\nQueryNodes silently capped results at the 100-row default with no way to\nfetch the rest: list/query helpers issue no limit, the server falls back\nto defaultQueryLimit=100, and there was no cursor. Callers got 100 of N\nwith no error and no continuation (Bug A).\n\nImplements ADR-029 (AIP-158 keyset pagination) for QueryNodes:\n\n  - Request gains page_size + page_token; response gains next_page_token.\n    page_size aliases (and wins over) the legacy limit; offset is\n    deprecated.\n  - The token is opaque and encodes a keyset anchor — the (order_by\n    value, node_id) tuple of the last row — plus the sort direction and a\n    fingerprint of the query (type_id + filters + order_by). A token\n    presented against a different query, or mixed with the deprecated\n    offset, is rejected with INVALID_ARGUMENT instead of returning wrong\n    rows.\n  - Continuation is a seek, not a skip: the store appends\n    `WHERE (order_by, node_id) > (anchor)` (or `<` descending) and always\n    sorts with node_id as the final, unique tiebreaker — a total order, so\n    pages never skip or duplicate a row under concurrent writes. This is\n    the discriminating win over OFFSET, pinned by a delete-stability test.\n  - next_page_token is minted from the last row the store returned\n    (before the ACL post-filter, which only drops rows), so a full page\n    always carries a cursor: a response that omits rows is never silent.\n\nThe previously-xfailed characterization test\ntest_query_does_not_silently_truncate now follows the cursor to retrieve\nall 150 rows and is green.\n\nStore: QueryNodes takes an optional QueryCursor and exposes\nEffectiveOrderBy / NodeOrderValue as the single source of truth for the\norder column so the cursor anchor always matches the SQL ORDER BY.\n\nScope: QueryNodes only. SDK helper auto-follow (both SDKs) and the same\ncursor on SearchNodes / GetEdgesFrom / GetEdgesTo / List* reuse this\npagetoken + keyset machinery and follow in tracked PRs.\n\nTests: token round-trip / fingerprint stability + discrimination /\nrejection paths; end-to-end paging of the full set, keyset stability\nunder a seen-region delete, page_size-over-limit precedence, and\ncross-query / token+offset rejection.\n\nRefs #564, ADR-029.",
+          "timestamp": "2026-05-24T07:29:48+01:00",
+          "tree_id": "5e4c60faa61f4fcccef92d5ae8fe384488241072",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/db1d8462c5b17b659182be06e64a49af07c9c75f"
+        },
+        "date": 1779604336980,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2508.2318044326576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002889392085307857",
+            "extra": "mean: 398.68723386441235 usec\nrounds: 1069"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1741.5534174613001,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007117532922828599",
+            "extra": "mean: 574.2000159017354 usec\nrounds: 1069"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 943.6998519623681,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000362991121420536",
+            "extra": "mean: 1.0596589560977032 msec\nrounds: 820"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 444.8531927225502,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004746453330778619",
+            "extra": "mean: 2.247932613183892 msec\nrounds: 349"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1175.0808260553108,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0020860455184585156",
+            "extra": "mean: 851.0052907228105 usec\nrounds: 1455"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1118.3784443779148,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0026266300581280883",
+            "extra": "mean: 894.1517113701512 usec\nrounds: 1029"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1244.231472731152,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001786397504032012",
+            "extra": "mean: 803.7089737048273 usec\nrounds: 1331"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1682.4554633102123,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003347650999466921",
+            "extra": "mean: 594.3693736965322 usec\nrounds: 1247"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1486.9246568940375,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000040418263184856875",
+            "extra": "mean: 672.5290318938216 usec\nrounds: 533"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1276.1833222393154,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006228382459072316",
+            "extra": "mean: 783.5864821092495 usec\nrounds: 1062"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2078.36839735716,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028398856154746865",
+            "extra": "mean: 481.1466539192924 usec\nrounds: 1569"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 166.1813934916995,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00039843246944336493",
+            "extra": "mean: 6.017520848686038 msec\nrounds: 152"
           }
         ]
       }
