@@ -181,6 +181,51 @@ func (g *GlobalStore) ListUsers(ctx context.Context, status string, limit, offse
 	return out, nil
 }
 
+// UserCursor anchors a keyset seek over the user registry (ADR-029). The
+// effective sort is (created_at ASC, user_id ASC); user_id is unique, so
+// the pair is a total order and the seek resumes unambiguously.
+type UserCursor struct {
+	CreatedAt int64
+	UserID    string
+}
+
+// ListUsersPaged is ListUsers with a keyset cursor (ADR-029): up to limit
+// users with the given status in (created_at, user_id) order, resuming
+// strictly after cursor when non-nil.
+func (g *GlobalStore) ListUsersPaged(ctx context.Context, status string, limit int, cursor *UserCursor) ([]*User, error) {
+	if limit <= 0 {
+		limit = -1
+	}
+	q := `SELECT user_id, email, name, status, created_at, updated_at
+	      FROM user_registry WHERE status = ?`
+	args := []any{status}
+	if cursor != nil {
+		// Seek strictly past (created_at, user_id) in ASC order.
+		q += ` AND (created_at > ? OR (created_at = ? AND user_id > ?))`
+		args = append(args, cursor.CreatedAt, cursor.CreatedAt, cursor.UserID)
+	}
+	q += ` ORDER BY created_at ASC, user_id ASC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := g.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("globalstore: list users: %w", err)
+	}
+	defer rows.Close()
+	out := []*User{}
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.UserID, &u.Email, &u.Name, &u.Status, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("globalstore: scan user: %w", err)
+		}
+		out = append(out, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("globalstore: iterate users: %w", err)
+	}
+	return out, nil
+}
+
 // DeleteUser is a soft delete: it sets status='deleted'. Returns true iff
 // the row existed.
 func (g *GlobalStore) DeleteUser(ctx context.Context, userID string) (bool, error) {

@@ -1954,17 +1954,22 @@ class DbClient:
         self,
         *,
         status: str = "active",
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         actor: str = "system:admin",
         timeout: float | None = None,
     ) -> list[dict[str, Any]]:
         """List users filtered by status.
 
+        ``limit`` defaults to ``0`` = the COMPLETE set: the SDK follows the
+        ADR-029 keyset cursor across pages so the user list never silently
+        truncates at the 100-row default. A positive value caps the total;
+        ``offset`` is deprecated (legacy single-shot path).
+
         Args:
             status: Status filter (e.g. 'active', 'suspended')
-            limit: Maximum results to return
-            offset: Pagination offset
+            limit: Maximum results; 0 (default) returns all.
+            offset: DEPRECATED legacy offset.
             actor: Actor performing the operation
             timeout: Per-call timeout in seconds
 

@@ -2425,17 +2425,21 @@ class GrpcClient:
         *,
         actor: str = "system:admin",
         status: str = "active",
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         timeout: float | None = None,
     ) -> list[dict[str, Any]]:
         """List users filtered by status.
 
+        Follows the ADR-029 keyset cursor to return the COMPLETE set by
+        default (``limit <= 0``); a positive ``limit`` caps the total. The
+        deprecated ``offset`` falls back to a single non-cursor request.
+
         Args:
             actor: Actor performing the operation
             status: Status filter (e.g. 'active', 'suspended')
-            limit: Maximum results
-            offset: Pagination offset
+            limit: Maximum results; ``<= 0`` (default) returns all.
+            offset: DEPRECATED legacy offset (single non-cursor request).
             timeout: Per-call timeout in seconds
 
         Returns:
@@ -2444,22 +2448,8 @@ class GrpcClient:
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
-        request = ListUsersRequest(
-            actor=actor,
-            status=status,
-            limit=limit,
-            offset=offset,
-        )
-
-        response = await self._retry(
-            stub.ListUsers,
-            request,
-            timeout=timeout or _DEFAULT_TIMEOUT,
-            metadata=metadata,
-        )
-
-        return [
-            {
+        def _to_dict(u: Any) -> dict[str, Any]:
+            return {
                 "user_id": u.user_id,
                 "email": u.email,
                 "name": u.name,
@@ -2467,8 +2457,44 @@ class GrpcClient:
                 "created_at": u.created_at,
                 "updated_at": u.updated_at,
             }
-            for u in response.users
-        ]
+
+        # Deprecated offset path: a single legacy request, no auto-follow
+        # (offset and page_token are mutually exclusive server-side).
+        if offset and offset > 0:
+            response = await self._retry(
+                stub.ListUsers,
+                ListUsersRequest(actor=actor, status=status, limit=limit or 100, offset=offset),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+            )
+            return [_to_dict(u) for u in response.users]
+
+        # Keyset auto-follow (ADR-029): loop next_page_token to exhaustion
+        # (or until `limit` rows when a positive cap is given).
+        out: list[dict[str, Any]] = []
+        page_token = ""
+        capped = limit and limit > 0
+        while True:
+            page_size = _MAX_PAGE_SIZE
+            if capped:
+                page_size = min(_MAX_PAGE_SIZE, limit - len(out))
+            response = await self._retry(
+                stub.ListUsers,
+                ListUsersRequest(
+                    actor=actor, status=status, page_size=page_size, page_token=page_token
+                ),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+            )
+            for u in response.users:
+                out.append(_to_dict(u))
+            page_token = response.next_page_token
+            if capped and len(out) >= limit:
+                out = out[:limit]
+                break
+            if not page_token:
+                break
+        return out
 
     # --- Tenant registry methods ---
 
