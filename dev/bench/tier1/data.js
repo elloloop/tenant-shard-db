@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779595445748,
+  "lastUpdate": 1779599095056,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -4644,6 +4644,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001636711605791911",
             "extra": "mean: 7.253457979730357 msec\nrounds: 148"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "839f458c1e17acb9e79a6864e2a9566d26de0d14",
+          "message": "feat(adr-028): SDKs emit/read typed payload — end-to-end lossless int64 (#576)\n\n* feat(adr-028): Go SDK emits/reads typed payload (lossless int64)\n\nThe Go SDK now sends typed_data/typed_patch (EntValue map) alongside the\nlegacy Struct data/patch (dual-write — still works against pre-v1.20\nservers), and prefers typed_payload/typed_props on read, falling back to\nStruct for older servers. int64 >2^53 round-trips losslessly through the\nGo SDK (TestPayloadRoundTrip_Int64Spectrum_BugC, recast to the typed path).\nPython SDK follows in this same PR before release (both SDKs ship together).\n\n* feat(adr-028): Python SDK emits/reads typed payload (lossless int64)\n\nThe Python SDK now dual-writes typed_data/typed_patch (EntValue) alongside\nthe legacy Struct data/patch, and prefers typed_payload/typed_props on read\n(falling back to Struct for pre-v1.20 servers). int64 >2^53 round-trips\nlosslessly through the Python SDK; unit test test_typed_payload covers the\nfull spectrum. Pairs with the Go SDK so both ship together.",
+          "timestamp": "2026-05-24T06:03:04+01:00",
+          "tree_id": "edee9cf8b7a32c8003a32eeb8e18bbbac598f693",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/839f458c1e17acb9e79a6864e2a9566d26de0d14"
+        },
+        "date": 1779599094680,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3212.4215069346237,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030239995887648907",
+            "extra": "mean: 311.2916526804809 usec\nrounds: 1287"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2087.537372748796,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005250500056526722",
+            "extra": "mean: 479.03333997955457 usec\nrounds: 1003"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 948.7042125867335,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001055049171843447",
+            "extra": "mean: 1.0540693155281808 msec\nrounds: 805"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 759.517311695483,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011415696469347983",
+            "extra": "mean: 1.3166256839724737 msec\nrounds: 443"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1968.6743542217828,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008170420880536974",
+            "extra": "mean: 507.95602525908873 usec\nrounds: 1544"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1935.7039796029783,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009521408640734822",
+            "extra": "mean: 516.6079165705412 usec\nrounds: 1738"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2033.4975106952918,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000796107468277191",
+            "extra": "mean: 491.7635722396733 usec\nrounds: 1585"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1870.695338624362,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021730546007906138",
+            "extra": "mean: 534.5605879016953 usec\nrounds: 529"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1786.7405545886602,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006047960580399369",
+            "extra": "mean: 559.6783469384104 usec\nrounds: 343"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1540.3887427484665,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005928718704055892",
+            "extra": "mean: 649.1867749018548 usec\nrounds: 1275"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2552.325551024041,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000056852295050966336",
+            "extra": "mean: 391.79954908133925 usec\nrounds: 1905"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 122.65120165979295,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001881887551354002",
+            "extra": "mean: 8.153201815125927 msec\nrounds: 119"
           }
         ]
       }
