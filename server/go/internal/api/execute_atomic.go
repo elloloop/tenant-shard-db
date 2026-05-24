@@ -406,7 +406,7 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				return nil, errs.Errorf(codes.InvalidArgument,
 					"create_node: type_id is required")
 			}
-			data, err := s.translatePayload(create.GetTypeId(), create.GetData())
+			data, err := s.ingressPayload(create.GetTypeId(), create.GetTypedData(), create.GetData())
 			if err != nil {
 				return nil, err
 			}
@@ -445,7 +445,7 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				return nil, errs.Errorf(codes.InvalidArgument,
 					"update_node: id is required")
 			}
-			patch, err := s.translatePayload(upd.GetTypeId(), upd.GetPatch())
+			patch, err := s.ingressPayload(upd.GetTypeId(), upd.GetTypedPatch(), upd.GetPatch())
 			if err != nil {
 				return nil, err
 			}
@@ -659,6 +659,27 @@ func (s *Server) translatePayload(typeID int32, st *structpb.Struct) (map[string
 		out[fmt.Sprintf("%d", fid)] = val
 	}
 	return out, nil
+}
+
+// ingressPayload converts a write op's payload to the internal
+// stringified id-keyed map. It PREFERS the typed EntValue map (ADR-028 —
+// lossless int64) when present, falling back to the legacy
+// google.protobuf.Struct. The typed map already carries concrete types,
+// so no schema-driven coercion or safe-integer guard is needed; int64
+// flows through the WAL (canonical jsonnum decode) to payload_json intact.
+func (s *Server) ingressPayload(typeID int32, typed map[uint32]*pb.EntValue, st *structpb.Struct) (map[string]any, error) {
+	if len(typed) > 0 {
+		idKeyed, err := payload.TypedToPayload(typed)
+		if err != nil {
+			return nil, err
+		}
+		out := make(map[string]any, len(idKeyed))
+		for fid, val := range idKeyed {
+			out[fmt.Sprintf("%d", fid)] = val
+		}
+		return out, nil
+	}
+	return s.translatePayload(typeID, st)
 }
 
 // convertACL maps the wire AclEntry slice to the internal list-of-dicts
