@@ -49,7 +49,22 @@ longer lies about the type, so the server no longer has to reconstruct it.
 
 At rest, the applier MUST persist integer values losslessly (store as a
 JSON integer / `json.Number`, never a float64) so `payload_json` keeps the
-exact value the typed wire delivered.
+exact value the typed wire delivered. Concretely this requires a SHARED
+canonical-number decode (`json.Decoder` + `UseNumber`, normalizing
+`json.Number` → `int64` if integral else `float64`) applied CONSISTENTLY
+at every JSON boundary — `wal.DecodeEvent`, the `applyUpdateNode` merge
+read, and every payload_json egress decode — because `applyUpdateNode`
+CAS does `reflect.DeepEqual(store-decoded, event-decoded)` and any
+representation mismatch breaks CAS / DeleteWhere / FTS.
+
+**Scope is not just stored payloads.** The same `EntValue` (or an
+int64-bearing form) MUST also carry the scalar wire-value fields that are
+`google.protobuf.Value`/`Struct` today, or int64 corrupts in the
+query/lookup/CAS paths (issue #572): `FieldFilter.value` (QueryNodes),
+`GetNodeByKeyRequest.value`, and `UpdateNodePrecondition.equals` — plus
+the SDKs' `toProtoValue`/filter encoders, which must stop routing int64
+through `float64`. Server-side reads of these fields must not collapse to
+`float64` via `AsInterface()`.
 
 ## Context
 
