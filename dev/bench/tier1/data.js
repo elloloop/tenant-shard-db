@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779599098040,
+  "lastUpdate": 1779603072435,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -4860,6 +4860,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0004100663162495954",
             "extra": "mean: 6.856666234848193 msec\nrounds: 132"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0fba2e1f600ead11a1ed20088828c0f1274ac1ea",
+          "message": "feat(#572): typed scalar wire-values (filter/unique-key/CAS) — lossless int64 (#577)\n\n* feat(#572): typed scalar wire-values — proto + server decode + Go SDK filter/CAS\n\nAdds EntValue to FieldFilter.typed_value, GetNodeByKeyRequest.typed_value,\nUpdateNodePrecondition.typed_equals (additive, buf-breaking clean) so int64\nfilters / unique-key lookups / CAS stop corrupting through google.protobuf.Value's\ndouble. Server prefers the typed field at all three decode sites (query filter,\nGetNodeByKey, CAS equals) via payload.EntValueToGo. Go SDK dual-writes\ntyped_value on filters and typed_equals on preconditions. Regenerated all stubs.\nRegression: TestQueryNodes_TypedFilterInt64. Remaining in this PR: Go SDK\nGetNodeByKey (transport signature) + Python SDK encode.\n\n* feat(sdk): dual-write typed scalar wire-values for filters, unique-key lookups, and CAS (#572)\n\nThe legacy google.protobuf.Struct Value carries every number as an\nIEEE-754 double, so an int64 above 2^53 used as a query filter, a\nunique-key lookup value, or a CAS precondition silently mismatched the\nstored value — the same class of corruption ADR-028 fixed for payloads.\n\nBoth SDKs now dual-write the typed EntValue alongside the legacy Value\non the three remaining scalar surfaces:\n\n  - FieldFilter.typed_value      (QueryNodes + DeleteWhere where-clauses)\n  - GetNodeByKeyRequest.typed_value\n  - UpdateNodePrecondition.typed_equals\n\nGo SDK: the Transport.GetNodeByKey signature takes the raw value\n(value any) instead of a pre-built *structpb.Value, so the grpc\ntransport builds both the legacy Struct and the typed EntValue in one\nplace; scope.GetByKey forwards the raw value untouched. filterToProto\nand the precondition builder already dual-write on their scalar\nbranches.\n\nPython SDK: _grpc_client wires _value_to_entvalue into the filter,\nGetNodeByKey, and precondition builders.\n\nThe server prefers the typed branch when present (decode landed\nearlier this cycle), falling back to the legacy Value, so old clients\nkeep working.\n\nTests: 27 new big-int parametrized encode cases across the three\nsurfaces; an end-to-end integration test pins the server's\ntyped-over-legacy preference with a discriminating pair (legacy value\npoints at a missing row, typed value at a real one).\n\nCloses #572.\n\n* docs: refresh GetNodeByKey transport comment + regenerated sdk-go reference\n\nThe Transport.GetNodeByKey signature now takes the raw value and\ndual-writes the legacy google.protobuf.Value plus the typed EntValue;\nupdate the doc comment to match and regenerate docs/generated/sdk-go.md\nwith the go.mod-pinned toolchain (go 1.25) so the Docs Coverage gate\nstays green.",
+          "timestamp": "2026-05-24T07:09:27+01:00",
+          "tree_id": "3119f88c280f3396f8105aeaac0e5b306f6b41d9",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/0fba2e1f600ead11a1ed20088828c0f1274ac1ea"
+        },
+        "date": 1779603072062,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3333.777285229075,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028919246779243828",
+            "extra": "mean: 299.96004965019335 usec\nrounds: 1430"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2167.2321158918853,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000038929765708003526",
+            "extra": "mean: 461.418042242544 usec\nrounds: 1160"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1070.315147654603,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010083111915428088",
+            "extra": "mean: 934.304258134919 usec\nrounds: 922"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 714.0189862266524,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001817471642325663",
+            "extra": "mean: 1.4005229822874319 msec\nrounds: 621"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1793.9792089499995,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001408043097531099",
+            "extra": "mean: 557.4200609522624 usec\nrounds: 1575"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1821.3884488976514,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00014403500865342773",
+            "extra": "mean: 549.0317019443185 usec\nrounds: 1493"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1933.1744745506767,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009830568316050718",
+            "extra": "mean: 517.2838836662313 usec\nrounds: 1745"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2035.5750271287875,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004045591972470543",
+            "extra": "mean: 491.2616762696862 usec\nrounds: 1458"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1770.7883459776338,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000447711100436228",
+            "extra": "mean: 564.7202288582437 usec\nrounds: 402"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1497.8301376641657,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000046921043380507045",
+            "extra": "mean: 667.6324470006183 usec\nrounds: 1217"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2658.7231167544237,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003641426527612448",
+            "extra": "mean: 376.12039918648145 usec\nrounds: 1473"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 166.98121046059552,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001627901732786749",
+            "extra": "mean: 5.988697753727097 msec\nrounds: 134"
           }
         ]
       }
