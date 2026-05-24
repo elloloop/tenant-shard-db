@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
-	"google.golang.org/protobuf/types/known/structpb"
 )
 
 // mockTransport implements Transport for testing without a live gRPC server.
@@ -31,7 +30,7 @@ type mockTransport struct {
 	lastGetNodeID         string
 	lastGetByKeyTypeID    int32
 	lastGetByKeyFieldID   int32
-	lastGetByKeyValue     *structpb.Value
+	lastGetByKeyValue     any
 	lastQueryTypeID       int
 	lastQueryFilter       map[string]any
 	lastCommitOperations  []Operation
@@ -68,7 +67,7 @@ func (m *mockTransport) GetNode(_ context.Context, _, _ string, typeID int, node
 	return m.getNodeResp, m.getNodeErr
 }
 
-func (m *mockTransport) GetNodeByKey(_ context.Context, _, _ string, typeID, fieldID int32, value *structpb.Value) (*Node, error) {
+func (m *mockTransport) GetNodeByKey(_ context.Context, _, _ string, typeID, fieldID int32, value any) (*Node, error) {
 	m.getNodeByKeyCalls++
 	m.lastGetByKeyTypeID = typeID
 	m.lastGetByKeyFieldID = fieldID

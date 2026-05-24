@@ -116,6 +116,41 @@ async def test_neq(stub) -> None:
     assert await _query_emails(stub, pb.FilterOp.NEQ, "rng-b@x") == ["rng-a@x", "rng-c@x"]
 
 
+async def test_server_prefers_typed_value_over_legacy(stub) -> None:
+    """#572 / ADR-028: when a filter carries both the legacy struct
+    ``value`` and the typed ``typed_value``, the server resolves the
+    predicate from ``typed_value``. Pinned with a discriminating pair —
+    the legacy value points at a row that does not exist, the typed
+    value at one that does. A pass proves the server reads typed; a
+    regression to the legacy path would return nothing.
+
+    This is the production guarantee behind the SDK dual-write: big-int
+    keys (>2^53) round-trip losslessly only because the typed branch
+    wins, and the contract-seed schema has no int64 field to exercise
+    that directly, so the preference itself is what we pin here."""
+    from entdb_sdk._generated import EntValue
+
+    resp = await stub.QueryNodes(
+        pb.QueryNodesRequest(
+            context=_ctx(),
+            type_id=1,
+            order_by="node_id",
+            descending=False,
+            limit=100,
+            filters=[
+                pb.FieldFilter(
+                    field="email",
+                    op=pb.FilterOp.EQ,
+                    value=_value("rng-DOES-NOT-EXIST@x"),
+                    typed_value=EntValue(string_value="rng-b@x"),
+                )
+            ],
+        )
+    )
+    got = sorted(_email(n) for n in resp.nodes if _email(n).startswith("rng-"))
+    assert got == ["rng-b@x"], "server must prefer typed_value over legacy value"
+
+
 async def test_and_of_two_filters(stub) -> None:
     """Half-open range: email >= rng-a@x AND email < rng-c@x."""
     resp = await stub.QueryNodes(

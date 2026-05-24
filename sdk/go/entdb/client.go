@@ -3,10 +3,10 @@ package entdb
 
 import (
 	"context"
+	"fmt"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
-	"google.golang.org/protobuf/types/known/structpb"
 
 	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
 )
@@ -32,7 +32,7 @@ type Transport interface {
 	// ``(type_id, field_id, value)``, with ``value`` carried as a
 	// ``google.protobuf.Value`` so one RPC shape handles string,
 	// int, float, and bool unique keys.
-	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value *structpb.Value) (*Node, error)
+	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value any) (*Node, error)
 	// QueryNodes retrieves nodes matching a filter.
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
@@ -340,10 +340,17 @@ func (t *grpcTransport) GetNode(ctx context.Context, tenantID, actor string, typ
 	return nodeFromProto(resp.GetNode()), nil
 }
 
-func (t *grpcTransport) GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value *structpb.Value) (*Node, error) {
+func (t *grpcTransport) GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value any) (*Node, error) {
 	client, err := t.ensureReady()
 	if err != nil {
 		return nil, err
+	}
+	// Dual-write the unique-key value: legacy Struct Value for old
+	// servers + typed EntValue (ADR-028 / #572) so a large int64 key
+	// matches exactly on v1.22+ servers.
+	pv, err := toProtoValue(value)
+	if err != nil {
+		return nil, fmt.Errorf("entdb: GetNodeByKey value: %w", err)
 	}
 	offset := t.offsets.resolve(ctx, tenantID)
 	var trailer metadata.MD
@@ -352,7 +359,8 @@ func (t *grpcTransport) GetNodeByKey(ctx context.Context, tenantID, actor string
 		Actor:       actor,
 		TypeId:      typeID,
 		FieldId:     fieldID,
-		Value:       value,
+		Value:       pv,
+		TypedValue:  valueToEnt(value),
 		AfterOffset: offsetAsInt64(offset),
 	}, grpc.Trailer(&trailer))
 	if err != nil {

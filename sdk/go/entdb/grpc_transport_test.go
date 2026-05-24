@@ -578,8 +578,7 @@ func TestGrpcTransport_GetNodeByKey_HappyPath(t *testing.T) {
 	}
 	tr := startFakeServer(t, svc)
 
-	val := structpb.NewStringValue("alice@example.com")
-	got, err := tr.GetNodeByKey(context.Background(), "acme", "user:alice", 202, 1, val)
+	got, err := tr.GetNodeByKey(context.Background(), "acme", "user:alice", 202, 1, "alice@example.com")
 	if err != nil {
 		t.Fatalf("GetNodeByKey: %v", err)
 	}
@@ -591,6 +590,10 @@ func TestGrpcTransport_GetNodeByKey_HappyPath(t *testing.T) {
 	}
 	if svc.getNodeByKeyReq.GetValue().GetStringValue() != "alice@example.com" {
 		t.Errorf("server saw value = %v", svc.getNodeByKeyReq.GetValue())
+	}
+	// #572: the transport also dual-writes the typed value.
+	if svc.getNodeByKeyReq.GetTypedValue().GetStringValue() != "alice@example.com" {
+		t.Errorf("server saw typed_value = %v", svc.getNodeByKeyReq.GetTypedValue())
 	}
 }
 
