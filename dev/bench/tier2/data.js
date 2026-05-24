@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779653467101,
+  "lastUpdate": 1779653474169,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -6048,6 +6048,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0004477482258860363",
             "extra": "mean: 6.371321708028489 msec\nrounds: 137"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f4e8df824cba481b8c7998ceb89ce0eaa7955e93",
+          "message": "feat(wal): Kafka SASL (PLAIN/SCRAM) + TLS support (#569) (#584)\n\nThe Kafka WAL backend only spoke plaintext, so it could not connect to\nany authenticated broker — Confluent Cloud, MSK, self-managed Kafka with\nauth, or Azure Event Hubs over the Kafka protocol. Adds transport\nsecurity applied to both the producer and consumer connections:\n\n  - TLS (the \"SSL\" in SASL_SSL): system roots by default (managed\n    brokers), optional private-CA bundle, optional client certificate\n    for mutual TLS, and an insecure-skip-verify testing knob.\n  - SASL: PLAIN (Confluent Cloud / Event Hubs), and SCRAM-SHA-256 /\n    SCRAM-SHA-512 (self-managed, MSK SCRAM) via an xdg-go/scram client\n    adapter for sarama's SCRAMClient interface.\n\nKafkaConfig gains TLS*/SASL* fields; producerConfig/consumerConfig now\nreturn an error and route through a shared applySecurity so producer and\nconsumer auth can never drift. The server exposes --wal-kafka-tls[-*]\nand --wal-kafka-sasl-{mechanism,username,password} flags (documented in\ndocs/deployment.md). Default (no flags) is byte-for-byte the old\nplaintext behavior — applySecurity is a no-op — so existing deployments\nand the redpanda e2e stack are unaffected.\n\nTests: applySecurity maps PLAIN / SCRAM-256 / SCRAM-512 / default-PLAIN\ncorrectly, rejects an unknown mechanism, enables TLS with\ninsecure-skip-verify, is a no-op when nothing is requested; buildTLSConfig\nerrors on a missing/invalid CA file and on a half-specified client cert.\n\nCloses #569.",
+          "timestamp": "2026-05-24T21:08:37+01:00",
+          "tree_id": "474929715093a91cf235030609772023d43376bf",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/f4e8df824cba481b8c7998ceb89ce0eaa7955e93"
+        },
+        "date": 1779653473387,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2511.4970310762983,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003728280074597398",
+            "extra": "mean: 398.168895931942 usec\nrounds: 1057"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1739.4477007825483,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005857056909750645",
+            "extra": "mean: 574.8951230612548 usec\nrounds: 1032"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 942.9033839173769,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003436486788885861",
+            "extra": "mean: 1.0605540472719592 msec\nrounds: 825"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 472.91072877114556,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003316677747486483",
+            "extra": "mean: 2.1145639951931128 msec\nrounds: 416"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1180.7031046270674,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002018774485631243",
+            "extra": "mean: 846.9529690242123 usec\nrounds: 1485"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1118.746930193947,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002549949693239074",
+            "extra": "mean: 893.8572013123995 usec\nrounds: 1371"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1192.127641704511,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0020639725112036795",
+            "extra": "mean: 838.8363502503761 usec\nrounds: 1399"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1653.4025862339024,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000053350249833318186",
+            "extra": "mean: 604.8133759593217 usec\nrounds: 1173"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1579.7084121805951,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000366619745625309",
+            "extra": "mean: 633.0282172895578 usec\nrounds: 428"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1358.1760979387777,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000051362952079932376",
+            "extra": "mean: 736.2815481126784 usec\nrounds: 1060"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2081.5451960120618,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002579326985818334",
+            "extra": "mean: 480.41234075332824 usec\nrounds: 1168"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 157.35557257790632,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004966067264384901",
+            "extra": "mean: 6.355033912160326 msec\nrounds: 148"
           }
         ]
       }
