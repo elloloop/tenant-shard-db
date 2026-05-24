@@ -11,6 +11,18 @@ import (
 	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
 )
 
+// maxQueryPageSize is the per-page row count the keyset auto-follow
+// requests (ADR-029). It matches the server's MaxPageSize so a large
+// result set is fetched in the fewest round-trips; the server clamps
+// anything larger.
+const maxQueryPageSize = 1000
+
+// maxAutoFollowPages bounds the auto-follow loop defensively so a buggy
+// server that never clears next_page_token cannot spin forever. At
+// maxQueryPageSize rows per page this still covers result sets in the
+// billions.
+const maxAutoFollowPages = 10_000_000
+
 // Transport is the low-level interface between the SDK and the
 // gRPC layer. It is intentionally NOT part of the public single-
 // shape API — user code goes through the typed [Scope] / [Plan]
@@ -35,7 +47,11 @@ type Transport interface {
 	// older servers keep reading the legacy field.
 	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value any) (*Node, error)
 	// QueryNodes retrieves nodes matching a filter.
-	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
+	// QueryNodes returns nodes matching a filter. The transport follows
+	// the ADR-029 keyset cursor across pages so the complete set is
+	// returned, never a silent 100-row prefix. limit caps the total when
+	// positive; limit <= 0 returns every matching row.
+	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any, limit int) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
 	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error)
 	// Share grants permission on a node to another actor.
@@ -373,31 +389,63 @@ func (t *grpcTransport) GetNodeByKey(ctx context.Context, tenantID, actor string
 	return nodeFromProto(resp.GetNode()), nil
 }
 
-func (t *grpcTransport) QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error) {
+func (t *grpcTransport) QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any, limit int) ([]*Node, error) {
 	client, err := t.ensureReady()
 	if err != nil {
 		return nil, err
 	}
+	// Build filters once and reuse across pages so the server's query
+	// fingerprint stays stable for the keyset cursor.
 	filters, err := filterToProto(filter)
 	if err != nil {
 		return nil, err
 	}
 	offset := t.offsets.resolve(ctx, tenantID)
-	var trailer metadata.MD
-	resp, err := client.QueryNodes(t.callContext(ctx, tenantID), &pb.QueryNodesRequest{
-		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		TypeId:        int32(typeID),
-		Filters:       filters,
-		AfterOffset:   offset,
-		WaitTimeoutMs: waitTimeoutForOffset(offset),
-	}, grpc.Trailer(&trailer))
-	if err != nil {
-		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
-	}
-	nodes := resp.GetNodes()
-	out := make([]*Node, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, nodeFromProto(n))
+
+	// Auto-follow the keyset cursor (ADR-029): loop next_page_token to
+	// exhaustion (or until `limit` rows are collected) so a query returns
+	// the complete set, never a silent prefix. Fence read-after-write only
+	// on the first page; later pages read the same applied snapshot.
+	var out []*Node
+	pageToken := ""
+	capped := limit > 0
+	for page := 0; ; page++ {
+		if page > maxAutoFollowPages {
+			return nil, fmt.Errorf("entdb: QueryNodes: pagination did not terminate after %d pages", maxAutoFollowPages)
+		}
+		pageSize := int32(maxQueryPageSize)
+		if capped {
+			if rem := limit - len(out); rem < int(pageSize) {
+				pageSize = int32(rem)
+			}
+		}
+		req := &pb.QueryNodesRequest{
+			Context:   &pb.RequestContext{TenantId: tenantID, Actor: actor},
+			TypeId:    int32(typeID),
+			Filters:   filters,
+			PageSize:  pageSize,
+			PageToken: pageToken,
+		}
+		if page == 0 {
+			req.AfterOffset = offset
+			req.WaitTimeoutMs = waitTimeoutForOffset(offset)
+		}
+		var trailer metadata.MD
+		resp, err := client.QueryNodes(t.callContext(ctx, tenantID), req, grpc.Trailer(&trailer))
+		if err != nil {
+			return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+		}
+		for _, n := range resp.GetNodes() {
+			out = append(out, nodeFromProto(n))
+		}
+		pageToken = resp.GetNextPageToken()
+		if capped && len(out) >= limit {
+			out = out[:limit]
+			break
+		}
+		if pageToken == "" {
+			break
+		}
 	}
 	return out, nil
 }

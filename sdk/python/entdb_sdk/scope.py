@@ -214,7 +214,7 @@ class ActorScope:
         *,
         filter: dict[str, Any] | None = None,
         where: list[Filter] | None = None,
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
@@ -234,6 +234,11 @@ class ActorScope:
 
         ``FilterOp.NE`` cannot use a B-tree index — it forces a full
         type scan. Use sparingly on large tables.
+
+        ``limit`` defaults to ``0`` = the COMPLETE result set: the SDK
+        follows the ADR-029 keyset cursor across pages so a query never
+        silently truncates at the 100-row page default. Set a positive
+        value to cap. ``offset`` is deprecated (legacy single-shot path).
         """
         kwargs: dict[str, Any] = {
             "limit": limit,

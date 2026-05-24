@@ -1159,7 +1159,7 @@ class DbClient:
         *,
         filter: dict[str, Any] | None = None,
         where: list[Filter] | None = None,
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         order_by: str = "created_at",
         descending: bool = True,
@@ -1181,8 +1181,12 @@ class DbClient:
                 with ``filter`` — pass one or the other.
                 ``FilterOp.NE`` forces a full type scan; B-tree
                 indexes cannot serve a not-equal predicate.
-            limit: Maximum nodes to return
-            offset: Pagination offset
+            limit: Maximum rows to return. ``0`` (the default) returns the
+                COMPLETE result set — the SDK follows the ADR-029 keyset
+                cursor across pages, so a query never silently truncates at
+                the 100-row page default. Set a positive value to cap.
+            offset: DEPRECATED legacy pagination offset. Non-zero forces a
+                single non-cursor request; prefer the default cursor path.
             order_by: Field to order results by
             descending: Whether to sort in descending order
             after_offset: Wait for this stream position before reading.
@@ -1192,7 +1196,7 @@ class DbClient:
             timeout: Per-call timeout in seconds
 
         Returns:
-            List of nodes
+            List of nodes (the complete set unless ``limit`` caps it)
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())

@@ -373,6 +373,10 @@ _DEADLINE_RETRYABLE_METHODS = frozenset(
 
 _DEFAULT_TIMEOUT: float = 30.0
 
+# Server-side MaxPageSize (ADR-029). The keyset auto-follow requests pages
+# of this size to minimise round-trips; the server clamps anything larger.
+_MAX_PAGE_SIZE: int = 1000
+
 
 def _short_method(fn: Any) -> str:
     """Return the trailing RPC name from a bound stub multicallable.
@@ -1468,7 +1472,7 @@ class GrpcClient:
         actor: str,
         type_id: int,
         *,
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         filter: dict[str, Any] | None = None,
         order_by: str | None = None,
@@ -1480,12 +1484,19 @@ class GrpcClient:
     ) -> tuple[list[Node], bool]:
         """Query nodes by type.
 
+        Follows the ADR-029 keyset cursor to return the complete result
+        set by default — a query never silently truncates at the 100-row
+        page default. ``limit`` caps the total when positive; ``limit <= 0``
+        (the default) returns every matching row.
+
         Args:
             tenant_id: Tenant identifier
             actor: Actor making request
             type_id: Node type ID
-            limit: Maximum nodes to return
-            offset: Pagination offset
+            limit: Maximum rows to return; ``<= 0`` (default) returns all.
+            offset: DEPRECATED legacy LIMIT/OFFSET. When > 0 the call falls
+                back to a single non-cursor request (no auto-follow), for
+                backwards compatibility. Prefer the default cursor path.
             filter: Filter dict (field_name → value for equality)
             order_by: Field to order results by
             descending: Whether to sort in descending order
@@ -1495,12 +1506,15 @@ class GrpcClient:
             timeout: Per-call timeout in seconds
 
         Returns:
-            Tuple of (nodes, has_more)
+            Tuple of (nodes, has_more). has_more is True only when a
+            positive ``limit`` capped the result before exhausting the set.
         """
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
-        # Convert filter dict to repeated FieldFilter
+        # Convert filter dict to repeated FieldFilter. typed_value carries
+        # the lossless value (ADR-028 / #572); built once and reused across
+        # pages so the server's query fingerprint stays stable.
         filters = []
         if filter:
             from google.protobuf.struct_pb2 import Value
@@ -1516,29 +1530,73 @@ class GrpcClient:
                     )
                 )
 
-        request = QueryNodesRequest(
-            context=self._make_context(tenant_id, actor, trace_id),
-            type_id=type_id,
-            limit=limit,
-            offset=offset,
-            filters=filters,
-            order_by=order_by or "",
-            descending=descending,
-            after_offset=after_offset or "",
-            wait_timeout_ms=wait_timeout_ms,
-        )
+        # Deprecated offset path: a single legacy LIMIT/OFFSET request.
+        # offset and the keyset page_token are mutually exclusive server
+        # side, so we do not auto-follow here.
+        if offset and offset > 0:
+            response = await self._retry(
+                stub.QueryNodes,
+                QueryNodesRequest(
+                    context=self._make_context(tenant_id, actor, trace_id),
+                    type_id=type_id,
+                    limit=limit or 100,
+                    offset=offset,
+                    filters=filters,
+                    order_by=order_by or "",
+                    descending=descending,
+                    after_offset=after_offset or "",
+                    wait_timeout_ms=wait_timeout_ms,
+                ),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+                tenant_id=tenant_id,
+            )
+            nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
+            return nodes, response.has_more
 
-        response = await self._retry(
-            stub.QueryNodes,
-            request,
-            timeout=timeout or _DEFAULT_TIMEOUT,
-            metadata=metadata,
-            tenant_id=tenant_id,
-        )
+        # Keyset auto-follow (ADR-029): loop next_page_token to exhaustion
+        # (or until `limit` rows are collected). Fence read-after-write only
+        # on the first page; later pages read the same applied snapshot.
+        nodes: list[Node] = []
+        page_token = ""
+        first = True
+        capped = limit and limit > 0
+        has_more = False
+        while True:
+            # Request only as many rows as remain under the cap (if any),
+            # so a small `limit` does not over-fetch a full page.
+            page_size = _MAX_PAGE_SIZE
+            if capped:
+                page_size = min(_MAX_PAGE_SIZE, limit - len(nodes))
+            response = await self._retry(
+                stub.QueryNodes,
+                QueryNodesRequest(
+                    context=self._make_context(tenant_id, actor, trace_id),
+                    type_id=type_id,
+                    page_size=page_size,
+                    page_token=page_token,
+                    filters=filters,
+                    order_by=order_by or "",
+                    descending=descending,
+                    after_offset=(after_offset or "") if first else "",
+                    wait_timeout_ms=wait_timeout_ms if first else 0,
+                ),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+                tenant_id=tenant_id,
+            )
+            first = False
+            for n in response.nodes:
+                nodes.append(_node_from_proto(n, self._registry))
+            page_token = response.next_page_token
+            if capped and len(nodes) >= limit:
+                has_more = bool(page_token) or len(nodes) > limit
+                nodes = nodes[:limit]
+                break
+            if not page_token:
+                break
 
-        nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
-
-        return nodes, response.has_more
+        return nodes, has_more
 
     async def get_edges_from(
         self,
