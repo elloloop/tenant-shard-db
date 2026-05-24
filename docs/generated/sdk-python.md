@@ -113,4 +113,4 @@ Extracted from `sdk/python/entdb_sdk` — `__all__` plus the public methods of `
 | `delete_where(node_type, where, *, limit=...)` | Delete every node of a type matching a predicate, in one op. |
 | `edge_create(edge_type, from_id, to_id, *, props=...)` | Create an edge. |
 | `edge_delete(edge_type, from_id, to_id)` | Delete an edge. |
-| `update(node_id, msg, *, precondition=...)` | Update a node from a proto message. |
+| `update(node_id, msg, *, fields=..., precondition=...)` | Update a node from a proto message. |

@@ -149,6 +149,56 @@ def _proto_payload_from_set_fields(msg: Any) -> dict[str, Any]:
     return out
 
 
+def _proto_payload_from_named_fields(msg: Any, fields: list[str]) -> dict[str, Any]:
+    """Return a name-keyed payload for an EXPLICIT list of field names,
+    INCLUDING any at their proto3 zero value (#574).
+
+    Unlike :func:`_proto_payload_from_set_fields` (which uses
+    ``ListFields()`` and so only yields explicitly-set, non-default
+    fields), this reads each named field off the message directly — so a
+    field can be updated TO ``0`` / ``""`` / ``False``, which the
+    set-fields path cannot express because proto3 omits zero-valued
+    scalars on the wire.
+    """
+    from google.protobuf.descriptor import FieldDescriptor
+    from google.protobuf.json_format import MessageToDict
+
+    if not fields:
+        raise ValueError("update(fields=...) requires at least one field name")
+
+    by_name = {fd.name: fd for fd in msg.DESCRIPTOR.fields}
+    by_json = {fd.json_name: fd for fd in msg.DESCRIPTOR.fields}
+    out: dict[str, Any] = {}
+    for name in fields:
+        fd = by_name.get(name) or by_json.get(name)
+        if fd is None:
+            known = {f.name for f in msg.DESCRIPTOR.fields}
+            suggestions = [n for n in known if name.lower() in n.lower()][:3]
+            raise UnknownFieldError(name, msg.DESCRIPTOR.name, suggestions)
+
+        is_message = fd.type == FieldDescriptor.TYPE_MESSAGE
+        is_repeated = fd.label == FieldDescriptor.LABEL_REPEATED
+        if is_message or is_repeated:
+            # Defer composite shapes to MessageToDict, same as the
+            # set-fields path; explicit-zero is a scalar concern.
+            sub = MessageToDict(msg, preserving_proto_field_name=True)
+            out[fd.name] = sub.get(fd.name)
+            continue
+
+        value = getattr(msg, fd.name)
+        if fd.type == FieldDescriptor.TYPE_BYTES:
+            import base64
+
+            out[fd.name] = (
+                base64.b64encode(value).decode("ascii")
+                if isinstance(value, (bytes, bytearray))
+                else value
+            )
+        else:
+            out[fd.name] = value
+    return out
+
+
 def _names_to_ids(name_to_id: dict[str, int], payload: dict[str, Any]) -> dict[str, Any]:
     """Re-key a name-keyed payload to id-keyed for the wire.
 
@@ -446,6 +496,7 @@ class Plan:
         node_id: str,
         msg: Any,
         *,
+        fields: list[str] | None = None,
         precondition: tuple[str, Any] | None = None,
     ) -> Plan:
         """Update a node from a proto message.
@@ -461,10 +512,25 @@ class Plan:
         sends ``{"price_cents": 1499}`` as the patch and leaves every
         other field untouched.
 
+        To set a field BACK to its zero value (``0`` / ``""`` /
+        ``False``), name it in ``fields`` — proto3 omits zero-valued
+        scalars, so the default set-fields path cannot express it and the
+        update is otherwise silently dropped (#574)::
+
+            plan.update(node_id, TotpCredential(), fields=["verified"])
+
+        sends ``{"verified": False}`` explicitly. When ``fields`` is
+        given the patch is EXACTLY those fields (read off ``msg``,
+        including zeros); set the values you want on ``msg`` first.
+
         Args:
             node_id: Id of the node to update.
             msg: A proto message instance whose descriptor carries an
                 ``(entdb.node)`` option.
+            fields: Optional explicit list of proto field names to update,
+                including ones at their zero value. Mutually exclusive in
+                spirit with the default set-fields behavior — when given,
+                only these fields form the patch.
             precondition: Optional ``(field, expected_value)`` tuple
                 for CAS semantics (GitHub issue #500). When set, the
                 applier compares the node's current ``field`` against
@@ -488,7 +554,10 @@ class Plan:
 
         type_id = _node_type_id_from_descriptor(msg.DESCRIPTOR)
         name_to_id = _name_to_id_from_proto(msg.DESCRIPTOR)
-        patch = _proto_payload_from_set_fields(msg)
+        if fields is not None:
+            patch = _proto_payload_from_named_fields(msg, fields)
+        else:
+            patch = _proto_payload_from_set_fields(msg)
         patch = _names_to_ids(name_to_id, patch)
 
         update_op: dict[str, Any] = {

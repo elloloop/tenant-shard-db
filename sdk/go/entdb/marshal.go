@@ -231,6 +231,47 @@ func marshalSetFieldsForWire(msg proto.Message) (int32, map[string]any, error) {
 	return marshalForWire(msg)
 }
 
+// marshalExplicitFieldsForWire builds an update patch from an explicit
+// list of proto field names, INCLUDING any whose value is the proto3
+// zero value (false / 0 / ""). This is the escape hatch for #574: the
+// default Update only sends *set* (non-default) fields because proto3
+// cannot distinguish "set to zero" from "unset" for scalars, so a field
+// can never be updated TO its zero value through it. Naming the field
+// here reads it via reflection's Get (which returns the zero) and forces
+// it into the patch, so the server applies the zero.
+func marshalExplicitFieldsForWire(msg proto.Message, fields []string) (int32, map[string]any, error) {
+	if msg == nil {
+		return 0, nil, fmt.Errorf("entdb: nil message")
+	}
+	typeID, err := typeIDFromMessage(msg)
+	if err != nil {
+		return 0, nil, err
+	}
+	if len(fields) == 0 {
+		return 0, nil, fmt.Errorf("entdb: no fields specified (use Update for set-fields-only)")
+	}
+	m := msg.ProtoReflect()
+	desc := m.Descriptor()
+	fds := desc.Fields()
+	patch := make(map[string]any, len(fields))
+	for _, name := range fields {
+		name = strings.TrimSpace(name)
+		fd := fds.ByName(protoreflect.Name(name))
+		if fd == nil {
+			fd = fds.ByJSONName(name)
+		}
+		if fd == nil {
+			return 0, nil, fmt.Errorf("entdb: message %q has no field %q", desc.FullName(), name)
+		}
+		converted, cerr := protoValueToGo(fd, m.Get(fd))
+		if cerr != nil {
+			return 0, nil, cerr
+		}
+		patch[strconv.Itoa(int(fd.Number()))] = converted
+	}
+	return typeID, patch, nil
+}
+
 // fieldIDFromMessage resolves a developer-facing proto field name to
 // its stable field number. ADR-006 makes the proto field number the
 // EntDB field_id, so CAS preconditions can stay name-based in SDK code
