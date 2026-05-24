@@ -1270,11 +1270,12 @@ type Transport interface {
 	GetNode(ctx context.Context, tenantID, actor string, typeID int, nodeID string) (*Node, error)
 	// GetNodeByKey resolves a node via a declared unique key.
 	//
-	// The signature matches the 2026-04-14 SDK v0.3 gRPC contract:
-	// ``(type_id, field_id, value)``, with ``value`` carried as a
-	// ``google.protobuf.Value`` so one RPC shape handles string,
-	// int, float, and bool unique keys.
-	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value *structpb.Value) (*Node, error)
+	// The contract is ``(type_id, field_id, value)``. value is the raw
+	// Go scalar; the transport builds both the legacy
+	// ``google.protobuf.Value`` and the typed ``EntValue`` (ADR-028 /
+	// #572) from it so int64 keys above 2^53 round-trip losslessly while
+	// older servers keep reading the legacy field.
+	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value any) (*Node, error)
 	// QueryNodes retrieves nodes matching a filter.
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
