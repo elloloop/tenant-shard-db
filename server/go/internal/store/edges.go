@@ -32,22 +32,56 @@ type EdgeInput struct {
 // GetEdgesFrom returns outgoing edges from nodeID. If edgeTypeID is
 // non-nil it filters by edge type; otherwise returns every edge type.
 func (s *CanonicalStore) GetEdgesFrom(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, limit int) ([]*Edge, error) {
-	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, true, limit)
+	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, true, limit, nil)
 }
 
 // GetEdgesTo returns incoming edges to nodeID.
 func (s *CanonicalStore) GetEdgesTo(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, limit int) ([]*Edge, error) {
-	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, false, limit)
+	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, false, limit, nil)
 }
 
-func (s *CanonicalStore) getEdges(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, outgoing bool, limit int) ([]*Edge, error) {
+// EdgeCursor anchors a keyset seek over the edge list (ADR-029). The
+// effective sort is (created_at DESC, edge_type_id DESC, peer DESC) where
+// peer is to_node_id for outgoing edges and from_node_id for incoming —
+// a total order, since (edge_type_id, peer) uniquely identifies an edge
+// for a fixed source/target node. The seek resumes strictly after this
+// tuple.
+type EdgeCursor struct {
+	CreatedAt  int64
+	EdgeTypeID int32
+	PeerNodeID string
+}
+
+// EdgeCursorFrom returns the keyset anchor for e in the given direction
+// (outgoing ⇒ peer is to_node_id; incoming ⇒ from_node_id).
+func EdgeCursorFrom(e *Edge, outgoing bool) EdgeCursor {
+	peer := e.ToNodeID
+	if !outgoing {
+		peer = e.FromNodeID
+	}
+	return EdgeCursor{CreatedAt: e.CreatedAt, EdgeTypeID: e.EdgeTypeID, PeerNodeID: peer}
+}
+
+// GetEdgesFromPaged is GetEdgesFrom with a keyset cursor (ADR-029).
+func (s *CanonicalStore) GetEdgesFromPaged(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, limit int, cursor *EdgeCursor) ([]*Edge, error) {
+	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, true, limit, cursor)
+}
+
+// GetEdgesToPaged is GetEdgesTo with a keyset cursor (ADR-029).
+func (s *CanonicalStore) GetEdgesToPaged(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, limit int, cursor *EdgeCursor) ([]*Edge, error) {
+	return s.getEdges(ctx, tenantID, nodeID, edgeTypeID, false, limit, cursor)
+}
+
+func (s *CanonicalStore) getEdges(ctx context.Context, tenantID, nodeID string, edgeTypeID *int32, outgoing bool, limit int, cursor *EdgeCursor) ([]*Edge, error) {
 	db, err := s.readDB(tenantID)
 	if err != nil {
 		return nil, err
 	}
 	col := "from_node_id"
+	peer := "to_node_id"
 	if !outgoing {
 		col = "to_node_id"
+		peer = "from_node_id"
 	}
 	q := fmt.Sprintf(
 		`SELECT tenant_id, edge_type_id, from_node_id, to_node_id,
@@ -59,7 +93,21 @@ func (s *CanonicalStore) getEdges(ctx context.Context, tenantID, nodeID string, 
 		q += ` AND edge_type_id = ?`
 		args = append(args, *edgeTypeID)
 	}
-	q += ` ORDER BY created_at DESC`
+	// Keyset seek (ADR-029): resume strictly after the cursor tuple in the
+	// effective DESC order (created_at, edge_type_id, peer). The expanded
+	// disjunction avoids relying on SQLite row-value comparison.
+	if cursor != nil {
+		q += fmt.Sprintf(
+			` AND (created_at < ? OR (created_at = ? AND edge_type_id < ?)`+
+				` OR (created_at = ? AND edge_type_id = ? AND %s < ?))`, peer)
+		args = append(args,
+			cursor.CreatedAt,
+			cursor.CreatedAt, cursor.EdgeTypeID,
+			cursor.CreatedAt, cursor.EdgeTypeID, cursor.PeerNodeID)
+	}
+	// Total order so the keyset cursor is unambiguous (peer uniquely
+	// identifies an edge for a fixed source/target node).
+	q += fmt.Sprintf(` ORDER BY created_at DESC, edge_type_id DESC, %s DESC`, peer)
 	if limit > 0 {
 		q += ` LIMIT ?`
 		args = append(args, limit)

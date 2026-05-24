@@ -553,45 +553,52 @@ func (t *grpcTransport) Share(ctx context.Context, tenantID, actor, nodeID, gran
 }
 
 func (t *grpcTransport) GetEdgesFrom(ctx context.Context, tenantID, actor, fromNodeID string, edgeTypeID int) ([]*Edge, error) {
-	client, err := t.ensureReady()
-	if err != nil {
-		return nil, err
-	}
-	var trailer metadata.MD
-	resp, err := client.GetEdgesFrom(t.callContext(ctx, tenantID), &pb.GetEdgesRequest{
-		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		NodeId:     fromNodeID,
-		EdgeTypeId: int32(edgeTypeID),
-	}, grpc.Trailer(&trailer))
-	if err != nil {
-		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
-	}
-	edges := resp.GetEdges()
-	out := make([]*Edge, 0, len(edges))
-	for _, e := range edges {
-		out = append(out, edgeFromProto(e))
-	}
-	return out, nil
+	return t.getEdgesPaged(ctx, tenantID, actor, fromNodeID, edgeTypeID, true)
 }
 
 func (t *grpcTransport) GetEdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error) {
+	return t.getEdgesPaged(ctx, tenantID, actor, toNodeID, edgeTypeID, false)
+}
+
+// getEdgesPaged auto-follows the ADR-029 keyset cursor across pages so an
+// edge read returns the COMPLETE set, never a silent prefix — the same
+// guarantee QueryNodes gives. outgoing selects GetEdgesFrom vs GetEdgesTo.
+func (t *grpcTransport) getEdgesPaged(ctx context.Context, tenantID, actor, nodeID string, edgeTypeID int, outgoing bool) ([]*Edge, error) {
 	client, err := t.ensureReady()
 	if err != nil {
 		return nil, err
 	}
-	var trailer metadata.MD
-	resp, err := client.GetEdgesTo(t.callContext(ctx, tenantID), &pb.GetEdgesRequest{
-		Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		NodeId:     toNodeID,
-		EdgeTypeId: int32(edgeTypeID),
-	}, grpc.Trailer(&trailer))
-	if err != nil {
-		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
-	}
-	edges := resp.GetEdges()
-	out := make([]*Edge, 0, len(edges))
-	for _, e := range edges {
-		out = append(out, edgeFromProto(e))
+	var out []*Edge
+	pageToken := ""
+	for page := 0; ; page++ {
+		if page > maxAutoFollowPages {
+			return nil, fmt.Errorf("entdb: GetEdges: pagination did not terminate after %d pages", maxAutoFollowPages)
+		}
+		req := &pb.GetEdgesRequest{
+			Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
+			NodeId:     nodeID,
+			EdgeTypeId: int32(edgeTypeID),
+			PageSize:   int32(maxQueryPageSize),
+			PageToken:  pageToken,
+		}
+		var trailer metadata.MD
+		var resp *pb.GetEdgesResponse
+		callCtx := t.callContext(ctx, tenantID)
+		if outgoing {
+			resp, err = client.GetEdgesFrom(callCtx, req, grpc.Trailer(&trailer))
+		} else {
+			resp, err = client.GetEdgesTo(callCtx, req, grpc.Trailer(&trailer))
+		}
+		if err != nil {
+			return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+		}
+		for _, e := range resp.GetEdges() {
+			out = append(out, edgeFromProto(e))
+		}
+		pageToken = resp.GetNextPageToken()
+		if pageToken == "" {
+			break
+		}
 	}
 	return out, nil
 }

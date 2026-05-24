@@ -41,6 +41,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 const grpcMethodGetEdgesTo = "GetEdgesTo"
@@ -94,23 +95,40 @@ func (s *Server) GetEdgesTo(
 		return nil, errs.Errorf(errs.Code(err), "GetEdgesTo: open tenant: %v", err)
 	}
 
-	limit := int(req.GetLimit())
-	if limit <= 0 {
-		limit = 100
+	pageSize := int(req.GetPageSize())
+	if pageSize <= 0 {
+		pageSize = int(req.GetLimit())
 	}
-	// SEC-4 (#135): cap oversized page requests before the store
-	// fetches limit+1 rows.
-	limit = clampPageSize(limit)
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	// SEC-4 (#135): cap oversized page requests.
+	pageSize = clampPageSize(pageSize)
 
 	var edgeType *int32
 	if t := req.GetEdgeTypeId(); t != 0 {
 		edgeType = &t
 	}
 
-	// Fetch limit+1 so a single trailing row distinguishes
-	// "exactly limit" from "more available", without materialising the
-	// full result set in memory for high-fan-in targets.
-	rows, err := s.store.GetEdgesTo(ctx, tenantID, req.GetNodeId(), edgeType, limit+1)
+	// Keyset cursor (ADR-029): page_token bound to (node_id, incoming,
+	// edge_type_id); mutually exclusive with the deprecated offset.
+	fingerprint := edgesFingerprint(req.GetNodeId(), false, req.GetEdgeTypeId())
+	var cursor *store.EdgeCursor
+	if tok := req.GetPageToken(); tok != "" {
+		if req.GetOffset() != 0 {
+			outcome = "error"
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"page_token and the deprecated offset are mutually exclusive; use one")
+		}
+		c, derr := decodeEdgePageToken(tok, fingerprint)
+		if derr != nil {
+			outcome = "error"
+			return nil, derr
+		}
+		cursor = &store.EdgeCursor{CreatedAt: c.CreatedAt, EdgeTypeID: c.EdgeTypeID, PeerNodeID: c.PeerNodeID}
+	}
+
+	rows, err := s.store.GetEdgesToPaged(ctx, tenantID, req.GetNodeId(), edgeType, pageSize, cursor)
 	if err != nil {
 		// Surface genuine post-open faults (#573): the tenant is already
 		// lazy-opened above, so this is a real IO/corruption error — not
@@ -122,16 +140,20 @@ func (s *Server) GetEdgesTo(
 		return nil, errs.Internal(ctx, "GetEdgesTo: store", err)
 	}
 
-	hasMore := len(rows) > limit
-	if hasMore {
-		rows = rows[:limit]
+	var nextPageToken string
+	if len(rows) == pageSize && pageSize > 0 {
+		ec := store.EdgeCursorFrom(rows[len(rows)-1], false)
+		nextPageToken = encodeEdgePageToken(edgePageCursor{
+			Fingerprint: fingerprint, CreatedAt: ec.CreatedAt,
+			EdgeTypeID: ec.EdgeTypeID, PeerNodeID: ec.PeerNodeID,
+		})
 	}
 
 	out := make([]*pb.Edge, 0, len(rows))
 	for _, e := range rows {
 		out = append(out, edgeToProto(e))
 	}
-	return &pb.GetEdgesResponse{Edges: out, HasMore: hasMore}, nil
+	return &pb.GetEdgesResponse{Edges: out, HasMore: nextPageToken != "", NextPageToken: nextPageToken}, nil
 }
 
 // edgeToProto and edgePropsToStruct live in helpers.go (consolidated

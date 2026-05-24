@@ -663,14 +663,29 @@ message GetEdgesRequest {
     // Optional edge type filter
     int32 edge_type_id = 3;
 
-    // Pagination
+    // Pagination. `offset` is DEPRECATED (ADR-029); use keyset cursor
+    // pagination via `page_size` + `page_token`.
     int32 limit = 4;
-    int32 offset = 5;
+    int32 offset = 5 [deprecated = true];
+
+    // Keyset cursor pagination (ADR-029, AIP-158). `page_size` bounds one
+    // page (alias for `limit`, takes precedence); `page_token` is the
+    // opaque `next_page_token` from a prior response, a seek over
+    // (created_at, edge_type_id, peer_node_id) bound to this query by a
+    // fingerprint. Mixing `page_token` with the deprecated `offset` is
+    // INVALID_ARGUMENT.
+    int32 page_size = 6;
+    string page_token = 7;
 }
 
 message GetEdgesResponse {
     repeated Edge edges = 1;
     bool has_more = 2;
+
+    // Opaque keyset cursor for the next page (ADR-029). Empty on the last
+    // page; non-empty whenever rows were omitted, so edge reads never
+    // silently truncate.
+    string next_page_token = 3;
 }
 
 message Edge {
