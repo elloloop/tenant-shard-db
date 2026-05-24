@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779595417425,
+  "lastUpdate": 1779595445748,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -4536,6 +4536,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0001075970607301978",
             "extra": "mean: 5.877600405405399 msec\nrounds: 148"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "59a57972e1456a9d826c6beb5e04f3a4ab0796bd",
+          "message": "feat(adr-028): typed payload wire values — server (lossless int64) (#571)\n\n* proto(adr-028): add EntValue + typed payload map fields; regen stubs\n\nAdditive, non-breaking (buf breaking clean): EntValue oneof (int64/double/\nbool/string/bytes/json) + typed map fields — Node.typed_payload=11,\nCreateNodeOp.typed_data=12, UpdateNodeOp.typed_patch=8, Edge.typed_props=8,\nCreateEdgeOp.typed_props=6. Regenerated Go server + Go SDK + Python SDK\nstubs. Also fixes 'make proto' to call buf directly (matching CI) instead\nof the broken go:generate path.\n\nTranslation + dual-read/write wiring follows in subsequent commits.\n\n* payload(adr-028): lossless typed translation (TypedToPayload/PayloadToTyped)\n\nEntValue carries a real int64, so INTEGER/TIMESTAMP fields round-trip\nexactly with no float64 hop and no safe-integer guard. PayloadToTyped is\nschema-aware and handles json.Number (the store decodes payload_json with\nUseNumber so int64 survives at rest). Recast TestPayload_Int64Spectrum_BugC\nto assert the typed path is lossless (wire + at-rest) across the full\nint64 spectrum incl. MaxInt64/MinInt64; it now PASSES. Companion test\ndocuments the legacy Struct path stays lossy by design.\n\n* docs(adr-028): widen scope — canonical-number decode at all boundaries + scalar wire values (#572)\n\nThe int64 fix is systemic: a shared UseNumber+normalize decode must be\napplied consistently at wal.DecodeEvent, the applyUpdateNode merge read,\nand every payload_json egress (CAS compares store-decoded vs event-decoded\nvia reflect.DeepEqual). Scope also covers the scalar wire-value fields that\ncorrupt int64 today (#572): FieldFilter.value, GetNodeByKeyRequest.value,\nUpdateNodePrecondition.equals, and SDK toProtoValue.\n\n* feat(adr-028): canonical int64-preserving JSON decode at WAL + CAS boundaries\n\nAdd internal/jsonnum (json.Decoder.UseNumber + normalize json.Number ->\nint64-if-integral-else-float64) and apply it consistently at wal.DecodeEvent\nand the applyUpdateNode CAS merge. Integer payload values now survive the\nWAL as int64 instead of collapsing to float64, and update_node preconditions\ncompare on a single representation (reflect.DeepEqual int64==int64) — the\ninconsistency that previously broke CAS/DeleteWhere when only one boundary\nused UseNumber. Foundation for typed-payload egress/ingress and the #572\nscalar-value fields. jsonnum int64-spectrum tests added; full server suite green.\n\n* feat(adr-028): typed payload ingress — prefer typed_data/typed_patch (lossless int64 writes)\n\nexecute_atomic now reads CreateNodeOp.typed_data / UpdateNodeOp.typed_patch\nin preference to the legacy Struct data/patch (via TypedToPayload). Combined\nwith the canonical WAL decode, an int64 > 2^53 written through typed_data\npersists losslessly to payload_json — proven end-to-end by\nTestExecuteAtomic_CreateNodeTypedDataInt64. Legacy Struct path unchanged\n(backward-compatible). Egress (typed_payload) + #572 scalar fields + SDKs follow.\n\n* feat(adr-028): typed payload egress on primary node reads\n\nstoreNodeToProto (QueryNodes/GetNodes/GetConnectedNodes) and nodeToProto\n(GetNode) now populate Node.typed_payload alongside the legacy Struct\npayload, decoding payload_json via the canonical jsonnum path so int64 >2^53\nround-trips losslessly on reads. Regression test\nTestQueryNodes_TypedPayloadPreservesInt64. Legacy Struct payload unchanged\n(backward-compatible). GetNodeByKey, SearchNodes, and edge typed_props next.\n\n* feat(adr-028): complete typed payload egress (edges, GetNodeByKey, SearchNodes) + store canonical decode\n\nPopulate typed_payload on GetNodeByKey + SearchNodes and typed_props on\nedges (edgeToProto), all via the canonical jsonnum decode so int64 >2^53\nround-trips losslessly on every read surface. Route the store-layer\nUpdateNode merge and TenantExport decodes through jsonnum too, so int64\nsurvives read-modify-write and GDPR export. Adds payloadTypeName helper.\nLegacy Struct payload/props unchanged (backward-compatible). Full server\nsuite green.",
+          "timestamp": "2026-05-24T05:02:06+01:00",
+          "tree_id": "a9e7754b1010e8baada0315ca6046d77a8be5281",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/59a57972e1456a9d826c6beb5e04f3a4ab0796bd"
+        },
+        "date": 1779595444786,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3956.2927848677296,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003191057256321321",
+            "extra": "mean: 252.76187946070652 usec\nrounds: 1261"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2467.0330140910155,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004660012736064288",
+            "extra": "mean: 405.3452038494315 usec\nrounds: 1143"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1116.0719447343813,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010704639372952899",
+            "extra": "mean: 895.9995856163147 usec\nrounds: 876"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 856.5492147816959,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000916167182603717",
+            "extra": "mean: 1.167475239884336 msec\nrounds: 692"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 2045.2319206836487,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009623124899290623",
+            "extra": "mean: 488.9421047495363 usec\nrounds: 1537"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 2147.9870788152493,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000837244422708347",
+            "extra": "mean: 465.5521487361848 usec\nrounds: 1701"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2110.033452213067,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007133862562922224",
+            "extra": "mean: 473.9261356028122 usec\nrounds: 1792"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2329.2354044635003,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005131575765041842",
+            "extra": "mean: 429.32543360954656 usec\nrounds: 482"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 2181.6539739461823,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002810525522249445",
+            "extra": "mean: 458.36783098613796 usec\nrounds: 426"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1740.8899754910676,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008268645265045306",
+            "extra": "mean: 574.4188398338738 usec\nrounds: 1205"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2982.6324263886368,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008582521408201129",
+            "extra": "mean: 335.2743003638559 usec\nrounds: 1375"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 137.86527788462826,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001636711605791911",
+            "extra": "mean: 7.253457979730357 msec\nrounds: 148"
           }
         ]
       }
