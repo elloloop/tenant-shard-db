@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strconv"
 	"testing"
 	"time"
 
@@ -47,18 +48,24 @@ type fakeServer struct {
 	getNodeByKeyErr  error
 	queryResp        *pb.QueryNodesResponse
 	queryErr         error
-	searchResp       *pb.SearchNodesResponse
-	searchErr        error
-	edgesFromResp    *pb.GetEdgesResponse
-	edgesFromErr     error
-	edgesToResp      *pb.GetEdgesResponse
-	edgesToErr       error
-	shareResp        *pb.ShareNodeResponse
-	shareErr         error
-	quotaResp        *pb.GetTenantQuotaResponse
-	quotaErr         error
-	execResp         *pb.ExecuteAtomicResponse
-	execErr          error
+	// queryPages, when set, makes QueryNodes serve keyset pages: the
+	// request's page_token is the index into queryPages ("" => 0), and
+	// each page's NextPageToken points at the next index (empty on the
+	// last). Used to exercise the SDK's ADR-029 auto-follow loop.
+	queryPages    []*pb.QueryNodesResponse
+	queryReqs     []*pb.QueryNodesRequest
+	searchResp    *pb.SearchNodesResponse
+	searchErr     error
+	edgesFromResp *pb.GetEdgesResponse
+	edgesFromErr  error
+	edgesToResp   *pb.GetEdgesResponse
+	edgesToErr    error
+	shareResp     *pb.ShareNodeResponse
+	shareErr      error
+	quotaResp     *pb.GetTenantQuotaResponse
+	quotaErr      error
+	execResp      *pb.ExecuteAtomicResponse
+	execErr       error
 
 	// v1.4 surface
 	getNodesReq    *pb.GetNodesRequest
@@ -171,9 +178,21 @@ func (s *fakeServer) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyReque
 
 func (s *fakeServer) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb.QueryNodesResponse, error) {
 	s.queryReq = req
+	s.queryReqs = append(s.queryReqs, req)
 	s.sendTrailer(ctx)
 	if s.queryErr != nil {
 		return nil, s.queryErr
+	}
+	if s.queryPages != nil {
+		idx := 0
+		if req.GetPageToken() != "" {
+			i, err := strconv.Atoi(req.GetPageToken())
+			if err != nil {
+				return nil, err
+			}
+			idx = i
+		}
+		return s.queryPages[idx], nil
 	}
 	return s.queryResp, nil
 }
@@ -615,7 +634,7 @@ func TestGrpcTransport_QueryNodes_HappyPath(t *testing.T) {
 		"price_cents": map[string]any{"$gte": 500.0},
 		"sku":         "WIDGET-1",
 	}
-	nodes, err := tr.QueryNodes(context.Background(), "acme", "user:alice", 201, filter)
+	nodes, err := tr.QueryNodes(context.Background(), "acme", "user:alice", 201, filter, 0)
 	if err != nil {
 		t.Fatalf("QueryNodes: %v", err)
 	}
@@ -640,6 +659,76 @@ func TestGrpcTransport_QueryNodes_HappyPath(t *testing.T) {
 	}
 	if !foundGte {
 		t.Errorf("expected a $gte filter on price_cents, got %+v", svc.queryReq.GetFilters())
+	}
+}
+
+// makeNodes builds n placeholder nodes for the pagination tests.
+func makeNodes(prefix string, n int) []*pb.Node {
+	out := make([]*pb.Node, n)
+	for i := 0; i < n; i++ {
+		out[i] = &pb.Node{TenantId: "acme", NodeId: prefix + strconv.Itoa(i), TypeId: 201}
+	}
+	return out
+}
+
+// TestGrpcTransport_QueryNodes_AutoFollowsCursor pins the ADR-029
+// auto-follow: a single QueryNodes call follows next_page_token across
+// pages and returns the complete set.
+func TestGrpcTransport_QueryNodes_AutoFollowsCursor(t *testing.T) {
+	svc := &fakeServer{
+		queryPages: []*pb.QueryNodesResponse{
+			{Nodes: makeNodes("a", 1000), NextPageToken: "1"},
+			{Nodes: makeNodes("b", 1000), NextPageToken: "2"},
+			{Nodes: makeNodes("c", 250), NextPageToken: ""},
+		},
+	}
+	tr := startFakeServer(t, svc)
+
+	nodes, err := tr.QueryNodes(context.Background(), "acme", "user:alice", 201, nil, 0)
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(nodes) != 2250 {
+		t.Fatalf("got %d nodes, want 2250 (complete set across 3 pages)", len(nodes))
+	}
+	if len(svc.queryReqs) != 3 {
+		t.Fatalf("made %d requests, want 3", len(svc.queryReqs))
+	}
+	// First page fences read-after-write; later pages carry the cursor.
+	if svc.queryReqs[0].GetPageToken() != "" {
+		t.Errorf("page 1 token = %q, want empty", svc.queryReqs[0].GetPageToken())
+	}
+	if svc.queryReqs[1].GetPageToken() != "1" || svc.queryReqs[2].GetPageToken() != "2" {
+		t.Errorf("cursor not advanced: %q, %q", svc.queryReqs[1].GetPageToken(), svc.queryReqs[2].GetPageToken())
+	}
+}
+
+// TestGrpcTransport_QueryNodes_LimitCapsTotal pins WithLimit's cap: the
+// transport stops following once `limit` rows are collected and requests
+// only the remaining count on the final page.
+func TestGrpcTransport_QueryNodes_LimitCapsTotal(t *testing.T) {
+	svc := &fakeServer{
+		queryPages: []*pb.QueryNodesResponse{
+			{Nodes: makeNodes("a", 1000), NextPageToken: "1"},
+			{Nodes: makeNodes("b", 1000), NextPageToken: "2"},
+			{Nodes: makeNodes("c", 1000), NextPageToken: ""},
+		},
+	}
+	tr := startFakeServer(t, svc)
+
+	nodes, err := tr.QueryNodes(context.Background(), "acme", "user:alice", 201, nil, 1200)
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(nodes) != 1200 {
+		t.Fatalf("got %d nodes, want 1200 (limit cap)", len(nodes))
+	}
+	if len(svc.queryReqs) != 2 {
+		t.Fatalf("made %d requests, want 2 (stop at cap)", len(svc.queryReqs))
+	}
+	// Second page only needs the remaining 200 rows.
+	if svc.queryReqs[1].GetPageSize() != 200 {
+		t.Errorf("page 2 page_size = %d, want 200", svc.queryReqs[1].GetPageSize())
 	}
 }
 
@@ -890,7 +979,7 @@ func TestGrpcTransport_InvalidArgumentError(t *testing.T) {
 	svc := &fakeServer{queryErr: status.Error(codes.InvalidArgument, "bad filter")}
 	tr := startFakeServer(t, svc)
 
-	_, err := tr.QueryNodes(context.Background(), "acme", "user:alice", 201, map[string]any{"x": "y"})
+	_, err := tr.QueryNodes(context.Background(), "acme", "user:alice", 201, map[string]any{"x": "y"}, 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}

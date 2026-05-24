@@ -1277,7 +1277,11 @@ type Transport interface {
 	// older servers keep reading the legacy field.
 	GetNodeByKey(ctx context.Context, tenantID, actor string, typeID, fieldID int32, value any) (*Node, error)
 	// QueryNodes retrieves nodes matching a filter.
-	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any) ([]*Node, error)
+	// QueryNodes returns nodes matching a filter. The transport follows
+	// the ADR-029 keyset cursor across pages so the complete set is
+	// returned, never a silent 100-row prefix. limit caps the total when
+	// positive; limit <= 0 returns every matching row.
+	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any, limit int) ([]*Node, error)
 	// ExecuteAtomic commits a batch of operations atomically.
 	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error)
 	// Share grants permission on a node to another actor.

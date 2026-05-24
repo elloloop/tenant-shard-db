@@ -211,14 +211,14 @@ func Query[T proto.Message](ctx context.Context, s *Scope, filter map[string]any
 	if err != nil {
 		return nil, fmt.Errorf("entdb: Query: %w", err)
 	}
-	// queryConfig is unused on the wire today — limit/offset will
-	// land when the transport supports them. Building the config
-	// keeps the public signature forward-compatible.
+	// WithLimit caps the total rows returned; unset (0) returns the
+	// complete set via the transport's ADR-029 keyset auto-follow.
+	// WithOffset is not wired — the cursor supersedes offset paging.
 	var cfg queryConfig
 	for _, o := range opts {
 		o(&cfg)
 	}
-	nodes, err := s.client.transport.QueryNodes(ctx, s.tenantID, s.actor.String(), int(typeID), filter)
+	nodes, err := s.client.transport.QueryNodes(ctx, s.tenantID, s.actor.String(), int(typeID), filter, int(cfg.limit))
 	if err != nil {
 		return nil, err
 	}

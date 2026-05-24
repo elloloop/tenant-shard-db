@@ -73,7 +73,7 @@ func TestReadAfterWrite_AutoAttachesOffset(t *testing.T) {
 		t.Errorf("GetNode wait_timeout_ms = %d, want 30000", got)
 	}
 
-	if _, err := tr.QueryNodes(ctx, "acme", "user:alice", 201, nil); err != nil {
+	if _, err := tr.QueryNodes(ctx, "acme", "user:alice", 201, nil, 0); err != nil {
 		t.Fatalf("QueryNodes: %v", err)
 	}
 	if got := svc.queryReq.GetAfterOffset(); got != "42" {

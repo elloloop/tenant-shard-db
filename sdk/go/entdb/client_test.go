@@ -33,6 +33,7 @@ type mockTransport struct {
 	lastGetByKeyValue     any
 	lastQueryTypeID       int
 	lastQueryFilter       map[string]any
+	lastQueryLimit        int
 	lastCommitOperations  []Operation
 	lastCommitIdempotency string
 
@@ -75,10 +76,11 @@ func (m *mockTransport) GetNodeByKey(_ context.Context, _, _ string, typeID, fie
 	return m.getNodeByKeyResp, m.getNodeByKeyErr
 }
 
-func (m *mockTransport) QueryNodes(_ context.Context, _, _ string, typeID int, filter map[string]any) ([]*Node, error) {
+func (m *mockTransport) QueryNodes(_ context.Context, _, _ string, typeID int, filter map[string]any, limit int) ([]*Node, error) {
 	m.queryCalls++
 	m.lastQueryTypeID = typeID
 	m.lastQueryFilter = filter
+	m.lastQueryLimit = limit
 	return m.queryResp, m.queryErr
 }
 
