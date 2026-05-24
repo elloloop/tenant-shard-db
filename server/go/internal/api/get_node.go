@@ -55,7 +55,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"google.golang.org/grpc/codes"
@@ -228,21 +227,11 @@ func nodeToProto(reg *schema.Registry, n *store.Node) (*pb.Node, error) {
 		OwnerActor: n.OwnerActor,
 	}
 
-	rawPayload := map[string]any{}
-	if n.PayloadJSON != "" {
-		if err := json.Unmarshal([]byte(n.PayloadJSON), &rawPayload); err != nil {
-			return nil, fmt.Errorf("decode payload_json: %w", err)
-		}
-	}
-	idKeyed := make(map[uint32]any, len(rawPayload))
-	for k, v := range rawPayload {
-		id, perr := strconv.ParseUint(k, 10, 32)
-		if perr != nil {
-			// Non-digit key on disk is unexpected; skip silently
-			// rather than corrupting the wire response.
-			continue
-		}
-		idKeyed[uint32(id)] = v
+	// Canonical decode (jsonnum via the shared helper): integers survive
+	// as int64 so typed_payload is lossless (ADR-028).
+	idKeyed, err := decodeIDKeyedPayload(n.PayloadJSON)
+	if err != nil {
+		return nil, fmt.Errorf("decode payload_json: %w", err)
 	}
 
 	typeName := ""
@@ -256,6 +245,11 @@ func nodeToProto(reg *schema.Registry, n *store.Node) (*pb.Node, error) {
 		return nil, fmt.Errorf("encode payload: %w", err)
 	}
 	out.Payload = wire
+	typed, err := payload.PayloadToTyped(reg, typeName, idKeyed)
+	if err != nil {
+		return nil, fmt.Errorf("encode typed payload: %w", err)
+	}
+	out.TypedPayload = typed
 
 	if n.ACLJSON != "" && n.ACLJSON != "[]" {
 		var entries []store.ACLEntry

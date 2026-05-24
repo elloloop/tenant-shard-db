@@ -234,6 +234,36 @@ func TestQueryNodes_NotOpenTenant_LazyOpensAndReadsData(t *testing.T) {
 	}
 }
 
+// TestQueryNodes_TypedPayloadPreservesInt64 is the egress regression for
+// Bug C (#563): a stored int64 > 2^53 must come back in typed_payload as a
+// lossless int_value. The legacy Struct `payload` stays float64-lossy by
+// design; the typed map carries the exact value.
+func TestQueryNodes_TypedPayloadPreservesInt64(t *testing.T) {
+	t.Parallel()
+	f := newQueryNodesFixture(t)
+	const big = int64(1)<<53 + 1 // 9007199254740993
+	// field 2 == "age" (KindInteger) in the fixture registry.
+	f.seedNode("n1", "user:alice", "alice@example.com", big)
+
+	resp, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
+		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
+		TypeId:  1,
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(resp.GetNodes()) != 1 {
+		t.Fatalf("nodes: got %d want 1", len(resp.GetNodes()))
+	}
+	tv := resp.GetNodes()[0].GetTypedPayload()[2]
+	if tv == nil {
+		t.Fatalf("typed_payload[2] missing; got %v", resp.GetNodes()[0].GetTypedPayload())
+	}
+	if tv.GetIntValue() != big {
+		t.Fatalf("typed_payload[2]: got %d, want %d (int64 corrupted on egress)", tv.GetIntValue(), big)
+	}
+}
+
 // TestQueryNodes_RangeOperators exercises the comparison operators
 // added by issue #501. Each branch seeds the same three rows and
 // asserts that the matching subset is returned. CONTAINS / IN are

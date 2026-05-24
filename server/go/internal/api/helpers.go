@@ -32,6 +32,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
@@ -226,19 +227,24 @@ func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, err
 	if err != nil {
 		return nil, err
 	}
+	pTyped, err := payload.PayloadToTyped(s.registry, typeName, idPayload)
+	if err != nil {
+		return nil, err
+	}
 	aclEntries, err := decodeACLEntries(n.ACLJSON)
 	if err != nil {
 		return nil, errs.InternalNoCtx("parse node acl", err)
 	}
 	return &pb.Node{
-		TenantId:   n.TenantID,
-		NodeId:     n.NodeID,
-		TypeId:     n.TypeID,
-		CreatedAt:  n.CreatedAt,
-		UpdatedAt:  n.UpdatedAt,
-		OwnerActor: n.OwnerActor,
-		Payload:    pStruct,
-		Acl:        aclEntries,
+		TenantId:     n.TenantID,
+		NodeId:       n.NodeID,
+		TypeId:       n.TypeID,
+		CreatedAt:    n.CreatedAt,
+		UpdatedAt:    n.UpdatedAt,
+		OwnerActor:   n.OwnerActor,
+		Payload:      pStruct,
+		TypedPayload: pTyped,
+		Acl:          aclEntries,
 	}, nil
 }
 
@@ -253,8 +259,10 @@ func decodeIDKeyedPayload(raw string) (map[uint32]any, error) {
 	if raw == "" || raw == "null" {
 		return out, nil
 	}
-	tmp := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &tmp); err != nil {
+	// Canonical decode (jsonnum): integers survive as int64, not float64,
+	// so PayloadToTyped can emit a lossless EntValue.int_value (ADR-028).
+	tmp, err := jsonnum.Decode([]byte(raw))
+	if err != nil {
 		return nil, err
 	}
 	for k, v := range tmp {
