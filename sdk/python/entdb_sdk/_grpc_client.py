@@ -1619,8 +1619,14 @@ class GrpcClient:
             positive ``limit`` capped the result.
         """
         return await self._get_edges_paged(
-            tenant_id, actor, node_id, edge_type_id, limit,
-            outgoing=True, trace_id=trace_id, timeout=timeout,
+            tenant_id,
+            actor,
+            node_id,
+            edge_type_id,
+            limit,
+            outgoing=True,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
     async def get_edges_to(
@@ -1643,8 +1649,14 @@ class GrpcClient:
             Tuple of (edges, has_more).
         """
         return await self._get_edges_paged(
-            tenant_id, actor, node_id, edge_type_id, limit,
-            outgoing=False, trace_id=trace_id, timeout=timeout,
+            tenant_id,
+            actor,
+            node_id,
+            edge_type_id,
+            limit,
+            outgoing=False,
+            trace_id=trace_id,
+            timeout=timeout,
         )
 
     async def _get_edges_paged(
