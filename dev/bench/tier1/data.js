@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779653426161,
+  "lastUpdate": 1779654637894,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -6156,6 +6156,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.002096275915121311",
             "extra": "mean: 8.99953857746393 msec\nrounds: 71"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "258f783159d5bed9dcd737a3d4fde08f552376d6",
+          "message": "fix(apply): fail-stop on corrupt acl_blob instead of silently dropping all grants (#582) (#585)\n\nTransferOwnership read the node's existing acl_blob and unmarshaled it\nwith the error discarded. refreshVisibility then DELETEs the node's\nvisibility rows and re-inserts owner + each ACL entry — so a corrupt\nacl_blob rebuilt the index from an EMPTY ACL, silently revoking every\nshared grant on the node. Now the decode error is propagated, so the\napplier halts (halt-on-poison) on a corrupt blob rather than masking it\nas a mass-revoke. The transfer does not apply and the owner is unchanged.\n\nAudited the same class in acladapter.GrantsForNode: the typed-cap arrays\n(core_caps / ext_caps) were also decoded with `err == nil` ignores,\nsilently dropping caps and mis-evaluating access. Those now fail closed\n(return the error) too.\n\nTest: seed a node with an ACL grant, corrupt its acl_blob via a second\nconnection, append a TransferOwnership op, and assert the applier halts\n(non-nil) with the owner unchanged — i.e. grants are not silently dropped.\n\nCloses #582.",
+          "timestamp": "2026-05-24T21:28:51+01:00",
+          "tree_id": "41324655bdfed5628f88357ef95790e1ece59483",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/258f783159d5bed9dcd737a3d4fde08f552376d6"
+        },
+        "date": 1779654637469,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3320.0617334526846,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008398378546784192",
+            "extra": "mean: 301.19921865430314 usec\nrounds: 1308"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2130.025486527792,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004922181089248073",
+            "extra": "mean: 469.47795053388074 usec\nrounds: 1031"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 995.1720603518067,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011326979856490625",
+            "extra": "mean: 1.0048513617298365 msec\nrounds: 763"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 468.55110510901415,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001361021056885842",
+            "extra": "mean: 2.134238910326202 msec\nrounds: 368"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1914.5428077080328,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009229221786762134",
+            "extra": "mean: 522.317911082456 usec\nrounds: 1597"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1922.6158807192007,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010996803388820407",
+            "extra": "mean: 520.1246957483394 usec\nrounds: 1811"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1970.4473834237476,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000931230171765922",
+            "extra": "mean: 507.49896110519416 usec\nrounds: 1594"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2009.7531196762823,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004604704310904394",
+            "extra": "mean: 497.5735527959143 usec\nrounds: 1288"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1881.75226738573,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008105597228790595",
+            "extra": "mean: 531.4195802135391 usec\nrounds: 374"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1583.67232560425,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006490466462077173",
+            "extra": "mean: 631.4437550194924 usec\nrounds: 1245"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2646.8334961700502,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002809530956188083",
+            "extra": "mean: 377.80993834594926 usec\nrounds: 1330"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 125.23080332163559,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008230536193814741",
+            "extra": "mean: 7.98525581147681 msec\nrounds: 122"
           }
         ]
       }
