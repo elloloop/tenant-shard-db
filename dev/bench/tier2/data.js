@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779584633832,
+  "lastUpdate": 1779584671743,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -4212,6 +4212,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001230842909760516",
             "extra": "mean: 6.005550566668489 msec\nrounds: 150"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b2547d15f37f1faab69c751adfa79be5325b721",
+          "message": "chore: retire Python-server remnants and fix proto regen (#561)\n\nThe historical Python server (ADR-017) left untracked remnants under\nserver/python/ and dbaas/ plus a stale scripts/generate_proto.sh that\ngenerated into the dead server path.\n\n- generate_proto.sh is now Python-SDK-only (drops the dead server stubs)\n- `make proto` regenerates Go (buf: server + SDK) AND Python SDK stubs\n- drop dangling doc-comment citations to the retired Python server",
+          "timestamp": "2026-05-24T02:01:56+01:00",
+          "tree_id": "0250d70e6f37fa8307928b6fb869dc491ac48a49",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/6b2547d15f37f1faab69c751adfa79be5325b721"
+        },
+        "date": 1779584670765,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2275.540343563021,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000037634380250277",
+            "extra": "mean: 439.4560627451715 usec\nrounds: 1275"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1608.198419695192,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008591186686366022",
+            "extra": "mean: 621.8138183406086 usec\nrounds: 1145"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 830.9790641499156,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005653421046640469",
+            "extra": "mean: 1.2033997523427276 msec\nrounds: 747"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 710.5779490014415,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010307257915258615",
+            "extra": "mean: 1.407305139999456 msec\nrounds: 600"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1161.0881296974012,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019104785000442265",
+            "extra": "mean: 861.2610657389259 usec\nrounds: 1293"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1090.2870018041374,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023863278953374033",
+            "extra": "mean: 917.1896925720143 usec\nrounds: 1454"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1169.224883034942,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018719598793919922",
+            "extra": "mean: 855.2674635219128 usec\nrounds: 1357"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1584.2263707158857,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004913327296994815",
+            "extra": "mean: 631.2229227368034 usec\nrounds: 1359"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1493.2571764808365,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027502699605119752",
+            "extra": "mean: 669.677009258849 usec\nrounds: 432"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1303.2757474154869,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004829360097990605",
+            "extra": "mean: 767.2973290442103 usec\nrounds: 1088"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1893.9102868654295,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003697506263707876",
+            "extra": "mean: 528.0081147112193 usec\nrounds: 1543"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 160.71544574966862,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001403536943233973",
+            "extra": "mean: 6.222177310559224 msec\nrounds: 161"
           }
         ]
       }
