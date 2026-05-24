@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779656535465,
+  "lastUpdate": 1779656542987,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -6588,6 +6588,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00015403915534673644",
             "extra": "mean: 7.558817458350593 msec\nrounds: 24"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a1291ed07f7d442a4cdbb1748a46b06e0e2d46a",
+          "message": "feat(#580): keyset cursor for GetEdgesFrom/GetEdgesTo + SDK auto-follow (#587)\n\n* feat(edges): keyset cursor pagination for GetEdgesFrom/GetEdgesTo + SDK auto-follow (#580)\n\nEdge reads truncated at the page default with no cursor (Bug A class): a\nhigh-fan-out node's edges came back as a prefix with has_more=true and no\nway to fetch the rest. Extends the ADR-029 keyset cursor (shipped for\nQueryNodes in v1.23/v1.24) to both edge RPCs.\n\nServer: GetEdgesRequest gains page_size + page_token, GetEdgesResponse\ngains next_page_token (offset deprecated). The store seeks over the total\norder (created_at DESC, edge_type_id DESC, peer DESC) — peer is\nto_node_id outgoing / from_node_id incoming, which uniquely identifies an\nedge for a fixed source/target, so pages never skip or duplicate. The\ntoken is fingerprint-bound to (node_id, direction, edge_type_id);\nmismatched or offset-mixed tokens are INVALID_ARGUMENT. next_page_token is\nminted from the last edge, so a response that omits edges always carries\na cursor.\n\nSDKs (both, together): Go transport.GetEdgesFrom/To and Python\nget_edges_from/get_edges_to auto-follow the cursor to return the COMPLETE\nset by default; Python `limit` defaults to 0 (= all), a positive value\ncaps. Shared helpers (getEdgesPaged / _get_edges_paged) back both\ndirections.\n\nTests: server keyset paging (all edges, no dup), cross-query and\ntoken+offset rejection; a real-server Go integration test\n(TestIntegration_GetEdgesFromAutoFollowsRealCursor) seeds 150 edges and\nasserts auto-follow returns all of them.\n\nRefs #580, ADR-029.\n\n* style: ruff-format _grpc_client.py (edge auto-follow helper)",
+          "timestamp": "2026-05-24T22:00:38+01:00",
+          "tree_id": "feae7570f69750dd37280c6818299b1c9602a39a",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/5a1291ed07f7d442a4cdbb1748a46b06e0e2d46a"
+        },
+        "date": 1779656542580,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3243.838726911229,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000025109764468453628",
+            "extra": "mean: 308.27673142437516 usec\nrounds: 1467"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2148.533887577648,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000039169224955130665",
+            "extra": "mean: 465.43366422181225 usec\nrounds: 1227"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 997.3568787214942,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009899230317488651",
+            "extra": "mean: 1.002650125882617 msec\nrounds: 850"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 467.91124627873484,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011295582665981668",
+            "extra": "mean: 2.137157437340798 msec\nrounds: 391"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1946.8925622198221,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011150743988807131",
+            "extra": "mean: 513.6390263157679 usec\nrounds: 1596"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1817.8480005075553,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001379656263592861",
+            "extra": "mean: 550.1009983897407 usec\nrounds: 1863"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1908.696677582389,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011031846834018031",
+            "extra": "mean: 523.9177139799024 usec\nrounds: 1402"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1773.0371147014273,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008155394251985223",
+            "extra": "mean: 564.003985990105 usec\nrounds: 1142"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1770.1081737023062,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006478567240440846",
+            "extra": "mean: 564.9372252252977 usec\nrounds: 333"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1550.343543608067,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006479510710014122",
+            "extra": "mean: 645.0183277912266 usec\nrounds: 1263"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2651.1723238393893,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000028842252569108595",
+            "extra": "mean: 377.19162613760784 usec\nrounds: 1209"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 136.47145795703432,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015622206503474565",
+            "extra": "mean: 7.327539508772835 msec\nrounds: 114"
           }
         ]
       }
