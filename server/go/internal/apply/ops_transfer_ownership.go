@@ -43,7 +43,15 @@ func (a *Applier) applyTransferOwnership(ctx context.Context, tx *BatchTxn, ev *
 	}
 	var acl []aclEntry
 	if aclJSON != "" {
-		_ = json.Unmarshal([]byte(aclJSON), &acl)
+		// Do NOT swallow this: a corrupt acl_blob means refreshVisibility
+		// would rebuild node_visibility from an EMPTY ACL, silently
+		// revoking every shared grant on the node (#582). Fail-stop
+		// instead — the applier's halt-on-poison surfaces the corruption
+		// rather than masking it as a mass-revoke.
+		if err := json.Unmarshal([]byte(aclJSON), &acl); err != nil {
+			return fmt.Errorf("apply transfer_ownership: decode acl_blob for %s/%s: %w",
+				ev.TenantID, nodeID, err)
+		}
 	}
 	if _, err := conn.ExecContext(ctx,
 		`UPDATE nodes SET owner_actor = ? WHERE tenant_id = ? AND node_id = ?`,

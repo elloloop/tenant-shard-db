@@ -114,20 +114,25 @@ func (r *StoreReaders) GrantsForNode(ctx context.Context, tenantID, nodeID strin
 			g.ExpiresAt = &ms
 		}
 		// Decode typed-cap arrays.
+		// Fail closed on a corrupt typed-cap array (#582): silently
+		// dropping caps would mis-evaluate access. Surface the error so
+		// the ACL read fails rather than returning a wrong grant set.
 		if coreJSON != "" {
 			var raw []int32
-			if err := json.Unmarshal([]byte(coreJSON), &raw); err == nil {
-				for _, v := range raw {
-					g.CoreCaps = append(g.CoreCaps, acl.CoreCapability(v))
-				}
+			if err := json.Unmarshal([]byte(coreJSON), &raw); err != nil {
+				return nil, fmt.Errorf("apply: GrantsForNode: decode core_caps for %s/%s: %w", tenantID, nodeID, err)
+			}
+			for _, v := range raw {
+				g.CoreCaps = append(g.CoreCaps, acl.CoreCapability(v))
 			}
 		}
 		if extJSON != "" {
 			var raw []int32
-			if err := json.Unmarshal([]byte(extJSON), &raw); err == nil {
-				for _, v := range raw {
-					g.ExtCapIDs = append(g.ExtCapIDs, acl.ExtCapID(v))
-				}
+			if err := json.Unmarshal([]byte(extJSON), &raw); err != nil {
+				return nil, fmt.Errorf("apply: GrantsForNode: decode ext_caps for %s/%s: %w", tenantID, nodeID, err)
+			}
+			for _, v := range raw {
+				g.ExtCapIDs = append(g.ExtCapIDs, acl.ExtCapID(v))
 			}
 		}
 		out = append(out, g)
