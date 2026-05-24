@@ -125,6 +125,34 @@ func (p *Plan) Update(nodeID string, msg proto.Message) {
 	})
 }
 
+// UpdateFields accumulates an update-node operation for an EXPLICIT set
+// of fields, including fields whose value is the proto3 zero value
+// (false / 0 / ""). Use it when you need to set a field BACK to its zero
+// value — the default [Plan.Update] sends only non-default fields (proto3
+// cannot tell "set to zero" from "unset" for scalars), so a true→false /
+// non-empty→"" / n→0 update is otherwise silently dropped (#574).
+//
+//	// clear the verified flag (Update would drop the false)
+//	plan.UpdateFields("node-1", &auth.TotpCredential{}, "verified")
+//
+// field names are proto field names (the SDK resolves them to field ids).
+// Naming a field reads its current value off msg — set the ones you want
+// to change on msg first, then list them here. At least one field is
+// required; an unknown field name panics at call time.
+func (p *Plan) UpdateFields(nodeID string, msg proto.Message, fields ...string) {
+	p.ensureNotCommitted()
+	typeID, patch, err := marshalExplicitFieldsForWire(msg, fields)
+	if err != nil {
+		panic(fmt.Errorf("entdb: Plan.UpdateFields: %w", err))
+	}
+	p.operations = append(p.operations, Operation{
+		Type:   OpUpdateNode,
+		TypeID: int(typeID),
+		NodeID: nodeID,
+		Patch:  patch,
+	})
+}
+
 // UpdateIf accumulates a conditional update-node operation with a
 // single-field equality precondition (CAS). The applier compares the
 // node's current “field“ against “equals“ before applying the

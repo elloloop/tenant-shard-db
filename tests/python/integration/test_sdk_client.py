@@ -99,6 +99,36 @@ class TestPlanBuilder:
         # Product.name is field_id 2.
         assert op["update_node"]["patch"] == {"2": "Updated Name"}
 
+    def test_plan_update_fields_includes_zero_value(self):
+        """update(fields=...) forces a named field into the patch even at
+        its proto3 zero value, so a field can be set BACK to 0/""/False
+        (#574). price_cents is field_id 3."""
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        plan.update("node_123", ts.Product(), fields=["price_cents"])
+
+        op = plan._operations[0]["update_node"]
+        assert op["patch"] == {"3": 0}
+
+    def test_plan_update_omits_zero_without_fields(self):
+        """The default set-fields path drops a zero-valued scalar (proto3
+        omits it) — this is the bug update(fields=...) works around."""
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+
+        plan.update("node_123", ts.Product(price_cents=0))
+
+        assert "3" not in plan._operations[0]["update_node"]["patch"]
+
+    def test_plan_update_fields_unknown_field_raises(self):
+        from entdb_sdk.errors import UnknownFieldError
+
+        client = _mock_client()
+        plan = Plan(client, tenant_id="t1", actor="user:alice")
+        with pytest.raises(UnknownFieldError):
+            plan.update("node_123", ts.Product(), fields=["no_such_field"])
+
     def test_plan_delete_node(self):
         """Plan can delete nodes — type witness is the proto class."""
         client = _mock_client()
