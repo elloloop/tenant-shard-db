@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 )
 
 // applyUpdateNode dispatches an "update_node" op. The patch is field-id-keyed
@@ -60,11 +62,9 @@ func (a *Applier) applyUpdateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		}
 		return fmt.Errorf("apply update_node: read existing: %w", err)
 	}
-	merged := map[string]any{}
-	if existingJSON != "" {
-		if err := json.Unmarshal([]byte(existingJSON), &merged); err != nil {
-			return fmt.Errorf("apply update_node: parse existing payload: %w", err)
-		}
+	merged, err := jsonnum.Decode([]byte(existingJSON))
+	if err != nil {
+		return fmt.Errorf("apply update_node: parse existing payload: %w", err)
 	}
 
 	// Precondition CHECK happens against materialised state (the

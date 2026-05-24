@@ -3,9 +3,12 @@
 package wal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 )
 
 // Event scope values. Tenant-scoped events materialize into the
@@ -63,8 +66,20 @@ func (e Event) Encode() ([]byte, error) {
 // than silently proceeding.
 func DecodeEvent(value []byte) (Event, error) {
 	var e Event
-	if err := json.Unmarshal(value, &e); err != nil {
+	// UseNumber + normalize so integer payload values inside Ops survive
+	// as int64 rather than collapsing to float64 (ADR-028 / Bug C #563).
+	// Numeric op fields (type_id, edge_id, ...) read through accessors
+	// that handle int64; CAS/DeleteWhere compare against the same
+	// canonical representation produced by jsonnum at every boundary.
+	dec := json.NewDecoder(bytes.NewReader(value))
+	dec.UseNumber()
+	if err := dec.Decode(&e); err != nil {
 		return Event{}, fmt.Errorf("wal: decode event: %w", err)
+	}
+	for i := range e.Ops {
+		if e.Ops[i] != nil {
+			e.Ops[i] = jsonnum.Normalize(e.Ops[i]).(map[string]any)
+		}
 	}
 	missing := make([]string, 0, 4)
 	if e.TenantID == "" {

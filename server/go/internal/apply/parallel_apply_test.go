@@ -215,7 +215,17 @@ func TestParallelApply_SingleWriterPerTenant(t *testing.T) {
 		if !ok {
 			return
 		}
-		seq := int(s.(float64))
+		// jsonnum canonicalizes integer op values to int64 (ADR-028);
+		// tolerate float64 for events not routed through DecodeEvent.
+		var seq int
+		switch v := s.(type) {
+		case int64:
+			seq = int(v)
+		case float64:
+			seq = int(v)
+		default:
+			return
+		}
 		seqMu.Lock()
 		if seq != lastSeq[ev.TenantID]+1 && seqViolation == "" {
 			seqViolation = fmt.Sprintf("tenant %s: applied seq %d after %d (not strictly +1)",
