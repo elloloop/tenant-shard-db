@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779620004495,
+  "lastUpdate": 1779621146379,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -5508,6 +5508,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0009969180194838595",
             "extra": "mean: 6.294820759258971 msec\nrounds: 162"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5b7242135ecbeac0cfaec17ad06a287b9398460e",
+          "message": "fix(api): read RPCs surface genuine store faults instead of masking them as empty+OK (#573) (#581)\n\nSeveral read RPCs swallowed a genuine post-open store fault (SQLite IO\nerror, on-disk corruption, scan failure, per-id panic) into an empty\nresponse with codes.OK — so a caller could not tell \"no results\" from \"the\nstore is broken\", and downstream silently dropped data with no alert. The\ntenant is already lazy-opened before these reads, so a post-open error is\na real fault, never the not-open case.\n\nNow surfaced as a sanitized codes.Internal (errs.Internal — no path/schema\nleak), preserving typed sentinels; empty+OK is reserved for a genuinely\nempty result set:\n\n  - GetEdgesFrom / GetEdgesTo — store error → Internal.\n  - GetConnectedNodes — source-gate ACL fault, BFS traversal fault, and\n    per-row marshal failure → Internal (the intentional \"source not\n    accessible → empty, no existence leak\" path is preserved).\n  - SearchNodes — genuine FTS/scan fault → Internal; a malformed FTS5\n    MATCH query is a CLIENT error and now returns InvalidArgument (was\n    masked as empty+OK, which looked like \"no matches\").\n  - GetNodes — a per-id GetNode/CanAccess error or a fan-out panic is no\n    longer reported as a missing id (which masked data loss); it surfaces\n    as Internal. A real miss (ErrNodeNotFound) still flows to missing_ids,\n    and an explicit ACL denial still flows to missing_ids, unchanged.\n\nTests: a fault-injection harness drops the underlying table through a\nsecond raw connection to the tenant SQLite file (the store's own pool then\nfaults on its next read) and asserts codes.Internal for QueryNodes,\nGetNodes, GetEdgesFrom/To, GetConnectedNodes, and SearchNodes; the\nSearchNodes malformed-query test now asserts InvalidArgument.\n\nCloses #573.",
+          "timestamp": "2026-05-24T12:10:01+01:00",
+          "tree_id": "c8c902239757902095bbb62317821d1d04b25ffc",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/5b7242135ecbeac0cfaec17ad06a287b9398460e"
+        },
+        "date": 1779621145984,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2516.338933427429,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003463033892961068",
+            "extra": "mean: 397.40274520091396 usec\nrounds: 1146"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1740.7674389985407,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006346213969421581",
+            "extra": "mean: 574.4592744538567 usec\nrounds: 1053"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 948.0808729900747,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00030550233651394874",
+            "extra": "mean: 1.0547623398900368 msec\nrounds: 915"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 444.4954809215713,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004300239875379293",
+            "extra": "mean: 2.24974165750055 msec\nrounds: 400"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1190.3536306467627,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002080491844816251",
+            "extra": "mean: 840.0864871195154 usec\nrounds: 1281"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1103.2447551291382,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0026239203080118227",
+            "extra": "mean: 906.4171801867727 usec\nrounds: 1393"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1208.4145231314697,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001994443304378497",
+            "extra": "mean: 827.5306038267506 usec\nrounds: 1411"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1672.6462975991344,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000040365894389047026",
+            "extra": "mean: 597.8550285469017 usec\nrounds: 1191"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1581.2149130442308,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000039732522515882875",
+            "extra": "mean: 632.4251003140059 usec\nrounds: 319"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1364.873947041745,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000044860879283703655",
+            "extra": "mean: 732.6683919547443 usec\nrounds: 1069"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2085.553323275175,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026166019639821128",
+            "extra": "mean: 479.48905877390337 usec\nrounds: 1191"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 158.2997134893915,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004658583019513226",
+            "extra": "mean: 6.317130827068839 msec\nrounds: 133"
           }
         ]
       }
