@@ -264,6 +264,39 @@ func TestQueryNodes_TypedPayloadPreservesInt64(t *testing.T) {
 	}
 }
 
+// TestQueryNodes_TypedFilterInt64 is the #572 regression: a filter whose
+// value is a typed EntValue (int64 > 2^53) must match the exact rows.
+// Through the legacy google.protobuf.Value path the comparison value
+// would corrupt to a double and match the wrong rows; the typed_value
+// path binds the exact int64.
+func TestQueryNodes_TypedFilterInt64(t *testing.T) {
+	t.Parallel()
+	f := newQueryNodesFixture(t)
+	const big = int64(1)<<53 + 1 // 9007199254740993
+	f.seedNode("n1", "user:alice", "alice@example.com", big)
+	f.seedNode("n2", "user:alice", "bob@example.com", big-1) // adjacent, must NOT match
+
+	resp, err := f.srv.QueryNodes(context.Background(), &pb.QueryNodesRequest{
+		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
+		TypeId:  1,
+		Filters: []*pb.FieldFilter{{
+			Field:      "age",
+			Op:         pb.FilterOp_EQ,
+			TypedValue: &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: big}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes: %v", err)
+	}
+	if len(resp.GetNodes()) != 1 || resp.GetNodes()[0].GetNodeId() != "n1" {
+		ids := make([]string, 0)
+		for _, n := range resp.GetNodes() {
+			ids = append(ids, n.GetNodeId())
+		}
+		t.Fatalf("typed int64 filter: got %v, want [n1] only (big-1 must not match)", ids)
+	}
+}
+
 // TestQueryNodes_RangeOperators exercises the comparison operators
 // added by issue #501. Each branch seeds the same three rows and
 // asserts that the matching subset is returned. CONTAINS / IN are

@@ -596,7 +596,16 @@ func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondit
 	// map[string]any for compounds) — exactly the shape the applier's
 	// reflect.DeepEqual comparator wants.
 	var equals any
-	if eq := pre.GetEquals(); eq != nil {
+	if tv := pre.GetTypedEquals(); tv != nil {
+		// Prefer the typed expected value (ADR-028 / #572) so a CAS on an
+		// int64 >2^53 field compares the exact value; int64 flows through
+		// the WAL canonical decode and matches the stored int64.
+		gv, terr := payload.EntValueToGo(tv)
+		if terr != nil {
+			return nil, errs.Errorf(codes.InvalidArgument, "precondition.equals: %v", terr)
+		}
+		equals = gv
+	} else if eq := pre.GetEquals(); eq != nil {
 		equals = eq.AsInterface()
 	}
 	if fid := pre.GetFieldId(); fid != 0 {

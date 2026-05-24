@@ -361,6 +361,11 @@ message UpdateNodePrecondition {
     // use it directly when it is non-zero; registry-backed servers may
     // fall back to ``field`` only for older clients.
     int32 field_id = 3;
+
+    // Typed, lossless expected value (ADR-028 / #572). Preferred over
+    // `equals` when set, so a CAS on an int64 >2^53 field compares the
+    // exact value instead of a float64-truncated one.
+    EntValue typed_equals = 4;
 }
 
 message DeleteNodeOp {
@@ -832,6 +837,11 @@ message FieldFilter {
     string field = 1;
     FilterOp op = 2;
     google.protobuf.Value value = 3;
+
+    // Typed, lossless filter value (ADR-028 / #572). Preferred over
+    // `value` when set, so an int64 >2^53 filter matches the right rows
+    // instead of corrupting through google.protobuf.Value's double.
+    EntValue typed_value = 4;
 }
 
 enum FilterOp {
@@ -1268,6 +1278,11 @@ message GetNodeByKeyRequest {
     // keeps the request agnostic to the field's scalar type (string,
     // int, float, bool) while staying typed end-to-end.
     google.protobuf.Value value = 8;
+
+    // Typed, lossless unique-key value (ADR-028 / #572). Preferred over
+    // `value`, so a large int64 unique key (Snowflake/external id)
+    // matches exactly instead of corrupting through a double.
+    EntValue typed_value = 9;
 }
 
 message GetNodeByKeyResponse {

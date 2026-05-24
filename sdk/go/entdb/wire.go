@@ -287,9 +287,10 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 					return nil, fmt.Errorf("entdb: precondition.Equals: %w", err)
 				}
 				upd.Precondition = &pb.UpdateNodePrecondition{
-					Field:   op.Precondition.Field,
-					FieldId: int32(op.Precondition.FieldID),
-					Equals:  eq,
+					Field:       op.Precondition.Field,
+					FieldId:     int32(op.Precondition.FieldID),
+					Equals:      eq,
+					TypedEquals: valueToEnt(op.Precondition.Equals),
 				}
 			}
 			po.Op = &pb.Operation_UpdateNode{UpdateNode: upd}
@@ -375,7 +376,9 @@ func filterToProto(filter map[string]any) ([]*pb.FieldFilter, error) {
 				if err != nil {
 					return nil, fmt.Errorf("entdb: filter field %q op %q: %w", field, opKey, err)
 				}
-				out = append(out, &pb.FieldFilter{Field: field, Op: op, Value: v})
+				// Dual-write typed_value (ADR-028 / #572) so an int64 >2^53
+				// comparison value binds exactly server-side.
+				out = append(out, &pb.FieldFilter{Field: field, Op: op, Value: v, TypedValue: valueToEnt(val)})
 			}
 			continue
 		}
@@ -384,7 +387,7 @@ func filterToProto(filter map[string]any) ([]*pb.FieldFilter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("entdb: filter field %q: %w", field, err)
 		}
-		out = append(out, &pb.FieldFilter{Field: field, Op: pb.FilterOp_EQ, Value: v})
+		out = append(out, &pb.FieldFilter{Field: field, Op: pb.FilterOp_EQ, Value: v, TypedValue: valueToEnt(raw)})
 	}
 	return out, nil
 }
