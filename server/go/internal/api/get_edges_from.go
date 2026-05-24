@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
@@ -76,6 +77,21 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	// destinations has a single chokepoint to bind against and so we
 	// honour the trusted-actor invariant explicitly.
 	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
+
+	// Open the per-tenant view before reading. The SQLite store is a
+	// materialized view of the WAL (ADR-016); "tenant not opened" means
+	// the applier has not materialized this tenant in-process yet, not a
+	// client error. Lazy-open it (as GetNode does) so a valid tenant is
+	// not silently reported as an empty edge set. A genuine open failure
+	// (region pin / crypto-shred -> FailedPrecondition; IO -> Internal)
+	// surfaces its real typed code; only post-open query faults fall
+	// through to the best-effort swallow below.
+	if s.store != nil {
+		if err := s.store.OpenTenant(ctx, tenantID); err != nil {
+			outcome = "error"
+			return nil, errs.Errorf(errs.Code(err), "GetEdgesFrom: open tenant: %v", err)
+		}
+	}
 
 	// edge_type_id filter: falsy (== 0) means "no filter".
 	var edgeTypeFilter *int32
