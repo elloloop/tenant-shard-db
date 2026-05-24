@@ -32,8 +32,10 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
@@ -177,7 +179,37 @@ func edgeToProto(e *store.Edge) *pb.Edge {
 		ToNodeId:   e.ToNodeID,
 		CreatedAt:  e.CreatedAt,
 		Props:      edgePropsToStruct(e.PropsJSON),
+		TypedProps: edgePropsToTyped(e.PropsJSON),
 	}
+}
+
+// edgePropsToTyped lowers stored props_json into the typed EntValue map
+// (ADR-028) so int64 edge props round-trip losslessly. Schema-less: the
+// edge converter has no registry, so EntValue inference keeps integers as
+// int_value. Empty/invalid input yields nil (callers tolerate a nil map).
+func edgePropsToTyped(propsJSON string) map[uint32]*pb.EntValue {
+	idKeyed, err := decodeIDKeyedPayload(propsJSON)
+	if err != nil || len(idKeyed) == 0 {
+		return nil
+	}
+	typed, err := payload.PayloadToTyped(nil, "", idKeyed)
+	if err != nil {
+		return nil
+	}
+	return typed
+}
+
+// payloadTypeName resolves a node type's name for schema-aware payload
+// translation, or "" when the registry is absent or the type is unknown
+// (schema-less passthrough).
+func payloadTypeName(reg *schema.Registry, typeID int32) string {
+	if reg == nil {
+		return ""
+	}
+	if nt := reg.NodeTypeByID(typeID); nt != nil {
+		return nt.Name
+	}
+	return ""
 }
 
 // edgePropsToStruct parses a stored props_json column into a typed
@@ -226,19 +258,24 @@ func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, err
 	if err != nil {
 		return nil, err
 	}
+	pTyped, err := payload.PayloadToTyped(s.registry, typeName, idPayload)
+	if err != nil {
+		return nil, err
+	}
 	aclEntries, err := decodeACLEntries(n.ACLJSON)
 	if err != nil {
 		return nil, errs.InternalNoCtx("parse node acl", err)
 	}
 	return &pb.Node{
-		TenantId:   n.TenantID,
-		NodeId:     n.NodeID,
-		TypeId:     n.TypeID,
-		CreatedAt:  n.CreatedAt,
-		UpdatedAt:  n.UpdatedAt,
-		OwnerActor: n.OwnerActor,
-		Payload:    pStruct,
-		Acl:        aclEntries,
+		TenantId:     n.TenantID,
+		NodeId:       n.NodeID,
+		TypeId:       n.TypeID,
+		CreatedAt:    n.CreatedAt,
+		UpdatedAt:    n.UpdatedAt,
+		OwnerActor:   n.OwnerActor,
+		Payload:      pStruct,
+		TypedPayload: pTyped,
+		Acl:          aclEntries,
 	}, nil
 }
 
@@ -253,8 +290,10 @@ func decodeIDKeyedPayload(raw string) (map[uint32]any, error) {
 	if raw == "" || raw == "null" {
 		return out, nil
 	}
-	tmp := map[string]any{}
-	if err := json.Unmarshal([]byte(raw), &tmp); err != nil {
+	// Canonical decode (jsonnum): integers survive as int64, not float64,
+	// so PayloadToTyped can emit a lossless EntValue.int_value (ADR-028).
+	tmp, err := jsonnum.Decode([]byte(raw))
+	if err != nil {
 		return nil, err
 	}
 	for k, v := range tmp {

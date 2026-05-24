@@ -88,7 +88,8 @@ build:
 
 proto:
 	@echo "Regenerating Go stubs (server + SDK) via buf..."
-	cd server/go && go generate ./internal/pb/...
+	buf generate --template server/go/buf.gen.yaml
+	buf generate --template server/go/buf.gen.console.yaml
 	buf generate --template sdk/go/entdb/buf.gen.yaml
 	@echo "Regenerating Python SDK stubs..."
 	./scripts/generate_proto.sh

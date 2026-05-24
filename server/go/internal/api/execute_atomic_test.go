@@ -79,6 +79,7 @@ func newXAFixture(t *testing.T) *xaFixture {
 		Fields: []schema.FieldDef{
 			{FieldID: 1, Name: "email", Kind: schema.KindString},
 			{FieldID: 2, Name: "name", Kind: schema.KindString},
+			{FieldID: 3, Name: "age", Kind: schema.KindInteger},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode: %v", err)
@@ -294,6 +295,48 @@ func TestExecuteAtomic_CreateNodeRoundTrip(t *testing.T) {
 
 	// Applier catches up.
 	f.waitForIdempKey(t, idem)
+}
+
+// TestExecuteAtomic_CreateNodeTypedDataInt64 is the end-to-end ingress
+// regression for Bug C (#563): a create_node carrying typed_data with an
+// int64 > 2^53 must persist losslessly through the handler -> WAL ->
+// applier -> payload_json. The legacy Struct `data` path would corrupt
+// this to 2^53 (float64); the typed EntValue path + canonical decode keep
+// the exact value.
+func TestExecuteAtomic_CreateNodeTypedDataInt64(t *testing.T) {
+	t.Parallel()
+	f := newXAFixture(t)
+	f.runApplier(t)
+
+	const big = int64(1)<<53 + 1 // 9007199254740993
+	const idem = "typed-int64-1"
+	const nodeID = "n-typed-int64"
+	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
+		IdempotencyKey: idem,
+		Operations: []*pb.Operation{{
+			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId:    1,
+				Id:        nodeID,
+				TypedData: map[uint32]*pb.EntValue{3: {V: &pb.EntValue_IntValue{IntValue: big}}},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("ExecuteAtomic: %v", err)
+	}
+	if !resp.GetSuccess() {
+		t.Fatalf("Success=false (error=%q code=%q)", resp.GetError(), resp.GetErrorCode())
+	}
+	f.waitForIdempKey(t, idem)
+
+	n, err := f.store.GetNode(context.Background(), xaTenant, nodeID)
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if !strings.Contains(n.PayloadJSON, "9007199254740993") {
+		t.Fatalf("payload_json lost the int64 (Bug C): %s", n.PayloadJSON)
+	}
 }
 
 // TestExecuteAtomic_MultipleOpsAtomic pins multi-op transactions: all

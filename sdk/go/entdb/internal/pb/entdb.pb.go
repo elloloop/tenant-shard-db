@@ -668,6 +668,156 @@ func (*Operation_DeleteEdge) isOperation_Op() {}
 
 func (*Operation_DeleteWhere) isOperation_Op() {}
 
+// EntValue is the typed, lossless carrier for a single payload field
+// value (ADR-028). It replaces google.protobuf.Struct's IEEE-754
+// double-backed numbers so INTEGER / TIMESTAMP fields preserve the full
+// int64 range. Absence of `v` denotes an explicit null.
+type EntValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Types that are valid to be assigned to V:
+	//
+	//	*EntValue_IntValue
+	//	*EntValue_DoubleValue
+	//	*EntValue_BoolValue
+	//	*EntValue_StringValue
+	//	*EntValue_BytesValue
+	//	*EntValue_JsonValue
+	V             isEntValue_V `protobuf_oneof:"v"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EntValue) Reset() {
+	*x = EntValue{}
+	mi := &file_entdb_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EntValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EntValue) ProtoMessage() {}
+
+func (x *EntValue) ProtoReflect() protoreflect.Message {
+	mi := &file_entdb_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EntValue.ProtoReflect.Descriptor instead.
+func (*EntValue) Descriptor() ([]byte, []int) {
+	return file_entdb_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *EntValue) GetV() isEntValue_V {
+	if x != nil {
+		return x.V
+	}
+	return nil
+}
+
+func (x *EntValue) GetIntValue() int64 {
+	if x != nil {
+		if x, ok := x.V.(*EntValue_IntValue); ok {
+			return x.IntValue
+		}
+	}
+	return 0
+}
+
+func (x *EntValue) GetDoubleValue() float64 {
+	if x != nil {
+		if x, ok := x.V.(*EntValue_DoubleValue); ok {
+			return x.DoubleValue
+		}
+	}
+	return 0
+}
+
+func (x *EntValue) GetBoolValue() bool {
+	if x != nil {
+		if x, ok := x.V.(*EntValue_BoolValue); ok {
+			return x.BoolValue
+		}
+	}
+	return false
+}
+
+func (x *EntValue) GetStringValue() string {
+	if x != nil {
+		if x, ok := x.V.(*EntValue_StringValue); ok {
+			return x.StringValue
+		}
+	}
+	return ""
+}
+
+func (x *EntValue) GetBytesValue() []byte {
+	if x != nil {
+		if x, ok := x.V.(*EntValue_BytesValue); ok {
+			return x.BytesValue
+		}
+	}
+	return nil
+}
+
+func (x *EntValue) GetJsonValue() *structpb.Value {
+	if x != nil {
+		if x, ok := x.V.(*EntValue_JsonValue); ok {
+			return x.JsonValue
+		}
+	}
+	return nil
+}
+
+type isEntValue_V interface {
+	isEntValue_V()
+}
+
+type EntValue_IntValue struct {
+	IntValue int64 `protobuf:"varint,1,opt,name=int_value,json=intValue,proto3,oneof"` // INTEGER / TIMESTAMP — lossless
+}
+
+type EntValue_DoubleValue struct {
+	DoubleValue float64 `protobuf:"fixed64,2,opt,name=double_value,json=doubleValue,proto3,oneof"` // DOUBLE
+}
+
+type EntValue_BoolValue struct {
+	BoolValue bool `protobuf:"varint,3,opt,name=bool_value,json=boolValue,proto3,oneof"` // BOOLEAN
+}
+
+type EntValue_StringValue struct {
+	StringValue string `protobuf:"bytes,4,opt,name=string_value,json=stringValue,proto3,oneof"` // STRING / ENUM
+}
+
+type EntValue_BytesValue struct {
+	BytesValue []byte `protobuf:"bytes,5,opt,name=bytes_value,json=bytesValue,proto3,oneof"` // BYTES (no base64-in-a-string)
+}
+
+type EntValue_JsonValue struct {
+	JsonValue *structpb.Value `protobuf:"bytes,6,opt,name=json_value,json=jsonValue,proto3,oneof"` // JSON (arbitrary, dynamically typed)
+}
+
+func (*EntValue_IntValue) isEntValue_V() {}
+
+func (*EntValue_DoubleValue) isEntValue_V() {}
+
+func (*EntValue_BoolValue) isEntValue_V() {}
+
+func (*EntValue_StringValue) isEntValue_V() {}
+
+func (*EntValue_BytesValue) isEntValue_V() {}
+
+func (*EntValue_JsonValue) isEntValue_V() {}
+
 type CreateNodeOp struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Node type ID (required)
@@ -688,14 +838,18 @@ type CreateNodeOp struct {
 	// Owning user id for “STORAGE_MODE_USER_MAILBOX“ nodes. Required
 	// when “storage_mode == STORAGE_MODE_USER_MAILBOX“; ignored for
 	// other modes.
-	TargetUserId  string `protobuf:"bytes,10,opt,name=target_user_id,json=targetUserId,proto3" json:"target_user_id,omitempty"`
+	TargetUserId string `protobuf:"bytes,10,opt,name=target_user_id,json=targetUserId,proto3" json:"target_user_id,omitempty"`
+	// Typed, lossless payload (ADR-028). Preferred over `data` when set;
+	// the server dual-reads (typed_data first, else `data`). Carries the
+	// full int64 range that the Struct `data` field cannot.
+	TypedData     map[uint32]*EntValue `protobuf:"bytes,12,rep,name=typed_data,json=typedData,proto3" json:"typed_data,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateNodeOp) Reset() {
 	*x = CreateNodeOp{}
-	mi := &file_entdb_proto_msgTypes[4]
+	mi := &file_entdb_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -707,7 +861,7 @@ func (x *CreateNodeOp) String() string {
 func (*CreateNodeOp) ProtoMessage() {}
 
 func (x *CreateNodeOp) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[4]
+	mi := &file_entdb_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -720,7 +874,7 @@ func (x *CreateNodeOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateNodeOp.ProtoReflect.Descriptor instead.
 func (*CreateNodeOp) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{4}
+	return file_entdb_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *CreateNodeOp) GetTypeId() int32 {
@@ -779,6 +933,13 @@ func (x *CreateNodeOp) GetTargetUserId() string {
 	return ""
 }
 
+func (x *CreateNodeOp) GetTypedData() map[uint32]*EntValue {
+	if x != nil {
+		return x.TypedData
+	}
+	return nil
+}
+
 type UpdateNodeOp struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Node type ID (required for validation)
@@ -804,14 +965,16 @@ type UpdateNodeOp struct {
 	// Equality is the only operator in v1; compound predicates and
 	// comparison operators (Lt/Gt/...) are deliberately out of scope.
 	// See GitHub issue #500 for the design rationale.
-	Precondition  *UpdateNodePrecondition `protobuf:"bytes,7,opt,name=precondition,proto3" json:"precondition,omitempty"`
+	Precondition *UpdateNodePrecondition `protobuf:"bytes,7,opt,name=precondition,proto3" json:"precondition,omitempty"`
+	// Typed, lossless patch (ADR-028). Preferred over `patch` when set.
+	TypedPatch    map[uint32]*EntValue `protobuf:"bytes,8,rep,name=typed_patch,json=typedPatch,proto3" json:"typed_patch,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateNodeOp) Reset() {
 	*x = UpdateNodeOp{}
-	mi := &file_entdb_proto_msgTypes[5]
+	mi := &file_entdb_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -823,7 +986,7 @@ func (x *UpdateNodeOp) String() string {
 func (*UpdateNodeOp) ProtoMessage() {}
 
 func (x *UpdateNodeOp) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[5]
+	mi := &file_entdb_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -836,7 +999,7 @@ func (x *UpdateNodeOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNodeOp.ProtoReflect.Descriptor instead.
 func (*UpdateNodeOp) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{5}
+	return file_entdb_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UpdateNodeOp) GetTypeId() int32 {
@@ -874,6 +1037,13 @@ func (x *UpdateNodeOp) GetPrecondition() *UpdateNodePrecondition {
 	return nil
 }
 
+func (x *UpdateNodeOp) GetTypedPatch() map[uint32]*EntValue {
+	if x != nil {
+		return x.TypedPatch
+	}
+	return nil
+}
+
 // UpdateNodePrecondition is the single-field equality CAS predicate
 // attached to “UpdateNodeOp.precondition“. Official SDKs accept a
 // developer-facing field name and translate it to “field_id“ before
@@ -904,7 +1074,7 @@ type UpdateNodePrecondition struct {
 
 func (x *UpdateNodePrecondition) Reset() {
 	*x = UpdateNodePrecondition{}
-	mi := &file_entdb_proto_msgTypes[6]
+	mi := &file_entdb_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -916,7 +1086,7 @@ func (x *UpdateNodePrecondition) String() string {
 func (*UpdateNodePrecondition) ProtoMessage() {}
 
 func (x *UpdateNodePrecondition) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[6]
+	mi := &file_entdb_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -929,7 +1099,7 @@ func (x *UpdateNodePrecondition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateNodePrecondition.ProtoReflect.Descriptor instead.
 func (*UpdateNodePrecondition) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{6}
+	return file_entdb_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *UpdateNodePrecondition) GetField() string {
@@ -965,7 +1135,7 @@ type DeleteNodeOp struct {
 
 func (x *DeleteNodeOp) Reset() {
 	*x = DeleteNodeOp{}
-	mi := &file_entdb_proto_msgTypes[7]
+	mi := &file_entdb_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -977,7 +1147,7 @@ func (x *DeleteNodeOp) String() string {
 func (*DeleteNodeOp) ProtoMessage() {}
 
 func (x *DeleteNodeOp) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[7]
+	mi := &file_entdb_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -990,7 +1160,7 @@ func (x *DeleteNodeOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteNodeOp.ProtoReflect.Descriptor instead.
 func (*DeleteNodeOp) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{7}
+	return file_entdb_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *DeleteNodeOp) GetTypeId() int32 {
@@ -1049,7 +1219,7 @@ type DeleteWhereOp struct {
 
 func (x *DeleteWhereOp) Reset() {
 	*x = DeleteWhereOp{}
-	mi := &file_entdb_proto_msgTypes[8]
+	mi := &file_entdb_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1061,7 +1231,7 @@ func (x *DeleteWhereOp) String() string {
 func (*DeleteWhereOp) ProtoMessage() {}
 
 func (x *DeleteWhereOp) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[8]
+	mi := &file_entdb_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1074,7 +1244,7 @@ func (x *DeleteWhereOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteWhereOp.ProtoReflect.Descriptor instead.
 func (*DeleteWhereOp) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{8}
+	return file_entdb_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *DeleteWhereOp) GetTypeId() int32 {
@@ -1107,14 +1277,16 @@ type CreateEdgeOp struct {
 	// Target node reference
 	To *NodeRef `protobuf:"bytes,3,opt,name=to,proto3" json:"to,omitempty"`
 	// Edge properties as typed Struct
-	Props         *structpb.Struct `protobuf:"bytes,5,opt,name=props,proto3" json:"props,omitempty"`
+	Props *structpb.Struct `protobuf:"bytes,5,opt,name=props,proto3" json:"props,omitempty"`
+	// Typed, lossless props (ADR-028). Preferred over `props` when set.
+	TypedProps    map[uint32]*EntValue `protobuf:"bytes,6,rep,name=typed_props,json=typedProps,proto3" json:"typed_props,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateEdgeOp) Reset() {
 	*x = CreateEdgeOp{}
-	mi := &file_entdb_proto_msgTypes[9]
+	mi := &file_entdb_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1126,7 +1298,7 @@ func (x *CreateEdgeOp) String() string {
 func (*CreateEdgeOp) ProtoMessage() {}
 
 func (x *CreateEdgeOp) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[9]
+	mi := &file_entdb_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1139,7 +1311,7 @@ func (x *CreateEdgeOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateEdgeOp.ProtoReflect.Descriptor instead.
 func (*CreateEdgeOp) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{9}
+	return file_entdb_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *CreateEdgeOp) GetEdgeId() int32 {
@@ -1170,6 +1342,13 @@ func (x *CreateEdgeOp) GetProps() *structpb.Struct {
 	return nil
 }
 
+func (x *CreateEdgeOp) GetTypedProps() map[uint32]*EntValue {
+	if x != nil {
+		return x.TypedProps
+	}
+	return nil
+}
+
 type DeleteEdgeOp struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Edge type ID (required)
@@ -1184,7 +1363,7 @@ type DeleteEdgeOp struct {
 
 func (x *DeleteEdgeOp) Reset() {
 	*x = DeleteEdgeOp{}
-	mi := &file_entdb_proto_msgTypes[10]
+	mi := &file_entdb_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1196,7 +1375,7 @@ func (x *DeleteEdgeOp) String() string {
 func (*DeleteEdgeOp) ProtoMessage() {}
 
 func (x *DeleteEdgeOp) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[10]
+	mi := &file_entdb_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1209,7 +1388,7 @@ func (x *DeleteEdgeOp) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteEdgeOp.ProtoReflect.Descriptor instead.
 func (*DeleteEdgeOp) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{10}
+	return file_entdb_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *DeleteEdgeOp) GetEdgeId() int32 {
@@ -1247,7 +1426,7 @@ type NodeRef struct {
 
 func (x *NodeRef) Reset() {
 	*x = NodeRef{}
-	mi := &file_entdb_proto_msgTypes[11]
+	mi := &file_entdb_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1259,7 +1438,7 @@ func (x *NodeRef) String() string {
 func (*NodeRef) ProtoMessage() {}
 
 func (x *NodeRef) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[11]
+	mi := &file_entdb_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1272,7 +1451,7 @@ func (x *NodeRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeRef.ProtoReflect.Descriptor instead.
 func (*NodeRef) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{11}
+	return file_entdb_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *NodeRef) GetRef() isNodeRef_Ref {
@@ -1344,7 +1523,7 @@ type TypedNodeRef struct {
 
 func (x *TypedNodeRef) Reset() {
 	*x = TypedNodeRef{}
-	mi := &file_entdb_proto_msgTypes[12]
+	mi := &file_entdb_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1356,7 +1535,7 @@ func (x *TypedNodeRef) String() string {
 func (*TypedNodeRef) ProtoMessage() {}
 
 func (x *TypedNodeRef) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[12]
+	mi := &file_entdb_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1369,7 +1548,7 @@ func (x *TypedNodeRef) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TypedNodeRef.ProtoReflect.Descriptor instead.
 func (*TypedNodeRef) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{12}
+	return file_entdb_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *TypedNodeRef) GetTypeId() int32 {
@@ -1410,7 +1589,7 @@ type ExecuteAtomicResponse struct {
 
 func (x *ExecuteAtomicResponse) Reset() {
 	*x = ExecuteAtomicResponse{}
-	mi := &file_entdb_proto_msgTypes[13]
+	mi := &file_entdb_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1422,7 +1601,7 @@ func (x *ExecuteAtomicResponse) String() string {
 func (*ExecuteAtomicResponse) ProtoMessage() {}
 
 func (x *ExecuteAtomicResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[13]
+	mi := &file_entdb_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1435,7 +1614,7 @@ func (x *ExecuteAtomicResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteAtomicResponse.ProtoReflect.Descriptor instead.
 func (*ExecuteAtomicResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{13}
+	return file_entdb_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ExecuteAtomicResponse) GetSuccess() bool {
@@ -1512,7 +1691,7 @@ type PreconditionFailure struct {
 
 func (x *PreconditionFailure) Reset() {
 	*x = PreconditionFailure{}
-	mi := &file_entdb_proto_msgTypes[14]
+	mi := &file_entdb_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1524,7 +1703,7 @@ func (x *PreconditionFailure) String() string {
 func (*PreconditionFailure) ProtoMessage() {}
 
 func (x *PreconditionFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[14]
+	mi := &file_entdb_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1537,7 +1716,7 @@ func (x *PreconditionFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PreconditionFailure.ProtoReflect.Descriptor instead.
 func (*PreconditionFailure) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{14}
+	return file_entdb_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *PreconditionFailure) GetOpIndex() int32 {
@@ -1578,7 +1757,7 @@ type GetReceiptStatusRequest struct {
 
 func (x *GetReceiptStatusRequest) Reset() {
 	*x = GetReceiptStatusRequest{}
-	mi := &file_entdb_proto_msgTypes[15]
+	mi := &file_entdb_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1590,7 +1769,7 @@ func (x *GetReceiptStatusRequest) String() string {
 func (*GetReceiptStatusRequest) ProtoMessage() {}
 
 func (x *GetReceiptStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[15]
+	mi := &file_entdb_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1603,7 +1782,7 @@ func (x *GetReceiptStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReceiptStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetReceiptStatusRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{15}
+	return file_entdb_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetReceiptStatusRequest) GetContext() *RequestContext {
@@ -1635,7 +1814,7 @@ type GetReceiptStatusResponse struct {
 
 func (x *GetReceiptStatusResponse) Reset() {
 	*x = GetReceiptStatusResponse{}
-	mi := &file_entdb_proto_msgTypes[16]
+	mi := &file_entdb_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1647,7 +1826,7 @@ func (x *GetReceiptStatusResponse) String() string {
 func (*GetReceiptStatusResponse) ProtoMessage() {}
 
 func (x *GetReceiptStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[16]
+	mi := &file_entdb_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1660,7 +1839,7 @@ func (x *GetReceiptStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetReceiptStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetReceiptStatusResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{16}
+	return file_entdb_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetReceiptStatusResponse) GetStatus() ReceiptStatus {
@@ -1698,7 +1877,7 @@ type GetNodeRequest struct {
 
 func (x *GetNodeRequest) Reset() {
 	*x = GetNodeRequest{}
-	mi := &file_entdb_proto_msgTypes[17]
+	mi := &file_entdb_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1710,7 +1889,7 @@ func (x *GetNodeRequest) String() string {
 func (*GetNodeRequest) ProtoMessage() {}
 
 func (x *GetNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[17]
+	mi := &file_entdb_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1723,7 +1902,7 @@ func (x *GetNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNodeRequest.ProtoReflect.Descriptor instead.
 func (*GetNodeRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{17}
+	return file_entdb_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetNodeRequest) GetContext() *RequestContext {
@@ -1771,7 +1950,7 @@ type GetNodeResponse struct {
 
 func (x *GetNodeResponse) Reset() {
 	*x = GetNodeResponse{}
-	mi := &file_entdb_proto_msgTypes[18]
+	mi := &file_entdb_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1783,7 +1962,7 @@ func (x *GetNodeResponse) String() string {
 func (*GetNodeResponse) ProtoMessage() {}
 
 func (x *GetNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[18]
+	mi := &file_entdb_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1796,7 +1975,7 @@ func (x *GetNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNodeResponse.ProtoReflect.Descriptor instead.
 func (*GetNodeResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{18}
+	return file_entdb_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *GetNodeResponse) GetNode() *Node {
@@ -1827,7 +2006,7 @@ type GetNodesRequest struct {
 
 func (x *GetNodesRequest) Reset() {
 	*x = GetNodesRequest{}
-	mi := &file_entdb_proto_msgTypes[19]
+	mi := &file_entdb_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1839,7 +2018,7 @@ func (x *GetNodesRequest) String() string {
 func (*GetNodesRequest) ProtoMessage() {}
 
 func (x *GetNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[19]
+	mi := &file_entdb_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1852,7 +2031,7 @@ func (x *GetNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNodesRequest.ProtoReflect.Descriptor instead.
 func (*GetNodesRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{19}
+	return file_entdb_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GetNodesRequest) GetContext() *RequestContext {
@@ -1900,7 +2079,7 @@ type GetNodesResponse struct {
 
 func (x *GetNodesResponse) Reset() {
 	*x = GetNodesResponse{}
-	mi := &file_entdb_proto_msgTypes[20]
+	mi := &file_entdb_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1912,7 +2091,7 @@ func (x *GetNodesResponse) String() string {
 func (*GetNodesResponse) ProtoMessage() {}
 
 func (x *GetNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[20]
+	mi := &file_entdb_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1925,7 +2104,7 @@ func (x *GetNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNodesResponse.ProtoReflect.Descriptor instead.
 func (*GetNodesResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{20}
+	return file_entdb_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *GetNodesResponse) GetNodes() []*Node {
@@ -1963,7 +2142,7 @@ type QueryNodesRequest struct {
 
 func (x *QueryNodesRequest) Reset() {
 	*x = QueryNodesRequest{}
-	mi := &file_entdb_proto_msgTypes[21]
+	mi := &file_entdb_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1975,7 +2154,7 @@ func (x *QueryNodesRequest) String() string {
 func (*QueryNodesRequest) ProtoMessage() {}
 
 func (x *QueryNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[21]
+	mi := &file_entdb_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1988,7 +2167,7 @@ func (x *QueryNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryNodesRequest.ProtoReflect.Descriptor instead.
 func (*QueryNodesRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{21}
+	return file_entdb_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *QueryNodesRequest) GetContext() *RequestContext {
@@ -2065,7 +2244,7 @@ type QueryNodesResponse struct {
 
 func (x *QueryNodesResponse) Reset() {
 	*x = QueryNodesResponse{}
-	mi := &file_entdb_proto_msgTypes[22]
+	mi := &file_entdb_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2077,7 +2256,7 @@ func (x *QueryNodesResponse) String() string {
 func (*QueryNodesResponse) ProtoMessage() {}
 
 func (x *QueryNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[22]
+	mi := &file_entdb_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2090,7 +2269,7 @@ func (x *QueryNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryNodesResponse.ProtoReflect.Descriptor instead.
 func (*QueryNodesResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{22}
+	return file_entdb_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *QueryNodesResponse) GetNodes() []*Node {
@@ -2124,6 +2303,9 @@ type Node struct {
 	OwnerActor string                 `protobuf:"bytes,7,opt,name=owner_actor,json=ownerActor,proto3" json:"owner_actor,omitempty"`
 	// Payload as typed Struct
 	Payload *structpb.Struct `protobuf:"bytes,9,opt,name=payload,proto3" json:"payload,omitempty"`
+	// Typed, lossless payload (ADR-028). Populated alongside `payload`;
+	// newer SDKs read this, older SDKs fall back to `payload`.
+	TypedPayload map[uint32]*EntValue `protobuf:"bytes,11,rep,name=typed_payload,json=typedPayload,proto3" json:"typed_payload,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// ACL entries
 	Acl           []*AclEntry `protobuf:"bytes,10,rep,name=acl,proto3" json:"acl,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2132,7 +2314,7 @@ type Node struct {
 
 func (x *Node) Reset() {
 	*x = Node{}
-	mi := &file_entdb_proto_msgTypes[23]
+	mi := &file_entdb_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2144,7 +2326,7 @@ func (x *Node) String() string {
 func (*Node) ProtoMessage() {}
 
 func (x *Node) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[23]
+	mi := &file_entdb_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2157,7 +2339,7 @@ func (x *Node) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Node.ProtoReflect.Descriptor instead.
 func (*Node) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{23}
+	return file_entdb_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *Node) GetTenantId() string {
@@ -2209,6 +2391,13 @@ func (x *Node) GetPayload() *structpb.Struct {
 	return nil
 }
 
+func (x *Node) GetTypedPayload() map[uint32]*EntValue {
+	if x != nil {
+		return x.TypedPayload
+	}
+	return nil
+}
+
 func (x *Node) GetAcl() []*AclEntry {
 	if x != nil {
 		return x.Acl
@@ -2231,7 +2420,7 @@ type GetEdgesRequest struct {
 
 func (x *GetEdgesRequest) Reset() {
 	*x = GetEdgesRequest{}
-	mi := &file_entdb_proto_msgTypes[24]
+	mi := &file_entdb_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2243,7 +2432,7 @@ func (x *GetEdgesRequest) String() string {
 func (*GetEdgesRequest) ProtoMessage() {}
 
 func (x *GetEdgesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[24]
+	mi := &file_entdb_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2256,7 +2445,7 @@ func (x *GetEdgesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEdgesRequest.ProtoReflect.Descriptor instead.
 func (*GetEdgesRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{24}
+	return file_entdb_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *GetEdgesRequest) GetContext() *RequestContext {
@@ -2304,7 +2493,7 @@ type GetEdgesResponse struct {
 
 func (x *GetEdgesResponse) Reset() {
 	*x = GetEdgesResponse{}
-	mi := &file_entdb_proto_msgTypes[25]
+	mi := &file_entdb_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2316,7 +2505,7 @@ func (x *GetEdgesResponse) String() string {
 func (*GetEdgesResponse) ProtoMessage() {}
 
 func (x *GetEdgesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[25]
+	mi := &file_entdb_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2329,7 +2518,7 @@ func (x *GetEdgesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetEdgesResponse.ProtoReflect.Descriptor instead.
 func (*GetEdgesResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{25}
+	return file_entdb_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *GetEdgesResponse) GetEdges() []*Edge {
@@ -2354,14 +2543,16 @@ type Edge struct {
 	ToNodeId   string                 `protobuf:"bytes,4,opt,name=to_node_id,json=toNodeId,proto3" json:"to_node_id,omitempty"`
 	CreatedAt  int64                  `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	// Edge properties as typed Struct
-	Props         *structpb.Struct `protobuf:"bytes,7,opt,name=props,proto3" json:"props,omitempty"`
+	Props *structpb.Struct `protobuf:"bytes,7,opt,name=props,proto3" json:"props,omitempty"`
+	// Typed, lossless props (ADR-028). Populated alongside `props`.
+	TypedProps    map[uint32]*EntValue `protobuf:"bytes,8,rep,name=typed_props,json=typedProps,proto3" json:"typed_props,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Edge) Reset() {
 	*x = Edge{}
-	mi := &file_entdb_proto_msgTypes[26]
+	mi := &file_entdb_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2373,7 +2564,7 @@ func (x *Edge) String() string {
 func (*Edge) ProtoMessage() {}
 
 func (x *Edge) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[26]
+	mi := &file_entdb_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2386,7 +2577,7 @@ func (x *Edge) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Edge.ProtoReflect.Descriptor instead.
 func (*Edge) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{26}
+	return file_entdb_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Edge) GetTenantId() string {
@@ -2431,6 +2622,13 @@ func (x *Edge) GetProps() *structpb.Struct {
 	return nil
 }
 
+func (x *Edge) GetTypedProps() map[uint32]*EntValue {
+	if x != nil {
+		return x.TypedProps
+	}
+	return nil
+}
+
 type SearchMailboxRequest struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Context *RequestContext        `protobuf:"bytes,1,opt,name=context,proto3" json:"context,omitempty"`
@@ -2449,7 +2647,7 @@ type SearchMailboxRequest struct {
 
 func (x *SearchMailboxRequest) Reset() {
 	*x = SearchMailboxRequest{}
-	mi := &file_entdb_proto_msgTypes[27]
+	mi := &file_entdb_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2461,7 +2659,7 @@ func (x *SearchMailboxRequest) String() string {
 func (*SearchMailboxRequest) ProtoMessage() {}
 
 func (x *SearchMailboxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[27]
+	mi := &file_entdb_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2474,7 +2672,7 @@ func (x *SearchMailboxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchMailboxRequest.ProtoReflect.Descriptor instead.
 func (*SearchMailboxRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{27}
+	return file_entdb_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *SearchMailboxRequest) GetContext() *RequestContext {
@@ -2529,7 +2727,7 @@ type SearchMailboxResponse struct {
 
 func (x *SearchMailboxResponse) Reset() {
 	*x = SearchMailboxResponse{}
-	mi := &file_entdb_proto_msgTypes[28]
+	mi := &file_entdb_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2541,7 +2739,7 @@ func (x *SearchMailboxResponse) String() string {
 func (*SearchMailboxResponse) ProtoMessage() {}
 
 func (x *SearchMailboxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[28]
+	mi := &file_entdb_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2554,7 +2752,7 @@ func (x *SearchMailboxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchMailboxResponse.ProtoReflect.Descriptor instead.
 func (*SearchMailboxResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{28}
+	return file_entdb_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *SearchMailboxResponse) GetResults() []*MailboxSearchResult {
@@ -2582,7 +2780,7 @@ type MailboxSearchResult struct {
 
 func (x *MailboxSearchResult) Reset() {
 	*x = MailboxSearchResult{}
-	mi := &file_entdb_proto_msgTypes[29]
+	mi := &file_entdb_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2594,7 +2792,7 @@ func (x *MailboxSearchResult) String() string {
 func (*MailboxSearchResult) ProtoMessage() {}
 
 func (x *MailboxSearchResult) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[29]
+	mi := &file_entdb_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2607,7 +2805,7 @@ func (x *MailboxSearchResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MailboxSearchResult.ProtoReflect.Descriptor instead.
 func (*MailboxSearchResult) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{29}
+	return file_entdb_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *MailboxSearchResult) GetItem() *MailboxItem {
@@ -2648,7 +2846,7 @@ type GetMailboxRequest struct {
 
 func (x *GetMailboxRequest) Reset() {
 	*x = GetMailboxRequest{}
-	mi := &file_entdb_proto_msgTypes[30]
+	mi := &file_entdb_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2660,7 +2858,7 @@ func (x *GetMailboxRequest) String() string {
 func (*GetMailboxRequest) ProtoMessage() {}
 
 func (x *GetMailboxRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[30]
+	mi := &file_entdb_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2673,7 +2871,7 @@ func (x *GetMailboxRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMailboxRequest.ProtoReflect.Descriptor instead.
 func (*GetMailboxRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{30}
+	return file_entdb_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *GetMailboxRequest) GetContext() *RequestContext {
@@ -2736,7 +2934,7 @@ type GetMailboxResponse struct {
 
 func (x *GetMailboxResponse) Reset() {
 	*x = GetMailboxResponse{}
-	mi := &file_entdb_proto_msgTypes[31]
+	mi := &file_entdb_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2748,7 +2946,7 @@ func (x *GetMailboxResponse) String() string {
 func (*GetMailboxResponse) ProtoMessage() {}
 
 func (x *GetMailboxResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[31]
+	mi := &file_entdb_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2761,7 +2959,7 @@ func (x *GetMailboxResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMailboxResponse.ProtoReflect.Descriptor instead.
 func (*GetMailboxResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{31}
+	return file_entdb_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GetMailboxResponse) GetItems() []*MailboxItem {
@@ -2804,7 +3002,7 @@ type MailboxItem struct {
 
 func (x *MailboxItem) Reset() {
 	*x = MailboxItem{}
-	mi := &file_entdb_proto_msgTypes[32]
+	mi := &file_entdb_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2816,7 +3014,7 @@ func (x *MailboxItem) String() string {
 func (*MailboxItem) ProtoMessage() {}
 
 func (x *MailboxItem) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[32]
+	mi := &file_entdb_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2829,7 +3027,7 @@ func (x *MailboxItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MailboxItem.ProtoReflect.Descriptor instead.
 func (*MailboxItem) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{32}
+	return file_entdb_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *MailboxItem) GetItemId() string {
@@ -2903,7 +3101,7 @@ type HealthRequest struct {
 
 func (x *HealthRequest) Reset() {
 	*x = HealthRequest{}
-	mi := &file_entdb_proto_msgTypes[33]
+	mi := &file_entdb_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2915,7 +3113,7 @@ func (x *HealthRequest) String() string {
 func (*HealthRequest) ProtoMessage() {}
 
 func (x *HealthRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[33]
+	mi := &file_entdb_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2928,7 +3126,7 @@ func (x *HealthRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthRequest.ProtoReflect.Descriptor instead.
 func (*HealthRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{33}
+	return file_entdb_proto_rawDescGZIP(), []int{34}
 }
 
 type HealthResponse struct {
@@ -2942,7 +3140,7 @@ type HealthResponse struct {
 
 func (x *HealthResponse) Reset() {
 	*x = HealthResponse{}
-	mi := &file_entdb_proto_msgTypes[34]
+	mi := &file_entdb_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2954,7 +3152,7 @@ func (x *HealthResponse) String() string {
 func (*HealthResponse) ProtoMessage() {}
 
 func (x *HealthResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[34]
+	mi := &file_entdb_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2967,7 +3165,7 @@ func (x *HealthResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResponse.ProtoReflect.Descriptor instead.
 func (*HealthResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{34}
+	return file_entdb_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *HealthResponse) GetHealthy() bool {
@@ -3003,7 +3201,7 @@ type GetSchemaRequest struct {
 
 func (x *GetSchemaRequest) Reset() {
 	*x = GetSchemaRequest{}
-	mi := &file_entdb_proto_msgTypes[35]
+	mi := &file_entdb_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3015,7 +3213,7 @@ func (x *GetSchemaRequest) String() string {
 func (*GetSchemaRequest) ProtoMessage() {}
 
 func (x *GetSchemaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[35]
+	mi := &file_entdb_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3028,7 +3226,7 @@ func (x *GetSchemaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSchemaRequest.ProtoReflect.Descriptor instead.
 func (*GetSchemaRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{35}
+	return file_entdb_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetSchemaRequest) GetTypeId() int32 {
@@ -3056,7 +3254,7 @@ type GetSchemaResponse struct {
 
 func (x *GetSchemaResponse) Reset() {
 	*x = GetSchemaResponse{}
-	mi := &file_entdb_proto_msgTypes[36]
+	mi := &file_entdb_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3068,7 +3266,7 @@ func (x *GetSchemaResponse) String() string {
 func (*GetSchemaResponse) ProtoMessage() {}
 
 func (x *GetSchemaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[36]
+	mi := &file_entdb_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3081,7 +3279,7 @@ func (x *GetSchemaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSchemaResponse.ProtoReflect.Descriptor instead.
 func (*GetSchemaResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{36}
+	return file_entdb_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *GetSchemaResponse) GetFingerprint() string {
@@ -3106,7 +3304,7 @@ type ListTenantsRequest struct {
 
 func (x *ListTenantsRequest) Reset() {
 	*x = ListTenantsRequest{}
-	mi := &file_entdb_proto_msgTypes[37]
+	mi := &file_entdb_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3118,7 +3316,7 @@ func (x *ListTenantsRequest) String() string {
 func (*ListTenantsRequest) ProtoMessage() {}
 
 func (x *ListTenantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[37]
+	mi := &file_entdb_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3131,7 +3329,7 @@ func (x *ListTenantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTenantsRequest.ProtoReflect.Descriptor instead.
 func (*ListTenantsRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{37}
+	return file_entdb_proto_rawDescGZIP(), []int{38}
 }
 
 type ListTenantsResponse struct {
@@ -3143,7 +3341,7 @@ type ListTenantsResponse struct {
 
 func (x *ListTenantsResponse) Reset() {
 	*x = ListTenantsResponse{}
-	mi := &file_entdb_proto_msgTypes[38]
+	mi := &file_entdb_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3155,7 +3353,7 @@ func (x *ListTenantsResponse) String() string {
 func (*ListTenantsResponse) ProtoMessage() {}
 
 func (x *ListTenantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[38]
+	mi := &file_entdb_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3168,7 +3366,7 @@ func (x *ListTenantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTenantsResponse.ProtoReflect.Descriptor instead.
 func (*ListTenantsResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{38}
+	return file_entdb_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ListTenantsResponse) GetTenants() []*TenantInfo {
@@ -3187,7 +3385,7 @@ type TenantInfo struct {
 
 func (x *TenantInfo) Reset() {
 	*x = TenantInfo{}
-	mi := &file_entdb_proto_msgTypes[39]
+	mi := &file_entdb_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3199,7 +3397,7 @@ func (x *TenantInfo) String() string {
 func (*TenantInfo) ProtoMessage() {}
 
 func (x *TenantInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[39]
+	mi := &file_entdb_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3212,7 +3410,7 @@ func (x *TenantInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantInfo.ProtoReflect.Descriptor instead.
 func (*TenantInfo) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{39}
+	return file_entdb_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *TenantInfo) GetTenantId() string {
@@ -3231,7 +3429,7 @@ type ListMailboxUsersRequest struct {
 
 func (x *ListMailboxUsersRequest) Reset() {
 	*x = ListMailboxUsersRequest{}
-	mi := &file_entdb_proto_msgTypes[40]
+	mi := &file_entdb_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3243,7 +3441,7 @@ func (x *ListMailboxUsersRequest) String() string {
 func (*ListMailboxUsersRequest) ProtoMessage() {}
 
 func (x *ListMailboxUsersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[40]
+	mi := &file_entdb_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3256,7 +3454,7 @@ func (x *ListMailboxUsersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMailboxUsersRequest.ProtoReflect.Descriptor instead.
 func (*ListMailboxUsersRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{40}
+	return file_entdb_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ListMailboxUsersRequest) GetTenantId() string {
@@ -3275,7 +3473,7 @@ type ListMailboxUsersResponse struct {
 
 func (x *ListMailboxUsersResponse) Reset() {
 	*x = ListMailboxUsersResponse{}
-	mi := &file_entdb_proto_msgTypes[41]
+	mi := &file_entdb_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3287,7 +3485,7 @@ func (x *ListMailboxUsersResponse) String() string {
 func (*ListMailboxUsersResponse) ProtoMessage() {}
 
 func (x *ListMailboxUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[41]
+	mi := &file_entdb_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3300,7 +3498,7 @@ func (x *ListMailboxUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMailboxUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListMailboxUsersResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{41}
+	return file_entdb_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ListMailboxUsersResponse) GetUserIds() []string {
@@ -3341,7 +3539,7 @@ type AclEntry struct {
 
 func (x *AclEntry) Reset() {
 	*x = AclEntry{}
-	mi := &file_entdb_proto_msgTypes[42]
+	mi := &file_entdb_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3353,7 +3551,7 @@ func (x *AclEntry) String() string {
 func (*AclEntry) ProtoMessage() {}
 
 func (x *AclEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[42]
+	mi := &file_entdb_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3366,7 +3564,7 @@ func (x *AclEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AclEntry.ProtoReflect.Descriptor instead.
 func (*AclEntry) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{42}
+	return file_entdb_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *AclEntry) GetPrincipal() string {
@@ -3430,7 +3628,7 @@ type FieldFilter struct {
 
 func (x *FieldFilter) Reset() {
 	*x = FieldFilter{}
-	mi := &file_entdb_proto_msgTypes[43]
+	mi := &file_entdb_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3442,7 +3640,7 @@ func (x *FieldFilter) String() string {
 func (*FieldFilter) ProtoMessage() {}
 
 func (x *FieldFilter) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[43]
+	mi := &file_entdb_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3455,7 +3653,7 @@ func (x *FieldFilter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FieldFilter.ProtoReflect.Descriptor instead.
 func (*FieldFilter) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{43}
+	return file_entdb_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *FieldFilter) GetField() string {
@@ -3490,7 +3688,7 @@ type WaitForOffsetRequest struct {
 
 func (x *WaitForOffsetRequest) Reset() {
 	*x = WaitForOffsetRequest{}
-	mi := &file_entdb_proto_msgTypes[44]
+	mi := &file_entdb_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3502,7 +3700,7 @@ func (x *WaitForOffsetRequest) String() string {
 func (*WaitForOffsetRequest) ProtoMessage() {}
 
 func (x *WaitForOffsetRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[44]
+	mi := &file_entdb_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3515,7 +3713,7 @@ func (x *WaitForOffsetRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitForOffsetRequest.ProtoReflect.Descriptor instead.
 func (*WaitForOffsetRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{44}
+	return file_entdb_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *WaitForOffsetRequest) GetContext() *RequestContext {
@@ -3549,7 +3747,7 @@ type WaitForOffsetResponse struct {
 
 func (x *WaitForOffsetResponse) Reset() {
 	*x = WaitForOffsetResponse{}
-	mi := &file_entdb_proto_msgTypes[45]
+	mi := &file_entdb_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3561,7 +3759,7 @@ func (x *WaitForOffsetResponse) String() string {
 func (*WaitForOffsetResponse) ProtoMessage() {}
 
 func (x *WaitForOffsetResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[45]
+	mi := &file_entdb_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3574,7 +3772,7 @@ func (x *WaitForOffsetResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WaitForOffsetResponse.ProtoReflect.Descriptor instead.
 func (*WaitForOffsetResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{45}
+	return file_entdb_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *WaitForOffsetResponse) GetReached() bool {
@@ -3604,7 +3802,7 @@ type GetConnectedNodesRequest struct {
 
 func (x *GetConnectedNodesRequest) Reset() {
 	*x = GetConnectedNodesRequest{}
-	mi := &file_entdb_proto_msgTypes[46]
+	mi := &file_entdb_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3616,7 +3814,7 @@ func (x *GetConnectedNodesRequest) String() string {
 func (*GetConnectedNodesRequest) ProtoMessage() {}
 
 func (x *GetConnectedNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[46]
+	mi := &file_entdb_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3629,7 +3827,7 @@ func (x *GetConnectedNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConnectedNodesRequest.ProtoReflect.Descriptor instead.
 func (*GetConnectedNodesRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{46}
+	return file_entdb_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *GetConnectedNodesRequest) GetContext() *RequestContext {
@@ -3677,7 +3875,7 @@ type GetConnectedNodesResponse struct {
 
 func (x *GetConnectedNodesResponse) Reset() {
 	*x = GetConnectedNodesResponse{}
-	mi := &file_entdb_proto_msgTypes[47]
+	mi := &file_entdb_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3689,7 +3887,7 @@ func (x *GetConnectedNodesResponse) String() string {
 func (*GetConnectedNodesResponse) ProtoMessage() {}
 
 func (x *GetConnectedNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[47]
+	mi := &file_entdb_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3702,7 +3900,7 @@ func (x *GetConnectedNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetConnectedNodesResponse.ProtoReflect.Descriptor instead.
 func (*GetConnectedNodesResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{47}
+	return file_entdb_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *GetConnectedNodesResponse) GetNodes() []*Node {
@@ -3746,7 +3944,7 @@ type ShareNodeRequest struct {
 
 func (x *ShareNodeRequest) Reset() {
 	*x = ShareNodeRequest{}
-	mi := &file_entdb_proto_msgTypes[48]
+	mi := &file_entdb_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3758,7 +3956,7 @@ func (x *ShareNodeRequest) String() string {
 func (*ShareNodeRequest) ProtoMessage() {}
 
 func (x *ShareNodeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[48]
+	mi := &file_entdb_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3771,7 +3969,7 @@ func (x *ShareNodeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShareNodeRequest.ProtoReflect.Descriptor instead.
 func (*ShareNodeRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{48}
+	return file_entdb_proto_rawDescGZIP(), []int{49}
 }
 
 func (x *ShareNodeRequest) GetContext() *RequestContext {
@@ -3848,7 +4046,7 @@ type ShareNodeResponse struct {
 
 func (x *ShareNodeResponse) Reset() {
 	*x = ShareNodeResponse{}
-	mi := &file_entdb_proto_msgTypes[49]
+	mi := &file_entdb_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3860,7 +4058,7 @@ func (x *ShareNodeResponse) String() string {
 func (*ShareNodeResponse) ProtoMessage() {}
 
 func (x *ShareNodeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[49]
+	mi := &file_entdb_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3873,7 +4071,7 @@ func (x *ShareNodeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ShareNodeResponse.ProtoReflect.Descriptor instead.
 func (*ShareNodeResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{49}
+	return file_entdb_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *ShareNodeResponse) GetSuccess() bool {
@@ -3901,7 +4099,7 @@ type RevokeAccessRequest struct {
 
 func (x *RevokeAccessRequest) Reset() {
 	*x = RevokeAccessRequest{}
-	mi := &file_entdb_proto_msgTypes[50]
+	mi := &file_entdb_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3913,7 +4111,7 @@ func (x *RevokeAccessRequest) String() string {
 func (*RevokeAccessRequest) ProtoMessage() {}
 
 func (x *RevokeAccessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[50]
+	mi := &file_entdb_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3926,7 +4124,7 @@ func (x *RevokeAccessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAccessRequest.ProtoReflect.Descriptor instead.
 func (*RevokeAccessRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{50}
+	return file_entdb_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *RevokeAccessRequest) GetContext() *RequestContext {
@@ -3960,7 +4158,7 @@ type RevokeAccessResponse struct {
 
 func (x *RevokeAccessResponse) Reset() {
 	*x = RevokeAccessResponse{}
-	mi := &file_entdb_proto_msgTypes[51]
+	mi := &file_entdb_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3972,7 +4170,7 @@ func (x *RevokeAccessResponse) String() string {
 func (*RevokeAccessResponse) ProtoMessage() {}
 
 func (x *RevokeAccessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[51]
+	mi := &file_entdb_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3985,7 +4183,7 @@ func (x *RevokeAccessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAccessResponse.ProtoReflect.Descriptor instead.
 func (*RevokeAccessResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{51}
+	return file_entdb_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *RevokeAccessResponse) GetFound() bool {
@@ -4013,7 +4211,7 @@ type ListSharedWithMeRequest struct {
 
 func (x *ListSharedWithMeRequest) Reset() {
 	*x = ListSharedWithMeRequest{}
-	mi := &file_entdb_proto_msgTypes[52]
+	mi := &file_entdb_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4025,7 +4223,7 @@ func (x *ListSharedWithMeRequest) String() string {
 func (*ListSharedWithMeRequest) ProtoMessage() {}
 
 func (x *ListSharedWithMeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[52]
+	mi := &file_entdb_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4038,7 +4236,7 @@ func (x *ListSharedWithMeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSharedWithMeRequest.ProtoReflect.Descriptor instead.
 func (*ListSharedWithMeRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{52}
+	return file_entdb_proto_rawDescGZIP(), []int{53}
 }
 
 func (x *ListSharedWithMeRequest) GetContext() *RequestContext {
@@ -4072,7 +4270,7 @@ type ListSharedWithMeResponse struct {
 
 func (x *ListSharedWithMeResponse) Reset() {
 	*x = ListSharedWithMeResponse{}
-	mi := &file_entdb_proto_msgTypes[53]
+	mi := &file_entdb_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4084,7 +4282,7 @@ func (x *ListSharedWithMeResponse) String() string {
 func (*ListSharedWithMeResponse) ProtoMessage() {}
 
 func (x *ListSharedWithMeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[53]
+	mi := &file_entdb_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4097,7 +4295,7 @@ func (x *ListSharedWithMeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListSharedWithMeResponse.ProtoReflect.Descriptor instead.
 func (*ListSharedWithMeResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{53}
+	return file_entdb_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *ListSharedWithMeResponse) GetNodes() []*Node {
@@ -4126,7 +4324,7 @@ type GroupMemberRequest struct {
 
 func (x *GroupMemberRequest) Reset() {
 	*x = GroupMemberRequest{}
-	mi := &file_entdb_proto_msgTypes[54]
+	mi := &file_entdb_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4138,7 +4336,7 @@ func (x *GroupMemberRequest) String() string {
 func (*GroupMemberRequest) ProtoMessage() {}
 
 func (x *GroupMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[54]
+	mi := &file_entdb_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4151,7 +4349,7 @@ func (x *GroupMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GroupMemberRequest.ProtoReflect.Descriptor instead.
 func (*GroupMemberRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{54}
+	return file_entdb_proto_rawDescGZIP(), []int{55}
 }
 
 func (x *GroupMemberRequest) GetContext() *RequestContext {
@@ -4192,7 +4390,7 @@ type GroupMemberResponse struct {
 
 func (x *GroupMemberResponse) Reset() {
 	*x = GroupMemberResponse{}
-	mi := &file_entdb_proto_msgTypes[55]
+	mi := &file_entdb_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4204,7 +4402,7 @@ func (x *GroupMemberResponse) String() string {
 func (*GroupMemberResponse) ProtoMessage() {}
 
 func (x *GroupMemberResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[55]
+	mi := &file_entdb_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4217,7 +4415,7 @@ func (x *GroupMemberResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GroupMemberResponse.ProtoReflect.Descriptor instead.
 func (*GroupMemberResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{55}
+	return file_entdb_proto_rawDescGZIP(), []int{56}
 }
 
 func (x *GroupMemberResponse) GetSuccess() bool {
@@ -4245,7 +4443,7 @@ type TransferOwnershipRequest struct {
 
 func (x *TransferOwnershipRequest) Reset() {
 	*x = TransferOwnershipRequest{}
-	mi := &file_entdb_proto_msgTypes[56]
+	mi := &file_entdb_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4257,7 +4455,7 @@ func (x *TransferOwnershipRequest) String() string {
 func (*TransferOwnershipRequest) ProtoMessage() {}
 
 func (x *TransferOwnershipRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[56]
+	mi := &file_entdb_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4270,7 +4468,7 @@ func (x *TransferOwnershipRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferOwnershipRequest.ProtoReflect.Descriptor instead.
 func (*TransferOwnershipRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{56}
+	return file_entdb_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *TransferOwnershipRequest) GetContext() *RequestContext {
@@ -4304,7 +4502,7 @@ type TransferOwnershipResponse struct {
 
 func (x *TransferOwnershipResponse) Reset() {
 	*x = TransferOwnershipResponse{}
-	mi := &file_entdb_proto_msgTypes[57]
+	mi := &file_entdb_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4316,7 +4514,7 @@ func (x *TransferOwnershipResponse) String() string {
 func (*TransferOwnershipResponse) ProtoMessage() {}
 
 func (x *TransferOwnershipResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[57]
+	mi := &file_entdb_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4329,7 +4527,7 @@ func (x *TransferOwnershipResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferOwnershipResponse.ProtoReflect.Descriptor instead.
 func (*TransferOwnershipResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{57}
+	return file_entdb_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *TransferOwnershipResponse) GetFound() bool {
@@ -4360,7 +4558,7 @@ type UserInfo struct {
 
 func (x *UserInfo) Reset() {
 	*x = UserInfo{}
-	mi := &file_entdb_proto_msgTypes[58]
+	mi := &file_entdb_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4372,7 +4570,7 @@ func (x *UserInfo) String() string {
 func (*UserInfo) ProtoMessage() {}
 
 func (x *UserInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[58]
+	mi := &file_entdb_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4385,7 +4583,7 @@ func (x *UserInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UserInfo.ProtoReflect.Descriptor instead.
 func (*UserInfo) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{58}
+	return file_entdb_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *UserInfo) GetUserId() string {
@@ -4443,7 +4641,7 @@ type CreateUserRequest struct {
 
 func (x *CreateUserRequest) Reset() {
 	*x = CreateUserRequest{}
-	mi := &file_entdb_proto_msgTypes[59]
+	mi := &file_entdb_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4455,7 +4653,7 @@ func (x *CreateUserRequest) String() string {
 func (*CreateUserRequest) ProtoMessage() {}
 
 func (x *CreateUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[59]
+	mi := &file_entdb_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4468,7 +4666,7 @@ func (x *CreateUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserRequest.ProtoReflect.Descriptor instead.
 func (*CreateUserRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{59}
+	return file_entdb_proto_rawDescGZIP(), []int{60}
 }
 
 func (x *CreateUserRequest) GetActor() string {
@@ -4510,7 +4708,7 @@ type CreateUserResponse struct {
 
 func (x *CreateUserResponse) Reset() {
 	*x = CreateUserResponse{}
-	mi := &file_entdb_proto_msgTypes[60]
+	mi := &file_entdb_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4522,7 +4720,7 @@ func (x *CreateUserResponse) String() string {
 func (*CreateUserResponse) ProtoMessage() {}
 
 func (x *CreateUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[60]
+	mi := &file_entdb_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4535,7 +4733,7 @@ func (x *CreateUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateUserResponse.ProtoReflect.Descriptor instead.
 func (*CreateUserResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{60}
+	return file_entdb_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *CreateUserResponse) GetSuccess() bool {
@@ -4569,7 +4767,7 @@ type GetUserRequest struct {
 
 func (x *GetUserRequest) Reset() {
 	*x = GetUserRequest{}
-	mi := &file_entdb_proto_msgTypes[61]
+	mi := &file_entdb_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4581,7 +4779,7 @@ func (x *GetUserRequest) String() string {
 func (*GetUserRequest) ProtoMessage() {}
 
 func (x *GetUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[61]
+	mi := &file_entdb_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4594,7 +4792,7 @@ func (x *GetUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserRequest.ProtoReflect.Descriptor instead.
 func (*GetUserRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{61}
+	return file_entdb_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *GetUserRequest) GetActor() string {
@@ -4621,7 +4819,7 @@ type GetUserResponse struct {
 
 func (x *GetUserResponse) Reset() {
 	*x = GetUserResponse{}
-	mi := &file_entdb_proto_msgTypes[62]
+	mi := &file_entdb_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4633,7 +4831,7 @@ func (x *GetUserResponse) String() string {
 func (*GetUserResponse) ProtoMessage() {}
 
 func (x *GetUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[62]
+	mi := &file_entdb_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4646,7 +4844,7 @@ func (x *GetUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserResponse.ProtoReflect.Descriptor instead.
 func (*GetUserResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{62}
+	return file_entdb_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *GetUserResponse) GetFound() bool {
@@ -4677,7 +4875,7 @@ type UpdateUserRequest struct {
 
 func (x *UpdateUserRequest) Reset() {
 	*x = UpdateUserRequest{}
-	mi := &file_entdb_proto_msgTypes[63]
+	mi := &file_entdb_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4689,7 +4887,7 @@ func (x *UpdateUserRequest) String() string {
 func (*UpdateUserRequest) ProtoMessage() {}
 
 func (x *UpdateUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[63]
+	mi := &file_entdb_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4702,7 +4900,7 @@ func (x *UpdateUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserRequest.ProtoReflect.Descriptor instead.
 func (*UpdateUserRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{63}
+	return file_entdb_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *UpdateUserRequest) GetActor() string {
@@ -4750,7 +4948,7 @@ type UpdateUserResponse struct {
 
 func (x *UpdateUserResponse) Reset() {
 	*x = UpdateUserResponse{}
-	mi := &file_entdb_proto_msgTypes[64]
+	mi := &file_entdb_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4762,7 +4960,7 @@ func (x *UpdateUserResponse) String() string {
 func (*UpdateUserResponse) ProtoMessage() {}
 
 func (x *UpdateUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[64]
+	mi := &file_entdb_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4775,7 +4973,7 @@ func (x *UpdateUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UpdateUserResponse.ProtoReflect.Descriptor instead.
 func (*UpdateUserResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{64}
+	return file_entdb_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *UpdateUserResponse) GetSuccess() bool {
@@ -4804,7 +5002,7 @@ type ListUsersRequest struct {
 
 func (x *ListUsersRequest) Reset() {
 	*x = ListUsersRequest{}
-	mi := &file_entdb_proto_msgTypes[65]
+	mi := &file_entdb_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4816,7 +5014,7 @@ func (x *ListUsersRequest) String() string {
 func (*ListUsersRequest) ProtoMessage() {}
 
 func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[65]
+	mi := &file_entdb_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4829,7 +5027,7 @@ func (x *ListUsersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersRequest.ProtoReflect.Descriptor instead.
 func (*ListUsersRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{65}
+	return file_entdb_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *ListUsersRequest) GetActor() string {
@@ -4869,7 +5067,7 @@ type ListUsersResponse struct {
 
 func (x *ListUsersResponse) Reset() {
 	*x = ListUsersResponse{}
-	mi := &file_entdb_proto_msgTypes[66]
+	mi := &file_entdb_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4881,7 +5079,7 @@ func (x *ListUsersResponse) String() string {
 func (*ListUsersResponse) ProtoMessage() {}
 
 func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[66]
+	mi := &file_entdb_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4894,7 +5092,7 @@ func (x *ListUsersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListUsersResponse.ProtoReflect.Descriptor instead.
 func (*ListUsersResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{66}
+	return file_entdb_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *ListUsersResponse) GetUsers() []*UserInfo {
@@ -4921,7 +5119,7 @@ type TenantDetail struct {
 
 func (x *TenantDetail) Reset() {
 	*x = TenantDetail{}
-	mi := &file_entdb_proto_msgTypes[67]
+	mi := &file_entdb_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4933,7 +5131,7 @@ func (x *TenantDetail) String() string {
 func (*TenantDetail) ProtoMessage() {}
 
 func (x *TenantDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[67]
+	mi := &file_entdb_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4946,7 +5144,7 @@ func (x *TenantDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantDetail.ProtoReflect.Descriptor instead.
 func (*TenantDetail) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{67}
+	return file_entdb_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *TenantDetail) GetTenantId() string {
@@ -4998,7 +5196,7 @@ type CreateTenantRequest struct {
 
 func (x *CreateTenantRequest) Reset() {
 	*x = CreateTenantRequest{}
-	mi := &file_entdb_proto_msgTypes[68]
+	mi := &file_entdb_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5010,7 +5208,7 @@ func (x *CreateTenantRequest) String() string {
 func (*CreateTenantRequest) ProtoMessage() {}
 
 func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[68]
+	mi := &file_entdb_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5023,7 +5221,7 @@ func (x *CreateTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantRequest.ProtoReflect.Descriptor instead.
 func (*CreateTenantRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{68}
+	return file_entdb_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *CreateTenantRequest) GetActor() string {
@@ -5065,7 +5263,7 @@ type CreateTenantResponse struct {
 
 func (x *CreateTenantResponse) Reset() {
 	*x = CreateTenantResponse{}
-	mi := &file_entdb_proto_msgTypes[69]
+	mi := &file_entdb_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5077,7 +5275,7 @@ func (x *CreateTenantResponse) String() string {
 func (*CreateTenantResponse) ProtoMessage() {}
 
 func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[69]
+	mi := &file_entdb_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5090,7 +5288,7 @@ func (x *CreateTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateTenantResponse.ProtoReflect.Descriptor instead.
 func (*CreateTenantResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{69}
+	return file_entdb_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *CreateTenantResponse) GetSuccess() bool {
@@ -5124,7 +5322,7 @@ type GetTenantRequest struct {
 
 func (x *GetTenantRequest) Reset() {
 	*x = GetTenantRequest{}
-	mi := &file_entdb_proto_msgTypes[70]
+	mi := &file_entdb_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5136,7 +5334,7 @@ func (x *GetTenantRequest) String() string {
 func (*GetTenantRequest) ProtoMessage() {}
 
 func (x *GetTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[70]
+	mi := &file_entdb_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5149,7 +5347,7 @@ func (x *GetTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantRequest.ProtoReflect.Descriptor instead.
 func (*GetTenantRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{70}
+	return file_entdb_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *GetTenantRequest) GetActor() string {
@@ -5176,7 +5374,7 @@ type GetTenantResponse struct {
 
 func (x *GetTenantResponse) Reset() {
 	*x = GetTenantResponse{}
-	mi := &file_entdb_proto_msgTypes[71]
+	mi := &file_entdb_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5188,7 +5386,7 @@ func (x *GetTenantResponse) String() string {
 func (*GetTenantResponse) ProtoMessage() {}
 
 func (x *GetTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[71]
+	mi := &file_entdb_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5201,7 +5399,7 @@ func (x *GetTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantResponse.ProtoReflect.Descriptor instead.
 func (*GetTenantResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{71}
+	return file_entdb_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *GetTenantResponse) GetFound() bool {
@@ -5228,7 +5426,7 @@ type ArchiveTenantRequest struct {
 
 func (x *ArchiveTenantRequest) Reset() {
 	*x = ArchiveTenantRequest{}
-	mi := &file_entdb_proto_msgTypes[72]
+	mi := &file_entdb_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5240,7 +5438,7 @@ func (x *ArchiveTenantRequest) String() string {
 func (*ArchiveTenantRequest) ProtoMessage() {}
 
 func (x *ArchiveTenantRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[72]
+	mi := &file_entdb_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5253,7 +5451,7 @@ func (x *ArchiveTenantRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArchiveTenantRequest.ProtoReflect.Descriptor instead.
 func (*ArchiveTenantRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{72}
+	return file_entdb_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *ArchiveTenantRequest) GetActor() string {
@@ -5280,7 +5478,7 @@ type ArchiveTenantResponse struct {
 
 func (x *ArchiveTenantResponse) Reset() {
 	*x = ArchiveTenantResponse{}
-	mi := &file_entdb_proto_msgTypes[73]
+	mi := &file_entdb_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5292,7 +5490,7 @@ func (x *ArchiveTenantResponse) String() string {
 func (*ArchiveTenantResponse) ProtoMessage() {}
 
 func (x *ArchiveTenantResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[73]
+	mi := &file_entdb_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5305,7 +5503,7 @@ func (x *ArchiveTenantResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ArchiveTenantResponse.ProtoReflect.Descriptor instead.
 func (*ArchiveTenantResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{73}
+	return file_entdb_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *ArchiveTenantResponse) GetSuccess() bool {
@@ -5334,7 +5532,7 @@ type TenantMemberInfo struct {
 
 func (x *TenantMemberInfo) Reset() {
 	*x = TenantMemberInfo{}
-	mi := &file_entdb_proto_msgTypes[74]
+	mi := &file_entdb_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5346,7 +5544,7 @@ func (x *TenantMemberInfo) String() string {
 func (*TenantMemberInfo) ProtoMessage() {}
 
 func (x *TenantMemberInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[74]
+	mi := &file_entdb_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5359,7 +5557,7 @@ func (x *TenantMemberInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantMemberInfo.ProtoReflect.Descriptor instead.
 func (*TenantMemberInfo) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{74}
+	return file_entdb_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *TenantMemberInfo) GetTenantId() string {
@@ -5402,7 +5600,7 @@ type TenantMemberRequest struct {
 
 func (x *TenantMemberRequest) Reset() {
 	*x = TenantMemberRequest{}
-	mi := &file_entdb_proto_msgTypes[75]
+	mi := &file_entdb_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5414,7 +5612,7 @@ func (x *TenantMemberRequest) String() string {
 func (*TenantMemberRequest) ProtoMessage() {}
 
 func (x *TenantMemberRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[75]
+	mi := &file_entdb_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5427,7 +5625,7 @@ func (x *TenantMemberRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantMemberRequest.ProtoReflect.Descriptor instead.
 func (*TenantMemberRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{75}
+	return file_entdb_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *TenantMemberRequest) GetActor() string {
@@ -5468,7 +5666,7 @@ type TenantMemberResponse struct {
 
 func (x *TenantMemberResponse) Reset() {
 	*x = TenantMemberResponse{}
-	mi := &file_entdb_proto_msgTypes[76]
+	mi := &file_entdb_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5480,7 +5678,7 @@ func (x *TenantMemberResponse) String() string {
 func (*TenantMemberResponse) ProtoMessage() {}
 
 func (x *TenantMemberResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[76]
+	mi := &file_entdb_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5493,7 +5691,7 @@ func (x *TenantMemberResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TenantMemberResponse.ProtoReflect.Descriptor instead.
 func (*TenantMemberResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{76}
+	return file_entdb_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *TenantMemberResponse) GetSuccess() bool {
@@ -5520,7 +5718,7 @@ type GetTenantMembersRequest struct {
 
 func (x *GetTenantMembersRequest) Reset() {
 	*x = GetTenantMembersRequest{}
-	mi := &file_entdb_proto_msgTypes[77]
+	mi := &file_entdb_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5532,7 +5730,7 @@ func (x *GetTenantMembersRequest) String() string {
 func (*GetTenantMembersRequest) ProtoMessage() {}
 
 func (x *GetTenantMembersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[77]
+	mi := &file_entdb_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5545,7 +5743,7 @@ func (x *GetTenantMembersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantMembersRequest.ProtoReflect.Descriptor instead.
 func (*GetTenantMembersRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{77}
+	return file_entdb_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *GetTenantMembersRequest) GetActor() string {
@@ -5571,7 +5769,7 @@ type GetTenantMembersResponse struct {
 
 func (x *GetTenantMembersResponse) Reset() {
 	*x = GetTenantMembersResponse{}
-	mi := &file_entdb_proto_msgTypes[78]
+	mi := &file_entdb_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5583,7 +5781,7 @@ func (x *GetTenantMembersResponse) String() string {
 func (*GetTenantMembersResponse) ProtoMessage() {}
 
 func (x *GetTenantMembersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[78]
+	mi := &file_entdb_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5596,7 +5794,7 @@ func (x *GetTenantMembersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantMembersResponse.ProtoReflect.Descriptor instead.
 func (*GetTenantMembersResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{78}
+	return file_entdb_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *GetTenantMembersResponse) GetMembers() []*TenantMemberInfo {
@@ -5616,7 +5814,7 @@ type GetUserTenantsRequest struct {
 
 func (x *GetUserTenantsRequest) Reset() {
 	*x = GetUserTenantsRequest{}
-	mi := &file_entdb_proto_msgTypes[79]
+	mi := &file_entdb_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5628,7 +5826,7 @@ func (x *GetUserTenantsRequest) String() string {
 func (*GetUserTenantsRequest) ProtoMessage() {}
 
 func (x *GetUserTenantsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[79]
+	mi := &file_entdb_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5641,7 +5839,7 @@ func (x *GetUserTenantsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserTenantsRequest.ProtoReflect.Descriptor instead.
 func (*GetUserTenantsRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{79}
+	return file_entdb_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *GetUserTenantsRequest) GetActor() string {
@@ -5667,7 +5865,7 @@ type GetUserTenantsResponse struct {
 
 func (x *GetUserTenantsResponse) Reset() {
 	*x = GetUserTenantsResponse{}
-	mi := &file_entdb_proto_msgTypes[80]
+	mi := &file_entdb_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5679,7 +5877,7 @@ func (x *GetUserTenantsResponse) String() string {
 func (*GetUserTenantsResponse) ProtoMessage() {}
 
 func (x *GetUserTenantsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[80]
+	mi := &file_entdb_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5692,7 +5890,7 @@ func (x *GetUserTenantsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetUserTenantsResponse.ProtoReflect.Descriptor instead.
 func (*GetUserTenantsResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{80}
+	return file_entdb_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *GetUserTenantsResponse) GetMemberships() []*TenantMemberInfo {
@@ -5714,7 +5912,7 @@ type ChangeMemberRoleRequest struct {
 
 func (x *ChangeMemberRoleRequest) Reset() {
 	*x = ChangeMemberRoleRequest{}
-	mi := &file_entdb_proto_msgTypes[81]
+	mi := &file_entdb_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5726,7 +5924,7 @@ func (x *ChangeMemberRoleRequest) String() string {
 func (*ChangeMemberRoleRequest) ProtoMessage() {}
 
 func (x *ChangeMemberRoleRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[81]
+	mi := &file_entdb_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5739,7 +5937,7 @@ func (x *ChangeMemberRoleRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeMemberRoleRequest.ProtoReflect.Descriptor instead.
 func (*ChangeMemberRoleRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{81}
+	return file_entdb_proto_rawDescGZIP(), []int{82}
 }
 
 func (x *ChangeMemberRoleRequest) GetActor() string {
@@ -5780,7 +5978,7 @@ type ChangeMemberRoleResponse struct {
 
 func (x *ChangeMemberRoleResponse) Reset() {
 	*x = ChangeMemberRoleResponse{}
-	mi := &file_entdb_proto_msgTypes[82]
+	mi := &file_entdb_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5792,7 +5990,7 @@ func (x *ChangeMemberRoleResponse) String() string {
 func (*ChangeMemberRoleResponse) ProtoMessage() {}
 
 func (x *ChangeMemberRoleResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[82]
+	mi := &file_entdb_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5805,7 +6003,7 @@ func (x *ChangeMemberRoleResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChangeMemberRoleResponse.ProtoReflect.Descriptor instead.
 func (*ChangeMemberRoleResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{82}
+	return file_entdb_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *ChangeMemberRoleResponse) GetSuccess() bool {
@@ -5834,7 +6032,7 @@ type TransferUserContentRequest struct {
 
 func (x *TransferUserContentRequest) Reset() {
 	*x = TransferUserContentRequest{}
-	mi := &file_entdb_proto_msgTypes[83]
+	mi := &file_entdb_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5846,7 +6044,7 @@ func (x *TransferUserContentRequest) String() string {
 func (*TransferUserContentRequest) ProtoMessage() {}
 
 func (x *TransferUserContentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[83]
+	mi := &file_entdb_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5859,7 +6057,7 @@ func (x *TransferUserContentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferUserContentRequest.ProtoReflect.Descriptor instead.
 func (*TransferUserContentRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{83}
+	return file_entdb_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *TransferUserContentRequest) GetActor() string {
@@ -5901,7 +6099,7 @@ type TransferUserContentResponse struct {
 
 func (x *TransferUserContentResponse) Reset() {
 	*x = TransferUserContentResponse{}
-	mi := &file_entdb_proto_msgTypes[84]
+	mi := &file_entdb_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5913,7 +6111,7 @@ func (x *TransferUserContentResponse) String() string {
 func (*TransferUserContentResponse) ProtoMessage() {}
 
 func (x *TransferUserContentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[84]
+	mi := &file_entdb_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5926,7 +6124,7 @@ func (x *TransferUserContentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TransferUserContentResponse.ProtoReflect.Descriptor instead.
 func (*TransferUserContentResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{84}
+	return file_entdb_proto_rawDescGZIP(), []int{85}
 }
 
 func (x *TransferUserContentResponse) GetSuccess() bool {
@@ -5964,7 +6162,7 @@ type DelegateAccessRequest struct {
 
 func (x *DelegateAccessRequest) Reset() {
 	*x = DelegateAccessRequest{}
-	mi := &file_entdb_proto_msgTypes[85]
+	mi := &file_entdb_proto_msgTypes[86]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5976,7 +6174,7 @@ func (x *DelegateAccessRequest) String() string {
 func (*DelegateAccessRequest) ProtoMessage() {}
 
 func (x *DelegateAccessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[85]
+	mi := &file_entdb_proto_msgTypes[86]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5989,7 +6187,7 @@ func (x *DelegateAccessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DelegateAccessRequest.ProtoReflect.Descriptor instead.
 func (*DelegateAccessRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{85}
+	return file_entdb_proto_rawDescGZIP(), []int{86}
 }
 
 func (x *DelegateAccessRequest) GetActor() string {
@@ -6046,7 +6244,7 @@ type DelegateAccessResponse struct {
 
 func (x *DelegateAccessResponse) Reset() {
 	*x = DelegateAccessResponse{}
-	mi := &file_entdb_proto_msgTypes[86]
+	mi := &file_entdb_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6058,7 +6256,7 @@ func (x *DelegateAccessResponse) String() string {
 func (*DelegateAccessResponse) ProtoMessage() {}
 
 func (x *DelegateAccessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[86]
+	mi := &file_entdb_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6071,7 +6269,7 @@ func (x *DelegateAccessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DelegateAccessResponse.ProtoReflect.Descriptor instead.
 func (*DelegateAccessResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{86}
+	return file_entdb_proto_rawDescGZIP(), []int{87}
 }
 
 func (x *DelegateAccessResponse) GetSuccess() bool {
@@ -6113,7 +6311,7 @@ type LegalHoldRequest struct {
 
 func (x *LegalHoldRequest) Reset() {
 	*x = LegalHoldRequest{}
-	mi := &file_entdb_proto_msgTypes[87]
+	mi := &file_entdb_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6125,7 +6323,7 @@ func (x *LegalHoldRequest) String() string {
 func (*LegalHoldRequest) ProtoMessage() {}
 
 func (x *LegalHoldRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[87]
+	mi := &file_entdb_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6138,7 +6336,7 @@ func (x *LegalHoldRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LegalHoldRequest.ProtoReflect.Descriptor instead.
 func (*LegalHoldRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{87}
+	return file_entdb_proto_rawDescGZIP(), []int{88}
 }
 
 func (x *LegalHoldRequest) GetActor() string {
@@ -6173,7 +6371,7 @@ type LegalHoldResponse struct {
 
 func (x *LegalHoldResponse) Reset() {
 	*x = LegalHoldResponse{}
-	mi := &file_entdb_proto_msgTypes[88]
+	mi := &file_entdb_proto_msgTypes[89]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6185,7 +6383,7 @@ func (x *LegalHoldResponse) String() string {
 func (*LegalHoldResponse) ProtoMessage() {}
 
 func (x *LegalHoldResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[88]
+	mi := &file_entdb_proto_msgTypes[89]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6198,7 +6396,7 @@ func (x *LegalHoldResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LegalHoldResponse.ProtoReflect.Descriptor instead.
 func (*LegalHoldResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{88}
+	return file_entdb_proto_rawDescGZIP(), []int{89}
 }
 
 func (x *LegalHoldResponse) GetSuccess() bool {
@@ -6233,7 +6431,7 @@ type RevokeAllUserAccessRequest struct {
 
 func (x *RevokeAllUserAccessRequest) Reset() {
 	*x = RevokeAllUserAccessRequest{}
-	mi := &file_entdb_proto_msgTypes[89]
+	mi := &file_entdb_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6245,7 +6443,7 @@ func (x *RevokeAllUserAccessRequest) String() string {
 func (*RevokeAllUserAccessRequest) ProtoMessage() {}
 
 func (x *RevokeAllUserAccessRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[89]
+	mi := &file_entdb_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6258,7 +6456,7 @@ func (x *RevokeAllUserAccessRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAllUserAccessRequest.ProtoReflect.Descriptor instead.
 func (*RevokeAllUserAccessRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{89}
+	return file_entdb_proto_rawDescGZIP(), []int{90}
 }
 
 func (x *RevokeAllUserAccessRequest) GetActor() string {
@@ -6295,7 +6493,7 @@ type RevokeAllUserAccessResponse struct {
 
 func (x *RevokeAllUserAccessResponse) Reset() {
 	*x = RevokeAllUserAccessResponse{}
-	mi := &file_entdb_proto_msgTypes[90]
+	mi := &file_entdb_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6307,7 +6505,7 @@ func (x *RevokeAllUserAccessResponse) String() string {
 func (*RevokeAllUserAccessResponse) ProtoMessage() {}
 
 func (x *RevokeAllUserAccessResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[90]
+	mi := &file_entdb_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6320,7 +6518,7 @@ func (x *RevokeAllUserAccessResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeAllUserAccessResponse.ProtoReflect.Descriptor instead.
 func (*RevokeAllUserAccessResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{90}
+	return file_entdb_proto_rawDescGZIP(), []int{91}
 }
 
 func (x *RevokeAllUserAccessResponse) GetSuccess() bool {
@@ -6372,7 +6570,7 @@ type DeleteUserRequest struct {
 
 func (x *DeleteUserRequest) Reset() {
 	*x = DeleteUserRequest{}
-	mi := &file_entdb_proto_msgTypes[91]
+	mi := &file_entdb_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6384,7 +6582,7 @@ func (x *DeleteUserRequest) String() string {
 func (*DeleteUserRequest) ProtoMessage() {}
 
 func (x *DeleteUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[91]
+	mi := &file_entdb_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6397,7 +6595,7 @@ func (x *DeleteUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUserRequest.ProtoReflect.Descriptor instead.
 func (*DeleteUserRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{91}
+	return file_entdb_proto_rawDescGZIP(), []int{92}
 }
 
 func (x *DeleteUserRequest) GetActor() string {
@@ -6434,7 +6632,7 @@ type DeleteUserResponse struct {
 
 func (x *DeleteUserResponse) Reset() {
 	*x = DeleteUserResponse{}
-	mi := &file_entdb_proto_msgTypes[92]
+	mi := &file_entdb_proto_msgTypes[93]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6446,7 +6644,7 @@ func (x *DeleteUserResponse) String() string {
 func (*DeleteUserResponse) ProtoMessage() {}
 
 func (x *DeleteUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[92]
+	mi := &file_entdb_proto_msgTypes[93]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6459,7 +6657,7 @@ func (x *DeleteUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteUserResponse.ProtoReflect.Descriptor instead.
 func (*DeleteUserResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{92}
+	return file_entdb_proto_rawDescGZIP(), []int{93}
 }
 
 func (x *DeleteUserResponse) GetSuccess() bool {
@@ -6507,7 +6705,7 @@ type ExportUserDataRequest struct {
 
 func (x *ExportUserDataRequest) Reset() {
 	*x = ExportUserDataRequest{}
-	mi := &file_entdb_proto_msgTypes[93]
+	mi := &file_entdb_proto_msgTypes[94]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6519,7 +6717,7 @@ func (x *ExportUserDataRequest) String() string {
 func (*ExportUserDataRequest) ProtoMessage() {}
 
 func (x *ExportUserDataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[93]
+	mi := &file_entdb_proto_msgTypes[94]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6532,7 +6730,7 @@ func (x *ExportUserDataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportUserDataRequest.ProtoReflect.Descriptor instead.
 func (*ExportUserDataRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{93}
+	return file_entdb_proto_rawDescGZIP(), []int{94}
 }
 
 func (x *ExportUserDataRequest) GetActor() string {
@@ -6561,7 +6759,7 @@ type ExportUserDataResponse struct {
 
 func (x *ExportUserDataResponse) Reset() {
 	*x = ExportUserDataResponse{}
-	mi := &file_entdb_proto_msgTypes[94]
+	mi := &file_entdb_proto_msgTypes[95]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6573,7 +6771,7 @@ func (x *ExportUserDataResponse) String() string {
 func (*ExportUserDataResponse) ProtoMessage() {}
 
 func (x *ExportUserDataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[94]
+	mi := &file_entdb_proto_msgTypes[95]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6586,7 +6784,7 @@ func (x *ExportUserDataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportUserDataResponse.ProtoReflect.Descriptor instead.
 func (*ExportUserDataResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{94}
+	return file_entdb_proto_rawDescGZIP(), []int{95}
 }
 
 func (x *ExportUserDataResponse) GetSuccess() bool {
@@ -6622,7 +6820,7 @@ type FreezeUserRequest struct {
 
 func (x *FreezeUserRequest) Reset() {
 	*x = FreezeUserRequest{}
-	mi := &file_entdb_proto_msgTypes[95]
+	mi := &file_entdb_proto_msgTypes[96]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6634,7 +6832,7 @@ func (x *FreezeUserRequest) String() string {
 func (*FreezeUserRequest) ProtoMessage() {}
 
 func (x *FreezeUserRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[95]
+	mi := &file_entdb_proto_msgTypes[96]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6647,7 +6845,7 @@ func (x *FreezeUserRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FreezeUserRequest.ProtoReflect.Descriptor instead.
 func (*FreezeUserRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{95}
+	return file_entdb_proto_rawDescGZIP(), []int{96}
 }
 
 func (x *FreezeUserRequest) GetActor() string {
@@ -6682,7 +6880,7 @@ type FreezeUserResponse struct {
 
 func (x *FreezeUserResponse) Reset() {
 	*x = FreezeUserResponse{}
-	mi := &file_entdb_proto_msgTypes[96]
+	mi := &file_entdb_proto_msgTypes[97]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6694,7 +6892,7 @@ func (x *FreezeUserResponse) String() string {
 func (*FreezeUserResponse) ProtoMessage() {}
 
 func (x *FreezeUserResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[96]
+	mi := &file_entdb_proto_msgTypes[97]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6707,7 +6905,7 @@ func (x *FreezeUserResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FreezeUserResponse.ProtoReflect.Descriptor instead.
 func (*FreezeUserResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{96}
+	return file_entdb_proto_rawDescGZIP(), []int{97}
 }
 
 func (x *FreezeUserResponse) GetSuccess() bool {
@@ -6741,7 +6939,7 @@ type CancelUserDeletionRequest struct {
 
 func (x *CancelUserDeletionRequest) Reset() {
 	*x = CancelUserDeletionRequest{}
-	mi := &file_entdb_proto_msgTypes[97]
+	mi := &file_entdb_proto_msgTypes[98]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6753,7 +6951,7 @@ func (x *CancelUserDeletionRequest) String() string {
 func (*CancelUserDeletionRequest) ProtoMessage() {}
 
 func (x *CancelUserDeletionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[97]
+	mi := &file_entdb_proto_msgTypes[98]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6766,7 +6964,7 @@ func (x *CancelUserDeletionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelUserDeletionRequest.ProtoReflect.Descriptor instead.
 func (*CancelUserDeletionRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{97}
+	return file_entdb_proto_rawDescGZIP(), []int{98}
 }
 
 func (x *CancelUserDeletionRequest) GetActor() string {
@@ -6793,7 +6991,7 @@ type CancelUserDeletionResponse struct {
 
 func (x *CancelUserDeletionResponse) Reset() {
 	*x = CancelUserDeletionResponse{}
-	mi := &file_entdb_proto_msgTypes[98]
+	mi := &file_entdb_proto_msgTypes[99]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6805,7 +7003,7 @@ func (x *CancelUserDeletionResponse) String() string {
 func (*CancelUserDeletionResponse) ProtoMessage() {}
 
 func (x *CancelUserDeletionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[98]
+	mi := &file_entdb_proto_msgTypes[99]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6818,7 +7016,7 @@ func (x *CancelUserDeletionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelUserDeletionResponse.ProtoReflect.Descriptor instead.
 func (*CancelUserDeletionResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{98}
+	return file_entdb_proto_rawDescGZIP(), []int{99}
 }
 
 func (x *CancelUserDeletionResponse) GetSuccess() bool {
@@ -6848,7 +7046,7 @@ type GetTenantQuotaRequest struct {
 
 func (x *GetTenantQuotaRequest) Reset() {
 	*x = GetTenantQuotaRequest{}
-	mi := &file_entdb_proto_msgTypes[99]
+	mi := &file_entdb_proto_msgTypes[100]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6860,7 +7058,7 @@ func (x *GetTenantQuotaRequest) String() string {
 func (*GetTenantQuotaRequest) ProtoMessage() {}
 
 func (x *GetTenantQuotaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[99]
+	mi := &file_entdb_proto_msgTypes[100]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6873,7 +7071,7 @@ func (x *GetTenantQuotaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantQuotaRequest.ProtoReflect.Descriptor instead.
 func (*GetTenantQuotaRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{99}
+	return file_entdb_proto_rawDescGZIP(), []int{100}
 }
 
 func (x *GetTenantQuotaRequest) GetActor() string {
@@ -6912,7 +7110,7 @@ type GetTenantQuotaResponse struct {
 
 func (x *GetTenantQuotaResponse) Reset() {
 	*x = GetTenantQuotaResponse{}
-	mi := &file_entdb_proto_msgTypes[100]
+	mi := &file_entdb_proto_msgTypes[101]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -6924,7 +7122,7 @@ func (x *GetTenantQuotaResponse) String() string {
 func (*GetTenantQuotaResponse) ProtoMessage() {}
 
 func (x *GetTenantQuotaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[100]
+	mi := &file_entdb_proto_msgTypes[101]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -6937,7 +7135,7 @@ func (x *GetTenantQuotaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetTenantQuotaResponse.ProtoReflect.Descriptor instead.
 func (*GetTenantQuotaResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{100}
+	return file_entdb_proto_rawDescGZIP(), []int{101}
 }
 
 func (x *GetTenantQuotaResponse) GetTenantId() string {
@@ -7033,7 +7231,7 @@ type GetNodeByKeyRequest struct {
 
 func (x *GetNodeByKeyRequest) Reset() {
 	*x = GetNodeByKeyRequest{}
-	mi := &file_entdb_proto_msgTypes[101]
+	mi := &file_entdb_proto_msgTypes[102]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7045,7 +7243,7 @@ func (x *GetNodeByKeyRequest) String() string {
 func (*GetNodeByKeyRequest) ProtoMessage() {}
 
 func (x *GetNodeByKeyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[101]
+	mi := &file_entdb_proto_msgTypes[102]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7058,7 +7256,7 @@ func (x *GetNodeByKeyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNodeByKeyRequest.ProtoReflect.Descriptor instead.
 func (*GetNodeByKeyRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{101}
+	return file_entdb_proto_rawDescGZIP(), []int{102}
 }
 
 func (x *GetNodeByKeyRequest) GetTenantId() string {
@@ -7113,7 +7311,7 @@ type GetNodeByKeyResponse struct {
 
 func (x *GetNodeByKeyResponse) Reset() {
 	*x = GetNodeByKeyResponse{}
-	mi := &file_entdb_proto_msgTypes[102]
+	mi := &file_entdb_proto_msgTypes[103]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7125,7 +7323,7 @@ func (x *GetNodeByKeyResponse) String() string {
 func (*GetNodeByKeyResponse) ProtoMessage() {}
 
 func (x *GetNodeByKeyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[102]
+	mi := &file_entdb_proto_msgTypes[103]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7138,7 +7336,7 @@ func (x *GetNodeByKeyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetNodeByKeyResponse.ProtoReflect.Descriptor instead.
 func (*GetNodeByKeyResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{102}
+	return file_entdb_proto_rawDescGZIP(), []int{103}
 }
 
 func (x *GetNodeByKeyResponse) GetNode() *Node {
@@ -7170,7 +7368,7 @@ type SearchNodesRequest struct {
 
 func (x *SearchNodesRequest) Reset() {
 	*x = SearchNodesRequest{}
-	mi := &file_entdb_proto_msgTypes[103]
+	mi := &file_entdb_proto_msgTypes[104]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7182,7 +7380,7 @@ func (x *SearchNodesRequest) String() string {
 func (*SearchNodesRequest) ProtoMessage() {}
 
 func (x *SearchNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[103]
+	mi := &file_entdb_proto_msgTypes[104]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7195,7 +7393,7 @@ func (x *SearchNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchNodesRequest.ProtoReflect.Descriptor instead.
 func (*SearchNodesRequest) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{103}
+	return file_entdb_proto_rawDescGZIP(), []int{104}
 }
 
 func (x *SearchNodesRequest) GetTenantId() string {
@@ -7249,7 +7447,7 @@ type SearchNodesResponse struct {
 
 func (x *SearchNodesResponse) Reset() {
 	*x = SearchNodesResponse{}
-	mi := &file_entdb_proto_msgTypes[104]
+	mi := &file_entdb_proto_msgTypes[105]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7261,7 +7459,7 @@ func (x *SearchNodesResponse) String() string {
 func (*SearchNodesResponse) ProtoMessage() {}
 
 func (x *SearchNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_entdb_proto_msgTypes[104]
+	mi := &file_entdb_proto_msgTypes[105]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7274,7 +7472,7 @@ func (x *SearchNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchNodesResponse.ProtoReflect.Descriptor instead.
 func (*SearchNodesResponse) Descriptor() ([]byte, []int) {
-	return file_entdb_proto_rawDescGZIP(), []int{104}
+	return file_entdb_proto_rawDescGZIP(), []int{105}
 }
 
 func (x *SearchNodesResponse) GetNodes() []*Node {
@@ -7318,7 +7516,18 @@ const file_entdb_proto_rawDesc = "" +
 	"\vdelete_edge\x18\x05 \x01(\v2\x16.entdb.v1.DeleteEdgeOpH\x00R\n" +
 	"deleteEdge\x12<\n" +
 	"\fdelete_where\x18\x06 \x01(\v2\x17.entdb.v1.DeleteWhereOpH\x00R\vdeleteWhereB\x04\n" +
-	"\x02op\"\xc4\x02\n" +
+	"\x02op\"\xf5\x01\n" +
+	"\bEntValue\x12\x1d\n" +
+	"\tint_value\x18\x01 \x01(\x03H\x00R\bintValue\x12#\n" +
+	"\fdouble_value\x18\x02 \x01(\x01H\x00R\vdoubleValue\x12\x1f\n" +
+	"\n" +
+	"bool_value\x18\x03 \x01(\bH\x00R\tboolValue\x12#\n" +
+	"\fstring_value\x18\x04 \x01(\tH\x00R\vstringValue\x12!\n" +
+	"\vbytes_value\x18\x05 \x01(\fH\x00R\n" +
+	"bytesValue\x127\n" +
+	"\n" +
+	"json_value\x18\x06 \x01(\v2\x16.google.protobuf.ValueH\x00R\tjsonValueB\x03\n" +
+	"\x01v\"\xdc\x03\n" +
 	"\fCreateNodeOp\x12\x17\n" +
 	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x0e\n" +
@@ -7328,14 +7537,24 @@ const file_entdb_proto_rawDesc = "" +
 	"\x03acl\x18\b \x03(\v2\x12.entdb.v1.AclEntryR\x03acl\x128\n" +
 	"\fstorage_mode\x18\t \x01(\x0e2\x15.entdb.v1.StorageModeR\vstorageMode\x12$\n" +
 	"\x0etarget_user_id\x18\n" +
-	" \x01(\tR\ftargetUserIdJ\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\v\x10\fR\tdata_jsonR\bacl_jsonR\x04keys\"\xe9\x01\n" +
+	" \x01(\tR\ftargetUserId\x12D\n" +
+	"\n" +
+	"typed_data\x18\f \x03(\v2%.entdb.v1.CreateNodeOp.TypedDataEntryR\ttypedData\x1aP\n" +
+	"\x0eTypedDataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\x04\x10\x05J\x04\b\v\x10\fR\tdata_jsonR\bacl_jsonR\x04keys\"\x85\x03\n" +
 	"\fUpdateNodeOp\x12\x17\n" +
 	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1d\n" +
 	"\n" +
 	"field_mask\x18\x04 \x03(\tR\tfieldMask\x12-\n" +
 	"\x05patch\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05patch\x12D\n" +
-	"\fprecondition\x18\a \x01(\v2 .entdb.v1.UpdateNodePreconditionR\fpreconditionJ\x04\b\x03\x10\x04J\x04\b\x06\x10\aR\n" +
+	"\fprecondition\x18\a \x01(\v2 .entdb.v1.UpdateNodePreconditionR\fprecondition\x12G\n" +
+	"\vtyped_patch\x18\b \x03(\v2&.entdb.v1.UpdateNodeOp.TypedPatchEntryR\n" +
+	"typedPatch\x1aQ\n" +
+	"\x0fTypedPatchEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\x06\x10\aR\n" +
 	"patch_jsonR\x04keys\"y\n" +
 	"\x16UpdateNodePrecondition\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12.\n" +
@@ -7347,12 +7566,17 @@ const file_entdb_proto_rawDesc = "" +
 	"\rDeleteWhereOp\x12\x17\n" +
 	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x12+\n" +
 	"\x05where\x18\x02 \x03(\v2\x15.entdb.v1.FieldFilterR\x05where\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\"\xb2\x01\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"\xce\x02\n" +
 	"\fCreateEdgeOp\x12\x17\n" +
 	"\aedge_id\x18\x01 \x01(\x05R\x06edgeId\x12%\n" +
 	"\x04from\x18\x02 \x01(\v2\x11.entdb.v1.NodeRefR\x04from\x12!\n" +
 	"\x02to\x18\x03 \x01(\v2\x11.entdb.v1.NodeRefR\x02to\x12-\n" +
-	"\x05props\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05propsJ\x04\b\x04\x10\x05R\n" +
+	"\x05props\x18\x05 \x01(\v2\x17.google.protobuf.StructR\x05props\x12G\n" +
+	"\vtyped_props\x18\x06 \x03(\v2&.entdb.v1.CreateEdgeOp.TypedPropsEntryR\n" +
+	"typedProps\x1aQ\n" +
+	"\x0fTypedPropsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x04\x10\x05R\n" +
 	"props_json\"q\n" +
 	"\fDeleteEdgeOp\x12\x17\n" +
 	"\aedge_id\x18\x01 \x01(\x05R\x06edgeId\x12%\n" +
@@ -7425,7 +7649,7 @@ const file_entdb_proto_rawDesc = "" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
 	"totalCount\x12\x19\n" +
-	"\bhas_more\x18\x03 \x01(\bR\ahasMore\"\xb1\x02\n" +
+	"\bhas_more\x18\x03 \x01(\bR\ahasMore\"\xcd\x03\n" +
 	"\x04Node\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x17\n" +
@@ -7436,9 +7660,13 @@ const file_entdb_proto_rawDesc = "" +
 	"updated_at\x18\x06 \x01(\x03R\tupdatedAt\x12\x1f\n" +
 	"\vowner_actor\x18\a \x01(\tR\n" +
 	"ownerActor\x121\n" +
-	"\apayload\x18\t \x01(\v2\x17.google.protobuf.StructR\apayload\x12$\n" +
+	"\apayload\x18\t \x01(\v2\x17.google.protobuf.StructR\apayload\x12E\n" +
+	"\rtyped_payload\x18\v \x03(\v2 .entdb.v1.Node.TypedPayloadEntryR\ftypedPayload\x12$\n" +
 	"\x03acl\x18\n" +
-	" \x03(\v2\x12.entdb.v1.AclEntryR\x03aclJ\x04\b\x04\x10\x05J\x04\b\b\x10\tR\fpayload_jsonR\bacl_json\"\xae\x01\n" +
+	" \x03(\v2\x12.entdb.v1.AclEntryR\x03acl\x1aS\n" +
+	"\x11TypedPayloadEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\b\x10\tR\fpayload_jsonR\bacl_json\"\xae\x01\n" +
 	"\x0fGetEdgesRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12 \n" +
@@ -7448,7 +7676,7 @@ const file_entdb_proto_rawDesc = "" +
 	"\x06offset\x18\x05 \x01(\x05R\x06offset\"S\n" +
 	"\x10GetEdgesResponse\x12$\n" +
 	"\x05edges\x18\x01 \x03(\v2\x0e.entdb.v1.EdgeR\x05edges\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xe5\x01\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xf9\x02\n" +
 	"\x04Edge\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12 \n" +
 	"\fedge_type_id\x18\x02 \x01(\x05R\n" +
@@ -7459,7 +7687,12 @@ const file_entdb_proto_rawDesc = "" +
 	"to_node_id\x18\x04 \x01(\tR\btoNodeId\x12\x1d\n" +
 	"\n" +
 	"created_at\x18\x06 \x01(\x03R\tcreatedAt\x12-\n" +
-	"\x05props\x18\a \x01(\v2\x17.google.protobuf.StructR\x05propsJ\x04\b\x05\x10\x06R\n" +
+	"\x05props\x18\a \x01(\v2\x17.google.protobuf.StructR\x05props\x12?\n" +
+	"\vtyped_props\x18\b \x03(\v2\x1e.entdb.v1.Edge.TypedPropsEntryR\n" +
+	"typedProps\x1aQ\n" +
+	"\x0fTypedPropsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x05\x10\x06R\n" +
 	"props_json\"\xcf\x01\n" +
 	"\x14SearchMailboxRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
@@ -7913,7 +8146,7 @@ func file_entdb_proto_rawDescGZIP() []byte {
 }
 
 var file_entdb_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_entdb_proto_msgTypes = make([]protoimpl.MessageInfo, 106)
+var file_entdb_proto_msgTypes = make([]protoimpl.MessageInfo, 112)
 var file_entdb_proto_goTypes = []any{
 	(StorageMode)(0),                    // 0: entdb.v1.StorageMode
 	(ReceiptStatus)(0),                  // 1: entdb.v1.ReceiptStatus
@@ -7923,279 +8156,296 @@ var file_entdb_proto_goTypes = []any{
 	(*Receipt)(nil),                     // 5: entdb.v1.Receipt
 	(*ExecuteAtomicRequest)(nil),        // 6: entdb.v1.ExecuteAtomicRequest
 	(*Operation)(nil),                   // 7: entdb.v1.Operation
-	(*CreateNodeOp)(nil),                // 8: entdb.v1.CreateNodeOp
-	(*UpdateNodeOp)(nil),                // 9: entdb.v1.UpdateNodeOp
-	(*UpdateNodePrecondition)(nil),      // 10: entdb.v1.UpdateNodePrecondition
-	(*DeleteNodeOp)(nil),                // 11: entdb.v1.DeleteNodeOp
-	(*DeleteWhereOp)(nil),               // 12: entdb.v1.DeleteWhereOp
-	(*CreateEdgeOp)(nil),                // 13: entdb.v1.CreateEdgeOp
-	(*DeleteEdgeOp)(nil),                // 14: entdb.v1.DeleteEdgeOp
-	(*NodeRef)(nil),                     // 15: entdb.v1.NodeRef
-	(*TypedNodeRef)(nil),                // 16: entdb.v1.TypedNodeRef
-	(*ExecuteAtomicResponse)(nil),       // 17: entdb.v1.ExecuteAtomicResponse
-	(*PreconditionFailure)(nil),         // 18: entdb.v1.PreconditionFailure
-	(*GetReceiptStatusRequest)(nil),     // 19: entdb.v1.GetReceiptStatusRequest
-	(*GetReceiptStatusResponse)(nil),    // 20: entdb.v1.GetReceiptStatusResponse
-	(*GetNodeRequest)(nil),              // 21: entdb.v1.GetNodeRequest
-	(*GetNodeResponse)(nil),             // 22: entdb.v1.GetNodeResponse
-	(*GetNodesRequest)(nil),             // 23: entdb.v1.GetNodesRequest
-	(*GetNodesResponse)(nil),            // 24: entdb.v1.GetNodesResponse
-	(*QueryNodesRequest)(nil),           // 25: entdb.v1.QueryNodesRequest
-	(*QueryNodesResponse)(nil),          // 26: entdb.v1.QueryNodesResponse
-	(*Node)(nil),                        // 27: entdb.v1.Node
-	(*GetEdgesRequest)(nil),             // 28: entdb.v1.GetEdgesRequest
-	(*GetEdgesResponse)(nil),            // 29: entdb.v1.GetEdgesResponse
-	(*Edge)(nil),                        // 30: entdb.v1.Edge
-	(*SearchMailboxRequest)(nil),        // 31: entdb.v1.SearchMailboxRequest
-	(*SearchMailboxResponse)(nil),       // 32: entdb.v1.SearchMailboxResponse
-	(*MailboxSearchResult)(nil),         // 33: entdb.v1.MailboxSearchResult
-	(*GetMailboxRequest)(nil),           // 34: entdb.v1.GetMailboxRequest
-	(*GetMailboxResponse)(nil),          // 35: entdb.v1.GetMailboxResponse
-	(*MailboxItem)(nil),                 // 36: entdb.v1.MailboxItem
-	(*HealthRequest)(nil),               // 37: entdb.v1.HealthRequest
-	(*HealthResponse)(nil),              // 38: entdb.v1.HealthResponse
-	(*GetSchemaRequest)(nil),            // 39: entdb.v1.GetSchemaRequest
-	(*GetSchemaResponse)(nil),           // 40: entdb.v1.GetSchemaResponse
-	(*ListTenantsRequest)(nil),          // 41: entdb.v1.ListTenantsRequest
-	(*ListTenantsResponse)(nil),         // 42: entdb.v1.ListTenantsResponse
-	(*TenantInfo)(nil),                  // 43: entdb.v1.TenantInfo
-	(*ListMailboxUsersRequest)(nil),     // 44: entdb.v1.ListMailboxUsersRequest
-	(*ListMailboxUsersResponse)(nil),    // 45: entdb.v1.ListMailboxUsersResponse
-	(*AclEntry)(nil),                    // 46: entdb.v1.AclEntry
-	(*FieldFilter)(nil),                 // 47: entdb.v1.FieldFilter
-	(*WaitForOffsetRequest)(nil),        // 48: entdb.v1.WaitForOffsetRequest
-	(*WaitForOffsetResponse)(nil),       // 49: entdb.v1.WaitForOffsetResponse
-	(*GetConnectedNodesRequest)(nil),    // 50: entdb.v1.GetConnectedNodesRequest
-	(*GetConnectedNodesResponse)(nil),   // 51: entdb.v1.GetConnectedNodesResponse
-	(*ShareNodeRequest)(nil),            // 52: entdb.v1.ShareNodeRequest
-	(*ShareNodeResponse)(nil),           // 53: entdb.v1.ShareNodeResponse
-	(*RevokeAccessRequest)(nil),         // 54: entdb.v1.RevokeAccessRequest
-	(*RevokeAccessResponse)(nil),        // 55: entdb.v1.RevokeAccessResponse
-	(*ListSharedWithMeRequest)(nil),     // 56: entdb.v1.ListSharedWithMeRequest
-	(*ListSharedWithMeResponse)(nil),    // 57: entdb.v1.ListSharedWithMeResponse
-	(*GroupMemberRequest)(nil),          // 58: entdb.v1.GroupMemberRequest
-	(*GroupMemberResponse)(nil),         // 59: entdb.v1.GroupMemberResponse
-	(*TransferOwnershipRequest)(nil),    // 60: entdb.v1.TransferOwnershipRequest
-	(*TransferOwnershipResponse)(nil),   // 61: entdb.v1.TransferOwnershipResponse
-	(*UserInfo)(nil),                    // 62: entdb.v1.UserInfo
-	(*CreateUserRequest)(nil),           // 63: entdb.v1.CreateUserRequest
-	(*CreateUserResponse)(nil),          // 64: entdb.v1.CreateUserResponse
-	(*GetUserRequest)(nil),              // 65: entdb.v1.GetUserRequest
-	(*GetUserResponse)(nil),             // 66: entdb.v1.GetUserResponse
-	(*UpdateUserRequest)(nil),           // 67: entdb.v1.UpdateUserRequest
-	(*UpdateUserResponse)(nil),          // 68: entdb.v1.UpdateUserResponse
-	(*ListUsersRequest)(nil),            // 69: entdb.v1.ListUsersRequest
-	(*ListUsersResponse)(nil),           // 70: entdb.v1.ListUsersResponse
-	(*TenantDetail)(nil),                // 71: entdb.v1.TenantDetail
-	(*CreateTenantRequest)(nil),         // 72: entdb.v1.CreateTenantRequest
-	(*CreateTenantResponse)(nil),        // 73: entdb.v1.CreateTenantResponse
-	(*GetTenantRequest)(nil),            // 74: entdb.v1.GetTenantRequest
-	(*GetTenantResponse)(nil),           // 75: entdb.v1.GetTenantResponse
-	(*ArchiveTenantRequest)(nil),        // 76: entdb.v1.ArchiveTenantRequest
-	(*ArchiveTenantResponse)(nil),       // 77: entdb.v1.ArchiveTenantResponse
-	(*TenantMemberInfo)(nil),            // 78: entdb.v1.TenantMemberInfo
-	(*TenantMemberRequest)(nil),         // 79: entdb.v1.TenantMemberRequest
-	(*TenantMemberResponse)(nil),        // 80: entdb.v1.TenantMemberResponse
-	(*GetTenantMembersRequest)(nil),     // 81: entdb.v1.GetTenantMembersRequest
-	(*GetTenantMembersResponse)(nil),    // 82: entdb.v1.GetTenantMembersResponse
-	(*GetUserTenantsRequest)(nil),       // 83: entdb.v1.GetUserTenantsRequest
-	(*GetUserTenantsResponse)(nil),      // 84: entdb.v1.GetUserTenantsResponse
-	(*ChangeMemberRoleRequest)(nil),     // 85: entdb.v1.ChangeMemberRoleRequest
-	(*ChangeMemberRoleResponse)(nil),    // 86: entdb.v1.ChangeMemberRoleResponse
-	(*TransferUserContentRequest)(nil),  // 87: entdb.v1.TransferUserContentRequest
-	(*TransferUserContentResponse)(nil), // 88: entdb.v1.TransferUserContentResponse
-	(*DelegateAccessRequest)(nil),       // 89: entdb.v1.DelegateAccessRequest
-	(*DelegateAccessResponse)(nil),      // 90: entdb.v1.DelegateAccessResponse
-	(*LegalHoldRequest)(nil),            // 91: entdb.v1.LegalHoldRequest
-	(*LegalHoldResponse)(nil),           // 92: entdb.v1.LegalHoldResponse
-	(*RevokeAllUserAccessRequest)(nil),  // 93: entdb.v1.RevokeAllUserAccessRequest
-	(*RevokeAllUserAccessResponse)(nil), // 94: entdb.v1.RevokeAllUserAccessResponse
-	(*DeleteUserRequest)(nil),           // 95: entdb.v1.DeleteUserRequest
-	(*DeleteUserResponse)(nil),          // 96: entdb.v1.DeleteUserResponse
-	(*ExportUserDataRequest)(nil),       // 97: entdb.v1.ExportUserDataRequest
-	(*ExportUserDataResponse)(nil),      // 98: entdb.v1.ExportUserDataResponse
-	(*FreezeUserRequest)(nil),           // 99: entdb.v1.FreezeUserRequest
-	(*FreezeUserResponse)(nil),          // 100: entdb.v1.FreezeUserResponse
-	(*CancelUserDeletionRequest)(nil),   // 101: entdb.v1.CancelUserDeletionRequest
-	(*CancelUserDeletionResponse)(nil),  // 102: entdb.v1.CancelUserDeletionResponse
-	(*GetTenantQuotaRequest)(nil),       // 103: entdb.v1.GetTenantQuotaRequest
-	(*GetTenantQuotaResponse)(nil),      // 104: entdb.v1.GetTenantQuotaResponse
-	(*GetNodeByKeyRequest)(nil),         // 105: entdb.v1.GetNodeByKeyRequest
-	(*GetNodeByKeyResponse)(nil),        // 106: entdb.v1.GetNodeByKeyResponse
-	(*SearchNodesRequest)(nil),          // 107: entdb.v1.SearchNodesRequest
-	(*SearchNodesResponse)(nil),         // 108: entdb.v1.SearchNodesResponse
-	nil,                                 // 109: entdb.v1.HealthResponse.ComponentsEntry
-	(*structpb.Struct)(nil),             // 110: google.protobuf.Struct
-	(*structpb.Value)(nil),              // 111: google.protobuf.Value
+	(*EntValue)(nil),                    // 8: entdb.v1.EntValue
+	(*CreateNodeOp)(nil),                // 9: entdb.v1.CreateNodeOp
+	(*UpdateNodeOp)(nil),                // 10: entdb.v1.UpdateNodeOp
+	(*UpdateNodePrecondition)(nil),      // 11: entdb.v1.UpdateNodePrecondition
+	(*DeleteNodeOp)(nil),                // 12: entdb.v1.DeleteNodeOp
+	(*DeleteWhereOp)(nil),               // 13: entdb.v1.DeleteWhereOp
+	(*CreateEdgeOp)(nil),                // 14: entdb.v1.CreateEdgeOp
+	(*DeleteEdgeOp)(nil),                // 15: entdb.v1.DeleteEdgeOp
+	(*NodeRef)(nil),                     // 16: entdb.v1.NodeRef
+	(*TypedNodeRef)(nil),                // 17: entdb.v1.TypedNodeRef
+	(*ExecuteAtomicResponse)(nil),       // 18: entdb.v1.ExecuteAtomicResponse
+	(*PreconditionFailure)(nil),         // 19: entdb.v1.PreconditionFailure
+	(*GetReceiptStatusRequest)(nil),     // 20: entdb.v1.GetReceiptStatusRequest
+	(*GetReceiptStatusResponse)(nil),    // 21: entdb.v1.GetReceiptStatusResponse
+	(*GetNodeRequest)(nil),              // 22: entdb.v1.GetNodeRequest
+	(*GetNodeResponse)(nil),             // 23: entdb.v1.GetNodeResponse
+	(*GetNodesRequest)(nil),             // 24: entdb.v1.GetNodesRequest
+	(*GetNodesResponse)(nil),            // 25: entdb.v1.GetNodesResponse
+	(*QueryNodesRequest)(nil),           // 26: entdb.v1.QueryNodesRequest
+	(*QueryNodesResponse)(nil),          // 27: entdb.v1.QueryNodesResponse
+	(*Node)(nil),                        // 28: entdb.v1.Node
+	(*GetEdgesRequest)(nil),             // 29: entdb.v1.GetEdgesRequest
+	(*GetEdgesResponse)(nil),            // 30: entdb.v1.GetEdgesResponse
+	(*Edge)(nil),                        // 31: entdb.v1.Edge
+	(*SearchMailboxRequest)(nil),        // 32: entdb.v1.SearchMailboxRequest
+	(*SearchMailboxResponse)(nil),       // 33: entdb.v1.SearchMailboxResponse
+	(*MailboxSearchResult)(nil),         // 34: entdb.v1.MailboxSearchResult
+	(*GetMailboxRequest)(nil),           // 35: entdb.v1.GetMailboxRequest
+	(*GetMailboxResponse)(nil),          // 36: entdb.v1.GetMailboxResponse
+	(*MailboxItem)(nil),                 // 37: entdb.v1.MailboxItem
+	(*HealthRequest)(nil),               // 38: entdb.v1.HealthRequest
+	(*HealthResponse)(nil),              // 39: entdb.v1.HealthResponse
+	(*GetSchemaRequest)(nil),            // 40: entdb.v1.GetSchemaRequest
+	(*GetSchemaResponse)(nil),           // 41: entdb.v1.GetSchemaResponse
+	(*ListTenantsRequest)(nil),          // 42: entdb.v1.ListTenantsRequest
+	(*ListTenantsResponse)(nil),         // 43: entdb.v1.ListTenantsResponse
+	(*TenantInfo)(nil),                  // 44: entdb.v1.TenantInfo
+	(*ListMailboxUsersRequest)(nil),     // 45: entdb.v1.ListMailboxUsersRequest
+	(*ListMailboxUsersResponse)(nil),    // 46: entdb.v1.ListMailboxUsersResponse
+	(*AclEntry)(nil),                    // 47: entdb.v1.AclEntry
+	(*FieldFilter)(nil),                 // 48: entdb.v1.FieldFilter
+	(*WaitForOffsetRequest)(nil),        // 49: entdb.v1.WaitForOffsetRequest
+	(*WaitForOffsetResponse)(nil),       // 50: entdb.v1.WaitForOffsetResponse
+	(*GetConnectedNodesRequest)(nil),    // 51: entdb.v1.GetConnectedNodesRequest
+	(*GetConnectedNodesResponse)(nil),   // 52: entdb.v1.GetConnectedNodesResponse
+	(*ShareNodeRequest)(nil),            // 53: entdb.v1.ShareNodeRequest
+	(*ShareNodeResponse)(nil),           // 54: entdb.v1.ShareNodeResponse
+	(*RevokeAccessRequest)(nil),         // 55: entdb.v1.RevokeAccessRequest
+	(*RevokeAccessResponse)(nil),        // 56: entdb.v1.RevokeAccessResponse
+	(*ListSharedWithMeRequest)(nil),     // 57: entdb.v1.ListSharedWithMeRequest
+	(*ListSharedWithMeResponse)(nil),    // 58: entdb.v1.ListSharedWithMeResponse
+	(*GroupMemberRequest)(nil),          // 59: entdb.v1.GroupMemberRequest
+	(*GroupMemberResponse)(nil),         // 60: entdb.v1.GroupMemberResponse
+	(*TransferOwnershipRequest)(nil),    // 61: entdb.v1.TransferOwnershipRequest
+	(*TransferOwnershipResponse)(nil),   // 62: entdb.v1.TransferOwnershipResponse
+	(*UserInfo)(nil),                    // 63: entdb.v1.UserInfo
+	(*CreateUserRequest)(nil),           // 64: entdb.v1.CreateUserRequest
+	(*CreateUserResponse)(nil),          // 65: entdb.v1.CreateUserResponse
+	(*GetUserRequest)(nil),              // 66: entdb.v1.GetUserRequest
+	(*GetUserResponse)(nil),             // 67: entdb.v1.GetUserResponse
+	(*UpdateUserRequest)(nil),           // 68: entdb.v1.UpdateUserRequest
+	(*UpdateUserResponse)(nil),          // 69: entdb.v1.UpdateUserResponse
+	(*ListUsersRequest)(nil),            // 70: entdb.v1.ListUsersRequest
+	(*ListUsersResponse)(nil),           // 71: entdb.v1.ListUsersResponse
+	(*TenantDetail)(nil),                // 72: entdb.v1.TenantDetail
+	(*CreateTenantRequest)(nil),         // 73: entdb.v1.CreateTenantRequest
+	(*CreateTenantResponse)(nil),        // 74: entdb.v1.CreateTenantResponse
+	(*GetTenantRequest)(nil),            // 75: entdb.v1.GetTenantRequest
+	(*GetTenantResponse)(nil),           // 76: entdb.v1.GetTenantResponse
+	(*ArchiveTenantRequest)(nil),        // 77: entdb.v1.ArchiveTenantRequest
+	(*ArchiveTenantResponse)(nil),       // 78: entdb.v1.ArchiveTenantResponse
+	(*TenantMemberInfo)(nil),            // 79: entdb.v1.TenantMemberInfo
+	(*TenantMemberRequest)(nil),         // 80: entdb.v1.TenantMemberRequest
+	(*TenantMemberResponse)(nil),        // 81: entdb.v1.TenantMemberResponse
+	(*GetTenantMembersRequest)(nil),     // 82: entdb.v1.GetTenantMembersRequest
+	(*GetTenantMembersResponse)(nil),    // 83: entdb.v1.GetTenantMembersResponse
+	(*GetUserTenantsRequest)(nil),       // 84: entdb.v1.GetUserTenantsRequest
+	(*GetUserTenantsResponse)(nil),      // 85: entdb.v1.GetUserTenantsResponse
+	(*ChangeMemberRoleRequest)(nil),     // 86: entdb.v1.ChangeMemberRoleRequest
+	(*ChangeMemberRoleResponse)(nil),    // 87: entdb.v1.ChangeMemberRoleResponse
+	(*TransferUserContentRequest)(nil),  // 88: entdb.v1.TransferUserContentRequest
+	(*TransferUserContentResponse)(nil), // 89: entdb.v1.TransferUserContentResponse
+	(*DelegateAccessRequest)(nil),       // 90: entdb.v1.DelegateAccessRequest
+	(*DelegateAccessResponse)(nil),      // 91: entdb.v1.DelegateAccessResponse
+	(*LegalHoldRequest)(nil),            // 92: entdb.v1.LegalHoldRequest
+	(*LegalHoldResponse)(nil),           // 93: entdb.v1.LegalHoldResponse
+	(*RevokeAllUserAccessRequest)(nil),  // 94: entdb.v1.RevokeAllUserAccessRequest
+	(*RevokeAllUserAccessResponse)(nil), // 95: entdb.v1.RevokeAllUserAccessResponse
+	(*DeleteUserRequest)(nil),           // 96: entdb.v1.DeleteUserRequest
+	(*DeleteUserResponse)(nil),          // 97: entdb.v1.DeleteUserResponse
+	(*ExportUserDataRequest)(nil),       // 98: entdb.v1.ExportUserDataRequest
+	(*ExportUserDataResponse)(nil),      // 99: entdb.v1.ExportUserDataResponse
+	(*FreezeUserRequest)(nil),           // 100: entdb.v1.FreezeUserRequest
+	(*FreezeUserResponse)(nil),          // 101: entdb.v1.FreezeUserResponse
+	(*CancelUserDeletionRequest)(nil),   // 102: entdb.v1.CancelUserDeletionRequest
+	(*CancelUserDeletionResponse)(nil),  // 103: entdb.v1.CancelUserDeletionResponse
+	(*GetTenantQuotaRequest)(nil),       // 104: entdb.v1.GetTenantQuotaRequest
+	(*GetTenantQuotaResponse)(nil),      // 105: entdb.v1.GetTenantQuotaResponse
+	(*GetNodeByKeyRequest)(nil),         // 106: entdb.v1.GetNodeByKeyRequest
+	(*GetNodeByKeyResponse)(nil),        // 107: entdb.v1.GetNodeByKeyResponse
+	(*SearchNodesRequest)(nil),          // 108: entdb.v1.SearchNodesRequest
+	(*SearchNodesResponse)(nil),         // 109: entdb.v1.SearchNodesResponse
+	nil,                                 // 110: entdb.v1.CreateNodeOp.TypedDataEntry
+	nil,                                 // 111: entdb.v1.UpdateNodeOp.TypedPatchEntry
+	nil,                                 // 112: entdb.v1.CreateEdgeOp.TypedPropsEntry
+	nil,                                 // 113: entdb.v1.Node.TypedPayloadEntry
+	nil,                                 // 114: entdb.v1.Edge.TypedPropsEntry
+	nil,                                 // 115: entdb.v1.HealthResponse.ComponentsEntry
+	(*structpb.Value)(nil),              // 116: google.protobuf.Value
+	(*structpb.Struct)(nil),             // 117: google.protobuf.Struct
 }
 var file_entdb_proto_depIdxs = []int32{
 	4,   // 0: entdb.v1.ExecuteAtomicRequest.context:type_name -> entdb.v1.RequestContext
 	7,   // 1: entdb.v1.ExecuteAtomicRequest.operations:type_name -> entdb.v1.Operation
-	8,   // 2: entdb.v1.Operation.create_node:type_name -> entdb.v1.CreateNodeOp
-	9,   // 3: entdb.v1.Operation.update_node:type_name -> entdb.v1.UpdateNodeOp
-	11,  // 4: entdb.v1.Operation.delete_node:type_name -> entdb.v1.DeleteNodeOp
-	13,  // 5: entdb.v1.Operation.create_edge:type_name -> entdb.v1.CreateEdgeOp
-	14,  // 6: entdb.v1.Operation.delete_edge:type_name -> entdb.v1.DeleteEdgeOp
-	12,  // 7: entdb.v1.Operation.delete_where:type_name -> entdb.v1.DeleteWhereOp
-	110, // 8: entdb.v1.CreateNodeOp.data:type_name -> google.protobuf.Struct
-	46,  // 9: entdb.v1.CreateNodeOp.acl:type_name -> entdb.v1.AclEntry
-	0,   // 10: entdb.v1.CreateNodeOp.storage_mode:type_name -> entdb.v1.StorageMode
-	110, // 11: entdb.v1.UpdateNodeOp.patch:type_name -> google.protobuf.Struct
-	10,  // 12: entdb.v1.UpdateNodeOp.precondition:type_name -> entdb.v1.UpdateNodePrecondition
-	111, // 13: entdb.v1.UpdateNodePrecondition.equals:type_name -> google.protobuf.Value
-	47,  // 14: entdb.v1.DeleteWhereOp.where:type_name -> entdb.v1.FieldFilter
-	15,  // 15: entdb.v1.CreateEdgeOp.from:type_name -> entdb.v1.NodeRef
-	15,  // 16: entdb.v1.CreateEdgeOp.to:type_name -> entdb.v1.NodeRef
-	110, // 17: entdb.v1.CreateEdgeOp.props:type_name -> google.protobuf.Struct
-	15,  // 18: entdb.v1.DeleteEdgeOp.from:type_name -> entdb.v1.NodeRef
-	15,  // 19: entdb.v1.DeleteEdgeOp.to:type_name -> entdb.v1.NodeRef
-	16,  // 20: entdb.v1.NodeRef.typed:type_name -> entdb.v1.TypedNodeRef
-	5,   // 21: entdb.v1.ExecuteAtomicResponse.receipt:type_name -> entdb.v1.Receipt
-	1,   // 22: entdb.v1.ExecuteAtomicResponse.applied_status:type_name -> entdb.v1.ReceiptStatus
-	18,  // 23: entdb.v1.ExecuteAtomicResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
-	111, // 24: entdb.v1.PreconditionFailure.expected:type_name -> google.protobuf.Value
-	111, // 25: entdb.v1.PreconditionFailure.observed:type_name -> google.protobuf.Value
-	4,   // 26: entdb.v1.GetReceiptStatusRequest.context:type_name -> entdb.v1.RequestContext
-	1,   // 27: entdb.v1.GetReceiptStatusResponse.status:type_name -> entdb.v1.ReceiptStatus
-	18,  // 28: entdb.v1.GetReceiptStatusResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
-	4,   // 29: entdb.v1.GetNodeRequest.context:type_name -> entdb.v1.RequestContext
-	27,  // 30: entdb.v1.GetNodeResponse.node:type_name -> entdb.v1.Node
-	4,   // 31: entdb.v1.GetNodesRequest.context:type_name -> entdb.v1.RequestContext
-	27,  // 32: entdb.v1.GetNodesResponse.nodes:type_name -> entdb.v1.Node
-	4,   // 33: entdb.v1.QueryNodesRequest.context:type_name -> entdb.v1.RequestContext
-	47,  // 34: entdb.v1.QueryNodesRequest.filters:type_name -> entdb.v1.FieldFilter
-	27,  // 35: entdb.v1.QueryNodesResponse.nodes:type_name -> entdb.v1.Node
-	110, // 36: entdb.v1.Node.payload:type_name -> google.protobuf.Struct
-	46,  // 37: entdb.v1.Node.acl:type_name -> entdb.v1.AclEntry
-	4,   // 38: entdb.v1.GetEdgesRequest.context:type_name -> entdb.v1.RequestContext
-	30,  // 39: entdb.v1.GetEdgesResponse.edges:type_name -> entdb.v1.Edge
-	110, // 40: entdb.v1.Edge.props:type_name -> google.protobuf.Struct
-	4,   // 41: entdb.v1.SearchMailboxRequest.context:type_name -> entdb.v1.RequestContext
-	33,  // 42: entdb.v1.SearchMailboxResponse.results:type_name -> entdb.v1.MailboxSearchResult
-	36,  // 43: entdb.v1.MailboxSearchResult.item:type_name -> entdb.v1.MailboxItem
-	4,   // 44: entdb.v1.GetMailboxRequest.context:type_name -> entdb.v1.RequestContext
-	36,  // 45: entdb.v1.GetMailboxResponse.items:type_name -> entdb.v1.MailboxItem
-	110, // 46: entdb.v1.MailboxItem.state:type_name -> google.protobuf.Struct
-	110, // 47: entdb.v1.MailboxItem.metadata:type_name -> google.protobuf.Struct
-	109, // 48: entdb.v1.HealthResponse.components:type_name -> entdb.v1.HealthResponse.ComponentsEntry
-	110, // 49: entdb.v1.GetSchemaResponse.schema:type_name -> google.protobuf.Struct
-	43,  // 50: entdb.v1.ListTenantsResponse.tenants:type_name -> entdb.v1.TenantInfo
-	2,   // 51: entdb.v1.AclEntry.core_caps:type_name -> entdb.v1.CoreCapability
-	3,   // 52: entdb.v1.FieldFilter.op:type_name -> entdb.v1.FilterOp
-	111, // 53: entdb.v1.FieldFilter.value:type_name -> google.protobuf.Value
-	4,   // 54: entdb.v1.WaitForOffsetRequest.context:type_name -> entdb.v1.RequestContext
-	4,   // 55: entdb.v1.GetConnectedNodesRequest.context:type_name -> entdb.v1.RequestContext
-	27,  // 56: entdb.v1.GetConnectedNodesResponse.nodes:type_name -> entdb.v1.Node
-	4,   // 57: entdb.v1.ShareNodeRequest.context:type_name -> entdb.v1.RequestContext
-	2,   // 58: entdb.v1.ShareNodeRequest.core_caps:type_name -> entdb.v1.CoreCapability
-	4,   // 59: entdb.v1.RevokeAccessRequest.context:type_name -> entdb.v1.RequestContext
-	4,   // 60: entdb.v1.ListSharedWithMeRequest.context:type_name -> entdb.v1.RequestContext
-	27,  // 61: entdb.v1.ListSharedWithMeResponse.nodes:type_name -> entdb.v1.Node
-	4,   // 62: entdb.v1.GroupMemberRequest.context:type_name -> entdb.v1.RequestContext
-	4,   // 63: entdb.v1.TransferOwnershipRequest.context:type_name -> entdb.v1.RequestContext
-	62,  // 64: entdb.v1.CreateUserResponse.user:type_name -> entdb.v1.UserInfo
-	62,  // 65: entdb.v1.GetUserResponse.user:type_name -> entdb.v1.UserInfo
-	62,  // 66: entdb.v1.ListUsersResponse.users:type_name -> entdb.v1.UserInfo
-	71,  // 67: entdb.v1.CreateTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
-	71,  // 68: entdb.v1.GetTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
-	78,  // 69: entdb.v1.GetTenantMembersResponse.members:type_name -> entdb.v1.TenantMemberInfo
-	78,  // 70: entdb.v1.GetUserTenantsResponse.memberships:type_name -> entdb.v1.TenantMemberInfo
-	111, // 71: entdb.v1.GetNodeByKeyRequest.value:type_name -> google.protobuf.Value
-	27,  // 72: entdb.v1.GetNodeByKeyResponse.node:type_name -> entdb.v1.Node
-	27,  // 73: entdb.v1.SearchNodesResponse.nodes:type_name -> entdb.v1.Node
-	6,   // 74: entdb.v1.EntDBService.ExecuteAtomic:input_type -> entdb.v1.ExecuteAtomicRequest
-	19,  // 75: entdb.v1.EntDBService.GetReceiptStatus:input_type -> entdb.v1.GetReceiptStatusRequest
-	21,  // 76: entdb.v1.EntDBService.GetNode:input_type -> entdb.v1.GetNodeRequest
-	23,  // 77: entdb.v1.EntDBService.GetNodes:input_type -> entdb.v1.GetNodesRequest
-	25,  // 78: entdb.v1.EntDBService.QueryNodes:input_type -> entdb.v1.QueryNodesRequest
-	28,  // 79: entdb.v1.EntDBService.GetEdgesFrom:input_type -> entdb.v1.GetEdgesRequest
-	28,  // 80: entdb.v1.EntDBService.GetEdgesTo:input_type -> entdb.v1.GetEdgesRequest
-	31,  // 81: entdb.v1.EntDBService.SearchMailbox:input_type -> entdb.v1.SearchMailboxRequest
-	34,  // 82: entdb.v1.EntDBService.GetMailbox:input_type -> entdb.v1.GetMailboxRequest
-	37,  // 83: entdb.v1.EntDBService.Health:input_type -> entdb.v1.HealthRequest
-	39,  // 84: entdb.v1.EntDBService.GetSchema:input_type -> entdb.v1.GetSchemaRequest
-	41,  // 85: entdb.v1.EntDBService.ListTenants:input_type -> entdb.v1.ListTenantsRequest
-	44,  // 86: entdb.v1.EntDBService.ListMailboxUsers:input_type -> entdb.v1.ListMailboxUsersRequest
-	48,  // 87: entdb.v1.EntDBService.WaitForOffset:input_type -> entdb.v1.WaitForOffsetRequest
-	50,  // 88: entdb.v1.EntDBService.GetConnectedNodes:input_type -> entdb.v1.GetConnectedNodesRequest
-	52,  // 89: entdb.v1.EntDBService.ShareNode:input_type -> entdb.v1.ShareNodeRequest
-	54,  // 90: entdb.v1.EntDBService.RevokeAccess:input_type -> entdb.v1.RevokeAccessRequest
-	56,  // 91: entdb.v1.EntDBService.ListSharedWithMe:input_type -> entdb.v1.ListSharedWithMeRequest
-	58,  // 92: entdb.v1.EntDBService.AddGroupMember:input_type -> entdb.v1.GroupMemberRequest
-	58,  // 93: entdb.v1.EntDBService.RemoveGroupMember:input_type -> entdb.v1.GroupMemberRequest
-	60,  // 94: entdb.v1.EntDBService.TransferOwnership:input_type -> entdb.v1.TransferOwnershipRequest
-	63,  // 95: entdb.v1.EntDBService.CreateUser:input_type -> entdb.v1.CreateUserRequest
-	65,  // 96: entdb.v1.EntDBService.GetUser:input_type -> entdb.v1.GetUserRequest
-	67,  // 97: entdb.v1.EntDBService.UpdateUser:input_type -> entdb.v1.UpdateUserRequest
-	69,  // 98: entdb.v1.EntDBService.ListUsers:input_type -> entdb.v1.ListUsersRequest
-	72,  // 99: entdb.v1.EntDBService.CreateTenant:input_type -> entdb.v1.CreateTenantRequest
-	74,  // 100: entdb.v1.EntDBService.GetTenant:input_type -> entdb.v1.GetTenantRequest
-	76,  // 101: entdb.v1.EntDBService.ArchiveTenant:input_type -> entdb.v1.ArchiveTenantRequest
-	79,  // 102: entdb.v1.EntDBService.AddTenantMember:input_type -> entdb.v1.TenantMemberRequest
-	79,  // 103: entdb.v1.EntDBService.RemoveTenantMember:input_type -> entdb.v1.TenantMemberRequest
-	81,  // 104: entdb.v1.EntDBService.GetTenantMembers:input_type -> entdb.v1.GetTenantMembersRequest
-	83,  // 105: entdb.v1.EntDBService.GetUserTenants:input_type -> entdb.v1.GetUserTenantsRequest
-	85,  // 106: entdb.v1.EntDBService.ChangeMemberRole:input_type -> entdb.v1.ChangeMemberRoleRequest
-	87,  // 107: entdb.v1.EntDBService.TransferUserContent:input_type -> entdb.v1.TransferUserContentRequest
-	89,  // 108: entdb.v1.EntDBService.DelegateAccess:input_type -> entdb.v1.DelegateAccessRequest
-	91,  // 109: entdb.v1.EntDBService.SetLegalHold:input_type -> entdb.v1.LegalHoldRequest
-	93,  // 110: entdb.v1.EntDBService.RevokeAllUserAccess:input_type -> entdb.v1.RevokeAllUserAccessRequest
-	95,  // 111: entdb.v1.EntDBService.DeleteUser:input_type -> entdb.v1.DeleteUserRequest
-	97,  // 112: entdb.v1.EntDBService.ExportUserData:input_type -> entdb.v1.ExportUserDataRequest
-	99,  // 113: entdb.v1.EntDBService.FreezeUser:input_type -> entdb.v1.FreezeUserRequest
-	101, // 114: entdb.v1.EntDBService.CancelUserDeletion:input_type -> entdb.v1.CancelUserDeletionRequest
-	103, // 115: entdb.v1.EntDBService.GetTenantQuota:input_type -> entdb.v1.GetTenantQuotaRequest
-	105, // 116: entdb.v1.EntDBService.GetNodeByKey:input_type -> entdb.v1.GetNodeByKeyRequest
-	107, // 117: entdb.v1.EntDBService.SearchNodes:input_type -> entdb.v1.SearchNodesRequest
-	17,  // 118: entdb.v1.EntDBService.ExecuteAtomic:output_type -> entdb.v1.ExecuteAtomicResponse
-	20,  // 119: entdb.v1.EntDBService.GetReceiptStatus:output_type -> entdb.v1.GetReceiptStatusResponse
-	22,  // 120: entdb.v1.EntDBService.GetNode:output_type -> entdb.v1.GetNodeResponse
-	24,  // 121: entdb.v1.EntDBService.GetNodes:output_type -> entdb.v1.GetNodesResponse
-	26,  // 122: entdb.v1.EntDBService.QueryNodes:output_type -> entdb.v1.QueryNodesResponse
-	29,  // 123: entdb.v1.EntDBService.GetEdgesFrom:output_type -> entdb.v1.GetEdgesResponse
-	29,  // 124: entdb.v1.EntDBService.GetEdgesTo:output_type -> entdb.v1.GetEdgesResponse
-	32,  // 125: entdb.v1.EntDBService.SearchMailbox:output_type -> entdb.v1.SearchMailboxResponse
-	35,  // 126: entdb.v1.EntDBService.GetMailbox:output_type -> entdb.v1.GetMailboxResponse
-	38,  // 127: entdb.v1.EntDBService.Health:output_type -> entdb.v1.HealthResponse
-	40,  // 128: entdb.v1.EntDBService.GetSchema:output_type -> entdb.v1.GetSchemaResponse
-	42,  // 129: entdb.v1.EntDBService.ListTenants:output_type -> entdb.v1.ListTenantsResponse
-	45,  // 130: entdb.v1.EntDBService.ListMailboxUsers:output_type -> entdb.v1.ListMailboxUsersResponse
-	49,  // 131: entdb.v1.EntDBService.WaitForOffset:output_type -> entdb.v1.WaitForOffsetResponse
-	51,  // 132: entdb.v1.EntDBService.GetConnectedNodes:output_type -> entdb.v1.GetConnectedNodesResponse
-	53,  // 133: entdb.v1.EntDBService.ShareNode:output_type -> entdb.v1.ShareNodeResponse
-	55,  // 134: entdb.v1.EntDBService.RevokeAccess:output_type -> entdb.v1.RevokeAccessResponse
-	57,  // 135: entdb.v1.EntDBService.ListSharedWithMe:output_type -> entdb.v1.ListSharedWithMeResponse
-	59,  // 136: entdb.v1.EntDBService.AddGroupMember:output_type -> entdb.v1.GroupMemberResponse
-	59,  // 137: entdb.v1.EntDBService.RemoveGroupMember:output_type -> entdb.v1.GroupMemberResponse
-	61,  // 138: entdb.v1.EntDBService.TransferOwnership:output_type -> entdb.v1.TransferOwnershipResponse
-	64,  // 139: entdb.v1.EntDBService.CreateUser:output_type -> entdb.v1.CreateUserResponse
-	66,  // 140: entdb.v1.EntDBService.GetUser:output_type -> entdb.v1.GetUserResponse
-	68,  // 141: entdb.v1.EntDBService.UpdateUser:output_type -> entdb.v1.UpdateUserResponse
-	70,  // 142: entdb.v1.EntDBService.ListUsers:output_type -> entdb.v1.ListUsersResponse
-	73,  // 143: entdb.v1.EntDBService.CreateTenant:output_type -> entdb.v1.CreateTenantResponse
-	75,  // 144: entdb.v1.EntDBService.GetTenant:output_type -> entdb.v1.GetTenantResponse
-	77,  // 145: entdb.v1.EntDBService.ArchiveTenant:output_type -> entdb.v1.ArchiveTenantResponse
-	80,  // 146: entdb.v1.EntDBService.AddTenantMember:output_type -> entdb.v1.TenantMemberResponse
-	80,  // 147: entdb.v1.EntDBService.RemoveTenantMember:output_type -> entdb.v1.TenantMemberResponse
-	82,  // 148: entdb.v1.EntDBService.GetTenantMembers:output_type -> entdb.v1.GetTenantMembersResponse
-	84,  // 149: entdb.v1.EntDBService.GetUserTenants:output_type -> entdb.v1.GetUserTenantsResponse
-	86,  // 150: entdb.v1.EntDBService.ChangeMemberRole:output_type -> entdb.v1.ChangeMemberRoleResponse
-	88,  // 151: entdb.v1.EntDBService.TransferUserContent:output_type -> entdb.v1.TransferUserContentResponse
-	90,  // 152: entdb.v1.EntDBService.DelegateAccess:output_type -> entdb.v1.DelegateAccessResponse
-	92,  // 153: entdb.v1.EntDBService.SetLegalHold:output_type -> entdb.v1.LegalHoldResponse
-	94,  // 154: entdb.v1.EntDBService.RevokeAllUserAccess:output_type -> entdb.v1.RevokeAllUserAccessResponse
-	96,  // 155: entdb.v1.EntDBService.DeleteUser:output_type -> entdb.v1.DeleteUserResponse
-	98,  // 156: entdb.v1.EntDBService.ExportUserData:output_type -> entdb.v1.ExportUserDataResponse
-	100, // 157: entdb.v1.EntDBService.FreezeUser:output_type -> entdb.v1.FreezeUserResponse
-	102, // 158: entdb.v1.EntDBService.CancelUserDeletion:output_type -> entdb.v1.CancelUserDeletionResponse
-	104, // 159: entdb.v1.EntDBService.GetTenantQuota:output_type -> entdb.v1.GetTenantQuotaResponse
-	106, // 160: entdb.v1.EntDBService.GetNodeByKey:output_type -> entdb.v1.GetNodeByKeyResponse
-	108, // 161: entdb.v1.EntDBService.SearchNodes:output_type -> entdb.v1.SearchNodesResponse
-	118, // [118:162] is the sub-list for method output_type
-	74,  // [74:118] is the sub-list for method input_type
-	74,  // [74:74] is the sub-list for extension type_name
-	74,  // [74:74] is the sub-list for extension extendee
-	0,   // [0:74] is the sub-list for field type_name
+	9,   // 2: entdb.v1.Operation.create_node:type_name -> entdb.v1.CreateNodeOp
+	10,  // 3: entdb.v1.Operation.update_node:type_name -> entdb.v1.UpdateNodeOp
+	12,  // 4: entdb.v1.Operation.delete_node:type_name -> entdb.v1.DeleteNodeOp
+	14,  // 5: entdb.v1.Operation.create_edge:type_name -> entdb.v1.CreateEdgeOp
+	15,  // 6: entdb.v1.Operation.delete_edge:type_name -> entdb.v1.DeleteEdgeOp
+	13,  // 7: entdb.v1.Operation.delete_where:type_name -> entdb.v1.DeleteWhereOp
+	116, // 8: entdb.v1.EntValue.json_value:type_name -> google.protobuf.Value
+	117, // 9: entdb.v1.CreateNodeOp.data:type_name -> google.protobuf.Struct
+	47,  // 10: entdb.v1.CreateNodeOp.acl:type_name -> entdb.v1.AclEntry
+	0,   // 11: entdb.v1.CreateNodeOp.storage_mode:type_name -> entdb.v1.StorageMode
+	110, // 12: entdb.v1.CreateNodeOp.typed_data:type_name -> entdb.v1.CreateNodeOp.TypedDataEntry
+	117, // 13: entdb.v1.UpdateNodeOp.patch:type_name -> google.protobuf.Struct
+	11,  // 14: entdb.v1.UpdateNodeOp.precondition:type_name -> entdb.v1.UpdateNodePrecondition
+	111, // 15: entdb.v1.UpdateNodeOp.typed_patch:type_name -> entdb.v1.UpdateNodeOp.TypedPatchEntry
+	116, // 16: entdb.v1.UpdateNodePrecondition.equals:type_name -> google.protobuf.Value
+	48,  // 17: entdb.v1.DeleteWhereOp.where:type_name -> entdb.v1.FieldFilter
+	16,  // 18: entdb.v1.CreateEdgeOp.from:type_name -> entdb.v1.NodeRef
+	16,  // 19: entdb.v1.CreateEdgeOp.to:type_name -> entdb.v1.NodeRef
+	117, // 20: entdb.v1.CreateEdgeOp.props:type_name -> google.protobuf.Struct
+	112, // 21: entdb.v1.CreateEdgeOp.typed_props:type_name -> entdb.v1.CreateEdgeOp.TypedPropsEntry
+	16,  // 22: entdb.v1.DeleteEdgeOp.from:type_name -> entdb.v1.NodeRef
+	16,  // 23: entdb.v1.DeleteEdgeOp.to:type_name -> entdb.v1.NodeRef
+	17,  // 24: entdb.v1.NodeRef.typed:type_name -> entdb.v1.TypedNodeRef
+	5,   // 25: entdb.v1.ExecuteAtomicResponse.receipt:type_name -> entdb.v1.Receipt
+	1,   // 26: entdb.v1.ExecuteAtomicResponse.applied_status:type_name -> entdb.v1.ReceiptStatus
+	19,  // 27: entdb.v1.ExecuteAtomicResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
+	116, // 28: entdb.v1.PreconditionFailure.expected:type_name -> google.protobuf.Value
+	116, // 29: entdb.v1.PreconditionFailure.observed:type_name -> google.protobuf.Value
+	4,   // 30: entdb.v1.GetReceiptStatusRequest.context:type_name -> entdb.v1.RequestContext
+	1,   // 31: entdb.v1.GetReceiptStatusResponse.status:type_name -> entdb.v1.ReceiptStatus
+	19,  // 32: entdb.v1.GetReceiptStatusResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
+	4,   // 33: entdb.v1.GetNodeRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 34: entdb.v1.GetNodeResponse.node:type_name -> entdb.v1.Node
+	4,   // 35: entdb.v1.GetNodesRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 36: entdb.v1.GetNodesResponse.nodes:type_name -> entdb.v1.Node
+	4,   // 37: entdb.v1.QueryNodesRequest.context:type_name -> entdb.v1.RequestContext
+	48,  // 38: entdb.v1.QueryNodesRequest.filters:type_name -> entdb.v1.FieldFilter
+	28,  // 39: entdb.v1.QueryNodesResponse.nodes:type_name -> entdb.v1.Node
+	117, // 40: entdb.v1.Node.payload:type_name -> google.protobuf.Struct
+	113, // 41: entdb.v1.Node.typed_payload:type_name -> entdb.v1.Node.TypedPayloadEntry
+	47,  // 42: entdb.v1.Node.acl:type_name -> entdb.v1.AclEntry
+	4,   // 43: entdb.v1.GetEdgesRequest.context:type_name -> entdb.v1.RequestContext
+	31,  // 44: entdb.v1.GetEdgesResponse.edges:type_name -> entdb.v1.Edge
+	117, // 45: entdb.v1.Edge.props:type_name -> google.protobuf.Struct
+	114, // 46: entdb.v1.Edge.typed_props:type_name -> entdb.v1.Edge.TypedPropsEntry
+	4,   // 47: entdb.v1.SearchMailboxRequest.context:type_name -> entdb.v1.RequestContext
+	34,  // 48: entdb.v1.SearchMailboxResponse.results:type_name -> entdb.v1.MailboxSearchResult
+	37,  // 49: entdb.v1.MailboxSearchResult.item:type_name -> entdb.v1.MailboxItem
+	4,   // 50: entdb.v1.GetMailboxRequest.context:type_name -> entdb.v1.RequestContext
+	37,  // 51: entdb.v1.GetMailboxResponse.items:type_name -> entdb.v1.MailboxItem
+	117, // 52: entdb.v1.MailboxItem.state:type_name -> google.protobuf.Struct
+	117, // 53: entdb.v1.MailboxItem.metadata:type_name -> google.protobuf.Struct
+	115, // 54: entdb.v1.HealthResponse.components:type_name -> entdb.v1.HealthResponse.ComponentsEntry
+	117, // 55: entdb.v1.GetSchemaResponse.schema:type_name -> google.protobuf.Struct
+	44,  // 56: entdb.v1.ListTenantsResponse.tenants:type_name -> entdb.v1.TenantInfo
+	2,   // 57: entdb.v1.AclEntry.core_caps:type_name -> entdb.v1.CoreCapability
+	3,   // 58: entdb.v1.FieldFilter.op:type_name -> entdb.v1.FilterOp
+	116, // 59: entdb.v1.FieldFilter.value:type_name -> google.protobuf.Value
+	4,   // 60: entdb.v1.WaitForOffsetRequest.context:type_name -> entdb.v1.RequestContext
+	4,   // 61: entdb.v1.GetConnectedNodesRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 62: entdb.v1.GetConnectedNodesResponse.nodes:type_name -> entdb.v1.Node
+	4,   // 63: entdb.v1.ShareNodeRequest.context:type_name -> entdb.v1.RequestContext
+	2,   // 64: entdb.v1.ShareNodeRequest.core_caps:type_name -> entdb.v1.CoreCapability
+	4,   // 65: entdb.v1.RevokeAccessRequest.context:type_name -> entdb.v1.RequestContext
+	4,   // 66: entdb.v1.ListSharedWithMeRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 67: entdb.v1.ListSharedWithMeResponse.nodes:type_name -> entdb.v1.Node
+	4,   // 68: entdb.v1.GroupMemberRequest.context:type_name -> entdb.v1.RequestContext
+	4,   // 69: entdb.v1.TransferOwnershipRequest.context:type_name -> entdb.v1.RequestContext
+	63,  // 70: entdb.v1.CreateUserResponse.user:type_name -> entdb.v1.UserInfo
+	63,  // 71: entdb.v1.GetUserResponse.user:type_name -> entdb.v1.UserInfo
+	63,  // 72: entdb.v1.ListUsersResponse.users:type_name -> entdb.v1.UserInfo
+	72,  // 73: entdb.v1.CreateTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
+	72,  // 74: entdb.v1.GetTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
+	79,  // 75: entdb.v1.GetTenantMembersResponse.members:type_name -> entdb.v1.TenantMemberInfo
+	79,  // 76: entdb.v1.GetUserTenantsResponse.memberships:type_name -> entdb.v1.TenantMemberInfo
+	116, // 77: entdb.v1.GetNodeByKeyRequest.value:type_name -> google.protobuf.Value
+	28,  // 78: entdb.v1.GetNodeByKeyResponse.node:type_name -> entdb.v1.Node
+	28,  // 79: entdb.v1.SearchNodesResponse.nodes:type_name -> entdb.v1.Node
+	8,   // 80: entdb.v1.CreateNodeOp.TypedDataEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 81: entdb.v1.UpdateNodeOp.TypedPatchEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 82: entdb.v1.CreateEdgeOp.TypedPropsEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 83: entdb.v1.Node.TypedPayloadEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 84: entdb.v1.Edge.TypedPropsEntry.value:type_name -> entdb.v1.EntValue
+	6,   // 85: entdb.v1.EntDBService.ExecuteAtomic:input_type -> entdb.v1.ExecuteAtomicRequest
+	20,  // 86: entdb.v1.EntDBService.GetReceiptStatus:input_type -> entdb.v1.GetReceiptStatusRequest
+	22,  // 87: entdb.v1.EntDBService.GetNode:input_type -> entdb.v1.GetNodeRequest
+	24,  // 88: entdb.v1.EntDBService.GetNodes:input_type -> entdb.v1.GetNodesRequest
+	26,  // 89: entdb.v1.EntDBService.QueryNodes:input_type -> entdb.v1.QueryNodesRequest
+	29,  // 90: entdb.v1.EntDBService.GetEdgesFrom:input_type -> entdb.v1.GetEdgesRequest
+	29,  // 91: entdb.v1.EntDBService.GetEdgesTo:input_type -> entdb.v1.GetEdgesRequest
+	32,  // 92: entdb.v1.EntDBService.SearchMailbox:input_type -> entdb.v1.SearchMailboxRequest
+	35,  // 93: entdb.v1.EntDBService.GetMailbox:input_type -> entdb.v1.GetMailboxRequest
+	38,  // 94: entdb.v1.EntDBService.Health:input_type -> entdb.v1.HealthRequest
+	40,  // 95: entdb.v1.EntDBService.GetSchema:input_type -> entdb.v1.GetSchemaRequest
+	42,  // 96: entdb.v1.EntDBService.ListTenants:input_type -> entdb.v1.ListTenantsRequest
+	45,  // 97: entdb.v1.EntDBService.ListMailboxUsers:input_type -> entdb.v1.ListMailboxUsersRequest
+	49,  // 98: entdb.v1.EntDBService.WaitForOffset:input_type -> entdb.v1.WaitForOffsetRequest
+	51,  // 99: entdb.v1.EntDBService.GetConnectedNodes:input_type -> entdb.v1.GetConnectedNodesRequest
+	53,  // 100: entdb.v1.EntDBService.ShareNode:input_type -> entdb.v1.ShareNodeRequest
+	55,  // 101: entdb.v1.EntDBService.RevokeAccess:input_type -> entdb.v1.RevokeAccessRequest
+	57,  // 102: entdb.v1.EntDBService.ListSharedWithMe:input_type -> entdb.v1.ListSharedWithMeRequest
+	59,  // 103: entdb.v1.EntDBService.AddGroupMember:input_type -> entdb.v1.GroupMemberRequest
+	59,  // 104: entdb.v1.EntDBService.RemoveGroupMember:input_type -> entdb.v1.GroupMemberRequest
+	61,  // 105: entdb.v1.EntDBService.TransferOwnership:input_type -> entdb.v1.TransferOwnershipRequest
+	64,  // 106: entdb.v1.EntDBService.CreateUser:input_type -> entdb.v1.CreateUserRequest
+	66,  // 107: entdb.v1.EntDBService.GetUser:input_type -> entdb.v1.GetUserRequest
+	68,  // 108: entdb.v1.EntDBService.UpdateUser:input_type -> entdb.v1.UpdateUserRequest
+	70,  // 109: entdb.v1.EntDBService.ListUsers:input_type -> entdb.v1.ListUsersRequest
+	73,  // 110: entdb.v1.EntDBService.CreateTenant:input_type -> entdb.v1.CreateTenantRequest
+	75,  // 111: entdb.v1.EntDBService.GetTenant:input_type -> entdb.v1.GetTenantRequest
+	77,  // 112: entdb.v1.EntDBService.ArchiveTenant:input_type -> entdb.v1.ArchiveTenantRequest
+	80,  // 113: entdb.v1.EntDBService.AddTenantMember:input_type -> entdb.v1.TenantMemberRequest
+	80,  // 114: entdb.v1.EntDBService.RemoveTenantMember:input_type -> entdb.v1.TenantMemberRequest
+	82,  // 115: entdb.v1.EntDBService.GetTenantMembers:input_type -> entdb.v1.GetTenantMembersRequest
+	84,  // 116: entdb.v1.EntDBService.GetUserTenants:input_type -> entdb.v1.GetUserTenantsRequest
+	86,  // 117: entdb.v1.EntDBService.ChangeMemberRole:input_type -> entdb.v1.ChangeMemberRoleRequest
+	88,  // 118: entdb.v1.EntDBService.TransferUserContent:input_type -> entdb.v1.TransferUserContentRequest
+	90,  // 119: entdb.v1.EntDBService.DelegateAccess:input_type -> entdb.v1.DelegateAccessRequest
+	92,  // 120: entdb.v1.EntDBService.SetLegalHold:input_type -> entdb.v1.LegalHoldRequest
+	94,  // 121: entdb.v1.EntDBService.RevokeAllUserAccess:input_type -> entdb.v1.RevokeAllUserAccessRequest
+	96,  // 122: entdb.v1.EntDBService.DeleteUser:input_type -> entdb.v1.DeleteUserRequest
+	98,  // 123: entdb.v1.EntDBService.ExportUserData:input_type -> entdb.v1.ExportUserDataRequest
+	100, // 124: entdb.v1.EntDBService.FreezeUser:input_type -> entdb.v1.FreezeUserRequest
+	102, // 125: entdb.v1.EntDBService.CancelUserDeletion:input_type -> entdb.v1.CancelUserDeletionRequest
+	104, // 126: entdb.v1.EntDBService.GetTenantQuota:input_type -> entdb.v1.GetTenantQuotaRequest
+	106, // 127: entdb.v1.EntDBService.GetNodeByKey:input_type -> entdb.v1.GetNodeByKeyRequest
+	108, // 128: entdb.v1.EntDBService.SearchNodes:input_type -> entdb.v1.SearchNodesRequest
+	18,  // 129: entdb.v1.EntDBService.ExecuteAtomic:output_type -> entdb.v1.ExecuteAtomicResponse
+	21,  // 130: entdb.v1.EntDBService.GetReceiptStatus:output_type -> entdb.v1.GetReceiptStatusResponse
+	23,  // 131: entdb.v1.EntDBService.GetNode:output_type -> entdb.v1.GetNodeResponse
+	25,  // 132: entdb.v1.EntDBService.GetNodes:output_type -> entdb.v1.GetNodesResponse
+	27,  // 133: entdb.v1.EntDBService.QueryNodes:output_type -> entdb.v1.QueryNodesResponse
+	30,  // 134: entdb.v1.EntDBService.GetEdgesFrom:output_type -> entdb.v1.GetEdgesResponse
+	30,  // 135: entdb.v1.EntDBService.GetEdgesTo:output_type -> entdb.v1.GetEdgesResponse
+	33,  // 136: entdb.v1.EntDBService.SearchMailbox:output_type -> entdb.v1.SearchMailboxResponse
+	36,  // 137: entdb.v1.EntDBService.GetMailbox:output_type -> entdb.v1.GetMailboxResponse
+	39,  // 138: entdb.v1.EntDBService.Health:output_type -> entdb.v1.HealthResponse
+	41,  // 139: entdb.v1.EntDBService.GetSchema:output_type -> entdb.v1.GetSchemaResponse
+	43,  // 140: entdb.v1.EntDBService.ListTenants:output_type -> entdb.v1.ListTenantsResponse
+	46,  // 141: entdb.v1.EntDBService.ListMailboxUsers:output_type -> entdb.v1.ListMailboxUsersResponse
+	50,  // 142: entdb.v1.EntDBService.WaitForOffset:output_type -> entdb.v1.WaitForOffsetResponse
+	52,  // 143: entdb.v1.EntDBService.GetConnectedNodes:output_type -> entdb.v1.GetConnectedNodesResponse
+	54,  // 144: entdb.v1.EntDBService.ShareNode:output_type -> entdb.v1.ShareNodeResponse
+	56,  // 145: entdb.v1.EntDBService.RevokeAccess:output_type -> entdb.v1.RevokeAccessResponse
+	58,  // 146: entdb.v1.EntDBService.ListSharedWithMe:output_type -> entdb.v1.ListSharedWithMeResponse
+	60,  // 147: entdb.v1.EntDBService.AddGroupMember:output_type -> entdb.v1.GroupMemberResponse
+	60,  // 148: entdb.v1.EntDBService.RemoveGroupMember:output_type -> entdb.v1.GroupMemberResponse
+	62,  // 149: entdb.v1.EntDBService.TransferOwnership:output_type -> entdb.v1.TransferOwnershipResponse
+	65,  // 150: entdb.v1.EntDBService.CreateUser:output_type -> entdb.v1.CreateUserResponse
+	67,  // 151: entdb.v1.EntDBService.GetUser:output_type -> entdb.v1.GetUserResponse
+	69,  // 152: entdb.v1.EntDBService.UpdateUser:output_type -> entdb.v1.UpdateUserResponse
+	71,  // 153: entdb.v1.EntDBService.ListUsers:output_type -> entdb.v1.ListUsersResponse
+	74,  // 154: entdb.v1.EntDBService.CreateTenant:output_type -> entdb.v1.CreateTenantResponse
+	76,  // 155: entdb.v1.EntDBService.GetTenant:output_type -> entdb.v1.GetTenantResponse
+	78,  // 156: entdb.v1.EntDBService.ArchiveTenant:output_type -> entdb.v1.ArchiveTenantResponse
+	81,  // 157: entdb.v1.EntDBService.AddTenantMember:output_type -> entdb.v1.TenantMemberResponse
+	81,  // 158: entdb.v1.EntDBService.RemoveTenantMember:output_type -> entdb.v1.TenantMemberResponse
+	83,  // 159: entdb.v1.EntDBService.GetTenantMembers:output_type -> entdb.v1.GetTenantMembersResponse
+	85,  // 160: entdb.v1.EntDBService.GetUserTenants:output_type -> entdb.v1.GetUserTenantsResponse
+	87,  // 161: entdb.v1.EntDBService.ChangeMemberRole:output_type -> entdb.v1.ChangeMemberRoleResponse
+	89,  // 162: entdb.v1.EntDBService.TransferUserContent:output_type -> entdb.v1.TransferUserContentResponse
+	91,  // 163: entdb.v1.EntDBService.DelegateAccess:output_type -> entdb.v1.DelegateAccessResponse
+	93,  // 164: entdb.v1.EntDBService.SetLegalHold:output_type -> entdb.v1.LegalHoldResponse
+	95,  // 165: entdb.v1.EntDBService.RevokeAllUserAccess:output_type -> entdb.v1.RevokeAllUserAccessResponse
+	97,  // 166: entdb.v1.EntDBService.DeleteUser:output_type -> entdb.v1.DeleteUserResponse
+	99,  // 167: entdb.v1.EntDBService.ExportUserData:output_type -> entdb.v1.ExportUserDataResponse
+	101, // 168: entdb.v1.EntDBService.FreezeUser:output_type -> entdb.v1.FreezeUserResponse
+	103, // 169: entdb.v1.EntDBService.CancelUserDeletion:output_type -> entdb.v1.CancelUserDeletionResponse
+	105, // 170: entdb.v1.EntDBService.GetTenantQuota:output_type -> entdb.v1.GetTenantQuotaResponse
+	107, // 171: entdb.v1.EntDBService.GetNodeByKey:output_type -> entdb.v1.GetNodeByKeyResponse
+	109, // 172: entdb.v1.EntDBService.SearchNodes:output_type -> entdb.v1.SearchNodesResponse
+	129, // [129:173] is the sub-list for method output_type
+	85,  // [85:129] is the sub-list for method input_type
+	85,  // [85:85] is the sub-list for extension type_name
+	85,  // [85:85] is the sub-list for extension extendee
+	0,   // [0:85] is the sub-list for field type_name
 }
 
 func init() { file_entdb_proto_init() }
@@ -8211,7 +8461,15 @@ func file_entdb_proto_init() {
 		(*Operation_DeleteEdge)(nil),
 		(*Operation_DeleteWhere)(nil),
 	}
-	file_entdb_proto_msgTypes[11].OneofWrappers = []any{
+	file_entdb_proto_msgTypes[4].OneofWrappers = []any{
+		(*EntValue_IntValue)(nil),
+		(*EntValue_DoubleValue)(nil),
+		(*EntValue_BoolValue)(nil),
+		(*EntValue_StringValue)(nil),
+		(*EntValue_BytesValue)(nil),
+		(*EntValue_JsonValue)(nil),
+	}
+	file_entdb_proto_msgTypes[12].OneofWrappers = []any{
 		(*NodeRef_Id)(nil),
 		(*NodeRef_AliasRef)(nil),
 		(*NodeRef_Typed)(nil),
@@ -8222,7 +8480,7 @@ func file_entdb_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_entdb_proto_rawDesc), len(file_entdb_proto_rawDesc)),
 			NumEnums:      4,
-			NumMessages:   106,
+			NumMessages:   112,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
