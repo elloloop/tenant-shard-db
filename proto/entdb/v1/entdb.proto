@@ -228,6 +228,21 @@ enum StorageMode {
     STORAGE_MODE_PUBLIC = 2;
 }
 
+// EntValue is the typed, lossless carrier for a single payload field
+// value (ADR-028). It replaces google.protobuf.Struct's IEEE-754
+// double-backed numbers so INTEGER / TIMESTAMP fields preserve the full
+// int64 range. Absence of `v` denotes an explicit null.
+message EntValue {
+    oneof v {
+        int64 int_value = 1;                  // INTEGER / TIMESTAMP — lossless
+        double double_value = 2;              // DOUBLE
+        bool bool_value = 3;                  // BOOLEAN
+        string string_value = 4;              // STRING / ENUM
+        bytes bytes_value = 5;                // BYTES (no base64-in-a-string)
+        google.protobuf.Value json_value = 6; // JSON (arbitrary, dynamically typed)
+    }
+}
+
 message CreateNodeOp {
     // Node type ID (required)
     int32 type_id = 1;
@@ -268,6 +283,11 @@ message CreateNodeOp {
     // parallel keys map.
     reserved 11;
     reserved "keys";
+
+    // Typed, lossless payload (ADR-028). Preferred over `data` when set;
+    // the server dual-reads (typed_data first, else `data`). Carries the
+    // full int64 range that the Struct `data` field cannot.
+    map<uint32, EntValue> typed_data = 12;
 }
 
 message UpdateNodeOp {
@@ -311,6 +331,9 @@ message UpdateNodeOp {
     // comparison operators (Lt/Gt/...) are deliberately out of scope.
     // See GitHub issue #500 for the design rationale.
     UpdateNodePrecondition precondition = 7;
+
+    // Typed, lossless patch (ADR-028). Preferred over `patch` when set.
+    map<uint32, EntValue> typed_patch = 8;
 }
 
 // UpdateNodePrecondition is the single-field equality CAS predicate
@@ -403,6 +426,9 @@ message CreateEdgeOp {
 
     // Edge properties as typed Struct
     google.protobuf.Struct props = 5;
+
+    // Typed, lossless props (ADR-028). Preferred over `props` when set.
+    map<uint32, EntValue> typed_props = 6;
 }
 
 message DeleteEdgeOp {
@@ -590,6 +616,10 @@ message Node {
     // Payload as typed Struct
     google.protobuf.Struct payload = 9;
 
+    // Typed, lossless payload (ADR-028). Populated alongside `payload`;
+    // newer SDKs read this, older SDKs fall back to `payload`.
+    map<uint32, EntValue> typed_payload = 11;
+
     // ACL entries
     repeated AclEntry acl = 10;
 }
@@ -627,6 +657,9 @@ message Edge {
 
     // Edge properties as typed Struct
     google.protobuf.Struct props = 7;
+
+    // Typed, lossless props (ADR-028). Populated alongside `props`.
+    map<uint32, EntValue> typed_props = 8;
 }
 
 // Mailbox operations
