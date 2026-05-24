@@ -42,6 +42,7 @@ from ._generated import (
     DeleteUserRequest,
     DeleteWhereOp,
     EntDBServiceStub,
+    EntValue,
     ExecuteAtomicRequest,
     ExportUserDataRequest,
     FieldFilter,
@@ -146,6 +147,68 @@ def _dict_to_struct(d):
 def _struct_to_dict(s):
     """Convert protobuf Struct to Python dict."""
     return json_format.MessageToDict(s) if s and s.fields else {}
+
+
+def _value_to_entvalue(v: Any) -> EntValue:
+    """Lower a Python scalar to a typed EntValue (ADR-028).
+
+    Integers are carried as int_value so they survive >2^53 losslessly —
+    unlike google.protobuf.Struct, whose numbers are IEEE-754 doubles.
+    bool is checked before int (bool subclasses int in Python).
+    """
+    ev = EntValue()
+    if v is None:
+        return ev  # unset oneof == explicit null
+    if isinstance(v, bool):
+        ev.bool_value = v
+    elif isinstance(v, int):
+        ev.int_value = v
+    elif isinstance(v, float):
+        ev.double_value = v
+    elif isinstance(v, str):
+        ev.string_value = v
+    elif isinstance(v, (bytes, bytearray)):
+        ev.bytes_value = bytes(v)
+    else:
+        ev.json_value.CopyFrom(json_format.ParseDict({"v": v}, Struct()).fields["v"])
+    return ev
+
+
+def _entvalue_to_python(ev: EntValue) -> Any:
+    """Unbox a typed EntValue to a Python value, preserving int64."""
+    kind = ev.WhichOneof("v")
+    if kind == "int_value":
+        return ev.int_value
+    if kind == "double_value":
+        return ev.double_value
+    if kind == "bool_value":
+        return ev.bool_value
+    if kind == "string_value":
+        return ev.string_value
+    if kind == "bytes_value":
+        return ev.bytes_value
+    if kind == "json_value":
+        return _python_from_value(ev.json_value)
+    return None  # unset == null
+
+
+def _populate_typed(typed_map, data: dict) -> None:
+    """Populate a proto map<uint32, EntValue> from an id-keyed payload
+    dict. Non-digit keys are skipped (the SDK keys payloads by field id).
+    """
+    for k, v in data.items():
+        try:
+            fid = int(k)
+        except (TypeError, ValueError):
+            continue
+        typed_map[fid].CopyFrom(_value_to_entvalue(v))
+
+
+def _typed_to_dict(typed_map) -> dict:
+    """Convert a proto map<uint32, EntValue> into an id-keyed Python dict,
+    preserving int64. Returns {} for an empty map.
+    """
+    return {str(fid): _entvalue_to_python(ev) for fid, ev in typed_map.items()}
 
 
 def _acl_proto_to_list(acl_entries):
@@ -491,7 +554,9 @@ def _node_from_proto(n: Any, registry: Any = None) -> Node:
     registry is supplied (or the type is not registered) the payload
     is passed through unchanged.
     """
-    raw = _struct_to_dict(n.payload)
+    # Prefer typed_payload (ADR-028, v1.20+ server) so int64 >2^53 is
+    # lossless; fall back to the Struct payload for older servers.
+    raw = _typed_to_dict(n.typed_payload) if len(n.typed_payload) else _struct_to_dict(n.payload)
     payload = _payload_id_to_name(raw, n.type_id, registry) if registry is not None else raw
     return Node(
         tenant_id=n.tenant_id,
@@ -548,7 +613,7 @@ def _edge_from_proto(e: Any, registry: Any = None) -> Edge:
     supplied registry. When no registry is supplied (or the edge type
     is not registered) the props pass through unchanged.
     """
-    raw_props = _struct_to_dict(e.props)
+    raw_props = _typed_to_dict(e.typed_props) if len(e.typed_props) else _struct_to_dict(e.props)
     props = (
         _edge_props_id_to_name(raw_props, e.edge_type_id, registry)
         if registry is not None
@@ -1009,6 +1074,9 @@ class GrpcClient:
                 data = create.get("data")
                 if data:
                     create_op.data.update(data)
+                    # Dual-write typed_data (ADR-028) so int64 >2^53 is
+                    # lossless on v1.20+ servers; old servers read `data`.
+                    _populate_typed(create_op.typed_data, data)
                 acl = create.get("acl")
                 if acl:
                     create_op.acl.extend(
@@ -1049,6 +1117,7 @@ class GrpcClient:
                 patch = update.get("patch")
                 if patch:
                     update_op.patch.update(patch)
+                    _populate_typed(update_op.typed_patch, patch)
                 if update.get("field_mask"):
                     update_op.field_mask.extend(update["field_mask"])
                 # GitHub issues #500/#525 — optional single-field CAS

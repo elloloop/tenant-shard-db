@@ -14,6 +14,7 @@ from .entdb_pb2 import (
     DeleteNodeOp,
     DeleteWhereOp,
     Edge,
+    EntValue,
     # Execute
     ExecuteAtomicRequest,
     ExecuteAtomicResponse,
@@ -164,6 +165,7 @@ __all__ = [
     "GetEdgesRequest",
     "GetEdgesResponse",
     "Edge",
+    "EntValue",
     "SearchMailboxRequest",
     "SearchMailboxResponse",
     "MailboxSearchResult",
