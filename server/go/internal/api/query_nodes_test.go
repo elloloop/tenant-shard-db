@@ -166,6 +166,74 @@ func TestQueryNodes_EqualityFilter(t *testing.T) {
 	}
 }
 
+// TestQueryNodes_NotOpenTenant_LazyOpensAndReadsData is the regression
+// test for the "tenant not opened" defect (#121): a registered tenant
+// whose per-tenant SQLite handle has NOT been opened in this process
+// must not be reported as a generic Internal error (the old bug) nor as
+// a false-empty result. The SQLite store is a materialized view of the
+// WAL (ADR-016); "not opened" only means the applier hasn't materialized
+// the tenant in-process yet, so the handler lazy-opens it and returns
+// the rows already persisted to disk.
+//
+// Two phases over the SAME RootDir prove this: phase 1 seeds rows
+// through a store that opens the tenant, then closes it so the on-disk
+// file is the only state; phase 2 serves QueryNodes from a FRESH store
+// where the tenant was never opened.
+func TestQueryNodes_NotOpenTenant_LazyOpensAndReadsData(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	const tenantID = "tenant-reopen"
+
+	// Phase 1: seed two alice-owned nodes, then close the store.
+	seedCS, err := store.New(store.Options{RootDir: dir, WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New (seed): %v", err)
+	}
+	if err := seedCS.OpenTenant(ctx, tenantID); err != nil {
+		t.Fatalf("OpenTenant (seed): %v", err)
+	}
+	for _, id := range []string{"n1", "n2"} {
+		if _, err := seedCS.CreateNodeRaw(ctx, tenantID, store.NodeInput{
+			NodeID:     id,
+			TypeID:     1,
+			OwnerActor: "user:alice",
+			Payload:    map[string]any{"1": "alice@example.com"},
+		}); err != nil {
+			t.Fatalf("CreateNodeRaw %s: %v", id, err)
+		}
+	}
+	if err := seedCS.Close(); err != nil {
+		t.Fatalf("seed store Close: %v", err)
+	}
+
+	// Phase 2: a fresh store over the same dir — tenant NOT opened.
+	cs, err := store.New(store.Options{RootDir: dir, WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New (fresh): %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	gs := newGlobalStore(t)
+	if _, err := gs.CreateTenant(ctx, tenantID, "Tenant Reopen", ""); err != nil {
+		t.Fatalf("CreateTenant: %v", err)
+	}
+	srv := api.New(api.WithStore(cs), api.WithGlobalStore(gs))
+
+	resp, err := srv.QueryNodes(ctx, &pb.QueryNodesRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: "user:alice"},
+		TypeId:  1,
+	})
+	if err != nil {
+		t.Fatalf("QueryNodes on not-open tenant: want OK, got %v (code=%s)",
+			err, status.Code(err))
+	}
+	if got := len(resp.GetNodes()); got != 2 {
+		t.Fatalf("nodes: got %d, want 2 — lazy-open must read persisted rows, "+
+			"not a false-empty result", got)
+	}
+}
+
 // TestQueryNodes_RangeOperators exercises the comparison operators
 // added by issue #501. Each branch seeds the same three rows and
 // asserts that the matching subset is returned. CONTAINS / IN are
