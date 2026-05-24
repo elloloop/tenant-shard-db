@@ -323,32 +323,25 @@ func TestSearchNodes_QueryTooLong(t *testing.T) {
 	}
 }
 
-// TestSearchNodes_MalformedFTSQueryReturnsEmpty: any error after the
-// validation gates is swallowed and the handler returns codes.OK with
-// an empty node list. Flipping to INTERNAL is a future contract-test
-// update.
-func TestSearchNodes_MalformedFTSQueryReturnsEmpty(t *testing.T) {
+// TestSearchNodes_MalformedFTSQueryRejected: a malformed FTS5 MATCH
+// query is a client error and is surfaced as INVALID_ARGUMENT, not
+// masked as empty+OK (#573). This lets the caller learn the query was
+// bad instead of mistaking it for "no matches".
+func TestSearchNodes_MalformedFTSQueryRejected(t *testing.T) {
 	t.Parallel()
 	srv, cs, tenantID := newSearchTestServer(t)
 	seedIndexedNode(t, cs, tenantID, "n1", "user:alice",
 		map[string]any{"1": "hello", "2": "world"}, nil)
 
-	// FTS5 rejects an unbalanced quote. The store layer surfaces an
-	// error; the handler must swallow it.
-	resp, err := srv.SearchNodes(context.Background(), &pb.SearchNodesRequest{
+	// FTS5 rejects an unbalanced quote with a syntax error.
+	_, err := srv.SearchNodes(context.Background(), &pb.SearchNodesRequest{
 		TenantId: tenantID,
 		Actor:    "user:alice",
 		TypeId:   searchTypeID,
 		Query:    `"unbalanced`,
 	})
-	if err != nil {
-		t.Fatalf("SearchNodes: expected swallow-to-OK, got err: %v", err)
-	}
-	if resp == nil {
-		t.Fatalf("SearchNodes: nil response")
-	}
-	if got := len(resp.GetNodes()); got != 0 {
-		t.Fatalf("SearchNodes: expected 0 nodes on malformed query, got %d", got)
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("SearchNodes malformed query: code = %s, want InvalidArgument (%v)", status.Code(err), err)
 	}
 }
 

@@ -25,15 +25,17 @@
 //     limit+1 rows (we ask SQLite for limit+1 to bound memory at the
 //     storage layer while still emitting the same wire shape).
 //   - offset is currently UNUSED (flagged in the spec "Open questions").
-//   - Internal storage errors are SWALLOWED into an empty
-//     GetEdgesResponse with codes.OK. Metric label is "error" so the
-//     swallow does not inflate the ok counter.
+//   - Genuine post-open storage faults are surfaced as a sanitized
+//     codes.Internal (#573); empty+OK is reserved for a genuinely empty
+//     incoming-edge set. Metric label is "error" on faults.
 
 package api
 
 import (
 	"context"
 	"time"
+
+	"google.golang.org/grpc/codes"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
@@ -110,11 +112,14 @@ func (s *Server) GetEdgesTo(
 	// full result set in memory for high-fan-in targets.
 	rows, err := s.store.GetEdgesTo(ctx, tenantID, req.GetNodeId(), edgeType, limit+1)
 	if err != nil {
-		// Swallow ALL internal errors into edges=[] with grpc.OK.
-		// Operators can still tell the "no edges" case apart from
-		// "store fault" via the metric label, which is "error" here.
+		// Surface genuine post-open faults (#573): the tenant is already
+		// lazy-opened above, so this is a real IO/corruption error — not
+		// "no edges". Preserve typed sentinels; sanitize naked store errors.
 		outcome = "error"
-		return &pb.GetEdgesResponse{}, nil
+		if c := errs.Code(err); c != codes.Unknown {
+			return nil, errs.Errorf(c, "GetEdgesTo: %v", err)
+		}
+		return nil, errs.Internal(ctx, "GetEdgesTo: store", err)
 	}
 
 	hasMore := len(rows) > limit

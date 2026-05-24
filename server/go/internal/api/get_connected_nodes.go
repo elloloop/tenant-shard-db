@@ -39,8 +39,11 @@ import (
 	"context"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
 	"github.com/elloloop/tenant-shard-db/server/go/internal/acl"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
@@ -121,11 +124,16 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 	if !aclActor.IsZero() && !aclActor.IsSystem() {
 		visibleSrc, err := filter.FilterReadable(ctx, tenantID, aclActor, []string{req.GetNodeId()})
 		if err != nil {
+			// Genuine ACL-store fault (#573) — not "not visible". Surface it.
 			resultStatus = "error"
-			return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
+			if c := errs.Code(err); c != codes.Unknown {
+				return nil, errs.Errorf(c, "GetConnectedNodes: %v", err)
+			}
+			return nil, errs.Internal(ctx, "GetConnectedNodes: acl", err)
 		}
 		if len(visibleSrc) == 0 {
 			// Source not accessible. Return empty — do NOT leak existence.
+			// This is an intentional empty result, not a fault.
 			return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
 		}
 	}
@@ -133,20 +141,23 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 	edgeTypeID := req.GetEdgeTypeId()
 	collected, err := s.bfsConnected(ctx, tenantID, req.GetNodeId(), edgeTypeID, aclActor, filter, limit, offset)
 	if err != nil {
-		// Collapse internal errors to nodes=[]; the metric is recorded
-		// as "error" so the swallow doesn't inflate the success counter.
+		// Surface genuine post-open faults (#573) instead of masking the
+		// traversal failure as an empty graph. Preserve typed sentinels.
 		resultStatus = "error"
-		return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
+		if c := errs.Code(err); c != codes.Unknown {
+			return nil, errs.Errorf(c, "GetConnectedNodes: %v", err)
+		}
+		return nil, errs.Internal(ctx, "GetConnectedNodes: traverse", err)
 	}
 
 	out := make([]*pb.Node, 0, len(collected))
 	for _, n := range collected {
 		pn, perr := s.storeNodeToProto("", n)
 		if perr != nil {
-			// A single bad row collapses the whole response to empty.
-			// Recording as error so the metric reflects the swallow.
+			// A row that will not marshal is corrupt stored state, not an
+			// absent result — surface it rather than dropping rows.
 			resultStatus = "error"
-			return &pb.GetConnectedNodesResponse{Nodes: []*pb.Node{}, HasMore: false}, nil
+			return nil, errs.Internal(ctx, "GetConnectedNodes: marshal row", perr)
 		}
 		out = append(out, pn)
 	}

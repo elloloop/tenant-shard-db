@@ -136,10 +136,19 @@ func (s *Server) SearchNodes(
 
 	rows, ferr := s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit, offset)
 	if ferr != nil {
-		// Swallow + empty + log "error" outcome. Operators see the
-		// elevated metric label; clients see codes.OK.
 		outcome = "error"
-		return &pb.SearchNodesResponse{Nodes: []*pb.Node{}}, nil
+		// A malformed FTS5 MATCH query is a CLIENT error: surface it as
+		// InvalidArgument so the caller learns the query was bad, rather
+		// than the old empty+OK that masqueraded as "no matches" (#573).
+		if isFTSQueryError(ferr) {
+			return nil, errs.Errorf(codes.InvalidArgument, "SearchNodes: malformed query: %v", ferr)
+		}
+		// Otherwise this is a genuine post-open fault (IO, corruption,
+		// scan) — surface it. Preserve typed sentinels; sanitize the rest.
+		if c := errs.Code(ferr); c != codes.Unknown {
+			return nil, errs.Errorf(c, "SearchNodes: %v", ferr)
+		}
+		return nil, errs.Internal(ctx, "SearchNodes: store", ferr)
 	}
 
 	// 5. ACL post-filter — only when the actor is classified
@@ -155,10 +164,11 @@ func (s *Server) SearchNodes(
 	for _, n := range rows {
 		pn, perr := nodeRowToProto(n)
 		if perr != nil {
-			// Per-row marshal failure is the same swallow path as the
-			// outer FTS error: log via metric, return empty for the row.
+			// A row that will not marshal is a corrupt stored payload, not
+			// an absent result — surfacing it (#573) beats silently dropping
+			// the row from the result set.
 			outcome = "error"
-			continue
+			return nil, errs.Internal(ctx, "SearchNodes: marshal row", perr)
 		}
 		out = append(out, pn)
 	}
@@ -296,4 +306,31 @@ func nodeRowToProto(n *store.Node) (*pb.Node, error) {
 	}
 
 	return out, nil
+}
+
+// isFTSQueryError reports whether a store.SearchNodes error came from an
+// invalid FTS5 MATCH expression (a client-query problem) rather than a
+// genuine storage fault. FTS5 reports query-syntax problems with stable
+// message signatures; a real IO/corruption error does not match these,
+// so it falls through to the Internal path (#573). String inspection is
+// the only seam — modernc/SQLite does not return a distinct error code
+// for FTS5 syntax errors.
+func isFTSQueryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, sig := range []string{
+		"fts5: syntax error",
+		"fts5: ",
+		"unterminated string",
+		"malformed match",
+		"unknown special query",
+		"no such column", // column-filtered MATCH against an unknown column
+	} {
+		if strings.Contains(msg, sig) {
+			return true
+		}
+	}
+	return false
 }
