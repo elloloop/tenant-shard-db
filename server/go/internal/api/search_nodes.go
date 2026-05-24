@@ -112,6 +112,19 @@ func (s *Server) SearchNodes(
 		return &pb.SearchNodesResponse{Nodes: []*pb.Node{}}, nil
 	}
 
+	// Open the per-tenant view before searching. The SQLite store is a
+	// materialized view of the WAL (ADR-016); "tenant not opened" means
+	// the applier has not materialized this tenant in-process yet, not a
+	// client error. Lazy-open it (as GetNode does) so a valid tenant is
+	// not silently reported as zero hits. A genuine open failure (region
+	// pin / crypto-shred -> FailedPrecondition; IO -> Internal) surfaces
+	// its real typed code; only post-open FTS faults fall through to the
+	// best-effort swallow below.
+	if err := s.store.OpenTenant(ctx, tenantID); err != nil {
+		outcome = "error"
+		return nil, errs.Errorf(errs.Code(err), "SearchNodes: open tenant: %v", err)
+	}
+
 	limit := int(req.GetLimit())
 	if limit == 0 {
 		limit = 50

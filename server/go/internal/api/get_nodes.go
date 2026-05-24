@@ -115,6 +115,20 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 		}, nil
 	}
 
+	// Open the per-tenant view before reading. The SQLite store is a
+	// materialized view of the WAL (ADR-016); "tenant not opened" means
+	// the applier has not materialized this tenant in-process yet, not a
+	// client error. Lazy-open it (as the single-node GetNode does) so a
+	// valid tenant is not silently reported as all-missing, and so the
+	// after_offset fence and cross-tenant grant probe below observe a
+	// live handle. A genuine open failure surfaces its real typed code.
+	if s.store != nil {
+		if err := s.store.OpenTenant(ctx, tenantID); err != nil {
+			resultStatus = "error"
+			return nil, errs.Errorf(errs.Code(err), "GetNodes: open tenant: %v", err)
+		}
+	}
+
 	// Cross-tenant role check (BATCH-LEVEL). Returns one of: roleLocal
 	// (no global), roleMember (member or system actor), roleCrossTenant
 	// (non-member with node_access grants), or PERMISSION_DENIED

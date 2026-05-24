@@ -237,40 +237,64 @@ func TestGetEdgesFrom_EdgeTypeFilter(t *testing.T) {
 	}
 }
 
-// TestGetEdgesFrom_StoreErrorSwallowedToEmpty: tenant gate passes but
-// the canonicalstore call fails (here: tenant DB not opened on the
-// store handle). The handler collapses that to an empty response with
-// codes.OK.
-func TestGetEdgesFrom_StoreErrorSwallowedToEmpty(t *testing.T) {
+// TestGetEdgesFrom_NotOpenTenant_LazyOpensAndReadsData: a registered
+// tenant whose per-tenant SQLite handle has NOT been opened in this
+// process must not be reported as a false-empty edge set. The store is a
+// materialized view of the WAL (ADR-016); "not opened" only means the
+// applier hasn't materialized the tenant in-process yet, so the handler
+// lazy-opens it and returns the edges already persisted to disk.
+//
+// Two phases over the SAME RootDir prove this: phase 1 seeds an edge
+// through a store that opens the tenant, then closes it; phase 2 serves
+// GetEdgesFrom from a FRESH store where the tenant was never opened.
+func TestGetEdgesFrom_NotOpenTenant_LazyOpensAndReadsData(t *testing.T) {
 	t.Parallel()
-
-	// Wire globalstore + a registered tenant so the gate succeeds, but
-	// use a fresh store where OpenTenant has NOT been called -> the
-	// store-side read returns ErrTenantNotOpen.
-	gs := newGlobalStore(t)
 	ctx := context.Background()
-	if _, err := gs.CreateTenant(ctx, "tenant-broken", "T", "us-east-1"); err != nil {
+	dir := t.TempDir()
+	const tenantID = "tenant-reopen"
+
+	// Phase 1: seed one edge, then close the store.
+	seedCS, err := store.New(store.Options{RootDir: dir, WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New (seed): %v", err)
+	}
+	if err := seedCS.OpenTenant(ctx, tenantID); err != nil {
+		t.Fatalf("OpenTenant (seed): %v", err)
+	}
+	if _, err := seedCS.CreateEdge(ctx, tenantID, store.EdgeInput{
+		EdgeTypeID: 7,
+		FromNodeID: "src",
+		ToNodeID:   "dst",
+	}); err != nil {
+		t.Fatalf("CreateEdge: %v", err)
+	}
+	if err := seedCS.Close(); err != nil {
+		t.Fatalf("seed store Close: %v", err)
+	}
+
+	// Phase 2: a fresh store over the same dir — tenant NOT opened.
+	cs, err := store.New(store.Options{RootDir: dir, WALMode: true})
+	if err != nil {
+		t.Fatalf("store.New (fresh): %v", err)
+	}
+	t.Cleanup(func() { _ = cs.Close() })
+
+	gs := newGlobalStore(t)
+	if _, err := gs.CreateTenant(ctx, tenantID, "T", "us-east-1"); err != nil {
 		t.Fatalf("CreateTenant: %v", err)
 	}
-	cs := newEdgesStore(t) // intentionally NOT opened for tenant-broken
-
 	srv := api.New(
 		api.WithGlobalStore(gs),
 		api.WithStore(cs),
 		api.WithSharding(&tenant.Sharding{NodeID: "node-a"}),
 	)
 
-	resp, err := srv.GetEdgesFrom(ctx, edgesFromReq("tenant-broken", "src"))
+	resp, err := srv.GetEdgesFrom(ctx, edgesFromReq(tenantID, "src"))
 	if err != nil {
-		t.Fatalf("GetEdgesFrom: must swallow store err to OK + empty resp, got %v", err)
+		t.Fatalf("GetEdgesFrom on not-open tenant: want OK, got %v", err)
 	}
-	if resp == nil {
-		t.Fatalf("GetEdgesFrom: nil response")
-	}
-	if len(resp.GetEdges()) != 0 {
-		t.Fatalf("edges: got %d, want 0 (swallowed)", len(resp.GetEdges()))
-	}
-	if resp.GetHasMore() {
-		t.Fatalf("has_more: got true, want false")
+	if got := len(resp.GetEdges()); got != 1 {
+		t.Fatalf("edges: got %d, want 1 — lazy-open must read the persisted "+
+			"edge, not a false-empty result", got)
 	}
 }

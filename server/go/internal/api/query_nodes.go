@@ -83,6 +83,18 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		return nil, errs.Errorf(codes.Unimplemented, "canonical store not configured")
 	}
 
+	// Open the per-tenant view before reading. The SQLite store is a
+	// materialized view of the WAL (ADR-016); "tenant not opened" just
+	// means the applier has not materialized this tenant in-process yet,
+	// not a client error. Lazy-open it (as GetNode does) so a valid
+	// tenant is never reported as an empty result set. A genuine open
+	// failure (region pin / crypto-shred -> FailedPrecondition; IO ->
+	// Internal) surfaces its real typed code.
+	if err := s.store.OpenTenant(ctx, tenantID); err != nil {
+		resultStatus = "error"
+		return nil, errs.Errorf(errs.Code(err), "QueryNodes: open tenant: %v", err)
+	}
+
 	typeID := req.GetTypeId()
 	if typeID == 0 {
 		resultStatus = "error"
@@ -120,6 +132,21 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	// SEC-4 (#135): cap oversized page requests before building protos.
 	limit = clampPageSize(limit)
 
+	// Read-after-write barrier (#121). QueryNodesRequest carries
+	// after_offset / wait_timeout_ms (proto fields 10/11) but the handler
+	// historically ignored them; honour them now so a client that just
+	// wrote can fence the query against the applier, matching GetNode /
+	// GetNodes. A fence timeout is non-fatal — proceed with a stale read.
+	if off := req.GetAfterOffset(); off != "" {
+		timeout := 30 * time.Second
+		if ms := req.GetWaitTimeoutMs(); ms > 0 {
+			timeout = time.Duration(ms) * time.Millisecond
+		}
+		waitCtx, cancel := context.WithTimeout(ctx, timeout)
+		_ = s.store.WaitForOffset(waitCtx, tenantID, parseStreamOffset(off))
+		cancel()
+	}
+
 	nodes, err := s.store.QueryNodes(ctx, store.QueryNodesArgs{
 		TenantID:   tenantID,
 		TypeID:     typeID,
@@ -131,6 +158,12 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	})
 	if err != nil {
 		resultStatus = "error"
+		// Preserve typed sentinels (their messages are contract, per
+		// errs/sanitize.go); only naked store/driver errors are sanitized
+		// into a generic Internal.
+		if c := errs.Code(err); c != codes.Unknown {
+			return nil, errs.Errorf(c, "QueryNodes: %v", err)
+		}
 		return nil, errs.Internal(ctx, "store: query nodes", err)
 	}
 
