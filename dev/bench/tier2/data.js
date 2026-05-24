@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779656589811,
+  "lastUpdate": 1779657504496,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -6696,6 +6696,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000515053409805086",
             "extra": "mean: 6.444735735999075 msec\nrounds: 125"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b3c76aa918c3eee79fcb406446339f373568e732",
+          "message": "feat(list-users): keyset cursor pagination for ListUsers + surface store faults (#580, #573) (#588)\n\nListUsers truncated at the 100-row default with NO has_more and NO cursor\n— the worst of the Bug A class — and swallowed genuine store faults into\nan empty list with codes.OK. This extends the ADR-029 keyset cursor to\nthe user registry and fixes the swallow.\n\nServer: ListUsersRequest gains page_size + page_token, ListUsersResponse\ngains next_page_token (offset deprecated). globalstore.ListUsersPaged\nseeks over the total order (created_at, user_id) — user_id is unique so\npages never skip or duplicate. The token is fingerprint-bound to the\nstatus filter; mismatched or offset-mixed tokens are INVALID_ARGUMENT.\nA genuine globalstore error now surfaces as sanitized codes.Internal\ninstead of empty+OK (#573-class swallow, called out as a parity wart in\nthe handler).\n\nPython SDK: list_users auto-follows the cursor to return the complete set\nby default; limit defaults to 0 (= all), a positive value caps, the\ndeprecated offset falls back to a single non-cursor request. The Go SDK\ndoes not expose ListUsers (admin RPC), so there is no Go-side change.\n\nTests: server keyset paging (all users, no dup), cross-filter token\nrejection, and the swallow test repointed to assert Internal; Python unit\ntests for auto-follow / limit cap / legacy offset.\n\nRefs #580, #573, ADR-029.",
+          "timestamp": "2026-05-24T22:15:58+01:00",
+          "tree_id": "bc8adfe809728ba66789cf6acf621541cc6050d3",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/b3c76aa918c3eee79fcb406446339f373568e732"
+        },
+        "date": 1779657503759,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2534.262226891419,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000025830716201464913",
+            "extra": "mean: 394.59215758687367 usec\nrounds: 1028"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1754.6434374664275,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003969604652356279",
+            "extra": "mean: 569.9163594421921 usec\nrounds: 932"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 937.1100979620961,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00029767818963389534",
+            "extra": "mean: 1.0671104731180132 msec\nrounds: 651"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 452.78241956569445,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004430483229215466",
+            "extra": "mean: 2.208566315271676 msec\nrounds: 406"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1183.1214334236795,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0021028138598652847",
+            "extra": "mean: 845.2217766913675 usec\nrounds: 1227"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1102.550709788581,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002654275882040949",
+            "extra": "mean: 906.9877613082799 usec\nrounds: 1437"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1180.811917016887,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0021589673650569993",
+            "extra": "mean: 846.8749218980814 usec\nrounds: 1306"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1536.7037071708633,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002333046511802341",
+            "extra": "mean: 650.7435332742461 usec\nrounds: 1112"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1552.5485216023258,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003208446046342313",
+            "extra": "mean: 644.102252577548 usec\nrounds: 388"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1330.531085134605,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006694535178129455",
+            "extra": "mean: 751.5795844024444 usec\nrounds: 1090"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2079.2036830722727,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030411124285530046",
+            "extra": "mean: 480.95336120335264 usec\nrounds: 1196"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 164.97736827078884,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004377063955604815",
+            "extra": "mean: 6.061437459461897 msec\nrounds: 148"
           }
         ]
       }
