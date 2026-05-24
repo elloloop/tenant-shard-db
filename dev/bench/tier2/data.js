@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779622324420,
+  "lastUpdate": 1779622337825,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -5832,6 +5832,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0004374108711996326",
             "extra": "mean: 6.278064601307583 msec\nrounds: 153"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "54474ab2e55b1226e422ad83737acc87d2289087",
+          "message": "feat(sdk): explicit-fields update so a field can be set to its zero value (#574) (#583)\n\nThe typed update path sends only the SET (non-default) fields of the\nmessage, because proto3 omits zero-valued scalars on the wire. So a\nfield could never be updated TO its zero value (false / 0 / \"\") through\nthe typed API — the patch simply omitted it and the change was silently\ndropped. Confirmed downstream: a TotpCredential.verified true→false\nupdate was a no-op.\n\nBoth SDKs gain an explicit-fields update that names which fields to\ninclude, read off the message via reflection (so zeros are included):\n\n  - Go: Plan.UpdateFields(nodeID, msg, fields...) — builds the patch from\n    the named fields via protoreflect Get (returns the zero), not Range.\n  - Python: plan.update(node_id, msg, fields=[...]) — builds the patch\n    from the named fields directly, not ListFields.\n\nServer-side this needs no change: the applier's update merge applies\nevery patch entry verbatim (`merged[k] = v`), zeros included, and the\ntyped wire value (ADR-028) carries 0/\"\"/false losslessly. The fix is\npurely the SDK no longer dropping the field before it reaches the wire.\n\nBoth SDKs ship together.\n\nTests: Go (UpdateFields includes a zero-valued field in the patch while\nplain Update omits it; unknown-field and no-fields panic) and Python\n(update(fields=[...]) emits {\"3\": 0}; default update omits it; unknown\nfield raises UnknownFieldError).\n\nCloses #574.",
+          "timestamp": "2026-05-24T12:29:45+01:00",
+          "tree_id": "97efbde22d8eafde048a3613a933ac490c13641b",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/54474ab2e55b1226e422ad83737acc87d2289087"
+        },
+        "date": 1779622336799,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2547.1541545401774,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029369267448613884",
+            "extra": "mean: 392.5950057704788 usec\nrounds: 1213"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1754.9343776159374,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005661957230455674",
+            "extra": "mean: 569.8218763931737 usec\nrounds: 987"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 963.7804845585298,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002453498895736353",
+            "extra": "mean: 1.0375806690649696 msec\nrounds: 834"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 448.34592669078535,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004313976236102274",
+            "extra": "mean: 2.230420620481467 msec\nrounds: 332"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1155.6111161066226,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002274116606777991",
+            "extra": "mean: 865.3430086144438 usec\nrounds: 1393"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1129.2990219346907,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0025743161568795893",
+            "extra": "mean: 885.5050616149667 usec\nrounds: 1412"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1214.6752499575384,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019506380936827991",
+            "extra": "mean: 823.2653131237811 usec\nrounds: 1303"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1693.7295394985863,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003186189990692154",
+            "extra": "mean: 590.4130362490113 usec\nrounds: 1269"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1546.1759983737174,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006108797615019723",
+            "extra": "mean: 646.7569028699253 usec\nrounds: 453"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1365.0739339250947,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004534003965297963",
+            "extra": "mean: 732.561054128862 usec\nrounds: 1090"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2097.5084747358173,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000035310811389832254",
+            "extra": "mean: 476.75611900731445 usec\nrounds: 1168"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 151.7406287344721,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000493976371408077",
+            "extra": "mean: 6.590192806897354 msec\nrounds: 145"
           }
         ]
       }
