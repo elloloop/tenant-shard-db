@@ -29,15 +29,19 @@
 //     in SQL: ordering is not contractually pinned.
 //   - Side effects: none. No WAL append, no SQLite write, no metric
 //     other than the standard request counter.
-//   - Error contract: any failure below the tenant gate is swallowed
-//     into an empty GetEdgesResponse with codes.OK. The metric outcome
-//     is "error" so swallowed faults don't inflate the ok counter.
+//   - Error contract (#573): the tenant is lazy-opened first, so a
+//     genuine post-open store fault (IO error, corruption, scan failure)
+//     is surfaced as a sanitized codes.Internal rather than masked as an
+//     empty GetEdgesResponse with codes.OK — empty+OK is reserved for a
+//     genuinely empty edge set. The metric outcome is "error" on faults.
 
 package api
 
 import (
 	"context"
 	"time"
+
+	"google.golang.org/grpc/codes"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
@@ -104,9 +108,15 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 	// slice + compute has_more here.
 	edges, err := s.store.GetEdgesFrom(ctx, tenantID, req.GetNodeId(), edgeTypeFilter, 0)
 	if err != nil {
-		// Swallow store errors — return empty response with codes.OK.
+		// Surface genuine post-open faults (#573): the tenant is already
+		// lazy-opened above, so this is a real IO/corruption error — not
+		// "no edges". Masking it as edges=[]+OK is silent data loss.
+		// Preserve typed sentinels; sanitize naked store errors.
 		outcome = "error"
-		return &pb.GetEdgesResponse{Edges: []*pb.Edge{}}, nil
+		if c := errs.Code(err); c != codes.Unknown {
+			return nil, errs.Errorf(c, "GetEdgesFrom: %v", err)
+		}
+		return nil, errs.Internal(ctx, "GetEdgesFrom: store", err)
 	}
 
 	limit := int(req.GetLimit())

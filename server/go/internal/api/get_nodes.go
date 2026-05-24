@@ -48,6 +48,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -173,8 +174,20 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	ids := req.GetNodeIds()
 	results := make([]*store.Node, len(ids))
 	denied := make([]bool, len(ids))
-	hadFatal := false
+	// firstErr captures the first genuine fault across the fan-out (#573):
+	// a GetNode/CanAccess store error or a per-id panic. Such a fault is
+	// distinct from a real miss (node absent → n == nil) and must NOT be
+	// reported as a missing id — that masks data loss. A real miss leaves
+	// firstErr nil and the id flows to missing_ids as before.
+	var firstErr error
 	var fatalMu sync.Mutex
+	recordErr := func(err error) {
+		fatalMu.Lock()
+		if firstErr == nil {
+			firstErr = err
+		}
+		fatalMu.Unlock()
+	}
 
 	sem := make(chan struct{}, getNodesFanout)
 	var wg sync.WaitGroup
@@ -187,19 +200,30 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 				<-sem
 				wg.Done()
 				if r := recover(); r != nil {
-					// Per-id panic -- treat as "missing".
-					fatalMu.Lock()
-					hadFatal = true
-					fatalMu.Unlock()
+					recordErr(fmt.Errorf("panic resolving id %q: %v", id, r))
 				}
 			}()
 			n, gerr := s.store.GetNode(ctx, tenantID, id)
-			if gerr != nil || n == nil {
-				return // miss -> nil entry -> missing_ids
+			if gerr != nil {
+				// NotFound is a genuine miss (the store signals an absent
+				// node via ErrNodeNotFound) → missing_ids. Any other error
+				// is a real fault (#573) → surface it.
+				if errs.Code(gerr) == codes.NotFound {
+					return
+				}
+				recordErr(gerr)
+				return
+			}
+			if n == nil {
+				return // genuine miss -> missing_ids
 			}
 			if actorIDs != nil {
 				ok, aerr := s.store.CanAccess(ctx, tenantID, id, actorIDs)
-				if aerr != nil || !ok {
+				if aerr != nil {
+					recordErr(aerr)
+					return
+				}
+				if !ok {
 					denied[i] = true
 					return
 				}
@@ -209,15 +233,15 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	}
 	wg.Wait()
 
-	if hadFatal {
-		// At least one panic during the fan-out. When partial state
-		// cannot be trusted, return "all missing" and flag the metric
-		// as error.
+	if firstErr != nil {
+		// A genuine fault occurred in at least one fan-out worker; partial
+		// state cannot be trusted. Surface it (#573) rather than masking it
+		// as all-missing + OK. Preserve typed sentinels; sanitize the rest.
 		resultStatus = "error"
-		return &pb.GetNodesResponse{
-			Nodes:      []*pb.Node{},
-			MissingIds: append([]string{}, ids...),
-		}, nil
+		if c := errs.Code(firstErr); c != codes.Unknown {
+			return nil, errs.Errorf(c, "GetNodes: %v", firstErr)
+		}
+		return nil, errs.Internal(ctx, "GetNodes: store", firstErr)
 	}
 
 	nodes := make([]*pb.Node, 0, len(ids))
@@ -229,10 +253,10 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 		}
 		pn, perr := s.storeNodeToProto("", results[i])
 		if perr != nil {
-			// Conversion failure on a single row -- fold into
-			// missing_ids rather than failing the whole batch.
-			missing = append(missing, id)
-			continue
+			// A row that will not marshal is corrupt stored state, not an
+			// absent node — surface it rather than folding into missing_ids.
+			resultStatus = "error"
+			return nil, errs.Internal(ctx, "GetNodes: marshal row", perr)
 		}
 		nodes = append(nodes, pn)
 	}
