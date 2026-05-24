@@ -159,6 +159,45 @@ func decodeEdgePageToken(token, fingerprint string) (edgePageCursor, error) {
 	return c, nil
 }
 
+// ── User registry keyset tokens (ADR-029, ListUsers) ────────────────
+
+// userPageCursor is the decoded payload of a ListUsers page token.
+type userPageCursor struct {
+	Fingerprint string `json:"f"`
+	CreatedAt   int64  `json:"c"`
+	UserID      string `json:"u"`
+}
+
+// usersFingerprint binds a ListUsers token to its status filter so a
+// token minted for one filter cannot be replayed against another.
+func usersFingerprint(status string) string {
+	h := sha256.New()
+	h.Write([]byte("listusers\x00"))
+	h.Write([]byte(status))
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+}
+
+func encodeUserPageToken(c userPageCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeUserPageToken(token, fingerprint string) (userPageCursor, error) {
+	var c userPageCursor
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return c, errs.Errorf(codes.InvalidArgument, "page_token: malformed: %v", err)
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return c, errs.Errorf(codes.InvalidArgument, "page_token: malformed: %v", err)
+	}
+	if c.Fingerprint != fingerprint {
+		return c, errs.Errorf(codes.InvalidArgument,
+			"page_token: does not match this query (status filter changed)")
+	}
+	return c, nil
+}
+
 // cursorOrderValue coerces a JSON-decoded cursor order value back to the
 // Go type the store expects for the effective order column. created_at /
 // updated_at / type_id are integer columns (JSON decodes them as

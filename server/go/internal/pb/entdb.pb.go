@@ -5095,11 +5095,22 @@ func (x *UpdateUserResponse) GetError() string {
 }
 
 type ListUsersRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Actor         string                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
-	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
-	Limit         int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Actor  string                 `protobuf:"bytes,1,opt,name=actor,proto3" json:"actor,omitempty"`
+	Status string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`
+	Limit  int32                  `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	// DEPRECATED (ADR-029): use keyset cursor pagination via page_size +
+	// page_token below.
+	//
+	// Deprecated: Marked as deprecated in entdb.proto.
+	Offset int32 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Keyset cursor pagination (ADR-029, AIP-158). page_size bounds one
+	// page (alias for limit, takes precedence); page_token is the opaque
+	// next_page_token from a prior response, a seek over
+	// (created_at, user_id) bound to the status filter by a fingerprint.
+	// Mixing page_token with the deprecated offset is INVALID_ARGUMENT.
+	PageSize      int32  `protobuf:"varint,5,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string `protobuf:"bytes,6,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5155,6 +5166,7 @@ func (x *ListUsersRequest) GetLimit() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in entdb.proto.
 func (x *ListUsersRequest) GetOffset() int32 {
 	if x != nil {
 		return x.Offset
@@ -5162,9 +5174,27 @@ func (x *ListUsersRequest) GetOffset() int32 {
 	return 0
 }
 
+func (x *ListUsersRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListUsersRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type ListUsersResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Users         []*UserInfo            `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Users []*UserInfo            `protobuf:"bytes,1,rep,name=users,proto3" json:"users,omitempty"`
+	// Opaque keyset cursor for the next page (ADR-029). Empty on the last
+	// page; non-empty whenever rows were omitted, so the user list never
+	// silently truncates.
+	NextPageToken string `protobuf:"bytes,2,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -5204,6 +5234,13 @@ func (x *ListUsersResponse) GetUsers() []*UserInfo {
 		return x.Users
 	}
 	return nil
+}
+
+func (x *ListUsersResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
 }
 
 type TenantDetail struct {
@@ -7999,14 +8036,18 @@ const file_entdb_proto_rawDesc = "" +
 	"\x06status\x18\x05 \x01(\tR\x06status\"D\n" +
 	"\x12UpdateUserResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"n\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xae\x01\n" +
 	"\x10ListUsersRequest\x12\x14\n" +
 	"\x05actor\x18\x01 \x01(\tR\x05actor\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12\x14\n" +
-	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x04 \x01(\x05R\x06offset\"=\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\x12\x1a\n" +
+	"\x06offset\x18\x04 \x01(\x05B\x02\x18\x01R\x06offset\x12\x1b\n" +
+	"\tpage_size\x18\x05 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x06 \x01(\tR\tpageToken\"e\n" +
 	"\x11ListUsersResponse\x12(\n" +
-	"\x05users\x18\x01 \x03(\v2\x12.entdb.v1.UserInfoR\x05users\"\x8e\x01\n" +
+	"\x05users\x18\x01 \x03(\v2\x12.entdb.v1.UserInfoR\x05users\x12&\n" +
+	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\"\x8e\x01\n" +
 	"\fTenantDetail\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +

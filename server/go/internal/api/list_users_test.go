@@ -19,9 +19,11 @@ package api_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
@@ -257,11 +259,12 @@ func TestListUsers_GlobalStoreUnconfigured(t *testing.T) {
 	}
 }
 
-// TestListUsers_InternalErrorSwallowed pins the parity wart: any
-// internal error from globalstore.ListUsers is swallowed and the
-// handler returns codes.OK with an empty Users list. We force the
-// error by closing the underlying SQLite handle before calling.
-func TestListUsers_InternalErrorSwallowed(t *testing.T) {
+// TestListUsers_InternalErrorSurfaced pins the #573 fix: a genuine
+// internal error from globalstore must surface as a non-OK status, not
+// be masked as an empty list with codes.OK (which hid DB outages and
+// silently broke pagination clients). We force the error by closing the
+// underlying SQLite handle before calling.
+func TestListUsers_InternalErrorSurfaced(t *testing.T) {
 	t.Parallel()
 
 	gs := newGlobalStore(t)
@@ -272,19 +275,82 @@ func TestListUsers_InternalErrorSwallowed(t *testing.T) {
 
 	srv := api.New(api.WithGlobalStore(gs))
 
-	resp, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
+	_, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
 		Actor: "user:u1",
 	})
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("ListUsers on broken store: code = %s, want Internal (%v)", status.Code(err), err)
+	}
+}
+
+// TestListUsers_KeysetPagesAllUsers pins the ADR-029 cursor (#580): the
+// user registry pages through completely with page_size + page_token,
+// returning every active user exactly once.
+func TestListUsers_KeysetPagesAllUsers(t *testing.T) {
+	t.Parallel()
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+	const n = 25
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("u%03d", i)
+		if _, err := gs.CreateUser(ctx, id, id+"@x", id); err != nil {
+			t.Fatalf("CreateUser(%s): %v", id, err)
+		}
+	}
+	srv := api.New(api.WithGlobalStore(gs))
+
+	seen := map[string]bool{}
+	token := ""
+	for pages := 0; ; pages++ {
+		if pages > 1000 {
+			t.Fatal("pagination did not terminate")
+		}
+		resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{
+			Actor: "user:admin", PageSize: 10, PageToken: token,
+		})
+		if err != nil {
+			t.Fatalf("ListUsers: %v", err)
+		}
+		for _, u := range resp.GetUsers() {
+			if seen[u.GetUserId()] {
+				t.Fatalf("user %s returned on more than one page", u.GetUserId())
+			}
+			seen[u.GetUserId()] = true
+		}
+		token = resp.GetNextPageToken()
+		if token == "" {
+			break
+		}
+	}
+	if len(seen) != n {
+		t.Fatalf("paged %d users, want %d — silent truncation (Bug A class)", len(seen), n)
+	}
+}
+
+// TestListUsers_KeysetRejectsCrossFilterToken pins that a token minted for one
+// status filter is rejected against another.
+func TestListUsers_KeysetRejectsCrossFilterToken(t *testing.T) {
+	t.Parallel()
+	gs := newGlobalStore(t)
+	ctx := context.Background()
+	for i := 0; i < 12; i++ {
+		id := fmt.Sprintf("u%03d", i)
+		if _, err := gs.CreateUser(ctx, id, id+"@x", id); err != nil {
+			t.Fatalf("CreateUser(%s): %v", id, err)
+		}
+	}
+	srv := api.New(api.WithGlobalStore(gs))
+	first, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:admin", Status: "active", PageSize: 5})
 	if err != nil {
-		t.Fatalf("ListUsers: expected OK (parity swallow), got err=%v", err)
+		t.Fatalf("ListUsers: %v", err)
 	}
-	if resp == nil {
-		t.Fatalf("ListUsers: response is nil; want empty Users slice")
+	if first.GetNextPageToken() == "" {
+		t.Fatal("expected a next_page_token")
 	}
-	if resp.Users == nil {
-		t.Fatalf("ListUsers: Users is nil; want non-nil empty slice")
-	}
-	if len(resp.Users) != 0 {
-		t.Fatalf("ListUsers: len(Users) = %d; want 0 on swallowed error", len(resp.Users))
+	_, err = srv.ListUsers(ctx, &pb.ListUsersRequest{
+		Actor: "user:admin", Status: "deleted", PageSize: 5, PageToken: first.GetNextPageToken(),
+	})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("cross-filter token: code = %s, want InvalidArgument (%v)", status.Code(err), err)
 	}
 }

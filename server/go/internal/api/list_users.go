@@ -31,6 +31,7 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 )
@@ -73,29 +74,60 @@ func (s *Server) ListUsers(
 	if statusFilter == "" {
 		statusFilter = "active"
 	}
-	limit := int(req.GetLimit())
-	if limit <= 0 {
-		// SEC-4 (#135): widened from ==0 to <=0 so a negative limit
-		// (SQLite treats LIMIT -1 as unbounded) can no longer trigger
-		// a full-table scan of the user registry.
-		limit = 100
+	// Page size: prefer page_size, fall back to the legacy limit, then the
+	// default. SEC-4 (#135): a non-positive value coerces to 100 and an
+	// oversized one is clamped, so no unbounded user-registry scan.
+	pageSize := int(req.GetPageSize())
+	if pageSize <= 0 {
+		pageSize = int(req.GetLimit())
 	}
-	// SEC-4 (#135): cap oversized page requests before building protos.
-	limit = clampPageSize(limit)
-	offset := int(req.GetOffset())
+	if pageSize <= 0 {
+		pageSize = 100
+	}
+	pageSize = clampPageSize(pageSize)
 
-	rows, err := s.global.ListUsers(ctx, statusFilter, limit, offset)
+	// Keyset cursor (ADR-029): page_token is bound to the status filter by
+	// a fingerprint; mixing it with the deprecated offset is INVALID_ARGUMENT.
+	fingerprint := usersFingerprint(statusFilter)
+	var cursor *globalstore.UserCursor
+	if tok := req.GetPageToken(); tok != "" {
+		if req.GetOffset() != 0 {
+			statusLabel = "error"
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"page_token and the deprecated offset are mutually exclusive; use one")
+		}
+		c, derr := decodeUserPageToken(tok, fingerprint)
+		if derr != nil {
+			statusLabel = "error"
+			return nil, derr
+		}
+		cursor = &globalstore.UserCursor{CreatedAt: c.CreatedAt, UserID: c.UserID}
+	}
+
+	rows, err := s.global.ListUsersPaged(ctx, statusFilter, pageSize, cursor)
 	if err != nil {
-		// Swallow: log via the metrics label, return an empty list with
-		// codes.OK. Tracked as a parity wart for follow-up — this hides
-		// DB outages from callers and breaks pagination clients silently.
+		// Surface genuine faults (#573) instead of masking a DB outage as
+		// an empty list with codes.OK. Preserve typed sentinels.
 		statusLabel = "error"
-		return &pb.ListUsersResponse{Users: []*pb.UserInfo{}}, nil
+		if c := errs.Code(err); c != codes.Unknown {
+			return nil, errs.Errorf(c, "ListUsers: %v", err)
+		}
+		return nil, errs.Internal(ctx, "ListUsers: store", err)
+	}
+
+	// Mint a cursor from the last row when the page is full, so a response
+	// that omits users always carries a token (ADR-029).
+	var nextPageToken string
+	if len(rows) == pageSize && pageSize > 0 {
+		last := rows[len(rows)-1]
+		nextPageToken = encodeUserPageToken(userPageCursor{
+			Fingerprint: fingerprint, CreatedAt: last.CreatedAt, UserID: last.UserID,
+		})
 	}
 
 	out := make([]*pb.UserInfo, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, userToProto(r))
 	}
-	return &pb.ListUsersResponse{Users: out}, nil
+	return &pb.ListUsersResponse{Users: out, NextPageToken: nextPageToken}, nil
 }
