@@ -169,3 +169,44 @@ async def test_contains_rejected(stub) -> None:
             )
         )
     assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="Bug A: List*/QueryNodes silently truncate at the 100-row default and "
+    "the SDK helpers do not paginate (the Go SDK QueryNodes has no limit/offset/"
+    "cursor param at all). Un-xfail when keyset cursor pagination + SDK "
+    "auto-follow lands — ADR pending.",
+)
+async def test_query_does_not_silently_truncate(grpc_endpoint) -> None:
+    """A read must return ALL rows the caller wrote, not silently cap at 100.
+
+    Characterizes the customer-reported symptom ("List returned 100 of 250").
+    Seeds 150 rows isolated by a unique half-open email range so the
+    server-side filtered set is exactly 150, then issues the read the way
+    the SDK list/query helpers do — with no explicit limit, so the server
+    falls back to defaultQueryLimit=100 (query_nodes.go) — and there is no
+    cursor to fetch the remainder. The fix (keyset cursor + helper
+    auto-follow) must let this return all 150.
+    """
+    n = 150
+    prefix = f"pag-{uuid.uuid4().hex[:6]}-"
+    upper = prefix + "~"  # 0x7E > any digit/'@'/'x' in the seeded suffixes
+    async with grpc_aio.insecure_channel(grpc_endpoint) as ch:
+        s = EntDBServiceStub(ch)
+        await _seed_users(s, [f"{prefix}{i:04d}@x" for i in range(n)])
+        resp = await s.QueryNodes(
+            pb.QueryNodesRequest(
+                context=_ctx(),
+                type_id=1,
+                order_by="node_id",
+                descending=False,
+                # No explicit limit — mirrors the SDK list/query helpers.
+                filters=[
+                    pb.FieldFilter(field="email", op=pb.FilterOp.GTE, value=_value(prefix)),
+                    pb.FieldFilter(field="email", op=pb.FilterOp.LT, value=_value(upper)),
+                ],
+            )
+        )
+        got = [node for node in resp.nodes if _email(node).startswith(prefix)]
+        assert len(got) == n, f"wrote {n} rows, read back {len(got)} — silent truncation (Bug A)"

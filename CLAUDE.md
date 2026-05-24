@@ -64,6 +64,8 @@ Quick orientation (one-liners, not normative — the ADR is normative):
 - [ADR-025](docs/adr/025-single-shape-sdk-api.md) — single-shape SDK API (proto messages everywhere, typed unique-key tokens via codegen, expression-index uniqueness)
 - [ADR-026](docs/adr/026-per-tenant-read-write-connection-split.md) — per-tenant read/write SQLite connection split (Accepted; landed dark — split off by default `--read-pool-size=1`; the post-commit broadcast fix is always active)
 - [ADR-027](docs/adr/027-parallel-wal-apply-across-tenants.md) — parallel WAL apply across distinct tenants; amends ADR-016's no-fan-out clause (Accepted; landed dark — serial by default `--apply-concurrency=1`)
+- [ADR-028](docs/adr/028-typed-payload-wire-values.md) — typed `field_id`-keyed payload wire values (`map<uint32, EntValue>`), retiring `google.protobuf.Struct` so int64 stops corrupting >2^53 (Accepted; design frozen, implementation pending — Bug C)
+- [ADR-029](docs/adr/029-keyset-cursor-pagination.md) — keyset cursor pagination (`page_token`/`next_page_token`) with SDK auto-follow, replacing the silent 100-row read truncation (Accepted; design frozen, implementation pending — Bug A)
 
 ## Project Structure
 
