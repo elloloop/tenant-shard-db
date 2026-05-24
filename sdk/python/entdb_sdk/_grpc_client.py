@@ -1133,6 +1133,7 @@ class GrpcClient:
                             field=pre.get("field", ""),
                             field_id=int(pre.get("field_id") or 0),
                             equals=eq,
+                            typed_equals=_value_to_entvalue(pre.get("equals")),
                         )
                     )
                 # 2026-04-14 SDK v0.3 — see CreateNodeOp note above.
@@ -1162,7 +1163,13 @@ class GrpcClient:
                 for field_name, field_value in where_dict.items():
                     v = Value()
                     json_format.Parse(json.dumps(field_value), v)
-                    where_filters.append(FieldFilter(field=field_name, value=v))
+                    where_filters.append(
+                        FieldFilter(
+                            field=field_name,
+                            value=v,
+                            typed_value=_value_to_entvalue(field_value),
+                        )
+                    )
                 proto_op.delete_where.CopyFrom(
                     DeleteWhereOp(
                         type_id=dw.get("type_id", 0),
@@ -1389,6 +1396,7 @@ class GrpcClient:
             type_id=type_id,
             field_id=int(field_id),
             value=value_msg,
+            typed_value=_value_to_entvalue(value),
             after_offset=after_offset,
         )
 
@@ -1500,7 +1508,13 @@ class GrpcClient:
             for field_name, field_value in filter.items():
                 v = Value()
                 json_format.Parse(json.dumps(field_value), v)
-                filters.append(FieldFilter(field=field_name, value=v))
+                filters.append(
+                    FieldFilter(
+                        field=field_name,
+                        value=v,
+                        typed_value=_value_to_entvalue(field_value),
+                    )
+                )
 
         request = QueryNodesRequest(
             context=self._make_context(tenant_id, actor, trace_id),

@@ -1067,7 +1067,11 @@ type UpdateNodePrecondition struct {
 	// This is the preferred and schema-less-safe coordinate. Servers
 	// use it directly when it is non-zero; registry-backed servers may
 	// fall back to “field“ only for older clients.
-	FieldId       int32 `protobuf:"varint,3,opt,name=field_id,json=fieldId,proto3" json:"field_id,omitempty"`
+	FieldId int32 `protobuf:"varint,3,opt,name=field_id,json=fieldId,proto3" json:"field_id,omitempty"`
+	// Typed, lossless expected value (ADR-028 / #572). Preferred over
+	// `equals` when set, so a CAS on an int64 >2^53 field compares the
+	// exact value instead of a float64-truncated one.
+	TypedEquals   *EntValue `protobuf:"bytes,4,opt,name=typed_equals,json=typedEquals,proto3" json:"typed_equals,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1121,6 +1125,13 @@ func (x *UpdateNodePrecondition) GetFieldId() int32 {
 		return x.FieldId
 	}
 	return 0
+}
+
+func (x *UpdateNodePrecondition) GetTypedEquals() *EntValue {
+	if x != nil {
+		return x.TypedEquals
+	}
+	return nil
 }
 
 type DeleteNodeOp struct {
@@ -3618,10 +3629,14 @@ func (x *AclEntry) GetExpiresAt() int64 {
 }
 
 type FieldFilter struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Field         string                 `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
-	Op            FilterOp               `protobuf:"varint,2,opt,name=op,proto3,enum=entdb.v1.FilterOp" json:"op,omitempty"`
-	Value         *structpb.Value        `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Field string                 `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
+	Op    FilterOp               `protobuf:"varint,2,opt,name=op,proto3,enum=entdb.v1.FilterOp" json:"op,omitempty"`
+	Value *structpb.Value        `protobuf:"bytes,3,opt,name=value,proto3" json:"value,omitempty"`
+	// Typed, lossless filter value (ADR-028 / #572). Preferred over
+	// `value` when set, so an int64 >2^53 filter matches the right rows
+	// instead of corrupting through google.protobuf.Value's double.
+	TypedValue    *EntValue `protobuf:"bytes,4,opt,name=typed_value,json=typedValue,proto3" json:"typed_value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3673,6 +3688,13 @@ func (x *FieldFilter) GetOp() FilterOp {
 func (x *FieldFilter) GetValue() *structpb.Value {
 	if x != nil {
 		return x.Value
+	}
+	return nil
+}
+
+func (x *FieldFilter) GetTypedValue() *EntValue {
+	if x != nil {
+		return x.TypedValue
 	}
 	return nil
 }
@@ -7224,7 +7246,11 @@ type GetNodeByKeyRequest struct {
 	// JSON-encoded value bound to the field. Using “google.protobuf.Value“
 	// keeps the request agnostic to the field's scalar type (string,
 	// int, float, bool) while staying typed end-to-end.
-	Value         *structpb.Value `protobuf:"bytes,8,opt,name=value,proto3" json:"value,omitempty"`
+	Value *structpb.Value `protobuf:"bytes,8,opt,name=value,proto3" json:"value,omitempty"`
+	// Typed, lossless unique-key value (ADR-028 / #572). Preferred over
+	// `value`, so a large int64 unique key (Snowflake/external id)
+	// matches exactly instead of corrupting through a double.
+	TypedValue    *EntValue `protobuf:"bytes,9,opt,name=typed_value,json=typedValue,proto3" json:"typed_value,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7297,6 +7323,13 @@ func (x *GetNodeByKeyRequest) GetFieldId() int32 {
 func (x *GetNodeByKeyRequest) GetValue() *structpb.Value {
 	if x != nil {
 		return x.Value
+	}
+	return nil
+}
+
+func (x *GetNodeByKeyRequest) GetTypedValue() *EntValue {
+	if x != nil {
+		return x.TypedValue
 	}
 	return nil
 }
@@ -7555,11 +7588,12 @@ const file_entdb_proto_rawDesc = "" +
 	"\x0fTypedPatchEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
 	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x03\x10\x04J\x04\b\x06\x10\aR\n" +
-	"patch_jsonR\x04keys\"y\n" +
+	"patch_jsonR\x04keys\"\xb0\x01\n" +
 	"\x16UpdateNodePrecondition\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12.\n" +
 	"\x06equals\x18\x02 \x01(\v2\x16.google.protobuf.ValueR\x06equals\x12\x19\n" +
-	"\bfield_id\x18\x03 \x01(\x05R\afieldId\"7\n" +
+	"\bfield_id\x18\x03 \x01(\x05R\afieldId\x125\n" +
+	"\ftyped_equals\x18\x04 \x01(\v2\x12.entdb.v1.EntValueR\vtypedEquals\"7\n" +
 	"\fDeleteNodeOp\x12\x17\n" +
 	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\"k\n" +
@@ -7772,11 +7806,13 @@ const file_entdb_proto_rawDesc = "" +
 	"\tcore_caps\x18\x05 \x03(\x0e2\x18.entdb.v1.CoreCapabilityR\bcoreCaps\x12\x1e\n" +
 	"\vext_cap_ids\x18\x06 \x03(\x05R\textCapIds\x12\x1d\n" +
 	"\n" +
-	"expires_at\x18\a \x01(\x03R\texpiresAt\"u\n" +
+	"expires_at\x18\a \x01(\x03R\texpiresAt\"\xaa\x01\n" +
 	"\vFieldFilter\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12\"\n" +
 	"\x02op\x18\x02 \x01(\x0e2\x12.entdb.v1.FilterOpR\x02op\x12,\n" +
-	"\x05value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\x05value\"\x92\x01\n" +
+	"\x05value\x18\x03 \x01(\v2\x16.google.protobuf.ValueR\x05value\x123\n" +
+	"\vtyped_value\x18\x04 \x01(\v2\x12.entdb.v1.EntValueR\n" +
+	"typedValue\"\x92\x01\n" +
 	"\x14WaitForOffsetRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12'\n" +
 	"\x0fstream_position\x18\x02 \x01(\tR\x0estreamPosition\x12\x1d\n" +
@@ -8032,14 +8068,16 @@ const file_entdb_proto_rawDesc = "" +
 	"\x1amax_rps_per_user_sustained\x18\b \x01(\x05R\x16maxRpsPerUserSustained\x122\n" +
 	"\x16max_rps_per_user_burst\x18\t \x01(\x05R\x12maxRpsPerUserBurst\x12!\n" +
 	"\fhard_enforce\x18\n" +
-	" \x01(\bR\vhardEnforce\"\xee\x01\n" +
+	" \x01(\bR\vhardEnforce\"\xa3\x02\n" +
 	"\x13GetNodeByKeyRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
 	"\x05actor\x18\x02 \x01(\tR\x05actor\x12\x17\n" +
 	"\atype_id\x18\x03 \x01(\x05R\x06typeId\x12!\n" +
 	"\fafter_offset\x18\x06 \x01(\x03R\vafterOffset\x12\x19\n" +
 	"\bfield_id\x18\a \x01(\x05R\afieldId\x12,\n" +
-	"\x05value\x18\b \x01(\v2\x16.google.protobuf.ValueR\x05valueJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\bkey_nameR\tkey_value\"P\n" +
+	"\x05value\x18\b \x01(\v2\x16.google.protobuf.ValueR\x05value\x123\n" +
+	"\vtyped_value\x18\t \x01(\v2\x12.entdb.v1.EntValueR\n" +
+	"typedValueJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\bkey_nameR\tkey_value\"P\n" +
 	"\x14GetNodeByKeyResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.entdb.v1.NodeR\x04node\x12\x14\n" +
 	"\x05found\x18\x02 \x01(\bR\x05found\"\xa4\x01\n" +
@@ -8285,167 +8323,170 @@ var file_entdb_proto_depIdxs = []int32{
 	11,  // 14: entdb.v1.UpdateNodeOp.precondition:type_name -> entdb.v1.UpdateNodePrecondition
 	111, // 15: entdb.v1.UpdateNodeOp.typed_patch:type_name -> entdb.v1.UpdateNodeOp.TypedPatchEntry
 	116, // 16: entdb.v1.UpdateNodePrecondition.equals:type_name -> google.protobuf.Value
-	48,  // 17: entdb.v1.DeleteWhereOp.where:type_name -> entdb.v1.FieldFilter
-	16,  // 18: entdb.v1.CreateEdgeOp.from:type_name -> entdb.v1.NodeRef
-	16,  // 19: entdb.v1.CreateEdgeOp.to:type_name -> entdb.v1.NodeRef
-	117, // 20: entdb.v1.CreateEdgeOp.props:type_name -> google.protobuf.Struct
-	112, // 21: entdb.v1.CreateEdgeOp.typed_props:type_name -> entdb.v1.CreateEdgeOp.TypedPropsEntry
-	16,  // 22: entdb.v1.DeleteEdgeOp.from:type_name -> entdb.v1.NodeRef
-	16,  // 23: entdb.v1.DeleteEdgeOp.to:type_name -> entdb.v1.NodeRef
-	17,  // 24: entdb.v1.NodeRef.typed:type_name -> entdb.v1.TypedNodeRef
-	5,   // 25: entdb.v1.ExecuteAtomicResponse.receipt:type_name -> entdb.v1.Receipt
-	1,   // 26: entdb.v1.ExecuteAtomicResponse.applied_status:type_name -> entdb.v1.ReceiptStatus
-	19,  // 27: entdb.v1.ExecuteAtomicResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
-	116, // 28: entdb.v1.PreconditionFailure.expected:type_name -> google.protobuf.Value
-	116, // 29: entdb.v1.PreconditionFailure.observed:type_name -> google.protobuf.Value
-	4,   // 30: entdb.v1.GetReceiptStatusRequest.context:type_name -> entdb.v1.RequestContext
-	1,   // 31: entdb.v1.GetReceiptStatusResponse.status:type_name -> entdb.v1.ReceiptStatus
-	19,  // 32: entdb.v1.GetReceiptStatusResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
-	4,   // 33: entdb.v1.GetNodeRequest.context:type_name -> entdb.v1.RequestContext
-	28,  // 34: entdb.v1.GetNodeResponse.node:type_name -> entdb.v1.Node
-	4,   // 35: entdb.v1.GetNodesRequest.context:type_name -> entdb.v1.RequestContext
-	28,  // 36: entdb.v1.GetNodesResponse.nodes:type_name -> entdb.v1.Node
-	4,   // 37: entdb.v1.QueryNodesRequest.context:type_name -> entdb.v1.RequestContext
-	48,  // 38: entdb.v1.QueryNodesRequest.filters:type_name -> entdb.v1.FieldFilter
-	28,  // 39: entdb.v1.QueryNodesResponse.nodes:type_name -> entdb.v1.Node
-	117, // 40: entdb.v1.Node.payload:type_name -> google.protobuf.Struct
-	113, // 41: entdb.v1.Node.typed_payload:type_name -> entdb.v1.Node.TypedPayloadEntry
-	47,  // 42: entdb.v1.Node.acl:type_name -> entdb.v1.AclEntry
-	4,   // 43: entdb.v1.GetEdgesRequest.context:type_name -> entdb.v1.RequestContext
-	31,  // 44: entdb.v1.GetEdgesResponse.edges:type_name -> entdb.v1.Edge
-	117, // 45: entdb.v1.Edge.props:type_name -> google.protobuf.Struct
-	114, // 46: entdb.v1.Edge.typed_props:type_name -> entdb.v1.Edge.TypedPropsEntry
-	4,   // 47: entdb.v1.SearchMailboxRequest.context:type_name -> entdb.v1.RequestContext
-	34,  // 48: entdb.v1.SearchMailboxResponse.results:type_name -> entdb.v1.MailboxSearchResult
-	37,  // 49: entdb.v1.MailboxSearchResult.item:type_name -> entdb.v1.MailboxItem
-	4,   // 50: entdb.v1.GetMailboxRequest.context:type_name -> entdb.v1.RequestContext
-	37,  // 51: entdb.v1.GetMailboxResponse.items:type_name -> entdb.v1.MailboxItem
-	117, // 52: entdb.v1.MailboxItem.state:type_name -> google.protobuf.Struct
-	117, // 53: entdb.v1.MailboxItem.metadata:type_name -> google.protobuf.Struct
-	115, // 54: entdb.v1.HealthResponse.components:type_name -> entdb.v1.HealthResponse.ComponentsEntry
-	117, // 55: entdb.v1.GetSchemaResponse.schema:type_name -> google.protobuf.Struct
-	44,  // 56: entdb.v1.ListTenantsResponse.tenants:type_name -> entdb.v1.TenantInfo
-	2,   // 57: entdb.v1.AclEntry.core_caps:type_name -> entdb.v1.CoreCapability
-	3,   // 58: entdb.v1.FieldFilter.op:type_name -> entdb.v1.FilterOp
-	116, // 59: entdb.v1.FieldFilter.value:type_name -> google.protobuf.Value
-	4,   // 60: entdb.v1.WaitForOffsetRequest.context:type_name -> entdb.v1.RequestContext
-	4,   // 61: entdb.v1.GetConnectedNodesRequest.context:type_name -> entdb.v1.RequestContext
-	28,  // 62: entdb.v1.GetConnectedNodesResponse.nodes:type_name -> entdb.v1.Node
-	4,   // 63: entdb.v1.ShareNodeRequest.context:type_name -> entdb.v1.RequestContext
-	2,   // 64: entdb.v1.ShareNodeRequest.core_caps:type_name -> entdb.v1.CoreCapability
-	4,   // 65: entdb.v1.RevokeAccessRequest.context:type_name -> entdb.v1.RequestContext
-	4,   // 66: entdb.v1.ListSharedWithMeRequest.context:type_name -> entdb.v1.RequestContext
-	28,  // 67: entdb.v1.ListSharedWithMeResponse.nodes:type_name -> entdb.v1.Node
-	4,   // 68: entdb.v1.GroupMemberRequest.context:type_name -> entdb.v1.RequestContext
-	4,   // 69: entdb.v1.TransferOwnershipRequest.context:type_name -> entdb.v1.RequestContext
-	63,  // 70: entdb.v1.CreateUserResponse.user:type_name -> entdb.v1.UserInfo
-	63,  // 71: entdb.v1.GetUserResponse.user:type_name -> entdb.v1.UserInfo
-	63,  // 72: entdb.v1.ListUsersResponse.users:type_name -> entdb.v1.UserInfo
-	72,  // 73: entdb.v1.CreateTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
-	72,  // 74: entdb.v1.GetTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
-	79,  // 75: entdb.v1.GetTenantMembersResponse.members:type_name -> entdb.v1.TenantMemberInfo
-	79,  // 76: entdb.v1.GetUserTenantsResponse.memberships:type_name -> entdb.v1.TenantMemberInfo
-	116, // 77: entdb.v1.GetNodeByKeyRequest.value:type_name -> google.protobuf.Value
-	28,  // 78: entdb.v1.GetNodeByKeyResponse.node:type_name -> entdb.v1.Node
-	28,  // 79: entdb.v1.SearchNodesResponse.nodes:type_name -> entdb.v1.Node
-	8,   // 80: entdb.v1.CreateNodeOp.TypedDataEntry.value:type_name -> entdb.v1.EntValue
-	8,   // 81: entdb.v1.UpdateNodeOp.TypedPatchEntry.value:type_name -> entdb.v1.EntValue
-	8,   // 82: entdb.v1.CreateEdgeOp.TypedPropsEntry.value:type_name -> entdb.v1.EntValue
-	8,   // 83: entdb.v1.Node.TypedPayloadEntry.value:type_name -> entdb.v1.EntValue
-	8,   // 84: entdb.v1.Edge.TypedPropsEntry.value:type_name -> entdb.v1.EntValue
-	6,   // 85: entdb.v1.EntDBService.ExecuteAtomic:input_type -> entdb.v1.ExecuteAtomicRequest
-	20,  // 86: entdb.v1.EntDBService.GetReceiptStatus:input_type -> entdb.v1.GetReceiptStatusRequest
-	22,  // 87: entdb.v1.EntDBService.GetNode:input_type -> entdb.v1.GetNodeRequest
-	24,  // 88: entdb.v1.EntDBService.GetNodes:input_type -> entdb.v1.GetNodesRequest
-	26,  // 89: entdb.v1.EntDBService.QueryNodes:input_type -> entdb.v1.QueryNodesRequest
-	29,  // 90: entdb.v1.EntDBService.GetEdgesFrom:input_type -> entdb.v1.GetEdgesRequest
-	29,  // 91: entdb.v1.EntDBService.GetEdgesTo:input_type -> entdb.v1.GetEdgesRequest
-	32,  // 92: entdb.v1.EntDBService.SearchMailbox:input_type -> entdb.v1.SearchMailboxRequest
-	35,  // 93: entdb.v1.EntDBService.GetMailbox:input_type -> entdb.v1.GetMailboxRequest
-	38,  // 94: entdb.v1.EntDBService.Health:input_type -> entdb.v1.HealthRequest
-	40,  // 95: entdb.v1.EntDBService.GetSchema:input_type -> entdb.v1.GetSchemaRequest
-	42,  // 96: entdb.v1.EntDBService.ListTenants:input_type -> entdb.v1.ListTenantsRequest
-	45,  // 97: entdb.v1.EntDBService.ListMailboxUsers:input_type -> entdb.v1.ListMailboxUsersRequest
-	49,  // 98: entdb.v1.EntDBService.WaitForOffset:input_type -> entdb.v1.WaitForOffsetRequest
-	51,  // 99: entdb.v1.EntDBService.GetConnectedNodes:input_type -> entdb.v1.GetConnectedNodesRequest
-	53,  // 100: entdb.v1.EntDBService.ShareNode:input_type -> entdb.v1.ShareNodeRequest
-	55,  // 101: entdb.v1.EntDBService.RevokeAccess:input_type -> entdb.v1.RevokeAccessRequest
-	57,  // 102: entdb.v1.EntDBService.ListSharedWithMe:input_type -> entdb.v1.ListSharedWithMeRequest
-	59,  // 103: entdb.v1.EntDBService.AddGroupMember:input_type -> entdb.v1.GroupMemberRequest
-	59,  // 104: entdb.v1.EntDBService.RemoveGroupMember:input_type -> entdb.v1.GroupMemberRequest
-	61,  // 105: entdb.v1.EntDBService.TransferOwnership:input_type -> entdb.v1.TransferOwnershipRequest
-	64,  // 106: entdb.v1.EntDBService.CreateUser:input_type -> entdb.v1.CreateUserRequest
-	66,  // 107: entdb.v1.EntDBService.GetUser:input_type -> entdb.v1.GetUserRequest
-	68,  // 108: entdb.v1.EntDBService.UpdateUser:input_type -> entdb.v1.UpdateUserRequest
-	70,  // 109: entdb.v1.EntDBService.ListUsers:input_type -> entdb.v1.ListUsersRequest
-	73,  // 110: entdb.v1.EntDBService.CreateTenant:input_type -> entdb.v1.CreateTenantRequest
-	75,  // 111: entdb.v1.EntDBService.GetTenant:input_type -> entdb.v1.GetTenantRequest
-	77,  // 112: entdb.v1.EntDBService.ArchiveTenant:input_type -> entdb.v1.ArchiveTenantRequest
-	80,  // 113: entdb.v1.EntDBService.AddTenantMember:input_type -> entdb.v1.TenantMemberRequest
-	80,  // 114: entdb.v1.EntDBService.RemoveTenantMember:input_type -> entdb.v1.TenantMemberRequest
-	82,  // 115: entdb.v1.EntDBService.GetTenantMembers:input_type -> entdb.v1.GetTenantMembersRequest
-	84,  // 116: entdb.v1.EntDBService.GetUserTenants:input_type -> entdb.v1.GetUserTenantsRequest
-	86,  // 117: entdb.v1.EntDBService.ChangeMemberRole:input_type -> entdb.v1.ChangeMemberRoleRequest
-	88,  // 118: entdb.v1.EntDBService.TransferUserContent:input_type -> entdb.v1.TransferUserContentRequest
-	90,  // 119: entdb.v1.EntDBService.DelegateAccess:input_type -> entdb.v1.DelegateAccessRequest
-	92,  // 120: entdb.v1.EntDBService.SetLegalHold:input_type -> entdb.v1.LegalHoldRequest
-	94,  // 121: entdb.v1.EntDBService.RevokeAllUserAccess:input_type -> entdb.v1.RevokeAllUserAccessRequest
-	96,  // 122: entdb.v1.EntDBService.DeleteUser:input_type -> entdb.v1.DeleteUserRequest
-	98,  // 123: entdb.v1.EntDBService.ExportUserData:input_type -> entdb.v1.ExportUserDataRequest
-	100, // 124: entdb.v1.EntDBService.FreezeUser:input_type -> entdb.v1.FreezeUserRequest
-	102, // 125: entdb.v1.EntDBService.CancelUserDeletion:input_type -> entdb.v1.CancelUserDeletionRequest
-	104, // 126: entdb.v1.EntDBService.GetTenantQuota:input_type -> entdb.v1.GetTenantQuotaRequest
-	106, // 127: entdb.v1.EntDBService.GetNodeByKey:input_type -> entdb.v1.GetNodeByKeyRequest
-	108, // 128: entdb.v1.EntDBService.SearchNodes:input_type -> entdb.v1.SearchNodesRequest
-	18,  // 129: entdb.v1.EntDBService.ExecuteAtomic:output_type -> entdb.v1.ExecuteAtomicResponse
-	21,  // 130: entdb.v1.EntDBService.GetReceiptStatus:output_type -> entdb.v1.GetReceiptStatusResponse
-	23,  // 131: entdb.v1.EntDBService.GetNode:output_type -> entdb.v1.GetNodeResponse
-	25,  // 132: entdb.v1.EntDBService.GetNodes:output_type -> entdb.v1.GetNodesResponse
-	27,  // 133: entdb.v1.EntDBService.QueryNodes:output_type -> entdb.v1.QueryNodesResponse
-	30,  // 134: entdb.v1.EntDBService.GetEdgesFrom:output_type -> entdb.v1.GetEdgesResponse
-	30,  // 135: entdb.v1.EntDBService.GetEdgesTo:output_type -> entdb.v1.GetEdgesResponse
-	33,  // 136: entdb.v1.EntDBService.SearchMailbox:output_type -> entdb.v1.SearchMailboxResponse
-	36,  // 137: entdb.v1.EntDBService.GetMailbox:output_type -> entdb.v1.GetMailboxResponse
-	39,  // 138: entdb.v1.EntDBService.Health:output_type -> entdb.v1.HealthResponse
-	41,  // 139: entdb.v1.EntDBService.GetSchema:output_type -> entdb.v1.GetSchemaResponse
-	43,  // 140: entdb.v1.EntDBService.ListTenants:output_type -> entdb.v1.ListTenantsResponse
-	46,  // 141: entdb.v1.EntDBService.ListMailboxUsers:output_type -> entdb.v1.ListMailboxUsersResponse
-	50,  // 142: entdb.v1.EntDBService.WaitForOffset:output_type -> entdb.v1.WaitForOffsetResponse
-	52,  // 143: entdb.v1.EntDBService.GetConnectedNodes:output_type -> entdb.v1.GetConnectedNodesResponse
-	54,  // 144: entdb.v1.EntDBService.ShareNode:output_type -> entdb.v1.ShareNodeResponse
-	56,  // 145: entdb.v1.EntDBService.RevokeAccess:output_type -> entdb.v1.RevokeAccessResponse
-	58,  // 146: entdb.v1.EntDBService.ListSharedWithMe:output_type -> entdb.v1.ListSharedWithMeResponse
-	60,  // 147: entdb.v1.EntDBService.AddGroupMember:output_type -> entdb.v1.GroupMemberResponse
-	60,  // 148: entdb.v1.EntDBService.RemoveGroupMember:output_type -> entdb.v1.GroupMemberResponse
-	62,  // 149: entdb.v1.EntDBService.TransferOwnership:output_type -> entdb.v1.TransferOwnershipResponse
-	65,  // 150: entdb.v1.EntDBService.CreateUser:output_type -> entdb.v1.CreateUserResponse
-	67,  // 151: entdb.v1.EntDBService.GetUser:output_type -> entdb.v1.GetUserResponse
-	69,  // 152: entdb.v1.EntDBService.UpdateUser:output_type -> entdb.v1.UpdateUserResponse
-	71,  // 153: entdb.v1.EntDBService.ListUsers:output_type -> entdb.v1.ListUsersResponse
-	74,  // 154: entdb.v1.EntDBService.CreateTenant:output_type -> entdb.v1.CreateTenantResponse
-	76,  // 155: entdb.v1.EntDBService.GetTenant:output_type -> entdb.v1.GetTenantResponse
-	78,  // 156: entdb.v1.EntDBService.ArchiveTenant:output_type -> entdb.v1.ArchiveTenantResponse
-	81,  // 157: entdb.v1.EntDBService.AddTenantMember:output_type -> entdb.v1.TenantMemberResponse
-	81,  // 158: entdb.v1.EntDBService.RemoveTenantMember:output_type -> entdb.v1.TenantMemberResponse
-	83,  // 159: entdb.v1.EntDBService.GetTenantMembers:output_type -> entdb.v1.GetTenantMembersResponse
-	85,  // 160: entdb.v1.EntDBService.GetUserTenants:output_type -> entdb.v1.GetUserTenantsResponse
-	87,  // 161: entdb.v1.EntDBService.ChangeMemberRole:output_type -> entdb.v1.ChangeMemberRoleResponse
-	89,  // 162: entdb.v1.EntDBService.TransferUserContent:output_type -> entdb.v1.TransferUserContentResponse
-	91,  // 163: entdb.v1.EntDBService.DelegateAccess:output_type -> entdb.v1.DelegateAccessResponse
-	93,  // 164: entdb.v1.EntDBService.SetLegalHold:output_type -> entdb.v1.LegalHoldResponse
-	95,  // 165: entdb.v1.EntDBService.RevokeAllUserAccess:output_type -> entdb.v1.RevokeAllUserAccessResponse
-	97,  // 166: entdb.v1.EntDBService.DeleteUser:output_type -> entdb.v1.DeleteUserResponse
-	99,  // 167: entdb.v1.EntDBService.ExportUserData:output_type -> entdb.v1.ExportUserDataResponse
-	101, // 168: entdb.v1.EntDBService.FreezeUser:output_type -> entdb.v1.FreezeUserResponse
-	103, // 169: entdb.v1.EntDBService.CancelUserDeletion:output_type -> entdb.v1.CancelUserDeletionResponse
-	105, // 170: entdb.v1.EntDBService.GetTenantQuota:output_type -> entdb.v1.GetTenantQuotaResponse
-	107, // 171: entdb.v1.EntDBService.GetNodeByKey:output_type -> entdb.v1.GetNodeByKeyResponse
-	109, // 172: entdb.v1.EntDBService.SearchNodes:output_type -> entdb.v1.SearchNodesResponse
-	129, // [129:173] is the sub-list for method output_type
-	85,  // [85:129] is the sub-list for method input_type
-	85,  // [85:85] is the sub-list for extension type_name
-	85,  // [85:85] is the sub-list for extension extendee
-	0,   // [0:85] is the sub-list for field type_name
+	8,   // 17: entdb.v1.UpdateNodePrecondition.typed_equals:type_name -> entdb.v1.EntValue
+	48,  // 18: entdb.v1.DeleteWhereOp.where:type_name -> entdb.v1.FieldFilter
+	16,  // 19: entdb.v1.CreateEdgeOp.from:type_name -> entdb.v1.NodeRef
+	16,  // 20: entdb.v1.CreateEdgeOp.to:type_name -> entdb.v1.NodeRef
+	117, // 21: entdb.v1.CreateEdgeOp.props:type_name -> google.protobuf.Struct
+	112, // 22: entdb.v1.CreateEdgeOp.typed_props:type_name -> entdb.v1.CreateEdgeOp.TypedPropsEntry
+	16,  // 23: entdb.v1.DeleteEdgeOp.from:type_name -> entdb.v1.NodeRef
+	16,  // 24: entdb.v1.DeleteEdgeOp.to:type_name -> entdb.v1.NodeRef
+	17,  // 25: entdb.v1.NodeRef.typed:type_name -> entdb.v1.TypedNodeRef
+	5,   // 26: entdb.v1.ExecuteAtomicResponse.receipt:type_name -> entdb.v1.Receipt
+	1,   // 27: entdb.v1.ExecuteAtomicResponse.applied_status:type_name -> entdb.v1.ReceiptStatus
+	19,  // 28: entdb.v1.ExecuteAtomicResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
+	116, // 29: entdb.v1.PreconditionFailure.expected:type_name -> google.protobuf.Value
+	116, // 30: entdb.v1.PreconditionFailure.observed:type_name -> google.protobuf.Value
+	4,   // 31: entdb.v1.GetReceiptStatusRequest.context:type_name -> entdb.v1.RequestContext
+	1,   // 32: entdb.v1.GetReceiptStatusResponse.status:type_name -> entdb.v1.ReceiptStatus
+	19,  // 33: entdb.v1.GetReceiptStatusResponse.precondition_failure:type_name -> entdb.v1.PreconditionFailure
+	4,   // 34: entdb.v1.GetNodeRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 35: entdb.v1.GetNodeResponse.node:type_name -> entdb.v1.Node
+	4,   // 36: entdb.v1.GetNodesRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 37: entdb.v1.GetNodesResponse.nodes:type_name -> entdb.v1.Node
+	4,   // 38: entdb.v1.QueryNodesRequest.context:type_name -> entdb.v1.RequestContext
+	48,  // 39: entdb.v1.QueryNodesRequest.filters:type_name -> entdb.v1.FieldFilter
+	28,  // 40: entdb.v1.QueryNodesResponse.nodes:type_name -> entdb.v1.Node
+	117, // 41: entdb.v1.Node.payload:type_name -> google.protobuf.Struct
+	113, // 42: entdb.v1.Node.typed_payload:type_name -> entdb.v1.Node.TypedPayloadEntry
+	47,  // 43: entdb.v1.Node.acl:type_name -> entdb.v1.AclEntry
+	4,   // 44: entdb.v1.GetEdgesRequest.context:type_name -> entdb.v1.RequestContext
+	31,  // 45: entdb.v1.GetEdgesResponse.edges:type_name -> entdb.v1.Edge
+	117, // 46: entdb.v1.Edge.props:type_name -> google.protobuf.Struct
+	114, // 47: entdb.v1.Edge.typed_props:type_name -> entdb.v1.Edge.TypedPropsEntry
+	4,   // 48: entdb.v1.SearchMailboxRequest.context:type_name -> entdb.v1.RequestContext
+	34,  // 49: entdb.v1.SearchMailboxResponse.results:type_name -> entdb.v1.MailboxSearchResult
+	37,  // 50: entdb.v1.MailboxSearchResult.item:type_name -> entdb.v1.MailboxItem
+	4,   // 51: entdb.v1.GetMailboxRequest.context:type_name -> entdb.v1.RequestContext
+	37,  // 52: entdb.v1.GetMailboxResponse.items:type_name -> entdb.v1.MailboxItem
+	117, // 53: entdb.v1.MailboxItem.state:type_name -> google.protobuf.Struct
+	117, // 54: entdb.v1.MailboxItem.metadata:type_name -> google.protobuf.Struct
+	115, // 55: entdb.v1.HealthResponse.components:type_name -> entdb.v1.HealthResponse.ComponentsEntry
+	117, // 56: entdb.v1.GetSchemaResponse.schema:type_name -> google.protobuf.Struct
+	44,  // 57: entdb.v1.ListTenantsResponse.tenants:type_name -> entdb.v1.TenantInfo
+	2,   // 58: entdb.v1.AclEntry.core_caps:type_name -> entdb.v1.CoreCapability
+	3,   // 59: entdb.v1.FieldFilter.op:type_name -> entdb.v1.FilterOp
+	116, // 60: entdb.v1.FieldFilter.value:type_name -> google.protobuf.Value
+	8,   // 61: entdb.v1.FieldFilter.typed_value:type_name -> entdb.v1.EntValue
+	4,   // 62: entdb.v1.WaitForOffsetRequest.context:type_name -> entdb.v1.RequestContext
+	4,   // 63: entdb.v1.GetConnectedNodesRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 64: entdb.v1.GetConnectedNodesResponse.nodes:type_name -> entdb.v1.Node
+	4,   // 65: entdb.v1.ShareNodeRequest.context:type_name -> entdb.v1.RequestContext
+	2,   // 66: entdb.v1.ShareNodeRequest.core_caps:type_name -> entdb.v1.CoreCapability
+	4,   // 67: entdb.v1.RevokeAccessRequest.context:type_name -> entdb.v1.RequestContext
+	4,   // 68: entdb.v1.ListSharedWithMeRequest.context:type_name -> entdb.v1.RequestContext
+	28,  // 69: entdb.v1.ListSharedWithMeResponse.nodes:type_name -> entdb.v1.Node
+	4,   // 70: entdb.v1.GroupMemberRequest.context:type_name -> entdb.v1.RequestContext
+	4,   // 71: entdb.v1.TransferOwnershipRequest.context:type_name -> entdb.v1.RequestContext
+	63,  // 72: entdb.v1.CreateUserResponse.user:type_name -> entdb.v1.UserInfo
+	63,  // 73: entdb.v1.GetUserResponse.user:type_name -> entdb.v1.UserInfo
+	63,  // 74: entdb.v1.ListUsersResponse.users:type_name -> entdb.v1.UserInfo
+	72,  // 75: entdb.v1.CreateTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
+	72,  // 76: entdb.v1.GetTenantResponse.tenant:type_name -> entdb.v1.TenantDetail
+	79,  // 77: entdb.v1.GetTenantMembersResponse.members:type_name -> entdb.v1.TenantMemberInfo
+	79,  // 78: entdb.v1.GetUserTenantsResponse.memberships:type_name -> entdb.v1.TenantMemberInfo
+	116, // 79: entdb.v1.GetNodeByKeyRequest.value:type_name -> google.protobuf.Value
+	8,   // 80: entdb.v1.GetNodeByKeyRequest.typed_value:type_name -> entdb.v1.EntValue
+	28,  // 81: entdb.v1.GetNodeByKeyResponse.node:type_name -> entdb.v1.Node
+	28,  // 82: entdb.v1.SearchNodesResponse.nodes:type_name -> entdb.v1.Node
+	8,   // 83: entdb.v1.CreateNodeOp.TypedDataEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 84: entdb.v1.UpdateNodeOp.TypedPatchEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 85: entdb.v1.CreateEdgeOp.TypedPropsEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 86: entdb.v1.Node.TypedPayloadEntry.value:type_name -> entdb.v1.EntValue
+	8,   // 87: entdb.v1.Edge.TypedPropsEntry.value:type_name -> entdb.v1.EntValue
+	6,   // 88: entdb.v1.EntDBService.ExecuteAtomic:input_type -> entdb.v1.ExecuteAtomicRequest
+	20,  // 89: entdb.v1.EntDBService.GetReceiptStatus:input_type -> entdb.v1.GetReceiptStatusRequest
+	22,  // 90: entdb.v1.EntDBService.GetNode:input_type -> entdb.v1.GetNodeRequest
+	24,  // 91: entdb.v1.EntDBService.GetNodes:input_type -> entdb.v1.GetNodesRequest
+	26,  // 92: entdb.v1.EntDBService.QueryNodes:input_type -> entdb.v1.QueryNodesRequest
+	29,  // 93: entdb.v1.EntDBService.GetEdgesFrom:input_type -> entdb.v1.GetEdgesRequest
+	29,  // 94: entdb.v1.EntDBService.GetEdgesTo:input_type -> entdb.v1.GetEdgesRequest
+	32,  // 95: entdb.v1.EntDBService.SearchMailbox:input_type -> entdb.v1.SearchMailboxRequest
+	35,  // 96: entdb.v1.EntDBService.GetMailbox:input_type -> entdb.v1.GetMailboxRequest
+	38,  // 97: entdb.v1.EntDBService.Health:input_type -> entdb.v1.HealthRequest
+	40,  // 98: entdb.v1.EntDBService.GetSchema:input_type -> entdb.v1.GetSchemaRequest
+	42,  // 99: entdb.v1.EntDBService.ListTenants:input_type -> entdb.v1.ListTenantsRequest
+	45,  // 100: entdb.v1.EntDBService.ListMailboxUsers:input_type -> entdb.v1.ListMailboxUsersRequest
+	49,  // 101: entdb.v1.EntDBService.WaitForOffset:input_type -> entdb.v1.WaitForOffsetRequest
+	51,  // 102: entdb.v1.EntDBService.GetConnectedNodes:input_type -> entdb.v1.GetConnectedNodesRequest
+	53,  // 103: entdb.v1.EntDBService.ShareNode:input_type -> entdb.v1.ShareNodeRequest
+	55,  // 104: entdb.v1.EntDBService.RevokeAccess:input_type -> entdb.v1.RevokeAccessRequest
+	57,  // 105: entdb.v1.EntDBService.ListSharedWithMe:input_type -> entdb.v1.ListSharedWithMeRequest
+	59,  // 106: entdb.v1.EntDBService.AddGroupMember:input_type -> entdb.v1.GroupMemberRequest
+	59,  // 107: entdb.v1.EntDBService.RemoveGroupMember:input_type -> entdb.v1.GroupMemberRequest
+	61,  // 108: entdb.v1.EntDBService.TransferOwnership:input_type -> entdb.v1.TransferOwnershipRequest
+	64,  // 109: entdb.v1.EntDBService.CreateUser:input_type -> entdb.v1.CreateUserRequest
+	66,  // 110: entdb.v1.EntDBService.GetUser:input_type -> entdb.v1.GetUserRequest
+	68,  // 111: entdb.v1.EntDBService.UpdateUser:input_type -> entdb.v1.UpdateUserRequest
+	70,  // 112: entdb.v1.EntDBService.ListUsers:input_type -> entdb.v1.ListUsersRequest
+	73,  // 113: entdb.v1.EntDBService.CreateTenant:input_type -> entdb.v1.CreateTenantRequest
+	75,  // 114: entdb.v1.EntDBService.GetTenant:input_type -> entdb.v1.GetTenantRequest
+	77,  // 115: entdb.v1.EntDBService.ArchiveTenant:input_type -> entdb.v1.ArchiveTenantRequest
+	80,  // 116: entdb.v1.EntDBService.AddTenantMember:input_type -> entdb.v1.TenantMemberRequest
+	80,  // 117: entdb.v1.EntDBService.RemoveTenantMember:input_type -> entdb.v1.TenantMemberRequest
+	82,  // 118: entdb.v1.EntDBService.GetTenantMembers:input_type -> entdb.v1.GetTenantMembersRequest
+	84,  // 119: entdb.v1.EntDBService.GetUserTenants:input_type -> entdb.v1.GetUserTenantsRequest
+	86,  // 120: entdb.v1.EntDBService.ChangeMemberRole:input_type -> entdb.v1.ChangeMemberRoleRequest
+	88,  // 121: entdb.v1.EntDBService.TransferUserContent:input_type -> entdb.v1.TransferUserContentRequest
+	90,  // 122: entdb.v1.EntDBService.DelegateAccess:input_type -> entdb.v1.DelegateAccessRequest
+	92,  // 123: entdb.v1.EntDBService.SetLegalHold:input_type -> entdb.v1.LegalHoldRequest
+	94,  // 124: entdb.v1.EntDBService.RevokeAllUserAccess:input_type -> entdb.v1.RevokeAllUserAccessRequest
+	96,  // 125: entdb.v1.EntDBService.DeleteUser:input_type -> entdb.v1.DeleteUserRequest
+	98,  // 126: entdb.v1.EntDBService.ExportUserData:input_type -> entdb.v1.ExportUserDataRequest
+	100, // 127: entdb.v1.EntDBService.FreezeUser:input_type -> entdb.v1.FreezeUserRequest
+	102, // 128: entdb.v1.EntDBService.CancelUserDeletion:input_type -> entdb.v1.CancelUserDeletionRequest
+	104, // 129: entdb.v1.EntDBService.GetTenantQuota:input_type -> entdb.v1.GetTenantQuotaRequest
+	106, // 130: entdb.v1.EntDBService.GetNodeByKey:input_type -> entdb.v1.GetNodeByKeyRequest
+	108, // 131: entdb.v1.EntDBService.SearchNodes:input_type -> entdb.v1.SearchNodesRequest
+	18,  // 132: entdb.v1.EntDBService.ExecuteAtomic:output_type -> entdb.v1.ExecuteAtomicResponse
+	21,  // 133: entdb.v1.EntDBService.GetReceiptStatus:output_type -> entdb.v1.GetReceiptStatusResponse
+	23,  // 134: entdb.v1.EntDBService.GetNode:output_type -> entdb.v1.GetNodeResponse
+	25,  // 135: entdb.v1.EntDBService.GetNodes:output_type -> entdb.v1.GetNodesResponse
+	27,  // 136: entdb.v1.EntDBService.QueryNodes:output_type -> entdb.v1.QueryNodesResponse
+	30,  // 137: entdb.v1.EntDBService.GetEdgesFrom:output_type -> entdb.v1.GetEdgesResponse
+	30,  // 138: entdb.v1.EntDBService.GetEdgesTo:output_type -> entdb.v1.GetEdgesResponse
+	33,  // 139: entdb.v1.EntDBService.SearchMailbox:output_type -> entdb.v1.SearchMailboxResponse
+	36,  // 140: entdb.v1.EntDBService.GetMailbox:output_type -> entdb.v1.GetMailboxResponse
+	39,  // 141: entdb.v1.EntDBService.Health:output_type -> entdb.v1.HealthResponse
+	41,  // 142: entdb.v1.EntDBService.GetSchema:output_type -> entdb.v1.GetSchemaResponse
+	43,  // 143: entdb.v1.EntDBService.ListTenants:output_type -> entdb.v1.ListTenantsResponse
+	46,  // 144: entdb.v1.EntDBService.ListMailboxUsers:output_type -> entdb.v1.ListMailboxUsersResponse
+	50,  // 145: entdb.v1.EntDBService.WaitForOffset:output_type -> entdb.v1.WaitForOffsetResponse
+	52,  // 146: entdb.v1.EntDBService.GetConnectedNodes:output_type -> entdb.v1.GetConnectedNodesResponse
+	54,  // 147: entdb.v1.EntDBService.ShareNode:output_type -> entdb.v1.ShareNodeResponse
+	56,  // 148: entdb.v1.EntDBService.RevokeAccess:output_type -> entdb.v1.RevokeAccessResponse
+	58,  // 149: entdb.v1.EntDBService.ListSharedWithMe:output_type -> entdb.v1.ListSharedWithMeResponse
+	60,  // 150: entdb.v1.EntDBService.AddGroupMember:output_type -> entdb.v1.GroupMemberResponse
+	60,  // 151: entdb.v1.EntDBService.RemoveGroupMember:output_type -> entdb.v1.GroupMemberResponse
+	62,  // 152: entdb.v1.EntDBService.TransferOwnership:output_type -> entdb.v1.TransferOwnershipResponse
+	65,  // 153: entdb.v1.EntDBService.CreateUser:output_type -> entdb.v1.CreateUserResponse
+	67,  // 154: entdb.v1.EntDBService.GetUser:output_type -> entdb.v1.GetUserResponse
+	69,  // 155: entdb.v1.EntDBService.UpdateUser:output_type -> entdb.v1.UpdateUserResponse
+	71,  // 156: entdb.v1.EntDBService.ListUsers:output_type -> entdb.v1.ListUsersResponse
+	74,  // 157: entdb.v1.EntDBService.CreateTenant:output_type -> entdb.v1.CreateTenantResponse
+	76,  // 158: entdb.v1.EntDBService.GetTenant:output_type -> entdb.v1.GetTenantResponse
+	78,  // 159: entdb.v1.EntDBService.ArchiveTenant:output_type -> entdb.v1.ArchiveTenantResponse
+	81,  // 160: entdb.v1.EntDBService.AddTenantMember:output_type -> entdb.v1.TenantMemberResponse
+	81,  // 161: entdb.v1.EntDBService.RemoveTenantMember:output_type -> entdb.v1.TenantMemberResponse
+	83,  // 162: entdb.v1.EntDBService.GetTenantMembers:output_type -> entdb.v1.GetTenantMembersResponse
+	85,  // 163: entdb.v1.EntDBService.GetUserTenants:output_type -> entdb.v1.GetUserTenantsResponse
+	87,  // 164: entdb.v1.EntDBService.ChangeMemberRole:output_type -> entdb.v1.ChangeMemberRoleResponse
+	89,  // 165: entdb.v1.EntDBService.TransferUserContent:output_type -> entdb.v1.TransferUserContentResponse
+	91,  // 166: entdb.v1.EntDBService.DelegateAccess:output_type -> entdb.v1.DelegateAccessResponse
+	93,  // 167: entdb.v1.EntDBService.SetLegalHold:output_type -> entdb.v1.LegalHoldResponse
+	95,  // 168: entdb.v1.EntDBService.RevokeAllUserAccess:output_type -> entdb.v1.RevokeAllUserAccessResponse
+	97,  // 169: entdb.v1.EntDBService.DeleteUser:output_type -> entdb.v1.DeleteUserResponse
+	99,  // 170: entdb.v1.EntDBService.ExportUserData:output_type -> entdb.v1.ExportUserDataResponse
+	101, // 171: entdb.v1.EntDBService.FreezeUser:output_type -> entdb.v1.FreezeUserResponse
+	103, // 172: entdb.v1.EntDBService.CancelUserDeletion:output_type -> entdb.v1.CancelUserDeletionResponse
+	105, // 173: entdb.v1.EntDBService.GetTenantQuota:output_type -> entdb.v1.GetTenantQuotaResponse
+	107, // 174: entdb.v1.EntDBService.GetNodeByKey:output_type -> entdb.v1.GetNodeByKeyResponse
+	109, // 175: entdb.v1.EntDBService.SearchNodes:output_type -> entdb.v1.SearchNodesResponse
+	132, // [132:176] is the sub-list for method output_type
+	88,  // [88:132] is the sub-list for method input_type
+	88,  // [88:88] is the sub-list for extension type_name
+	88,  // [88:88] is the sub-list for extension extendee
+	0,   // [0:88] is the sub-list for field type_name
 }
 
 func init() { file_entdb_proto_init() }

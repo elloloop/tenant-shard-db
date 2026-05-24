@@ -163,11 +163,10 @@ func Get[T proto.Message](ctx context.Context, s *Scope, nodeID string) (T, erro
 // compile time: passing an int where the key declares
 // UniqueKey[string] does not type-check.
 func GetByKey[T any](ctx context.Context, s *Scope, key UniqueKey[T], value T) (*Node, error) {
-	pv, err := toProtoValue(value)
-	if err != nil {
-		return nil, fmt.Errorf("entdb: GetByKey: %w", err)
-	}
-	return s.client.transport.GetNodeByKey(ctx, s.tenantID, s.actor.String(), key.TypeID, key.FieldID, pv)
+	// The transport builds both the legacy Struct value and the typed
+	// EntValue (ADR-028 / #572) from the raw value, so int64 keys are
+	// lossless. Passing the raw value keeps that conversion in one place.
+	return s.client.transport.GetNodeByKey(ctx, s.tenantID, s.actor.String(), key.TypeID, key.FieldID, value)
 }
 
 // QueryWhere is the typed counterpart of [Query]: callers pass a

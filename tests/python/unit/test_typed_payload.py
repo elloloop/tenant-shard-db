@@ -7,7 +7,12 @@ from __future__ import annotations
 
 import pytest
 
-from entdb_sdk._generated import CreateNodeOp
+from entdb_sdk._generated import (
+    CreateNodeOp,
+    FieldFilter,
+    GetNodeByKeyRequest,
+    UpdateNodePrecondition,
+)
 from entdb_sdk._grpc_client import (
     _entvalue_to_python,
     _populate_typed,
@@ -51,3 +56,31 @@ def test_non_digit_keys_skipped() -> None:
     _populate_typed(op.typed_data, {"email": "x", "5": 9})
     out = _typed_to_dict(op.typed_data)
     assert out == {"5": 9}
+
+
+# ── #572: scalar-value surfaces (filter / unique-key / CAS) ──────────
+# The legacy google.protobuf.Struct Value carries numbers as float64,
+# so a big-int filter / unique-key / CAS predicate would silently
+# mismatch the stored int64. These pin the typed-scalar wire encode the
+# SDK now dual-writes alongside the legacy Value.
+
+
+@pytest.mark.parametrize("want", INT64_SPECTRUM)
+def test_field_filter_typed_value_int64_roundtrip(want: int) -> None:
+    ff = FieldFilter(field="price_cents", typed_value=_value_to_entvalue(want))
+    got = _entvalue_to_python(ff.typed_value)
+    assert isinstance(got, int) and got == want
+
+
+@pytest.mark.parametrize("want", INT64_SPECTRUM)
+def test_get_node_by_key_typed_value_int64_roundtrip(want: int) -> None:
+    req = GetNodeByKeyRequest(field_id=1, typed_value=_value_to_entvalue(want))
+    got = _entvalue_to_python(req.typed_value)
+    assert isinstance(got, int) and got == want
+
+
+@pytest.mark.parametrize("want", INT64_SPECTRUM)
+def test_precondition_typed_equals_int64_roundtrip(want: int) -> None:
+    pre = UpdateNodePrecondition(field_id=3, typed_equals=_value_to_entvalue(want))
+    got = _entvalue_to_python(pre.typed_equals)
+    assert isinstance(got, int) and got == want

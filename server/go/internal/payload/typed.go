@@ -44,6 +44,14 @@ func TypedToPayload(m map[uint32]*pb.EntValue) (map[uint32]any, error) {
 	return out, nil
 }
 
+// EntValueToGo converts a single wire EntValue (ADR-028) to its Go value.
+// Used by the scalar wire-value fields — FieldFilter.typed_value,
+// GetNodeByKeyRequest.typed_value, UpdateNodePrecondition.typed_equals
+// (#572) — so int64 filters / unique-key lookups / CAS stay lossless.
+func EntValueToGo(v *pb.EntValue) (any, error) {
+	return entValueToGo(v)
+}
+
 func entValueToGo(v *pb.EntValue) (any, error) {
 	if v == nil {
 		return nil, nil

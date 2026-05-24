@@ -106,7 +106,18 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	// 4. Unwrap the typed Value to a native scalar. structpb.AsInterface
 	//    returns the same shape as a JSON decode (string/float64/
 	//    bool/nil/[]any/map[string]any).
-	rawValue := unwrapStructpbValue(req.GetValue())
+	var rawValue any
+	if tv := req.GetTypedValue(); tv != nil {
+		// Prefer the typed unique-key value (ADR-028 / #572) so a large
+		// int64 key matches exactly instead of corrupting via a double.
+		gv, terr := payload.EntValueToGo(tv)
+		if terr != nil {
+			return nil, errs.Errorf(codes.InvalidArgument, "GetNodeByKey: value: %v", terr)
+		}
+		rawValue = gv
+	} else {
+		rawValue = unwrapStructpbValue(req.GetValue())
+	}
 
 	// 5. Index seek. (nil, nil) → in-band found=false.
 	node, err := s.store.GetNodeByKey(

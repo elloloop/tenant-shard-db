@@ -240,7 +240,18 @@ func (s *Server) fieldFiltersToStoreFilters(typeName string, filters []*pb.Field
 			continue
 		}
 		field := f.GetField()
-		raw := f.GetValue().AsInterface()
+		// Prefer the typed filter value (ADR-028 / #572) so an int64 >2^53
+		// filter binds the exact value; fall back to the Struct value.
+		var raw any
+		if tv := f.GetTypedValue(); tv != nil {
+			gv, terr := payload.EntValueToGo(tv)
+			if terr != nil {
+				return nil, errs.Errorf(codes.InvalidArgument, "filter %q: %v", field, terr)
+			}
+			raw = gv
+		} else {
+			raw = f.GetValue().AsInterface()
+		}
 
 		fid, ok := nameToID[field]
 		if !ok {

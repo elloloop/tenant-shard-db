@@ -194,7 +194,7 @@ func TestSingleShapeFlow(t *testing.T) {
 	if transport.lastGetByKeyFieldID != 1 {
 		t.Errorf("lastGetByKeyFieldID = %d, want 1", transport.lastGetByKeyFieldID)
 	}
-	if transport.lastGetByKeyValue == nil || transport.lastGetByKeyValue.GetStringValue() != "WIDGET-1" {
+	if transport.lastGetByKeyValue != "WIDGET-1" {
 		t.Errorf("lastGetByKeyValue = %v, want string WIDGET-1", transport.lastGetByKeyValue)
 	}
 
