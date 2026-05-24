@@ -260,8 +260,19 @@ class TestRetryLoop:
         # (default 30s) trip on the first backoff decision, so even
         # though max_retries=50 the loop bails after a single retry
         # decision rather than running the full schedule.
-        ticks = iter([0.0, 100.0, 200.0, 300.0, 400.0])
-        monkeypatch.setattr("entdb_sdk._grpc_client.time.monotonic", lambda: next(ticks))
+        # Successive ticks, but hold the last value once exhausted so an
+        # incidental monotonic() call during teardown (or under xdist) does
+        # NOT raise StopIteration -> "generator raised StopIteration"
+        # (RuntimeError, PEP 479), which intermittently flaked the suite.
+        ticks = [0.0, 100.0, 200.0, 300.0, 400.0]
+        calls = {"n": 0}
+
+        def fake_monotonic():
+            i = min(calls["n"], len(ticks) - 1)
+            calls["n"] += 1
+            return ticks[i]
+
+        monkeypatch.setattr("entdb_sdk._grpc_client.time.monotonic", fake_monotonic)
 
         async def fake_sleep(_d):
             raise AssertionError("budget should trip before sleeping")
