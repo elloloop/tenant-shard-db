@@ -1604,46 +1604,30 @@ class GrpcClient:
         actor: str,
         node_id: str,
         edge_type_id: int | None = None,
-        limit: int = 100,
+        limit: int = 0,
         *,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[Edge], bool]:
         """Get outgoing edges from a node.
 
-        Args:
-            tenant_id: Tenant identifier
-            actor: Actor making request
-            node_id: Source node ID
-            edge_type_id: Optional edge type filter
-            limit: Maximum edges to return
-            trace_id: Optional trace ID for distributed tracing
-            timeout: Per-call timeout in seconds
+        Follows the ADR-029 keyset cursor to return the COMPLETE set by
+        default (``limit <= 0``); a positive ``limit`` caps the total.
 
         Returns:
-            Tuple of (edges, has_more)
+            Tuple of (edges, has_more). has_more is True only when a
+            positive ``limit`` capped the result.
         """
-        stub = self._ensure_connected()
-        metadata = self._build_metadata()
-
-        request = GetEdgesRequest(
-            context=self._make_context(tenant_id, actor, trace_id),
-            node_id=node_id,
-            edge_type_id=edge_type_id or 0,
-            limit=limit,
+        return await self._get_edges_paged(
+            tenant_id,
+            actor,
+            node_id,
+            edge_type_id,
+            limit,
+            outgoing=True,
+            trace_id=trace_id,
+            timeout=timeout,
         )
-
-        response = await self._retry(
-            stub.GetEdgesFrom,
-            request,
-            timeout=timeout or _DEFAULT_TIMEOUT,
-            metadata=metadata,
-            tenant_id=tenant_id,
-        )
-
-        edges = [_edge_from_proto(e, self._registry) for e in response.edges]
-
-        return edges, response.has_more
 
     async def get_edges_to(
         self,
@@ -1651,46 +1635,80 @@ class GrpcClient:
         actor: str,
         node_id: str,
         edge_type_id: int | None = None,
-        limit: int = 100,
+        limit: int = 0,
         *,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[Edge], bool]:
         """Get incoming edges to a node.
 
-        Args:
-            tenant_id: Tenant identifier
-            actor: Actor making request
-            node_id: Target node ID
-            edge_type_id: Optional edge type filter
-            limit: Maximum edges to return
-            trace_id: Optional trace ID for distributed tracing
-            timeout: Per-call timeout in seconds
+        Follows the ADR-029 keyset cursor to return the COMPLETE set by
+        default (``limit <= 0``); a positive ``limit`` caps the total.
 
         Returns:
-            Tuple of (edges, has_more)
+            Tuple of (edges, has_more).
         """
+        return await self._get_edges_paged(
+            tenant_id,
+            actor,
+            node_id,
+            edge_type_id,
+            limit,
+            outgoing=False,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+
+    async def _get_edges_paged(
+        self,
+        tenant_id: str,
+        actor: str,
+        node_id: str,
+        edge_type_id: int | None,
+        limit: int,
+        *,
+        outgoing: bool,
+        trace_id: str,
+        timeout: float | None,
+    ) -> tuple[list[Edge], bool]:
+        """Auto-follow the ADR-029 edge keyset cursor (shared by
+        get_edges_from / get_edges_to). Loops next_page_token to
+        exhaustion, or until `limit` rows when a positive cap is given."""
         stub = self._ensure_connected()
         metadata = self._build_metadata()
+        rpc = stub.GetEdgesFrom if outgoing else stub.GetEdgesTo
 
-        request = GetEdgesRequest(
-            context=self._make_context(tenant_id, actor, trace_id),
-            node_id=node_id,
-            edge_type_id=edge_type_id or 0,
-            limit=limit,
-        )
-
-        response = await self._retry(
-            stub.GetEdgesTo,
-            request,
-            timeout=timeout or _DEFAULT_TIMEOUT,
-            metadata=metadata,
-            tenant_id=tenant_id,
-        )
-
-        edges = [_edge_from_proto(e, self._registry) for e in response.edges]
-
-        return edges, response.has_more
+        edges: list[Edge] = []
+        page_token = ""
+        capped = limit and limit > 0
+        has_more = False
+        while True:
+            page_size = _MAX_PAGE_SIZE
+            if capped:
+                page_size = min(_MAX_PAGE_SIZE, limit - len(edges))
+            response = await self._retry(
+                rpc,
+                GetEdgesRequest(
+                    context=self._make_context(tenant_id, actor, trace_id),
+                    node_id=node_id,
+                    edge_type_id=edge_type_id or 0,
+                    page_size=page_size,
+                    page_token=page_token,
+                ),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+                tenant_id=tenant_id,
+            )
+            for e in response.edges:
+                edges.append(_edge_from_proto(e, self._registry))
+            page_token = response.next_page_token
+            if capped and len(edges) >= limit:
+                has_more = bool(page_token) or len(edges) > limit
+                edges = edges[:limit]
+                break
+            if not page_token:
+                break
+        return edges, has_more
 
     async def search_mailbox(
         self,

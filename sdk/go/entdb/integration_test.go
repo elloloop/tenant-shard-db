@@ -136,6 +136,22 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
+// eventually polls fn until it returns true or the deadline fires. Reads
+// that lack a read-after-write fence (edges; and GetNodeByKey under
+// applier backlog) are eventually consistent against the async applier,
+// so the integration assertions poll rather than racing the apply loop.
+func eventually(t *testing.T, what string, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("condition never held within 5s: %s", what)
+}
+
 // TestIntegration_TypedInt64RoundTrip proves an int64 above 2^53 survives
 // the full SDK→server→SDK round trip losslessly (ADR-028 / #563 / #572) —
 // the corruption fakes could never have caught.
@@ -209,6 +225,41 @@ func TestIntegration_QueryNodesAutoFollowsRealCursor(t *testing.T) {
 	}
 }
 
+// TestIntegration_GetEdgesFromAutoFollowsRealCursor proves the SDK
+// follows the real server's edge keyset cursor (ADR-029 / #580) over a
+// high-fan-out node — previously edge reads truncated at the page default
+// with no cursor.
+func TestIntegration_GetEdgesFromAutoFollowsRealCursor(t *testing.T) {
+	ctx := context.Background()
+	const n = 150 // > the server's 100-row default page
+	ops := make([]Operation, n)
+	for i := 0; i < n; i++ {
+		ops[i] = Operation{
+			Type: OpCreateEdge, EdgeTypeID: 8101, // e2e seed: Purchased edge
+			FromNodeID: "edge-hub", ToNodeID: fmt.Sprintf("edge-dst-%03d", i),
+		}
+	}
+	res, err := itClient.transport.ExecuteAtomic(ctx, itTenant, itActor, "it-edges-seed", ops)
+	if err != nil {
+		t.Fatalf("seed edges: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("seed commit not successful: %+v", res)
+	}
+
+	var count int
+	eventually(t, "all 150 edges visible via auto-follow", func() bool {
+		edges, gerr := itClient.transport.GetEdgesFrom(ctx, itTenant, itActor, "edge-hub", 8101)
+		if gerr != nil {
+			t.Fatalf("GetEdgesFrom: %v", gerr)
+		}
+		count = len(edges)
+		return count == n
+	})
+	// Reaching here means auto-follow returned exactly n across pages with
+	// no truncation; a stuck prefix (e.g. 100) would have failed the poll.
+}
+
 // TestIntegration_GetNodeByKeyRealServer proves the unique-key lookup
 // wire path (#572 typed value) works against the real server.
 func TestIntegration_GetNodeByKeyRealServer(t *testing.T) {
@@ -225,13 +276,13 @@ func TestIntegration_GetNodeByKeyRealServer(t *testing.T) {
 		t.Fatalf("commit not successful: %+v", res)
 	}
 
-	node, err := itClient.transport.GetNodeByKey(ctx, itTenant, itActor, itProductType, 1, "WIDGET-IT")
-	if err != nil {
-		t.Fatalf("GetNodeByKey: %v", err)
-	}
-	if node == nil || node.NodeID != "p-bykey" {
-		t.Fatalf("GetNodeByKey result = %+v, want node p-bykey", node)
-	}
+	eventually(t, "p-bykey visible by unique key", func() bool {
+		node, gerr := itClient.transport.GetNodeByKey(ctx, itTenant, itActor, itProductType, 1, "WIDGET-IT")
+		if gerr != nil {
+			t.Fatalf("GetNodeByKey: %v", gerr)
+		}
+		return node != nil && node.NodeID == "p-bykey"
+	})
 }
 
 // TestIntegration_ZeroValueUpdateRealServer proves a patch carrying an

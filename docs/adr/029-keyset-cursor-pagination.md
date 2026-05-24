@@ -5,10 +5,11 @@ implemented** (#564): keyset cursor with `page_size` / `page_token` →
 `next_page_token`, fingerprint-bound tokens, seek-not-skip continuation.
 The characterization test
 `tests/python/integration/test_query_range.py::test_query_does_not_silently_truncate`
-is now green (un-xfailed). **Remaining (tracked):** SDK helper
-auto-follow (both SDKs together) and the same cursor on `SearchNodes`,
-`GetEdgesFrom`/`GetEdgesTo`, and the `List*` RPCs — rolled out reusing the
-shared `pagetoken`/keyset machinery.
+is now green (un-xfailed). **`GetEdgesFrom`/`GetEdgesTo` implemented** (#580): keyset over
+`(created_at, edge_type_id, peer_node_id)` + both-SDK auto-follow.
+**Remaining (tracked, #580):** `SearchNodes` (FTS rank — special case),
+`ListSharedWithMe`, `ListUsers`, and `GetConnectedNodes` (BFS — may not
+fit keyset) — rolled out reusing the shared `pagetoken`/keyset machinery.
 **Decided:** 2026-05-23
 **Tags:** api, pagination, query, sdk, consistency, read-path
 **Complements:** [ADR-023](023-declarative-query-indexes.md) (declarative

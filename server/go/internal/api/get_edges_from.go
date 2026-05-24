@@ -47,6 +47,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 const grpcMethodGetEdgesFrom = "GetEdgesFrom"
@@ -104,9 +105,37 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 		edgeTypeFilter = &v
 	}
 
-	// Pass limit=0 to the store so it returns the full result set; we
-	// slice + compute has_more here.
-	edges, err := s.store.GetEdgesFrom(ctx, tenantID, req.GetNodeId(), edgeTypeFilter, 0)
+	// Page size: prefer page_size, fall back to the legacy limit, then the
+	// default. Clamp to MaxPageSize (SEC-4 #135).
+	pageSize := int(req.GetPageSize())
+	if pageSize <= 0 {
+		pageSize = int(req.GetLimit())
+	}
+	if pageSize <= 0 {
+		pageSize = defaultEdgesLimit
+	}
+	pageSize = clampPageSize(pageSize)
+
+	// Keyset cursor (ADR-029): page_token is bound to (node_id, outgoing,
+	// edge_type_id) by a fingerprint; mixing it with the deprecated offset
+	// is INVALID_ARGUMENT.
+	fingerprint := edgesFingerprint(req.GetNodeId(), true, req.GetEdgeTypeId())
+	var cursor *store.EdgeCursor
+	if tok := req.GetPageToken(); tok != "" {
+		if req.GetOffset() != 0 {
+			outcome = "error"
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"page_token and the deprecated offset are mutually exclusive; use one")
+		}
+		c, derr := decodeEdgePageToken(tok, fingerprint)
+		if derr != nil {
+			outcome = "error"
+			return nil, derr
+		}
+		cursor = &store.EdgeCursor{CreatedAt: c.CreatedAt, EdgeTypeID: c.EdgeTypeID, PeerNodeID: c.PeerNodeID}
+	}
+
+	edges, err := s.store.GetEdgesFromPaged(ctx, tenantID, req.GetNodeId(), edgeTypeFilter, pageSize, cursor)
 	if err != nil {
 		// Surface genuine post-open faults (#573): the tenant is already
 		// lazy-opened above, so this is a real IO/corruption error — not
@@ -119,23 +148,22 @@ func (s *Server) GetEdgesFrom(ctx context.Context, req *pb.GetEdgesRequest) (*pb
 		return nil, errs.Internal(ctx, "GetEdgesFrom: store", err)
 	}
 
-	limit := int(req.GetLimit())
-	if limit <= 0 {
-		limit = defaultEdgesLimit
-	}
-	// SEC-4 (#135): cap oversized page requests so the response slice
-	// can't be inflated past MaxPageSize protos.
-	limit = clampPageSize(limit)
-	hasMore := len(edges) > limit
-	if hasMore {
-		edges = edges[:limit]
+	// A full page means more may exist — mint a cursor from the last edge
+	// so a response that omits edges always carries a token (ADR-029).
+	var nextPageToken string
+	if len(edges) == pageSize && pageSize > 0 {
+		ec := store.EdgeCursorFrom(edges[len(edges)-1], true)
+		nextPageToken = encodeEdgePageToken(edgePageCursor{
+			Fingerprint: fingerprint, CreatedAt: ec.CreatedAt,
+			EdgeTypeID: ec.EdgeTypeID, PeerNodeID: ec.PeerNodeID,
+		})
 	}
 
 	out := make([]*pb.Edge, 0, len(edges))
 	for _, e := range edges {
 		out = append(out, edgeToProto(e))
 	}
-	return &pb.GetEdgesResponse{Edges: out, HasMore: hasMore}, nil
+	return &pb.GetEdgesResponse{Edges: out, HasMore: nextPageToken != "", NextPageToken: nextPageToken}, nil
 }
 
 // edgeToProto is shared with GetEdgesTo and lives in helpers.go (after

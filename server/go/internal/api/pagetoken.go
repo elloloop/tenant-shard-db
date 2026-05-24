@@ -107,6 +107,58 @@ func decodePageToken(token, fingerprint string, descending bool) (pageCursor, er
 	return c, nil
 }
 
+// ── Edge keyset tokens (ADR-029, GetEdgesFrom/GetEdgesTo) ───────────
+//
+// Edges sort (created_at DESC, edge_type_id DESC, peer DESC); the cursor
+// carries all three so the seek is unambiguous. peer is to_node_id for
+// outgoing edges, from_node_id for incoming.
+
+// edgePageCursor is the decoded payload of an edge page token.
+type edgePageCursor struct {
+	Fingerprint string `json:"f"`
+	CreatedAt   int64  `json:"c"`
+	EdgeTypeID  int32  `json:"e"`
+	PeerNodeID  string `json:"p"`
+}
+
+// edgesFingerprint binds an edge page token to its query: the source
+// node, direction (outgoing vs incoming), and the optional edge_type
+// filter. A token replayed against a different edge query is rejected.
+func edgesFingerprint(nodeID string, outgoing bool, edgeTypeID int32) string {
+	h := sha256.New()
+	h.Write([]byte(nodeID))
+	if outgoing {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
+	var b [4]byte
+	binary.BigEndian.PutUint32(b[:], uint32(edgeTypeID))
+	h.Write(b[:])
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+}
+
+func encodeEdgePageToken(c edgePageCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeEdgePageToken(token, fingerprint string) (edgePageCursor, error) {
+	var c edgePageCursor
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return c, errs.Errorf(codes.InvalidArgument, "page_token: malformed: %v", err)
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return c, errs.Errorf(codes.InvalidArgument, "page_token: malformed: %v", err)
+	}
+	if c.Fingerprint != fingerprint {
+		return c, errs.Errorf(codes.InvalidArgument,
+			"page_token: does not match this query (node_id / direction / edge_type_id changed)")
+	}
+	return c, nil
+}
+
 // cursorOrderValue coerces a JSON-decoded cursor order value back to the
 // Go type the store expects for the effective order column. created_at /
 // updated_at / type_id are integer columns (JSON decodes them as

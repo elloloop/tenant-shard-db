@@ -2468,9 +2468,19 @@ type GetEdgesRequest struct {
 	NodeId  string                 `protobuf:"bytes,2,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
 	// Optional edge type filter
 	EdgeTypeId int32 `protobuf:"varint,3,opt,name=edge_type_id,json=edgeTypeId,proto3" json:"edge_type_id,omitempty"`
-	// Pagination
-	Limit         int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Pagination. `offset` is DEPRECATED (ADR-029); use keyset cursor
+	// pagination via `page_size` + `page_token`.
+	Limit int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Deprecated: Marked as deprecated in entdb.proto.
+	Offset int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Keyset cursor pagination (ADR-029, AIP-158). `page_size` bounds one
+	// page (alias for `limit`, takes precedence); `page_token` is the
+	// opaque `next_page_token` from a prior response, a seek over
+	// (created_at, edge_type_id, peer_node_id) bound to this query by a
+	// fingerprint. Mixing `page_token` with the deprecated `offset` is
+	// INVALID_ARGUMENT.
+	PageSize      int32  `protobuf:"varint,6,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string `protobuf:"bytes,7,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2533,6 +2543,7 @@ func (x *GetEdgesRequest) GetLimit() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in entdb.proto.
 func (x *GetEdgesRequest) GetOffset() int32 {
 	if x != nil {
 		return x.Offset
@@ -2540,10 +2551,28 @@ func (x *GetEdgesRequest) GetOffset() int32 {
 	return 0
 }
 
+func (x *GetEdgesRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *GetEdgesRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type GetEdgesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Edges         []*Edge                `protobuf:"bytes,1,rep,name=edges,proto3" json:"edges,omitempty"`
-	HasMore       bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Edges   []*Edge                `protobuf:"bytes,1,rep,name=edges,proto3" json:"edges,omitempty"`
+	HasMore bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	// Opaque keyset cursor for the next page (ADR-029). Empty on the last
+	// page; non-empty whenever rows were omitted, so edge reads never
+	// silently truncate.
+	NextPageToken string `protobuf:"bytes,3,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2590,6 +2619,13 @@ func (x *GetEdgesResponse) GetHasMore() bool {
 		return x.HasMore
 	}
 	return false
+}
+
+func (x *GetEdgesResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
 }
 
 type Edge struct {
@@ -7750,17 +7786,21 @@ const file_entdb_proto_rawDesc = "" +
 	" \x03(\v2\x12.entdb.v1.AclEntryR\x03acl\x1aS\n" +
 	"\x11TypedPayloadEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12(\n" +
-	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\b\x10\tR\fpayload_jsonR\bacl_json\"\xae\x01\n" +
+	"\x05value\x18\x02 \x01(\v2\x12.entdb.v1.EntValueR\x05value:\x028\x01J\x04\b\x04\x10\x05J\x04\b\b\x10\tR\fpayload_jsonR\bacl_json\"\xee\x01\n" +
 	"\x0fGetEdgesRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12 \n" +
 	"\fedge_type_id\x18\x03 \x01(\x05R\n" +
 	"edgeTypeId\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x05 \x01(\x05R\x06offset\"S\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1a\n" +
+	"\x06offset\x18\x05 \x01(\x05B\x02\x18\x01R\x06offset\x12\x1b\n" +
+	"\tpage_size\x18\x06 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\a \x01(\tR\tpageToken\"{\n" +
 	"\x10GetEdgesResponse\x12$\n" +
 	"\x05edges\x18\x01 \x03(\v2\x0e.entdb.v1.EdgeR\x05edges\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\xf9\x02\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\x12&\n" +
+	"\x0fnext_page_token\x18\x03 \x01(\tR\rnextPageToken\"\xf9\x02\n" +
 	"\x04Edge\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12 \n" +
 	"\fedge_type_id\x18\x02 \x01(\x05R\n" +
