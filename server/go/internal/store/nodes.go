@@ -301,6 +301,49 @@ type QueryNodesArgs struct {
 	Descending bool
 	Limit      int
 	Offset     int
+
+	// Keyset cursor (ADR-029). When Cursor != nil the query seeks past
+	// the (Cursor.OrderValue, Cursor.NodeID) tuple instead of applying
+	// Offset — a stable continuation that never skips or duplicates a row
+	// under concurrent writes. Offset is ignored when Cursor is set.
+	Cursor *QueryCursor
+}
+
+// QueryCursor anchors a keyset seek: the effective order-by value and
+// node_id of the last row returned by the previous page. The store
+// resumes at the row strictly after this tuple in the effective sort
+// order (ascending or descending per Descending on the args).
+type QueryCursor struct {
+	OrderValue any
+	NodeID     string
+}
+
+// EffectiveOrderBy resolves a requested order_by to the column actually
+// used, applying the allow-list (default created_at). It is the single
+// source of truth shared by QueryNodes and the keyset-cursor machinery
+// in the api layer so the cursor anchor always matches the SQL ORDER BY.
+func EffectiveOrderBy(orderBy string) string {
+	switch orderBy {
+	case "created_at", "updated_at", "node_id", "type_id":
+		return orderBy
+	default:
+		return "created_at"
+	}
+}
+
+// NodeOrderValue returns the value of n's effective order column — the
+// anchor a keyset cursor stores so the next page can seek past it.
+func NodeOrderValue(n *Node, orderBy string) any {
+	switch EffectiveOrderBy(orderBy) {
+	case "updated_at":
+		return n.UpdatedAt
+	case "node_id":
+		return n.NodeID
+	case "type_id":
+		return n.TypeID
+	default: // created_at
+		return n.CreatedAt
+	}
 }
 
 // QueryNodes returns up to args.Limit nodes of args.TypeID, optionally
@@ -311,16 +354,12 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 	if err != nil {
 		return nil, err
 	}
-	orderBy := args.OrderBy
-	switch orderBy {
-	case "created_at", "updated_at", "node_id", "type_id":
-		// allowed
-	default:
-		orderBy = "created_at"
-	}
+	orderBy := EffectiveOrderBy(args.OrderBy)
 	dir := "DESC"
+	cmp := "<"
 	if !args.Descending {
 		dir = "ASC"
+		cmp = ">"
 	}
 	limit := args.Limit
 	if limit <= 0 {
@@ -347,14 +386,41 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 		whereParts = append(whereParts, fClauses...)
 		params = append(params, fParams...)
 	}
-	params = append(params, limit, args.Offset)
 
+	// Keyset seek (ADR-029) vs legacy OFFSET. node_id is unique and is
+	// always the final sort key, so (orderBy, node_id) is a total order
+	// and the seek resumes unambiguously at the row strictly after the
+	// cursor. When orderBy *is* node_id the two collapse to a single
+	// column. The expanded ``col cmp ? OR (col = ? AND node_id cmp ?)``
+	// form avoids relying on SQLite row-value tuple comparison and stays
+	// index-friendly.
+	var tail string
+	if args.Cursor != nil {
+		if orderBy == "node_id" {
+			whereParts = append(whereParts, fmt.Sprintf("node_id %s ?", cmp))
+			params = append(params, args.Cursor.NodeID)
+		} else {
+			whereParts = append(whereParts, fmt.Sprintf(
+				"(%s %s ? OR (%s = ? AND node_id %s ?))", orderBy, cmp, orderBy, cmp))
+			params = append(params, args.Cursor.OrderValue, args.Cursor.OrderValue, args.Cursor.NodeID)
+		}
+		params = append(params, limit)
+		tail = "LIMIT ?"
+	} else {
+		params = append(params, limit, args.Offset)
+		tail = "LIMIT ? OFFSET ?"
+	}
+
+	orderClause := fmt.Sprintf("%s %s", orderBy, dir)
+	if orderBy != "node_id" {
+		orderClause += fmt.Sprintf(", node_id %s", dir)
+	}
 	q := fmt.Sprintf(`
 		SELECT tenant_id, node_id, type_id, payload_json,
 		       created_at, updated_at, owner_actor, acl_blob
 		FROM nodes WHERE %s
-		ORDER BY %s %s LIMIT ? OFFSET ?`,
-		strings.Join(whereParts, " AND "), orderBy, dir,
+		ORDER BY %s %s`,
+		strings.Join(whereParts, " AND "), orderClause, tail,
 	)
 	rows, err := db.QueryContext(ctx, q, params...)
 	if err != nil {

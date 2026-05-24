@@ -2136,8 +2136,14 @@ type QueryNodesRequest struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Context *RequestContext        `protobuf:"bytes,1,opt,name=context,proto3" json:"context,omitempty"`
 	TypeId  int32                  `protobuf:"varint,2,opt,name=type_id,json=typeId,proto3" json:"type_id,omitempty"`
-	// Pagination
-	Limit  int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Pagination.
+	//
+	// `limit`/`offset` are the legacy LIMIT/OFFSET shape. `offset` is
+	// DEPRECATED (ADR-029): it is O(n) to skip and skips/duplicates rows
+	// under concurrent writes. New code uses keyset cursor pagination via
+	// `page_size` + `page_token` below.
+	Limit int32 `protobuf:"varint,4,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Deprecated: Marked as deprecated in entdb.proto.
 	Offset int32 `protobuf:"varint,5,opt,name=offset,proto3" json:"offset,omitempty"`
 	// Sort order
 	OrderBy    string `protobuf:"bytes,6,opt,name=order_by,json=orderBy,proto3" json:"order_by,omitempty"`
@@ -2147,6 +2153,19 @@ type QueryNodesRequest struct {
 	// Wait for this stream position to be applied before reading
 	AfterOffset   string `protobuf:"bytes,10,opt,name=after_offset,json=afterOffset,proto3" json:"after_offset,omitempty"`
 	WaitTimeoutMs int32  `protobuf:"varint,11,opt,name=wait_timeout_ms,json=waitTimeoutMs,proto3" json:"wait_timeout_ms,omitempty"`
+	// Keyset cursor pagination (ADR-029, AIP-158).
+	//
+	// `page_size` bounds one page (defaults to 100, clamped to 1000); it
+	// is an alias for `limit` and takes precedence when both are set.
+	// `page_token` is the opaque `next_page_token` from a prior response;
+	// it encodes a keyset seek over `(order_by, node_id)` plus a
+	// fingerprint of the query, so the server resumes exactly after the
+	// last row without skip/duplicate under concurrent writes. A token
+	// presented against a different query (type_id / filters / order_by)
+	// is rejected with INVALID_ARGUMENT, as is mixing `page_token` with
+	// the deprecated `offset`.
+	PageSize      int32  `protobuf:"varint,12,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string `protobuf:"bytes,13,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2202,6 +2221,7 @@ func (x *QueryNodesRequest) GetLimit() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in entdb.proto.
 func (x *QueryNodesRequest) GetOffset() int32 {
 	if x != nil {
 		return x.Offset
@@ -2244,11 +2264,30 @@ func (x *QueryNodesRequest) GetWaitTimeoutMs() int32 {
 	return 0
 }
 
+func (x *QueryNodesRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *QueryNodesRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type QueryNodesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	TotalCount    int32                  `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"`
-	HasMore       bool                   `protobuf:"varint,3,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Nodes      []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	TotalCount int32                  `protobuf:"varint,2,opt,name=total_count,json=totalCount,proto3" json:"total_count,omitempty"`
+	HasMore    bool                   `protobuf:"varint,3,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	// Opaque keyset cursor for the next page (ADR-029). Empty when the
+	// last page has been reached. A non-empty value MUST be followed to
+	// retrieve the remainder — a response that omits rows always sets it,
+	// so reads never silently truncate.
+	NextPageToken string `protobuf:"bytes,4,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2302,6 +2341,13 @@ func (x *QueryNodesResponse) GetHasMore() bool {
 		return x.HasMore
 	}
 	return false
+}
+
+func (x *QueryNodesResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
 }
 
 type Node struct {
@@ -7665,12 +7711,12 @@ const file_entdb_proto_rawDesc = "" +
 	"\x10GetNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x1f\n" +
 	"\vmissing_ids\x18\x02 \x03(\tR\n" +
-	"missingIds\"\xd8\x02\n" +
+	"missingIds\"\x98\x03\n" +
 	"\x11QueryNodesRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
 	"\atype_id\x18\x02 \x01(\x05R\x06typeId\x12\x14\n" +
-	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x05 \x01(\x05R\x06offset\x12\x19\n" +
+	"\x05limit\x18\x04 \x01(\x05R\x05limit\x12\x1a\n" +
+	"\x06offset\x18\x05 \x01(\x05B\x02\x18\x01R\x06offset\x12\x19\n" +
 	"\border_by\x18\x06 \x01(\tR\aorderBy\x12\x1e\n" +
 	"\n" +
 	"descending\x18\a \x01(\bR\n" +
@@ -7678,12 +7724,16 @@ const file_entdb_proto_rawDesc = "" +
 	"\afilters\x18\b \x03(\v2\x15.entdb.v1.FieldFilterR\afilters\x12!\n" +
 	"\fafter_offset\x18\n" +
 	" \x01(\tR\vafterOffset\x12&\n" +
-	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMsJ\x04\b\x03\x10\x04R\vfilter_json\"v\n" +
+	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMs\x12\x1b\n" +
+	"\tpage_size\x18\f \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\r \x01(\tR\tpageTokenJ\x04\b\x03\x10\x04R\vfilter_json\"\x9e\x01\n" +
 	"\x12QueryNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
 	"totalCount\x12\x19\n" +
-	"\bhas_more\x18\x03 \x01(\bR\ahasMore\"\xcd\x03\n" +
+	"\bhas_more\x18\x03 \x01(\bR\ahasMore\x12&\n" +
+	"\x0fnext_page_token\x18\x04 \x01(\tR\rnextPageToken\"\xcd\x03\n" +
 	"\x04Node\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x17\n" +
