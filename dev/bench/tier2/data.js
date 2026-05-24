@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779619993848,
+  "lastUpdate": 1779620004495,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -5400,6 +5400,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00036447180867332297",
             "extra": "mean: 5.77724313291182 msec\nrounds: 158"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "586d8d8cb77d49e8417bc6f46895ba36598fc8d6",
+          "message": "feat(sdk): auto-follow the keyset cursor so query returns the complete set (#564) (#579)\n\nThe server gained keyset cursor pagination in v1.23.0, but the SDK\nhelpers still issued a single request and returned the first page — so a\nquery over more than the 100-row default still silently truncated for\ncallers. This closes the loop: both SDKs now follow next_page_token to\nexhaustion and return the complete result set by default (ADR-029\ninvariant 3).\n\nGo SDK:\n  - Transport.QueryNodes takes a limit (0 = complete set) and loops\n    next_page_token, accumulating pages; it fences read-after-write only\n    on the first page. WithLimit is now wired through as a total cap, so\n    a small limit no longer over-fetches a full page. A defensive\n    page-count ceiling guards against a server that never clears the\n    cursor.\n\nPython SDK:\n  - query_nodes auto-follows the cursor; client.query / scope.query\n    default `limit` changes from 100 to 0 (= the complete set). A\n    positive limit caps the total; the deprecated `offset` falls back to\n    a single non-cursor request for backward compatibility.\n\nThis is the standard-database contract — a query returns every matching\nrow, not a silent prefix. Pages are fetched at the server's MaxPageSize\n(1000) to minimise round-trips.\n\nBoth SDKs ship together (this PR).\n\nTests: Python unit tests (complete-set follow, limit cap with reduced\nfinal page_size, legacy offset single-shot, single-page) and Go\ntransport tests (multi-page auto-follow over a paginating fake server,\nlimit cap stops early with a bounded final page_size).\n\nCloses #564. Refs ADR-029.",
+          "timestamp": "2026-05-24T11:50:49+01:00",
+          "tree_id": "f08265428dc15ac88d95185dac8d702928745686",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/586d8d8cb77d49e8417bc6f46895ba36598fc8d6"
+        },
+        "date": 1779620003951,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2316.9744360948685,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009252302031227516",
+            "extra": "mean: 431.59733850384833 usec\nrounds: 1096"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1657.6540377853094,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007645831080213445",
+            "extra": "mean: 603.2621869253485 usec\nrounds: 979"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 799.0172730593594,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006337795650032195",
+            "extra": "mean: 1.2515373993995116 msec\nrounds: 666"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 425.7704062493843,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007489079565506192",
+            "extra": "mean: 2.348683669231523 msec\nrounds: 390"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1145.1354937947212,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0020460032249455615",
+            "extra": "mean: 873.2591081307112 usec\nrounds: 1193"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1076.9163491410445,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002530396126643851",
+            "extra": "mean: 928.577229603401 usec\nrounds: 1189"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1188.359900663728,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001831012538029306",
+            "extra": "mean: 841.4959133520709 usec\nrounds: 1408"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1604.3018810321403,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003975333291868212",
+            "extra": "mean: 623.3240837171131 usec\nrounds: 1302"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1469.6266262259996,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000711391897853252",
+            "extra": "mean: 680.4449389760986 usec\nrounds: 508"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1285.3941900980146,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000052298820992066634",
+            "extra": "mean: 777.9714640874076 usec\nrounds: 1086"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1936.1428437643099,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030700132750071455",
+            "extra": "mean: 516.4908174108521 usec\nrounds: 942"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 158.86075843051017,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009969180194838595",
+            "extra": "mean: 6.294820759258971 msec\nrounds: 162"
           }
         ]
       }
