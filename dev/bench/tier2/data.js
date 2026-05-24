@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779654693636,
+  "lastUpdate": 1779655285829,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -6372,6 +6372,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0005891342927162455",
             "extra": "mean: 6.692211244603272 msec\nrounds: 139"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e7b144bd343adbc5c7102fc8fd5f891d3797fae3",
+          "message": "test(sdk-go): integration suite driving the Go SDK against a real entdb-server (#586)\n\nThe Go SDK had no end-to-end coverage: its unit tests run against an\nin-process fakeServer with canned responses, and the contract/integration\nsuite is Python-only (it boots the real server but drives it through the\nPython SDK). So every Go SDK wire change — typed int64, keyset\nauto-follow, unique-key lookup, zero-value patches — was only ever\nchecked against fakes that encode my understanding of the server, never\nthe server itself. And CI ran no Go SDK tests at all (only server/go).\n\nAdds (behind a `//go:build integration` tag so the fast unit path is\nunchanged) a TestMain that builds and boots the actual\nserver/go/cmd/entdb-server on a free port (e2e seed profile, memory WAL)\nand drives the Go SDK transport against it over real gRPC — the mirror of\nthe Python conftest. Tests:\n\n  - typed int64 > 2^53 round-trips losslessly (ADR-028 / #563 / #572);\n  - QueryNodes auto-follows the real keyset cursor over 250 rows with no\n    truncation (ADR-029 / #564);\n  - GetNodeByKey unique-key lookup (#572 typed value);\n  - an explicit zero-value patch sets the field (the wire shape #574's\n    UpdateFields emits), not a no-op.\n\nCI: new `go-sdk` job runs the SDK vet + unit tests AND this integration\nsuite, and is now a required check. Previously the Go SDK was untested in\nCI despite the `sdk/go/**` path filter.",
+          "timestamp": "2026-05-24T21:39:00+01:00",
+          "tree_id": "19b7c292be8d36013ef2afc1d2d93cef1965cbc3",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/e7b144bd343adbc5c7102fc8fd5f891d3797fae3"
+        },
+        "date": 1779655285233,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2201.1140205528714,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005712601987489141",
+            "extra": "mean: 454.315401502382 usec\nrounds: 1198"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1615.0140270423287,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006301704747458898",
+            "extra": "mean: 619.1896684831645 usec\nrounds: 917"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 759.8653383274902,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007370908159709704",
+            "extra": "mean: 1.3160226550155067 msec\nrounds: 658"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 400.6860529454177,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006341614960764067",
+            "extra": "mean: 2.495719510696875 msec\nrounds: 374"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1093.3775433882458,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00211797251295614",
+            "extra": "mean: 914.5971636669251 usec\nrounds: 1167"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1048.2373744542058,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0025408574846385",
+            "extra": "mean: 953.9823940361581 usec\nrounds: 1241"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1143.1376778000554,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019563975156664027",
+            "extra": "mean: 874.785268144148 usec\nrounds: 1309"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1537.2908103531765,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00017788646718907875",
+            "extra": "mean: 650.4950093146399 usec\nrounds: 1181"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1398.827061986308,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000041084251905541086",
+            "extra": "mean: 714.884653847073 usec\nrounds: 468"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1211.8823574178202,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000052638343112813755",
+            "extra": "mean: 825.1626025241577 usec\nrounds: 951"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1892.6328549185084,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003277689772633479",
+            "extra": "mean: 528.364493621272 usec\nrounds: 1019"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 149.8087605985629,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006203645685002902",
+            "extra": "mean: 6.67517704575144 msec\nrounds: 153"
           }
         ]
       }
