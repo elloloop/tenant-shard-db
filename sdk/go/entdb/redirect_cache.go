@@ -21,8 +21,8 @@ import (
 const outgoingTenantHeader = "entdb-tenant-id"
 
 // redirectTrailerKey is the trailing-metadata header the server
-// emits when a tenant lives on another node — see
-// “dbaas/entdb_server/api/grpc_server.py:_check_tenant“.
+// emits when a tenant lives on another node — set by the server's
+// tenant gate (CheckTenant sharding redirect).
 const redirectTrailerKey = "entdb-redirect-node"
 
 // tenantEndpointCache caches “tenant_id -> {endpoint, *grpc.ClientConn}“

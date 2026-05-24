@@ -87,7 +87,10 @@ build:
 	docker compose -f tests/python/e2e/docker-compose.e2e.yml build
 
 proto:
-	@echo "Regenerating protobuf files..."
+	@echo "Regenerating Go stubs (server + SDK) via buf..."
+	cd server/go && go generate ./internal/pb/...
+	buf generate --template sdk/go/entdb/buf.gen.yaml
+	@echo "Regenerating Python SDK stubs..."
 	./scripts/generate_proto.sh
 
 # =============================================================================
