@@ -3,6 +3,7 @@ package entdb
 
 import (
 	"fmt"
+	"strconv"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -23,11 +24,17 @@ func nodeFromProto(n *pb.Node) *Node {
 		return nil
 	}
 	owner, _ := ParseActor(n.GetOwnerActor())
+	// Prefer the typed payload (ADR-028, v1.20+ server) so int64 >2^53
+	// is lossless; fall back to the Struct payload for older servers.
+	pl := typedToMap(n.GetTypedPayload())
+	if pl == nil {
+		pl = structToMap(n.GetPayload())
+	}
 	return &Node{
 		TenantID:   n.GetTenantId(),
 		NodeID:     n.GetNodeId(),
 		TypeID:     int(n.GetTypeId()),
-		Payload:    structToMap(n.GetPayload()),
+		Payload:    pl,
 		CreatedAt:  n.GetCreatedAt(),
 		UpdatedAt:  n.GetUpdatedAt(),
 		OwnerActor: owner,
@@ -46,9 +53,18 @@ func edgeFromProto(e *pb.Edge) *Edge {
 		EdgeTypeID: int(e.GetEdgeTypeId()),
 		FromNodeID: e.GetFromNodeId(),
 		ToNodeID:   e.GetToNodeId(),
-		Props:      structToMap(e.GetProps()),
+		Props:      edgePropsMap(e),
 		CreatedAt:  e.GetCreatedAt(),
 	}
+}
+
+// edgePropsMap prefers the typed edge props (ADR-028) over the Struct
+// props, so int64 edge properties read back losslessly on v1.20+ servers.
+func edgePropsMap(e *pb.Edge) map[string]any {
+	if p := typedToMap(e.GetTypedProps()); p != nil {
+		return p
+	}
+	return structToMap(e.GetProps())
 }
 
 // aclFromProto converts a list of *pb.AclEntry into the SDK's
@@ -101,6 +117,99 @@ func mapToStruct(m map[string]any) (*structpb.Struct, error) {
 		return nil, fmt.Errorf("entdb: encode struct: %w", err)
 	}
 	return s, nil
+}
+
+// mapToTyped builds the typed, field_id-keyed payload (ADR-028) from the
+// SDK's id-keyed map. int64 values are carried as EntValue.int_value so
+// they survive >2^53 losslessly — unlike the google.protobuf.Struct path.
+// Sent ALONGSIDE the legacy Struct (dual-write) so a new SDK still works
+// against a pre-v1.20 server. Non-digit keys are skipped (the SDK keys by
+// field id). Returns nil for empty input.
+func mapToTyped(m map[string]any) map[uint32]*pb.EntValue {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[uint32]*pb.EntValue, len(m))
+	for k, v := range m {
+		id, err := strconv.ParseUint(k, 10, 32)
+		if err != nil {
+			continue
+		}
+		out[uint32(id)] = valueToEnt(v)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// valueToEnt lowers a single Go scalar to its typed EntValue. Integers
+// stay int64 (lossless); other scalars follow their Go type; anything
+// else falls back to a JSON value.
+func valueToEnt(v any) *pb.EntValue {
+	switch x := v.(type) {
+	case nil:
+		return &pb.EntValue{}
+	case int64:
+		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: x}}
+	case int:
+		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: int64(x)}}
+	case int32:
+		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: int64(x)}}
+	case uint64:
+		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: int64(x)}}
+	case uint:
+		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: int64(x)}}
+	case float64:
+		return &pb.EntValue{V: &pb.EntValue_DoubleValue{DoubleValue: x}}
+	case float32:
+		return &pb.EntValue{V: &pb.EntValue_DoubleValue{DoubleValue: float64(x)}}
+	case bool:
+		return &pb.EntValue{V: &pb.EntValue_BoolValue{BoolValue: x}}
+	case string:
+		return &pb.EntValue{V: &pb.EntValue_StringValue{StringValue: x}}
+	case []byte:
+		return &pb.EntValue{V: &pb.EntValue_BytesValue{BytesValue: x}}
+	default:
+		sv, err := structpb.NewValue(x)
+		if err != nil {
+			return &pb.EntValue{}
+		}
+		return &pb.EntValue{V: &pb.EntValue_JsonValue{JsonValue: sv}}
+	}
+}
+
+// typedToMap converts a wire typed payload (ADR-028) back to the SDK's
+// id-keyed map, preserving int64 exactly. Preferred over the Struct
+// payload on read when the server populated it (v1.20+).
+func typedToMap(m map[uint32]*pb.EntValue) map[string]any {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(m))
+	for id, v := range m {
+		out[strconv.FormatUint(uint64(id), 10)] = entToValue(v)
+	}
+	return out
+}
+
+func entToValue(v *pb.EntValue) any {
+	switch k := v.GetV().(type) {
+	case *pb.EntValue_IntValue:
+		return k.IntValue
+	case *pb.EntValue_DoubleValue:
+		return k.DoubleValue
+	case *pb.EntValue_BoolValue:
+		return k.BoolValue
+	case *pb.EntValue_StringValue:
+		return k.StringValue
+	case *pb.EntValue_BytesValue:
+		return k.BytesValue
+	case *pb.EntValue_JsonValue:
+		return k.JsonValue.AsInterface()
+	default:
+		return nil
+	}
 }
 
 // aclToProto converts the SDK's []ACLEntry into the wire
@@ -156,6 +265,7 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 				Id:           op.NodeID,
 				As:           op.Alias,
 				Data:         data,
+				TypedData:    mapToTyped(op.Data),
 				Acl:          aclToProto(op.ACL),
 				StorageMode:  storageModeToProto(op.StorageMode),
 				TargetUserId: op.TargetUserID,
@@ -166,9 +276,10 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 				return nil, err
 			}
 			upd := &pb.UpdateNodeOp{
-				TypeId: int32(op.TypeID),
-				Id:     op.NodeID,
-				Patch:  patch,
+				TypeId:     int32(op.TypeID),
+				Id:         op.NodeID,
+				Patch:      patch,
+				TypedPatch: mapToTyped(op.Patch),
 			}
 			if op.Precondition != nil {
 				eq, err := structpb.NewValue(op.Precondition.Equals)
