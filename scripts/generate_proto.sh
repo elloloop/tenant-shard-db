@@ -1,9 +1,13 @@
 #!/bin/bash
-# Generate Python protobuf code from .proto files
+# Generate the Python SDK protobuf stubs from proto/entdb/v1/*.proto.
 #
-# This script generates:
-#   - Server stubs in dbaas/entdb_server/api/generated/
-#   - SDK stubs in sdk/entdb_sdk/_generated/
+# This script generates ONLY the Python SDK stubs in
+# sdk/python/entdb_sdk/_generated/. The historical Python server was
+# retired (ADR-017) and its generated package no longer exists.
+#
+# The Go stubs are generated separately with `buf generate` (see
+# server/go/internal/pb/generate.go and sdk/go/entdb/internal/pb/generate.go);
+# `make proto` runs both this script and the Go regeneration.
 #
 # Requirements:
 #   pip install grpcio-tools
@@ -17,309 +21,40 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 
 PROTO_DIR="$ROOT_DIR/proto/entdb/v1"
-SERVER_OUT="$ROOT_DIR/server/python/entdb_server/api/generated"
 SDK_OUT="$ROOT_DIR/sdk/python/entdb_sdk/_generated"
 
-echo "Generating protobuf code..."
+echo "Generating Python SDK protobuf code..."
 echo "  Proto source: $PROTO_DIR"
-echo "  Server output: $SERVER_OUT"
-echo "  SDK output: $SDK_OUT"
+echo "  SDK output:   $SDK_OUT"
 
-# Create output directories
-mkdir -p "$SERVER_OUT"
 mkdir -p "$SDK_OUT"
 
-# Generate for server
-python -m grpc_tools.protoc \
-    -I"$PROTO_DIR" \
-    --python_out="$SERVER_OUT" \
-    --grpc_python_out="$SERVER_OUT" \
-    "$PROTO_DIR/entdb.proto"
-
-# Generate for SDK
+# Generate the service + message stubs for the SDK.
 python -m grpc_tools.protoc \
     -I"$PROTO_DIR" \
     --python_out="$SDK_OUT" \
     --grpc_python_out="$SDK_OUT" \
     "$PROTO_DIR/entdb.proto"
 
-# Generate entdb_options for the SDK (used by codegen to parse
-# entdb extension options from user .proto files)
+# Generate entdb_options for the SDK (used by codegen to parse the entdb
+# extension options from user .proto files).
 SDK_OPTIONS_PROTO_DIR="$ROOT_DIR/sdk/python/entdb_sdk/proto"
 python -m grpc_tools.protoc \
     -I"$SDK_OPTIONS_PROTO_DIR" \
     --python_out="$SDK_OUT" \
     "$SDK_OPTIONS_PROTO_DIR/entdb_options.proto"
 
-# Fix imports in generated files (grpc_tools generates absolute imports)
-# Change "import entdb_pb2" to "from . import entdb_pb2"
-# Use sed compatible with both macOS and Linux
-for dir in "$SERVER_OUT" "$SDK_OUT"; do
-    if [[ -f "$dir/entdb_pb2_grpc.py" ]]; then
-        sed -i '' 's/^import entdb_pb2/from . import entdb_pb2/' "$dir/entdb_pb2_grpc.py"
-    fi
-done
-
-# Note: __init__.py files are maintained manually to track proto message exports.
-# The generate script only regenerates the _pb2 and _pb2_grpc files.
-# If you add new messages to the proto, update __init__.py files manually.
-
-# Create __init__.py files (only if they don't exist)
-if [ ! -f "$SERVER_OUT/__init__.py" ]; then
-cat > "$SERVER_OUT/__init__.py" << 'EOF'
-# mypy: ignore-errors
-"""Generated protobuf code for EntDB server.
-
-Do not edit manually - regenerate with scripts/generate_proto.sh
-"""
-
-from .entdb_pb2 import (
-    AclEntry,
-    CreateEdgeOp,
-    CreateNodeOp,
-    DeleteEdgeOp,
-    DeleteNodeOp,
-    Edge,
-    # Execute
-    ExecuteAtomicRequest,
-    ExecuteAtomicResponse,
-    FieldFilter,
-    FilterOp,
-    # Edges
-    GetEdgesRequest,
-    GetEdgesResponse,
-    GetMailboxRequest,
-    GetMailboxResponse,
-    # Nodes
-    GetNodeRequest,
-    GetNodeResponse,
-    GetNodesRequest,
-    GetNodesResponse,
-    # Receipt
-    GetReceiptStatusRequest,
-    GetReceiptStatusResponse,
-    GetSchemaRequest,
-    GetSchemaResponse,
-    # Health/Schema
-    HealthRequest,
-    HealthResponse,
-    # Tenants
-    ListMailboxUsersRequest,
-    ListMailboxUsersResponse,
-    ListTenantsRequest,
-    ListTenantsResponse,
-    MailboxItem,
-    MailboxSearchResult,
-    Node,
-    NodeRef,
-    Operation,
-    QueryNodesRequest,
-    QueryNodesResponse,
-    Receipt,
-    ReceiptStatus,
-    # Common
-    RequestContext,
-    # Mailbox
-    SearchMailboxRequest,
-    SearchMailboxResponse,
-    TenantInfo,
-    TypedNodeRef,
-    UpdateNodeOp,
-    # Wait for offset
-    WaitForOffsetRequest,
-    WaitForOffsetResponse,
-)
-from .entdb_pb2_grpc import (
-    EntDBServiceServicer,
-    EntDBServiceStub,
-    add_EntDBServiceServicer_to_server,
-)
-
-__all__ = [
-    # Common
-    "RequestContext",
-    "Receipt",
-    # Execute
-    "ExecuteAtomicRequest",
-    "ExecuteAtomicResponse",
-    "Operation",
-    "CreateNodeOp",
-    "UpdateNodeOp",
-    "DeleteNodeOp",
-    "CreateEdgeOp",
-    "DeleteEdgeOp",
-    "NodeRef",
-    "TypedNodeRef",
-    # ACL and filter types
-    "AclEntry",
-    "FieldFilter",
-    "FilterOp",
-    # Receipt
-    "GetReceiptStatusRequest",
-    "GetReceiptStatusResponse",
-    "ReceiptStatus",
-    # Nodes
-    "GetNodeRequest",
-    "GetNodeResponse",
-    "GetNodesRequest",
-    "GetNodesResponse",
-    "QueryNodesRequest",
-    "QueryNodesResponse",
-    "Node",
-    # Edges
-    "GetEdgesRequest",
-    "GetEdgesResponse",
-    "Edge",
-    # Mailbox
-    "SearchMailboxRequest",
-    "SearchMailboxResponse",
-    "MailboxSearchResult",
-    "GetMailboxRequest",
-    "GetMailboxResponse",
-    "MailboxItem",
-    # Health/Schema
-    "HealthRequest",
-    "HealthResponse",
-    "GetSchemaRequest",
-    "GetSchemaResponse",
-    # Tenants
-    "ListTenantsRequest",
-    "ListTenantsResponse",
-    "TenantInfo",
-    "ListMailboxUsersRequest",
-    "ListMailboxUsersResponse",
-    # Wait for offset
-    "WaitForOffsetRequest",
-    "WaitForOffsetResponse",
-    # gRPC
-    "EntDBServiceServicer",
-    "EntDBServiceStub",
-    "add_EntDBServiceServicer_to_server",
-]
-EOF
+# Fix imports in generated files (grpc_tools emits absolute imports).
+# Change "import entdb_pb2" to "from . import entdb_pb2". sed form works
+# on both macOS and Linux.
+if [[ -f "$SDK_OUT/entdb_pb2_grpc.py" ]]; then
+    sed -i '' 's/^import entdb_pb2/from . import entdb_pb2/' "$SDK_OUT/entdb_pb2_grpc.py" 2>/dev/null \
+        || sed -i 's/^import entdb_pb2/from . import entdb_pb2/' "$SDK_OUT/entdb_pb2_grpc.py"
 fi
 
-if [ ! -f "$SDK_OUT/__init__.py" ]; then
-cat > "$SDK_OUT/__init__.py" << 'EOF'
-# mypy: ignore-errors
-"""Generated protobuf code for EntDB SDK.
-
-Do not edit manually - regenerate with scripts/generate_proto.sh
-
-This module is internal to the SDK. Users should not import from here.
-"""
-
-from .entdb_pb2 import (
-    AclEntry,
-    CreateEdgeOp,
-    CreateNodeOp,
-    DeleteEdgeOp,
-    DeleteNodeOp,
-    Edge,
-    # Execute
-    ExecuteAtomicRequest,
-    ExecuteAtomicResponse,
-    FieldFilter,
-    FilterOp,
-    # Edges
-    GetEdgesRequest,
-    GetEdgesResponse,
-    GetMailboxRequest,
-    GetMailboxResponse,
-    # Nodes
-    GetNodeRequest,
-    GetNodeResponse,
-    GetNodesRequest,
-    GetNodesResponse,
-    # Receipt
-    GetReceiptStatusRequest,
-    GetReceiptStatusResponse,
-    GetSchemaRequest,
-    GetSchemaResponse,
-    # Health/Schema
-    HealthRequest,
-    HealthResponse,
-    # Tenants
-    ListMailboxUsersRequest,
-    ListMailboxUsersResponse,
-    ListTenantsRequest,
-    ListTenantsResponse,
-    MailboxItem,
-    MailboxSearchResult,
-    Node,
-    NodeRef,
-    Operation,
-    QueryNodesRequest,
-    QueryNodesResponse,
-    Receipt,
-    ReceiptStatus,
-    # Common
-    RequestContext,
-    # Mailbox
-    SearchMailboxRequest,
-    SearchMailboxResponse,
-    TenantInfo,
-    TypedNodeRef,
-    UpdateNodeOp,
-    # Wait for offset
-    WaitForOffsetRequest,
-    WaitForOffsetResponse,
-)
-from .entdb_pb2_grpc import EntDBServiceStub
-
-__all__ = [
-    "RequestContext",
-    "Receipt",
-    "ExecuteAtomicRequest",
-    "ExecuteAtomicResponse",
-    "Operation",
-    "CreateNodeOp",
-    "UpdateNodeOp",
-    "DeleteNodeOp",
-    "CreateEdgeOp",
-    "DeleteEdgeOp",
-    "NodeRef",
-    "TypedNodeRef",
-    "AclEntry",
-    "FieldFilter",
-    "FilterOp",
-    "GetReceiptStatusRequest",
-    "GetReceiptStatusResponse",
-    "ReceiptStatus",
-    "GetNodeRequest",
-    "GetNodeResponse",
-    "GetNodesRequest",
-    "GetNodesResponse",
-    "QueryNodesRequest",
-    "QueryNodesResponse",
-    "Node",
-    "GetEdgesRequest",
-    "GetEdgesResponse",
-    "Edge",
-    "SearchMailboxRequest",
-    "SearchMailboxResponse",
-    "MailboxSearchResult",
-    "GetMailboxRequest",
-    "GetMailboxResponse",
-    "MailboxItem",
-    "HealthRequest",
-    "HealthResponse",
-    "GetSchemaRequest",
-    "GetSchemaResponse",
-    "ListTenantsRequest",
-    "ListTenantsResponse",
-    "TenantInfo",
-    "ListMailboxUsersRequest",
-    "ListMailboxUsersResponse",
-    # Wait for offset
-    "WaitForOffsetRequest",
-    "WaitForOffsetResponse",
-    "EntDBServiceStub",
-]
-EOF
-fi
+# Note: __init__.py is maintained manually to track proto message exports.
+# The generate script only regenerates the _pb2 and _pb2_grpc files. If you
+# add new messages to the proto, update __init__.py manually.
 
 echo "Done! Generated files:"
-ls -la "$SERVER_OUT"
-echo ""
 ls -la "$SDK_OUT"

@@ -168,8 +168,7 @@ _COMPOSITE_UNIQUE_DETAIL_RE = re.compile(
 def _parse_unique_constraint_detail(detail: str) -> tuple[int | None, int | None, Any]:
     """Parse the server's ALREADY_EXISTS detail string into structured fields.
 
-    The server emits unique-constraint failures using a stable format
-    (see ``dbaas/entdb_server/api/grpc_server.py``)::
+    The server emits unique-constraint failures using a stable format::
 
         Unique constraint violation: type_id=<int> field_id=<int>
         value=<repr> already exists
@@ -949,8 +948,7 @@ class GrpcClient:
             # server means a unique-field collision — parse the
             # structured error string the server emits and surface
             # it as a typed ``UniqueConstraintError``. The server
-            # message format (set in dbaas/entdb_server/api/grpc_server.py)
-            # is::
+            # message format is::
             #
             #     Unique constraint violation: type_id=<int>
             #     field_id=<int> value=<repr> already exists
