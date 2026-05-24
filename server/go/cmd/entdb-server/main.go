@@ -84,6 +84,16 @@ func main() {
 	// KAFKA_BROKERS env-var convention so the cross-impl e2e stack
 	// can swap targets without re-jiggering compose env-vars.
 	walBrokers := flag.String("wal-brokers", "localhost:9092", "comma-separated Kafka bootstrap brokers (used when --wal-backend=kafka)")
+	// Kafka transport security (#569; --wal-backend=kafka). TLS is the
+	// "SSL" half of SASL_SSL; SASL adds username/password auth.
+	walKafkaTLS := flag.Bool("wal-kafka-tls", false, "enable TLS for Kafka broker connections")
+	walKafkaTLSInsecure := flag.Bool("wal-kafka-tls-insecure", false, "skip Kafka TLS certificate verification (testing only)")
+	walKafkaTLSCAFile := flag.String("wal-kafka-tls-ca-file", "", "PEM bundle of additional Kafka TLS root CAs (private CA; defaults to system roots)")
+	walKafkaTLSCertFile := flag.String("wal-kafka-tls-cert-file", "", "client certificate for Kafka mutual TLS (requires --wal-kafka-tls-key-file)")
+	walKafkaTLSKeyFile := flag.String("wal-kafka-tls-key-file", "", "client private key for Kafka mutual TLS")
+	walKafkaSASLMechanism := flag.String("wal-kafka-sasl-mechanism", "", "Kafka SASL mechanism: PLAIN | SCRAM-SHA-256 | SCRAM-SHA-512 (empty disables SASL)")
+	walKafkaSASLUsername := flag.String("wal-kafka-sasl-username", "", "Kafka SASL username")
+	walKafkaSASLPassword := flag.String("wal-kafka-sasl-password", "", "Kafka SASL password")
 	// Cloud-native backend knobs (ADR-005 / EPIC #518). Each backend
 	// follows the existing Kafka pattern: backend-specific flags,
 	// shared --wal-topic / --wal-group. Unset flags are only an error
@@ -247,7 +257,19 @@ func main() {
 		if len(brokers) == 0 {
 			log.Fatalf("entdb-server: --wal-backend=kafka requires --wal-brokers")
 		}
-		walImpl = wal.NewKafka(wal.DefaultKafkaConfig(brokers))
+		kcfg := wal.DefaultKafkaConfig(brokers)
+		kcfg.TLSEnable = *walKafkaTLS
+		kcfg.TLSInsecureSkipVerify = *walKafkaTLSInsecure
+		kcfg.TLSCAFile = strings.TrimSpace(*walKafkaTLSCAFile)
+		kcfg.TLSClientCertFile = strings.TrimSpace(*walKafkaTLSCertFile)
+		kcfg.TLSClientKeyFile = strings.TrimSpace(*walKafkaTLSKeyFile)
+		if m := strings.TrimSpace(*walKafkaSASLMechanism); m != "" {
+			kcfg.SASLEnable = true
+			kcfg.SASLMechanism = m
+			kcfg.SASLUsername = strings.TrimSpace(*walKafkaSASLUsername)
+			kcfg.SASLPassword = *walKafkaSASLPassword
+		}
+		walImpl = wal.NewKafka(kcfg)
 	case "kinesis":
 		if strings.TrimSpace(*walAWSRegion) == "" {
 			log.Fatalf("entdb-server: --wal-backend=kinesis requires --wal-aws-region")

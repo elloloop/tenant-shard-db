@@ -84,6 +84,36 @@ type KafkaConfig struct {
 	// HeartbeatIntervalMs is how often the consumer heartbeats to the
 	// group coordinator. Must be < SessionTimeoutMs / 3.
 	HeartbeatIntervalMs int
+
+	// ── Transport security (#569) ──────────────────────────────────
+	// Applied to both the producer and consumer connections.
+
+	// TLSEnable turns on TLS for broker connections (the "SSL" half of
+	// SASL_SSL / SSL). With no CA file the host's system root pool is
+	// used — the common case for managed brokers (Confluent Cloud, MSK,
+	// Event Hubs Kafka).
+	TLSEnable bool
+	// TLSInsecureSkipVerify disables server certificate verification.
+	// For testing only — never set in production.
+	TLSInsecureSkipVerify bool
+	// TLSCAFile is an optional PEM bundle of additional root CAs to trust
+	// (private CA). Empty ⇒ system roots.
+	TLSCAFile string
+	// TLSClientCertFile / TLSClientKeyFile enable mutual TLS (client
+	// certificate auth). Both must be set together, or neither.
+	TLSClientCertFile string
+	TLSClientKeyFile  string
+
+	// SASLEnable turns on SASL authentication.
+	SASLEnable bool
+	// SASLMechanism is one of "PLAIN", "SCRAM-SHA-256", "SCRAM-SHA-512"
+	// (case-insensitive). PLAIN suits Confluent Cloud / Event Hubs Kafka
+	// (API key/secret or connection string); SCRAM suits self-managed
+	// Kafka and MSK SCRAM.
+	SASLMechanism string
+	// SASLUsername / SASLPassword are the SASL credentials.
+	SASLUsername string
+	SASLPassword string
 }
 
 // DefaultKafkaConfig returns a config populated with sensible defaults.
@@ -181,7 +211,7 @@ func NewKafka(cfg KafkaConfig) *Kafka {
 // producerConfig builds a sarama.Config for the producer half. Kept
 // out of Connect so tests can inspect / override it without spinning
 // up a broker.
-func (k *Kafka) producerConfig() *sarama.Config {
+func (k *Kafka) producerConfig() (*sarama.Config, error) {
 	config := sarama.NewConfig()
 	config.ClientID = k.config.ClientID
 	// Match aiokafka 1:1: V3_5_0_0 is what current Redpanda LTS and
@@ -225,11 +255,14 @@ func (k *Kafka) producerConfig() *sarama.Config {
 	// SyncProducer (5ms default).
 	config.Producer.Flush.Frequency = time.Duration(k.config.LingerMs) * time.Millisecond
 
-	return config
+	if err := k.config.applySecurity(config); err != nil {
+		return nil, err
+	}
+	return config, nil
 }
 
 // consumerConfig builds a sarama.Config for the consumer half.
-func (k *Kafka) consumerConfig() *sarama.Config {
+func (k *Kafka) consumerConfig() (*sarama.Config, error) {
 	config := sarama.NewConfig()
 	config.ClientID = k.config.ClientID + "-consumer"
 	config.Version = sarama.V3_5_0_0
@@ -249,7 +282,10 @@ func (k *Kafka) consumerConfig() *sarama.Config {
 	// propagate to PollBatch / Subscribe.
 	config.Consumer.Return.Errors = true
 
-	return config
+	if err := k.config.applySecurity(config); err != nil {
+		return nil, err
+	}
+	return config, nil
 }
 
 // Connect opens the producer connection.
@@ -263,7 +299,10 @@ func (k *Kafka) Connect(ctx context.Context) error {
 		return fmt.Errorf("%w: no brokers configured", ErrConnection)
 	}
 
-	config := k.producerConfig()
+	config, err := k.producerConfig()
+	if err != nil {
+		return fmt.Errorf("%w: kafka producer config: %v", ErrConnection, err)
+	}
 
 	prod, err := sarama.NewSyncProducer(k.config.Brokers, config)
 	if err != nil {
@@ -420,7 +459,10 @@ func (k *Kafka) consumerForLocked(topic, groupID string) (*saramaConsumer, error
 		return c, nil
 	}
 
-	config := k.consumerConfig()
+	config, err := k.consumerConfig()
+	if err != nil {
+		return nil, fmt.Errorf("%w: kafka consumer config: %v", ErrConnection, err)
+	}
 	group, err := sarama.NewConsumerGroup(k.config.Brokers, groupID, config)
 	if err != nil {
 		return nil, fmt.Errorf("%w: kafka new consumer: %v", ErrConnection, err)
