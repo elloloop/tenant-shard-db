@@ -8,6 +8,7 @@ package payload
 import (
 	"bytes"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"math"
 	"strings"
@@ -198,26 +199,22 @@ func TestStructToPayload_TimestampOutOfRange(t *testing.T) {
 	}
 }
 
-// TestPayload_Int64Spectrum_BugC characterizes the int64 data-integrity
-// landmine (Bug C). A typed INTEGER payload value MUST survive the wire
-// round-trip (PayloadToStruct -> StructToPayload) exactly, across the
-// full int64 range. Today the wire carrier is google.protobuf.Struct,
-// whose numbers are IEEE-754 doubles, so:
+// TestPayload_Int64Spectrum_BugC is the regression test for the int64
+// data-integrity landmine (Bug C, ADR-028). A typed INTEGER payload value
+// MUST survive round-trip exactly across the full int64 range, via the
+// typed EntValue carrier (which holds a real int64) — NOT the legacy
+// google.protobuf.Struct path, whose IEEE-754 doubles corrupt >2^53.
 //
-//   - 2^53+1 silently rounds to 2^53 and slips PAST the safe-range guard
-//     (translate.go:347 only rejects > 2^53), so it is stored corrupted;
-//   - larger magnitudes (10^16+1, 2^62+1, MaxInt64) are rejected outright
-//     by the guard, i.e. a value the client legitimately wrote cannot be
-//     stored at all.
+// Two paths are checked, since losslessness must hold at every hop:
 //
-// Either way the value read back is not the value written. The fix (a
-// typed field_id->Value wire carrier that holds a real int64; ADR
-// pending) must make every case round-trip exactly and drop the guard.
+//  1. Wire round-trip: PayloadToTyped -> TypedToPayload.
+//  2. At-rest round-trip: the value marshalled to payload_json and read
+//     back the way the store does (json.Decoder + UseNumber, so integers
+//     survive as json.Number rather than float64), then PayloadToTyped.
 //
-// LANDED RED on purpose (Bug C characterization). Skipped so CI stays
-// green; remove the t.Skip when the typed-value carrier lands.
+// The legacy Struct path remains lossy by design (ADR-028 retires it);
+// that is asserted separately in TestPayload_StructPathStillLossy_BugC.
 func TestPayload_Int64Spectrum_BugC(t *testing.T) {
-	t.Skip("Bug C: int64 payload corruption via google.protobuf.Struct (double-backed); un-skip when the typed field_id->Value wire carrier lands — ADR pending")
 	reg := fixtureRegistry(t)
 	// field_id 3 == "age", schema.KindInteger.
 	cases := []int64{
@@ -227,22 +224,64 @@ func TestPayload_Int64Spectrum_BugC(t *testing.T) {
 		math.MaxInt64 - 1,      // sentinel-adjacent
 		math.MaxInt64,          // MaxInt64 sentinel
 		-(1 << 53) - 1,         // negative side of the boundary
+		math.MinInt64,          // MinInt64 sentinel
 	}
 	for _, want := range cases {
-		s, err := PayloadToStruct(reg, "User", map[uint32]any{3: want})
+		// 1) wire round-trip
+		ev, err := PayloadToTyped(reg, "User", map[uint32]any{3: want})
 		if err != nil {
-			t.Errorf("PayloadToStruct(age=%d): %v", want, err)
+			t.Errorf("PayloadToTyped(age=%d): %v", want, err)
 			continue
 		}
-		got, err := StructToPayload(reg, "User", s)
+		got, err := TypedToPayload(ev)
 		if err != nil {
-			t.Errorf("StructToPayload(age=%d): %v — a legitimate int64 was rejected, not stored", want, err)
+			t.Errorf("TypedToPayload(age=%d): %v", want, err)
 			continue
 		}
 		if got[3] != any(want) {
-			t.Errorf("age round-trip: wrote %d, read back %v (%T) — int64 corrupted via Struct (Bug C)",
-				want, got[3], got[3])
+			t.Errorf("wire round-trip: wrote %d, read back %v (%T)", want, got[3], got[3])
 		}
+
+		// 2) at-rest round-trip through payload_json + UseNumber
+		raw, err := json.Marshal(map[string]any{"3": want})
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		var decoded map[string]any
+		if err := dec.Decode(&decoded); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		ev2, err := PayloadToTyped(reg, "User", map[uint32]any{3: decoded["3"]})
+		if err != nil {
+			t.Errorf("PayloadToTyped(at-rest age=%d): %v", want, err)
+			continue
+		}
+		got2, _ := TypedToPayload(ev2)
+		if got2[3] != any(want) {
+			t.Errorf("at-rest round-trip: wrote %d, read back %v (%T) — int64 corrupted", want, got2[3], got2[3])
+		}
+	}
+}
+
+// TestPayload_StructPathStillLossy_BugC documents that the retired
+// google.protobuf.Struct payload path remains lossy for int64 >2^53 — the
+// reason ADR-028 introduces the typed EntValue carrier. Kept as an
+// executable note so the contrast is explicit.
+func TestPayload_StructPathStillLossy_BugC(t *testing.T) {
+	reg := fixtureRegistry(t)
+	const want = int64(1)<<53 + 1
+	s, err := PayloadToStruct(reg, "User", map[uint32]any{3: want})
+	if err != nil {
+		t.Fatalf("PayloadToStruct: %v", err)
+	}
+	got, err := StructToPayload(reg, "User", s)
+	if err != nil {
+		t.Fatalf("StructToPayload: %v", err)
+	}
+	if got[3] == any(want) {
+		t.Fatalf("Struct path unexpectedly lossless for %d — ADR-028 assumes it is not", want)
 	}
 }
 
