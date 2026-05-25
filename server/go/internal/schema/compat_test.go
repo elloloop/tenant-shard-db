@@ -24,20 +24,20 @@ func regWith(nodes []NodeTypeDef, edges []EdgeTypeDef) *Registry {
 	return r
 }
 
+// userNode is the name-free fixture node (type_id=1) used across the
+// compat table tests.
 func userNode() NodeTypeDef {
 	return NodeTypeDef{
 		TypeID: 1,
-		Name:   "User",
 		Fields: []FieldDef{
-			{FieldID: 1, Name: "user_id", Kind: KindString, Required: true, Unique: true},
-			{FieldID: 2, Name: "email", Kind: KindString},
+			{FieldID: 1, Kind: KindString, Required: true, Unique: true},
+			{FieldID: 2, Kind: KindString},
 		},
 	}
 }
 
 // findChange returns the first Change whose Kind matches `k`, or nil
-// when none exists. Used by table tests to assert presence without
-// pinning slice indices.
+// when none exists.
 func findChange(cs []Change, k ChangeKind) *Change {
 	for i := range cs {
 		if cs[i].Kind == k {
@@ -50,7 +50,7 @@ func findChange(cs []Change, k ChangeKind) *Change {
 func TestCompat_NodeAdded(t *testing.T) {
 	old := regWith([]NodeTypeDef{userNode()}, nil)
 	post := userNode()
-	post2 := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	post2 := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	newR := regWith([]NodeTypeDef{post, post2}, nil)
 	c := Check(old, newR)
 	if got := findChange(c, ChangeKindNodeAdded); got == nil {
@@ -62,7 +62,7 @@ func TestCompat_NodeAdded(t *testing.T) {
 
 func TestCompat_NodeRemoved(t *testing.T) {
 	user := userNode()
-	post := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	old := regWith([]NodeTypeDef{user, post}, nil)
 	newR := regWith([]NodeTypeDef{user}, nil)
 	c := Check(old, newR)
@@ -75,23 +75,10 @@ func TestCompat_NodeRemoved(t *testing.T) {
 	}
 }
 
-func TestCompat_TypeIDChanged(t *testing.T) {
-	old := regWith([]NodeTypeDef{{TypeID: 1, Name: "User", Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}}}}, nil)
-	newR := regWith([]NodeTypeDef{{TypeID: 2, Name: "User", Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}}}}, nil)
-	c := Check(old, newR)
-	got := findChange(c, ChangeKindTypeIDChanged)
-	if got == nil {
-		t.Fatalf("expected TYPE_ID_CHANGED, got %v", c)
-	}
-	if !got.Breaking {
-		t.Fatalf("TYPE_ID_CHANGED must be breaking")
-	}
-}
-
 func TestCompat_FieldAdded(t *testing.T) {
 	old := regWith([]NodeTypeDef{userNode()}, nil)
 	user2 := userNode()
-	user2.Fields = append(user2.Fields, FieldDef{FieldID: 3, Name: "phone", Kind: KindString})
+	user2.Fields = append(user2.Fields, FieldDef{FieldID: 3, Kind: KindString})
 	newR := regWith([]NodeTypeDef{user2}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindFieldAdded)
@@ -118,19 +105,25 @@ func TestCompat_FieldRemoved(t *testing.T) {
 	}
 }
 
+// TestCompat_FieldIDReassigned: name-free (ADR-031), reassigning a
+// field_id is a remove (old id) + add (new id), not a single
+// FIELD_ID_CHANGED — that detection required a name to pair the two.
 func TestCompat_FieldIDReassigned(t *testing.T) {
 	old := regWith([]NodeTypeDef{userNode()}, nil)
 	user2 := userNode()
-	// email moves from field_id=2 to field_id=7
+	// field 2 moves to field_id=7
 	user2.Fields[1].FieldID = 7
 	newR := regWith([]NodeTypeDef{user2}, nil)
 	c := Check(old, newR)
-	got := findChange(c, ChangeKindFieldIDChanged)
-	if got == nil {
-		t.Fatalf("expected FIELD_ID_CHANGED, got %v", c)
+	if findChange(c, ChangeKindFieldRemoved) == nil {
+		t.Fatalf("expected FIELD_REMOVED for old field_id, got %v", c)
 	}
-	if !got.Breaking {
-		t.Fatalf("FIELD_ID_CHANGED must be breaking")
+	if findChange(c, ChangeKindFieldAdded) == nil {
+		t.Fatalf("expected FIELD_ADDED for new field_id, got %v", c)
+	}
+	// FIELD_ID_CHANGED / FIELD_RENAMED are retired and never emitted.
+	if findChange(c, ChangeKindFieldIDChanged) != nil {
+		t.Fatalf("FIELD_ID_CHANGED is retired (ADR-031) and must not fire")
 	}
 }
 
@@ -146,96 +139,6 @@ func TestCompat_FieldKindChanged(t *testing.T) {
 	}
 	if !got.Breaking {
 		t.Fatalf("FIELD_KIND_CHANGED must be breaking")
-	}
-}
-
-// TestCompat_FieldRenamed asserts that renaming a field (same field_id,
-// same kind, different name) is classified as the new non-breaking
-// FIELD_RENAMED kind — not FIELD_KIND_CHANGED. CLAUDE.md invariant #6:
-// field IDs (not names) are the on-disk key, so renames are free.
-func TestCompat_FieldRenamed(t *testing.T) {
-	old := regWith([]NodeTypeDef{userNode()}, nil)
-	user2 := userNode()
-	// rename email -> email_address while keeping field_id=2, kind=str
-	user2.Fields[1].Name = "email_address"
-	newR := regWith([]NodeTypeDef{user2}, nil)
-	c := Check(old, newR)
-
-	got := findChange(c, ChangeKindFieldRenamed)
-	if got == nil {
-		t.Fatalf("expected FIELD_RENAMED, got %v", c)
-	}
-	if got.Breaking {
-		t.Fatalf("FIELD_RENAMED must not be breaking (field_id is the on-disk key)")
-	}
-	// Must NOT emit FIELD_KIND_CHANGED for the rename — that's only
-	// for a genuine STRING -> INT etc transition.
-	if k := findChange(c, ChangeKindFieldKindChanged); k != nil {
-		t.Fatalf("FIELD_KIND_CHANGED must NOT fire on a same-kind rename; got %v", k)
-	}
-	// Must NOT emit FIELD_ADDED for the renamed-to name — that
-	// double-counts the rename.
-	if a := findChange(c, ChangeKindFieldAdded); a != nil {
-		t.Fatalf("FIELD_ADDED must NOT fire when a field_id is renamed; got %v", a)
-	}
-	if HasBreaking(c) {
-		t.Fatalf("rename-only diff must not flag any breaking change; got %v", c)
-	}
-	// Sanity: exactly one event.
-	if len(c) != 1 {
-		t.Fatalf("expected exactly one FIELD_RENAMED change, got %d: %v", len(c), c)
-	}
-}
-
-// TestCompat_FieldRenamedWithKindChange asserts that if a rename is
-// combined with a genuine kind transition (str -> int), the kind change
-// still surfaces as breaking. The rename itself remains non-breaking.
-func TestCompat_FieldRenamedWithKindChange(t *testing.T) {
-	old := regWith([]NodeTypeDef{userNode()}, nil)
-	user2 := userNode()
-	user2.Fields[1].Name = "email_address"
-	user2.Fields[1].Kind = KindInteger
-	newR := regWith([]NodeTypeDef{user2}, nil)
-	c := Check(old, newR)
-
-	if findChange(c, ChangeKindFieldRenamed) == nil {
-		t.Fatalf("expected FIELD_RENAMED, got %v", c)
-	}
-	if got := findChange(c, ChangeKindFieldKindChanged); got == nil {
-		t.Fatalf("expected FIELD_KIND_CHANGED for genuine str->int transition, got %v", c)
-	} else if !got.Breaking {
-		t.Fatalf("FIELD_KIND_CHANGED must remain breaking on genuine kind transitions")
-	}
-}
-
-// TestCompat_TypeIDChangedSingleEvent asserts that renaming a node's
-// type_id (same name, different type_id) emits ONLY TYPE_ID_CHANGED,
-// not the redundant NODE_REMOVED + NODE_ADDED pair.
-func TestCompat_TypeIDChangedSingleEvent(t *testing.T) {
-	old := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "User",
-		Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}},
-	}}, nil)
-	newR := regWith([]NodeTypeDef{{
-		TypeID: 99, Name: "User",
-		Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}},
-	}}, nil)
-	c := Check(old, newR)
-
-	if got := findChange(c, ChangeKindTypeIDChanged); got == nil {
-		t.Fatalf("expected TYPE_ID_CHANGED, got %v", c)
-	} else if !got.Breaking {
-		t.Fatalf("TYPE_ID_CHANGED must be breaking")
-	}
-	if r := findChange(c, ChangeKindNodeRemoved); r != nil {
-		t.Fatalf("NODE_REMOVED must NOT fire when TYPE_ID_CHANGED handles it; got %v", r)
-	}
-	if a := findChange(c, ChangeKindNodeAdded); a != nil {
-		t.Fatalf("NODE_ADDED must NOT fire when TYPE_ID_CHANGED handles it; got %v", a)
-	}
-	// Sanity: exactly one change.
-	if len(c) != 1 {
-		t.Fatalf("expected exactly one TYPE_ID_CHANGED change, got %d: %v", len(c), c)
 	}
 }
 
@@ -256,7 +159,7 @@ func TestCompat_RequiredTightened(t *testing.T) {
 
 func TestCompat_RequiredLoosened(t *testing.T) {
 	old := regWith([]NodeTypeDef{userNode()}, nil)
-	// flip user_id required from true to false
+	// flip field 1 required from true to false
 	user2 := userNode()
 	user2.Fields[0].Required = false
 	// keep unique flag (loosening required only)
@@ -304,12 +207,12 @@ func TestCompat_UniqueRemoved(t *testing.T) {
 
 func TestCompat_EnumValueAdded(t *testing.T) {
 	old := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "Order",
-		Fields: []FieldDef{{FieldID: 1, Name: "status", Kind: KindEnum, EnumValues: []string{"A", "B"}}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindEnum, EnumValues: []string{"A", "B"}}},
 	}}, nil)
 	newR := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "Order",
-		Fields: []FieldDef{{FieldID: 1, Name: "status", Kind: KindEnum, EnumValues: []string{"A", "B", "C"}}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindEnum, EnumValues: []string{"A", "B", "C"}}},
 	}}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindEnumValueAdded)
@@ -323,12 +226,12 @@ func TestCompat_EnumValueAdded(t *testing.T) {
 
 func TestCompat_EnumValueRemoved(t *testing.T) {
 	old := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "Order",
-		Fields: []FieldDef{{FieldID: 1, Name: "status", Kind: KindEnum, EnumValues: []string{"A", "B", "C"}}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindEnum, EnumValues: []string{"A", "B", "C"}}},
 	}}, nil)
 	newR := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "Order",
-		Fields: []FieldDef{{FieldID: 1, Name: "status", Kind: KindEnum, EnumValues: []string{"A", "B"}}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindEnum, EnumValues: []string{"A", "B"}}},
 	}}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindEnumValueRemoved)
@@ -342,12 +245,12 @@ func TestCompat_EnumValueRemoved(t *testing.T) {
 
 func TestCompat_EnumValueReordered(t *testing.T) {
 	old := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "Order",
-		Fields: []FieldDef{{FieldID: 1, Name: "status", Kind: KindEnum, EnumValues: []string{"A", "B"}}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindEnum, EnumValues: []string{"A", "B"}}},
 	}}, nil)
 	newR := regWith([]NodeTypeDef{{
-		TypeID: 1, Name: "Order",
-		Fields: []FieldDef{{FieldID: 1, Name: "status", Kind: KindEnum, EnumValues: []string{"B", "A"}}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindEnum, EnumValues: []string{"B", "A"}}},
 	}}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindEnumValueReordered)
@@ -363,7 +266,7 @@ func TestCompat_CompositeUniqueAdded(t *testing.T) {
 	user := userNode()
 	old := regWith([]NodeTypeDef{user}, nil)
 	user2 := userNode()
-	user2.CompositeUnique = []CompositeUniqueDef{{Name: "by_email_tenant", FieldIDs: []uint32{1, 2}}}
+	user2.CompositeUnique = []CompositeUniqueDef{{FieldIDs: []uint32{1, 2}}}
 	newR := regWith([]NodeTypeDef{user2}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindCompositeUniqueAdded)
@@ -377,7 +280,7 @@ func TestCompat_CompositeUniqueAdded(t *testing.T) {
 
 func TestCompat_CompositeUniqueRemoved(t *testing.T) {
 	user := userNode()
-	user.CompositeUnique = []CompositeUniqueDef{{Name: "by_email_tenant", FieldIDs: []uint32{1, 2}}}
+	user.CompositeUnique = []CompositeUniqueDef{{FieldIDs: []uint32{1, 2}}}
 	old := regWith([]NodeTypeDef{user}, nil)
 	user2 := userNode()
 	newR := regWith([]NodeTypeDef{user2}, nil)
@@ -391,32 +294,42 @@ func TestCompat_CompositeUniqueRemoved(t *testing.T) {
 	}
 }
 
-func TestCompat_CompositeUniqueChanged(t *testing.T) {
+// TestCompat_CompositeUniqueRetupled: name-free (ADR-031), changing a
+// composite's field tuple is a remove (old tuple) + add (new tuple). The
+// constraint identity IS the tuple, so there is no in-place "changed".
+func TestCompat_CompositeUniqueRetupled(t *testing.T) {
 	user := userNode()
-	user.Fields = append(user.Fields, FieldDef{FieldID: 3, Name: "org", Kind: KindString})
-	user.CompositeUnique = []CompositeUniqueDef{{Name: "by_set", FieldIDs: []uint32{1, 2}}}
+	user.Fields = append(user.Fields, FieldDef{FieldID: 3, Kind: KindString})
+	user.CompositeUnique = []CompositeUniqueDef{{FieldIDs: []uint32{1, 2}}}
 	old := regWith([]NodeTypeDef{user}, nil)
 	user2 := userNode()
-	user2.Fields = append(user2.Fields, FieldDef{FieldID: 3, Name: "org", Kind: KindString})
-	user2.CompositeUnique = []CompositeUniqueDef{{Name: "by_set", FieldIDs: []uint32{1, 3}}}
+	user2.Fields = append(user2.Fields, FieldDef{FieldID: 3, Kind: KindString})
+	user2.CompositeUnique = []CompositeUniqueDef{{FieldIDs: []uint32{1, 3}}}
 	newR := regWith([]NodeTypeDef{user2}, nil)
 	c := Check(old, newR)
-	got := findChange(c, ChangeKindCompositeUniqueChanged)
-	if got == nil {
-		t.Fatalf("expected COMPOSITE_UNIQUE_CHANGED, got %v", c)
+	if findChange(c, ChangeKindCompositeUniqueRemoved) == nil {
+		t.Fatalf("expected COMPOSITE_UNIQUE_REMOVED for the old tuple, got %v", c)
 	}
-	if !got.Breaking {
-		t.Fatalf("COMPOSITE_UNIQUE_CHANGED must be breaking")
+	added := findChange(c, ChangeKindCompositeUniqueAdded)
+	if added == nil {
+		t.Fatalf("expected COMPOSITE_UNIQUE_ADDED for the new tuple, got %v", c)
+	}
+	if !added.Breaking {
+		t.Fatalf("COMPOSITE_UNIQUE_ADDED must be breaking")
+	}
+	// COMPOSITE_UNIQUE_CHANGED is retired and never emitted.
+	if findChange(c, ChangeKindCompositeUniqueChanged) != nil {
+		t.Fatalf("COMPOSITE_UNIQUE_CHANGED is retired (ADR-031) and must not fire")
 	}
 }
 
 func owns() EdgeTypeDef {
-	return EdgeTypeDef{EdgeID: 100, Name: "Owns", FromTypeID: 1, ToTypeID: 2, OnSubjectExit: OnSubjectExitBoth}
+	return EdgeTypeDef{EdgeID: 100, FromTypeID: 1, ToTypeID: 2, OnSubjectExit: OnSubjectExitBoth}
 }
 
 func TestCompat_EdgeAdded(t *testing.T) {
 	user := userNode()
-	post := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	old := regWith([]NodeTypeDef{user, post}, nil)
 	newR := regWith([]NodeTypeDef{user, post}, []EdgeTypeDef{owns()})
 	c := Check(old, newR)
@@ -431,7 +344,7 @@ func TestCompat_EdgeAdded(t *testing.T) {
 
 func TestCompat_EdgeRemoved(t *testing.T) {
 	user := userNode()
-	post := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	old := regWith([]NodeTypeDef{user, post}, []EdgeTypeDef{owns()})
 	newR := regWith([]NodeTypeDef{user, post}, nil)
 	c := Check(old, newR)
@@ -446,8 +359,8 @@ func TestCompat_EdgeRemoved(t *testing.T) {
 
 func TestCompat_EdgeFromTypeChanged(t *testing.T) {
 	user := userNode()
-	org := NodeTypeDef{TypeID: 3, Name: "Org", Fields: []FieldDef{{FieldID: 1, Name: "name", Kind: KindString}}}
-	post := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	org := NodeTypeDef{TypeID: 3, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	old := regWith([]NodeTypeDef{user, post, org}, []EdgeTypeDef{owns()})
 	o2 := owns()
 	o2.FromTypeID = 3
@@ -464,7 +377,7 @@ func TestCompat_EdgeFromTypeChanged(t *testing.T) {
 
 func TestCompat_EdgeUniquePerFromAdded(t *testing.T) {
 	user := userNode()
-	post := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	old := regWith([]NodeTypeDef{user, post}, []EdgeTypeDef{owns()})
 	o2 := owns()
 	o2.UniquePerFrom = true
@@ -481,7 +394,7 @@ func TestCompat_EdgeUniquePerFromAdded(t *testing.T) {
 
 func TestCompat_OnSubjectExitChanged(t *testing.T) {
 	user := userNode()
-	post := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	old := regWith([]NodeTypeDef{user, post}, []EdgeTypeDef{owns()})
 	o2 := owns()
 	o2.OnSubjectExit = OnSubjectExitFrom
@@ -499,8 +412,8 @@ func TestCompat_OnSubjectExitChanged(t *testing.T) {
 func TestCompat_DataPolicyLoosened(t *testing.T) {
 	fin := DataPolicyFinancial
 	bus := DataPolicyBusiness
-	old := regWith([]NodeTypeDef{{TypeID: 1, Name: "Pay", DataPolicy: &fin, Fields: []FieldDef{{FieldID: 1, Name: "amount", Kind: KindInteger}}}}, nil)
-	newR := regWith([]NodeTypeDef{{TypeID: 1, Name: "Pay", DataPolicy: &bus, Fields: []FieldDef{{FieldID: 1, Name: "amount", Kind: KindInteger}}}}, nil)
+	old := regWith([]NodeTypeDef{{TypeID: 1, DataPolicy: &fin, Fields: []FieldDef{{FieldID: 1, Kind: KindInteger}}}}, nil)
+	newR := regWith([]NodeTypeDef{{TypeID: 1, DataPolicy: &bus, Fields: []FieldDef{{FieldID: 1, Kind: KindInteger}}}}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindDataPolicyLoosened)
 	if got == nil {
@@ -514,8 +427,8 @@ func TestCompat_DataPolicyLoosened(t *testing.T) {
 func TestCompat_DataPolicyTightened(t *testing.T) {
 	fin := DataPolicyFinancial
 	bus := DataPolicyBusiness
-	old := regWith([]NodeTypeDef{{TypeID: 1, Name: "Pay", DataPolicy: &bus, Fields: []FieldDef{{FieldID: 1, Name: "amount", Kind: KindInteger}}}}, nil)
-	newR := regWith([]NodeTypeDef{{TypeID: 1, Name: "Pay", DataPolicy: &fin, Fields: []FieldDef{{FieldID: 1, Name: "amount", Kind: KindInteger}}}}, nil)
+	old := regWith([]NodeTypeDef{{TypeID: 1, DataPolicy: &bus, Fields: []FieldDef{{FieldID: 1, Kind: KindInteger}}}}, nil)
+	newR := regWith([]NodeTypeDef{{TypeID: 1, DataPolicy: &fin, Fields: []FieldDef{{FieldID: 1, Kind: KindInteger}}}}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindDataPolicyTightened)
 	if got == nil {
@@ -527,10 +440,10 @@ func TestCompat_DataPolicyTightened(t *testing.T) {
 }
 
 func TestCompat_SubjectFieldChanged(t *testing.T) {
-	s1 := "user_id"
-	s2 := "id"
-	old := regWith([]NodeTypeDef{{TypeID: 1, Name: "User", SubjectField: &s1, Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}, {FieldID: 2, Name: "id", Kind: KindString}}}}, nil)
-	newR := regWith([]NodeTypeDef{{TypeID: 1, Name: "User", SubjectField: &s2, Fields: []FieldDef{{FieldID: 1, Name: "user_id", Kind: KindString}, {FieldID: 2, Name: "id", Kind: KindString}}}}, nil)
+	s1 := uint32(1)
+	s2 := uint32(2)
+	old := regWith([]NodeTypeDef{{TypeID: 1, SubjectField: &s1, Fields: []FieldDef{{FieldID: 1, Kind: KindString}, {FieldID: 2, Kind: KindString}}}}, nil)
+	newR := regWith([]NodeTypeDef{{TypeID: 1, SubjectField: &s2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}, {FieldID: 2, Kind: KindString}}}}, nil)
 	c := Check(old, newR)
 	got := findChange(c, ChangeKindSubjectFieldChanged)
 	if got == nil {
@@ -567,8 +480,8 @@ func TestCheck_NilRegistries(t *testing.T) {
 
 func TestCheck_DeterministicOutputOrder(t *testing.T) {
 	r1 := regWith([]NodeTypeDef{userNode()}, nil)
-	post1 := NodeTypeDef{TypeID: 2, Name: "Post", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
-	post2 := NodeTypeDef{TypeID: 3, Name: "Comment", Fields: []FieldDef{{FieldID: 1, Name: "body", Kind: KindString}}}
+	post1 := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
+	post2 := NodeTypeDef{TypeID: 3, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	r2 := regWith([]NodeTypeDef{userNode(), post1, post2}, nil)
 	a := Check(r1, r2)
 	b := Check(r1, r2)
@@ -583,12 +496,12 @@ func TestCheck_DeterministicOutputOrder(t *testing.T) {
 }
 
 func TestChangeKindMarshalJSON(t *testing.T) {
-	c := Change{Kind: ChangeKindFieldIDChanged, Path: "node:User.field:email", Message: "x", Breaking: true}
+	c := Change{Kind: ChangeKindFieldRemoved, Path: "node:1.field:2", Message: "x", Breaking: true}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if !strings.Contains(string(raw), `"FIELD_ID_CHANGED"`) {
+	if !strings.Contains(string(raw), `"FIELD_REMOVED"`) {
 		t.Fatalf("expected textual kind, got %s", raw)
 	}
 }
@@ -596,21 +509,19 @@ func TestChangeKindMarshalJSON(t *testing.T) {
 func TestRenderText_Smoke(t *testing.T) {
 	r1 := regWith([]NodeTypeDef{userNode()}, nil)
 	user2 := userNode()
-	user2.Fields[1].FieldID = 7
+	user2.Fields = user2.Fields[:1] // remove field 2 → breaking
 	r2 := regWith([]NodeTypeDef{user2}, nil)
 	c := Check(r1, r2)
 	out := RenderText(c, "baseline.json")
 	if !strings.Contains(out, "BREAKING") {
 		t.Fatalf("expected BREAKING header, got: %s", out)
 	}
-	if !strings.Contains(out, "FIELD_ID_CHANGED") {
+	if !strings.Contains(out, "FIELD_REMOVED") {
 		t.Fatalf("expected rule name, got: %s", out)
 	}
 }
 
 // BenchmarkCheck100Types asserts <100ms (well under the 2s budget).
-// A 100-type / 2000-field synthetic registry is large enough to make
-// the algorithmic cost visible without taking forever to construct.
 func BenchmarkCheck100Types(b *testing.B) {
 	nodes := make([]NodeTypeDef, 100)
 	for i := 0; i < 100; i++ {
@@ -618,46 +529,18 @@ func BenchmarkCheck100Types(b *testing.B) {
 		for j := 0; j < 20; j++ {
 			fields[j] = FieldDef{
 				FieldID: uint32(j + 1),
-				Name:    "f" + itoaShort(j),
 				Kind:    KindString,
 			}
 		}
 		nodes[i] = NodeTypeDef{
 			TypeID: int32(i + 1),
-			Name:   "T" + itoaShort(i),
 			Fields: fields,
 		}
 	}
 	r := regWith(nodes, nil)
-	// Same shape on both sides to exercise the "no diff" path, which
-	// is the hot path in CI (most PRs don't change the schema).
 	r2 := regWith(nodes, nil)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_ = Check(r, r2)
 	}
-}
-
-func itoaShort(v int) string {
-	if v == 0 {
-		return "0"
-	}
-	var buf [20]byte
-	i := len(buf)
-	neg := false
-	x := v
-	if x < 0 {
-		neg = true
-		x = -x
-	}
-	for x > 0 {
-		i--
-		buf[i] = byte('0' + x%10)
-		x /= 10
-	}
-	if neg {
-		i--
-		buf[i] = '-'
-	}
-	return string(buf[i:])
 }

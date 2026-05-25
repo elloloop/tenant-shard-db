@@ -553,6 +553,12 @@ func (x *ExecuteAtomicRequest) GetSchema() *SchemaDescriptor {
 // schema JSON contract (server/go/internal/schema/types.go) field-for-
 // field; the proto field NUMBERS here are wire ids, NOT the schema
 // “field_id“ values (those live in SchemaFieldDef.field_id).
+//
+// NAME-FREE (ADR-031): types are identified by type_id / edge_id and
+// fields by field_id only. No field name, type name, or constraint name
+// is carried on the wire — names live only in the client's proto and are
+// resolved by the SDK. The “name“ field numbers are RESERVED so they
+// are never reused.
 type SchemaDescriptor struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	NodeTypes     []*SchemaNodeTypeDef   `protobuf:"bytes,1,rep,name=node_types,json=nodeTypes,proto3" json:"node_types,omitempty"`
@@ -607,11 +613,11 @@ func (x *SchemaDescriptor) GetEdgeTypes() []*SchemaEdgeTypeDef {
 
 // SchemaFieldDef mirrors schema.FieldDef. “field_id“ is the stable
 // on-disk/wire field id (the proto field number of the user's own
-// message per ADR-018), NOT this message's field numbers.
+// message per ADR-018), NOT this message's field numbers. Name-free
+// (ADR-031): no field name is carried.
 type SchemaFieldDef struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	FieldId uint32                 `protobuf:"varint,1,opt,name=field_id,json=fieldId,proto3" json:"field_id,omitempty"`
-	Name    string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	// kind is the schema.FieldKind wire string: str / int / float / bool
 	// / timestamp / json / bytes / enum / ref / list_str / list_int /
 	// list_ref.
@@ -665,13 +671,6 @@ func (x *SchemaFieldDef) GetFieldId() uint32 {
 		return x.FieldId
 	}
 	return 0
-}
-
-func (x *SchemaFieldDef) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
 }
 
 func (x *SchemaFieldDef) GetKind() string {
@@ -744,10 +743,11 @@ func (x *SchemaFieldDef) GetUnique() bool {
 	return false
 }
 
-// SchemaCompositeUniqueDef mirrors schema.CompositeUniqueDef.
+// SchemaCompositeUniqueDef mirrors schema.CompositeUniqueDef. Name-free
+// (ADR-031): a composite constraint is identified solely by its
+// field_ids tuple; no constraint name is carried.
 type SchemaCompositeUniqueDef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	FieldIds      []uint32               `protobuf:"varint,2,rep,packed,name=field_ids,json=fieldIds,proto3" json:"field_ids,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -783,13 +783,6 @@ func (*SchemaCompositeUniqueDef) Descriptor() ([]byte, []int) {
 	return file_entdb_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *SchemaCompositeUniqueDef) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
 func (x *SchemaCompositeUniqueDef) GetFieldIds() []uint32 {
 	if x != nil {
 		return x.FieldIds
@@ -800,11 +793,11 @@ func (x *SchemaCompositeUniqueDef) GetFieldIds() []uint32 {
 // SchemaNodeTypeDef mirrors schema.NodeTypeDef. Only the fields the
 // server needs to enforce uniqueness / indexes / search / validation are
 // carried; GDPR/ACL policy metadata can be added later without breaking
-// the wire (additive field numbers).
+// the wire (additive field numbers). Name-free (ADR-031): identified by
+// type_id only.
 type SchemaNodeTypeDef struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	TypeId      int32                  `protobuf:"varint,1,opt,name=type_id,json=typeId,proto3" json:"type_id,omitempty"`
-	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	Fields      []*SchemaFieldDef      `protobuf:"bytes,3,rep,name=fields,proto3" json:"fields,omitempty"`
 	Deprecated  bool                   `protobuf:"varint,4,opt,name=deprecated,proto3" json:"deprecated,omitempty"`
 	Description string                 `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
@@ -812,9 +805,10 @@ type SchemaNodeTypeDef struct {
 	// business / financial / audit / ephemeral / healthcare); empty
 	// means unset.
 	DataPolicy string `protobuf:"bytes,6,opt,name=data_policy,json=dataPolicy,proto3" json:"data_policy,omitempty"`
-	// subject_field / legal_basis are optional GDPR metadata; absent
-	// means unset.
-	SubjectField    *string                     `protobuf:"bytes,7,opt,name=subject_field,json=subjectField,proto3,oneof" json:"subject_field,omitempty"`
+	// subject_field is the optional GDPR subject field_id (ADR-031:
+	// name-free); legal_basis is optional GDPR metadata. Absent means
+	// unset.
+	SubjectField    *uint32                     `protobuf:"varint,7,opt,name=subject_field,json=subjectField,proto3,oneof" json:"subject_field,omitempty"`
 	LegalBasis      *string                     `protobuf:"bytes,8,opt,name=legal_basis,json=legalBasis,proto3,oneof" json:"legal_basis,omitempty"`
 	CompositeUnique []*SchemaCompositeUniqueDef `protobuf:"bytes,9,rep,name=composite_unique,json=compositeUnique,proto3" json:"composite_unique,omitempty"`
 	unknownFields   protoimpl.UnknownFields
@@ -858,13 +852,6 @@ func (x *SchemaNodeTypeDef) GetTypeId() int32 {
 	return 0
 }
 
-func (x *SchemaNodeTypeDef) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
-}
-
 func (x *SchemaNodeTypeDef) GetFields() []*SchemaFieldDef {
 	if x != nil {
 		return x.Fields
@@ -893,11 +880,11 @@ func (x *SchemaNodeTypeDef) GetDataPolicy() string {
 	return ""
 }
 
-func (x *SchemaNodeTypeDef) GetSubjectField() string {
+func (x *SchemaNodeTypeDef) GetSubjectField() uint32 {
 	if x != nil && x.SubjectField != nil {
 		return *x.SubjectField
 	}
-	return ""
+	return 0
 }
 
 func (x *SchemaNodeTypeDef) GetLegalBasis() string {
@@ -914,11 +901,11 @@ func (x *SchemaNodeTypeDef) GetCompositeUnique() []*SchemaCompositeUniqueDef {
 	return nil
 }
 
-// SchemaEdgeTypeDef mirrors schema.EdgeTypeDef.
+// SchemaEdgeTypeDef mirrors schema.EdgeTypeDef. Name-free (ADR-031):
+// identified by edge_id only.
 type SchemaEdgeTypeDef struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EdgeId        int32                  `protobuf:"varint,1,opt,name=edge_id,json=edgeId,proto3" json:"edge_id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	FromTypeId    int32                  `protobuf:"varint,3,opt,name=from_type_id,json=fromTypeId,proto3" json:"from_type_id,omitempty"`
 	ToTypeId      int32                  `protobuf:"varint,4,opt,name=to_type_id,json=toTypeId,proto3" json:"to_type_id,omitempty"`
 	Props         []*SchemaFieldDef      `protobuf:"bytes,5,rep,name=props,proto3" json:"props,omitempty"`
@@ -969,13 +956,6 @@ func (x *SchemaEdgeTypeDef) GetEdgeId() int32 {
 		return x.EdgeId
 	}
 	return 0
-}
-
-func (x *SchemaEdgeTypeDef) GetName() string {
-	if x != nil {
-		return x.Name
-	}
-	return ""
 }
 
 func (x *SchemaEdgeTypeDef) GetFromTypeId() int32 {
@@ -8294,10 +8274,9 @@ const file_entdb_proto_rawDesc = "" +
 	"\n" +
 	"node_types\x18\x01 \x03(\v2\x1b.entdb.v1.SchemaNodeTypeDefR\tnodeTypes\x12:\n" +
 	"\n" +
-	"edge_types\x18\x02 \x03(\v2\x1b.entdb.v1.SchemaEdgeTypeDefR\tedgeTypes\"\xeb\x02\n" +
+	"edge_types\x18\x02 \x03(\v2\x1b.entdb.v1.SchemaEdgeTypeDefR\tedgeTypes\"\xe3\x02\n" +
 	"\x0eSchemaFieldDef\x12\x19\n" +
 	"\bfield_id\x18\x01 \x01(\rR\afieldId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x03 \x01(\tR\x04kind\x12\x1a\n" +
 	"\brequired\x18\x04 \x01(\bR\brequired\x12\x1f\n" +
 	"\venum_values\x18\x05 \x03(\tR\n" +
@@ -8314,13 +8293,11 @@ const file_entdb_proto_rawDesc = "" +
 	" \x01(\tR\vdescription\x12\x10\n" +
 	"\x03pii\x18\v \x01(\bR\x03pii\x12\x16\n" +
 	"\x06unique\x18\f \x01(\bR\x06uniqueB\x0e\n" +
-	"\f_ref_type_id\"K\n" +
-	"\x18SchemaCompositeUniqueDef\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1b\n" +
-	"\tfield_ids\x18\x02 \x03(\rR\bfieldIds\"\x96\x03\n" +
+	"\f_ref_type_idJ\x04\b\x02\x10\x03R\x04name\"C\n" +
+	"\x18SchemaCompositeUniqueDef\x12\x1b\n" +
+	"\tfield_ids\x18\x02 \x03(\rR\bfieldIdsJ\x04\b\x01\x10\x02R\x04name\"\x8e\x03\n" +
 	"\x11SchemaNodeTypeDef\x12\x17\n" +
-	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x120\n" +
+	"\atype_id\x18\x01 \x01(\x05R\x06typeId\x120\n" +
 	"\x06fields\x18\x03 \x03(\v2\x18.entdb.v1.SchemaFieldDefR\x06fields\x12\x1e\n" +
 	"\n" +
 	"deprecated\x18\x04 \x01(\bR\n" +
@@ -8328,15 +8305,14 @@ const file_entdb_proto_rawDesc = "" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\x12\x1f\n" +
 	"\vdata_policy\x18\x06 \x01(\tR\n" +
 	"dataPolicy\x12(\n" +
-	"\rsubject_field\x18\a \x01(\tH\x00R\fsubjectField\x88\x01\x01\x12$\n" +
+	"\rsubject_field\x18\a \x01(\rH\x00R\fsubjectField\x88\x01\x01\x12$\n" +
 	"\vlegal_basis\x18\b \x01(\tH\x01R\n" +
 	"legalBasis\x88\x01\x01\x12M\n" +
 	"\x10composite_unique\x18\t \x03(\v2\".entdb.v1.SchemaCompositeUniqueDefR\x0fcompositeUniqueB\x10\n" +
 	"\x0e_subject_fieldB\x0e\n" +
-	"\f_legal_basis\"\xe3\x02\n" +
+	"\f_legal_basisJ\x04\b\x02\x10\x03R\x04name\"\xdb\x02\n" +
 	"\x11SchemaEdgeTypeDef\x12\x17\n" +
-	"\aedge_id\x18\x01 \x01(\x05R\x06edgeId\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
+	"\aedge_id\x18\x01 \x01(\x05R\x06edgeId\x12 \n" +
 	"\ffrom_type_id\x18\x03 \x01(\x05R\n" +
 	"fromTypeId\x12\x1c\n" +
 	"\n" +
@@ -8350,7 +8326,7 @@ const file_entdb_proto_rawDesc = "" +
 	"\vdata_policy\x18\t \x01(\tR\n" +
 	"dataPolicy\x12&\n" +
 	"\x0fon_subject_exit\x18\n" +
-	" \x01(\tR\ronSubjectExit\"\xf6\x02\n" +
+	" \x01(\tR\ronSubjectExitJ\x04\b\x02\x10\x03R\x04name\"\xf6\x02\n" +
 	"\tOperation\x129\n" +
 	"\vcreate_node\x18\x01 \x01(\v2\x16.entdb.v1.CreateNodeOpH\x00R\n" +
 	"createNode\x129\n" +

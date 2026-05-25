@@ -14,9 +14,10 @@
 //  2. Trusted-actor: the wire-claimed actor is UNTRUSTED. We rebind via
 //     auth.Authoritative(ctx, claimed) — mirrors commit fece3fb.
 //  3. order_by, limit defaults are applied per spec (created_at, 100).
-//  4. filters: name-keyed FieldFilter entries are translated to id-keyed
-//     comparison filters via payload.FilterNamesToIDs. Eq/Ne/Lt/Le/Gt/Ge
-//     are supported as AND-ed predicates per issue #501. CONTAINS and IN
+//  4. filters: field_id-keyed FieldFilter entries (name-free, ADR-031)
+//     are validated to id-keyed comparison filters via payload.FilterToIDs.
+//     Eq/Ne/Lt/Le/Gt/Ge are supported as AND-ed predicates per issue #501.
+//     CONTAINS and IN
 //     remain reserved (the wire enum declares them but the server still
 //     surfaces them as INVALID_ARGUMENT pending the full MongoDB-operator
 //     allow-list).
@@ -47,6 +48,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
@@ -101,25 +103,21 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		return nil, errs.Errorf(codes.InvalidArgument, "type_id is required")
 	}
 
-	// Resolve the type so we can translate filter field names. A nil
-	// registry is tolerated for the schema-less unit-test path: in
-	// that case digit-only filter keys parse to ids, and string keys
-	// surface INVALID_ARGUMENT (per payload.FilterNamesToIDs schema-
-	// less path).
-	typeName := ""
+	// Validate the type exists (name-free, ADR-031). A nil registry is
+	// tolerated for the schema-less unit-test path: in that case
+	// digit-only filter keys parse to ids, and non-digit keys surface
+	// INVALID_ARGUMENT (per payload.FilterToIDs).
 	if s.registry != nil {
-		nt := s.registry.NodeTypeByID(typeID)
-		if nt == nil {
+		if nt := s.registry.NodeTypeByID(typeID); nt == nil {
 			resultStatus = "error"
 			return nil, errs.Errorf(codes.InvalidArgument, "unknown type_id %d", typeID)
 		}
-		typeName = nt.Name
 	}
 
 	// Translate FieldFilter wire shape -> id-keyed comparison filters.
 	// Eq/Ne/Lt/Le/Gt/Ge are supported (issue #501); CONTAINS / IN and
 	// any unknown operator value surface as INVALID_ARGUMENT.
-	storeFilters, err := s.fieldFiltersToStoreFilters(typeName, req.GetFilters())
+	storeFilters, err := s.fieldFiltersToStoreFilters(s.registry, typeID, req.GetFilters())
 	if err != nil {
 		resultStatus = "error"
 		return nil, err
@@ -229,7 +227,7 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	// ACL JSON unmarshalled to repeated AclEntry.
 	protoNodes := make([]*pb.Node, 0, len(nodes))
 	for _, n := range nodes {
-		pn, err := s.storeNodeToProto(typeName, n)
+		pn, err := s.storeNodeToProto(typeID, n)
 		if err != nil {
 			resultStatus = "error"
 			return nil, err
@@ -245,8 +243,13 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 }
 
 // fieldFiltersToStoreFilters translates the wire-shape FieldFilter
-// slice into the canonical store's id-keyed [store.QueryFilter]
-// list, applying name-to-id resolution against the schema registry.
+// slice into the canonical store's id-keyed [store.QueryFilter] list.
+//
+// NAME-FREE per ADR-031: FieldFilter.field carries the field_id as a
+// decimal string; the server never resolves a name. The id is validated
+// against the schema (when a type is resolved) via payload.FilterToIDs,
+// which surfaces a non-digit key or an unknown field_id as
+// INVALID_ARGUMENT.
 //
 // Supported operators (issue #501):
 //
@@ -261,25 +264,25 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 // existing SDK call site keeps working — the inlined operator overrides
 // the wire “op” field. Unknown inlined keys (e.g. “$nin”, “$between”)
 // still surface as INVALID_ARGUMENT.
-func (s *Server) fieldFiltersToStoreFilters(typeName string, filters []*pb.FieldFilter) ([]store.QueryFilter, error) {
+func (s *Server) fieldFiltersToStoreFilters(reg *schema.Registry, typeID int32, filters []*pb.FieldFilter) ([]store.QueryFilter, error) {
 	if len(filters) == 0 {
 		return nil, nil
 	}
-	// Resolve field name -> id via a single-entry call through
-	// payload.FilterNamesToIDs. We re-use that helper per distinct
-	// name so the unknown-field error shape stays identical to the
-	// equality path and the schema-less unit-test path keeps working.
-	resolveField := func(name string) (uint32, error) {
-		ids, err := payload.FilterNamesToIDs(s.registry, typeName, map[string]any{name: nil})
+	// Validate a field_id key against the schema via a single-entry call
+	// through payload.FilterToIDs so the unknown-field-id / non-digit
+	// error shape stays identical to the equality path and the
+	// schema-less unit-test path keeps working.
+	resolveField := func(field string) (uint32, error) {
+		ids, err := payload.FilterToIDs(reg, typeID, map[string]any{field: nil})
 		if err != nil {
 			return 0, err
 		}
 		for id := range ids {
 			return id, nil
 		}
-		// Defensive: FilterNamesToIDs always returns one id on success.
+		// Defensive: FilterToIDs always returns one id on success.
 		return 0, errs.Errorf(codes.InvalidArgument,
-			"QueryNodes: filter references unknown field %q", name)
+			"QueryNodes: filter references unknown field_id %q", field)
 	}
 
 	nameToID := map[string]uint32{}

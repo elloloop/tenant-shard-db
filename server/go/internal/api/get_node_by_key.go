@@ -164,7 +164,7 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	if derr != nil {
 		return nil, errs.Internal(ctx, "GetNodeByKey: decode payload", derr)
 	}
-	typedPayload, derr := payload.PayloadToTyped(s.registry, payloadTypeName(s.registry, node.TypeID), idKeyed)
+	typedPayload, derr := payload.PayloadToTyped(s.registry, node.TypeID, idKeyed)
 	if derr != nil {
 		return nil, errs.Internal(ctx, "GetNodeByKey: typed payload", derr)
 	}

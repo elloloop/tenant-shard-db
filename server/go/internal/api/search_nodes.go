@@ -322,12 +322,12 @@ func nodeRowToProto(n *store.Node) (*pb.Node, error) {
 	if len(idKeyed) > 0 {
 		// Schema-less (no registry here): canonical decode keeps int64 in
 		// typed_payload; Struct payload stays float64-lossy by design.
-		st, serr := payload.PayloadToStruct(nil, "", idKeyed)
+		st, serr := payload.PayloadToStruct(nil, 0, idKeyed)
 		if serr != nil {
 			return nil, serr
 		}
 		out.Payload = st
-		typed, terr := payload.PayloadToTyped(nil, "", idKeyed)
+		typed, terr := payload.PayloadToTyped(nil, 0, idKeyed)
 		if terr != nil {
 			return nil, terr
 		}

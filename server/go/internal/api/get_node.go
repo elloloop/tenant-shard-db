@@ -254,18 +254,14 @@ func nodeToProto(reg *schema.Registry, n *store.Node) (*pb.Node, error) {
 		return nil, fmt.Errorf("decode payload_json: %w", err)
 	}
 
-	typeName := ""
-	if reg != nil {
-		if nt := reg.NodeTypeByID(n.TypeID); nt != nil {
-			typeName = nt.Name
-		}
-	}
-	wire, err := payload.PayloadToStruct(reg, typeName, idKeyed)
+	// Name-free per ADR-031: the type is resolved by type_id for
+	// kind-aware payload coercion; no name lookup.
+	wire, err := payload.PayloadToStruct(reg, n.TypeID, idKeyed)
 	if err != nil {
 		return nil, fmt.Errorf("encode payload: %w", err)
 	}
 	out.Payload = wire
-	typed, err := payload.PayloadToTyped(reg, typeName, idKeyed)
+	typed, err := payload.PayloadToTyped(reg, n.TypeID, idKeyed)
 	if err != nil {
 		return nil, fmt.Errorf("encode typed payload: %w", err)
 	}

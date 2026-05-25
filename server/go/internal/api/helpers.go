@@ -35,7 +35,6 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
@@ -192,24 +191,11 @@ func edgePropsToTyped(propsJSON string) map[uint32]*pb.EntValue {
 	if err != nil || len(idKeyed) == 0 {
 		return nil
 	}
-	typed, err := payload.PayloadToTyped(nil, "", idKeyed)
+	typed, err := payload.PayloadToTyped(nil, 0, idKeyed)
 	if err != nil {
 		return nil
 	}
 	return typed
-}
-
-// payloadTypeName resolves a node type's name for schema-aware payload
-// translation, or "" when the registry is absent or the type is unknown
-// (schema-less passthrough).
-func payloadTypeName(reg *schema.Registry, typeID int32) string {
-	if reg == nil {
-		return ""
-	}
-	if nt := reg.NodeTypeByID(typeID); nt != nil {
-		return nt.Name
-	}
-	return ""
 }
 
 // edgePropsToStruct parses a stored props_json column into a typed
@@ -235,30 +221,30 @@ func edgePropsToStruct(propsJSON string) *structpb.Struct {
 }
 
 // storeNodeToProto translates a store.Node into the wire pb.Node.
-// Payload stays id-keyed on the wire per CLAUDE.md invariant #6; the
-// SDK names the fields client-side. ACL JSON is unmarshalled to
+// Payload stays id-keyed on the wire per CLAUDE.md invariant #6 / ADR-031;
+// the SDK names the fields client-side. ACL JSON is unmarshalled to
 // repeated AclEntry.
 //
-// typeName is consumed only by payload.PayloadToStruct for kind-aware
-// coercion (BYTES -> base64, TIMESTAMP/INTEGER -> float64). Callers
-// that have already resolved the type (QueryNodes) pass it directly;
-// callers that operate on heterogeneous node sets (GetNodes,
-// GetConnectedNodes) pass "" and accept the schema-less passthrough.
+// typeID is consumed only by payload.PayloadToStruct/PayloadToTyped for
+// kind-aware coercion (BYTES -> base64, TIMESTAMP/INTEGER -> float64).
+// Callers that have already resolved the type (QueryNodes) pass it
+// directly; callers that operate on heterogeneous node sets (GetNodes,
+// GetConnectedNodes) pass 0 and accept the schema-less passthrough.
 //
 // Consolidated from three duplicates (get_nodes.go,
 // get_connected_nodes.go, query_nodes.go). Picks the method form +
 // payload.PayloadToStruct path so the schema-aware QueryNodes call
 // site is preserved.
-func (s *Server) storeNodeToProto(typeName string, n *store.Node) (*pb.Node, error) {
+func (s *Server) storeNodeToProto(typeID int32, n *store.Node) (*pb.Node, error) {
 	idPayload, err := decodeIDKeyedPayload(n.PayloadJSON)
 	if err != nil {
 		return nil, errs.InternalNoCtx("parse node payload", err)
 	}
-	pStruct, err := payload.PayloadToStruct(s.registry, typeName, idPayload)
+	pStruct, err := payload.PayloadToStruct(s.registry, typeID, idPayload)
 	if err != nil {
 		return nil, err
 	}
-	pTyped, err := payload.PayloadToTyped(s.registry, typeName, idPayload)
+	pTyped, err := payload.PayloadToTyped(s.registry, typeID, idPayload)
 	if err != nil {
 		return nil, err
 	}

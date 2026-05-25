@@ -38,7 +38,7 @@ func LoadFromJSON(data []byte) (*Registry, error) {
 	for i := range f.NodeTypes {
 		nt := f.NodeTypes[i]
 		if err := r.RegisterNode(&nt); err != nil {
-			return nil, fmt.Errorf("schema: register node %q: %w", nt.Name, err)
+			return nil, fmt.Errorf("schema: register node type_id %d: %w", nt.TypeID, err)
 		}
 	}
 	for i := range f.EdgeTypes {
@@ -47,7 +47,7 @@ func LoadFromJSON(data []byte) (*Registry, error) {
 			et.OnSubjectExit = OnSubjectExitBoth
 		}
 		if err := r.RegisterEdge(&et); err != nil {
-			return nil, fmt.Errorf("schema: register edge %q: %w", et.Name, err)
+			return nil, fmt.Errorf("schema: register edge edge_id %d: %w", et.EdgeID, err)
 		}
 	}
 	return r, nil

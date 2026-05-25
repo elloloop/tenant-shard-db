@@ -1,7 +1,8 @@
-// Tests for payload translation. Mirrors the asserted behavior in
-// tests/python/unit/test_grpc_wire_format.py — wire payload is
-// id-keyed, unknown names dropped, field order does not matter,
-// schema-less mode passes through.
+// Tests for payload translation. NAME-FREE per ADR-031: the wire payload
+// is field_id-keyed (decimal-string keys), a non-digit (name) key is
+// rejected, field order does not matter, and the registry (looked up by
+// type_id) drives only field-KIND coercion. Schema-less mode passes
+// id-keyed values through untouched.
 
 package payload
 
@@ -19,24 +20,24 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
-// fixtureRegistry seeds a minimal frozen registry with a User-like type.
-// Field IDs are deliberately non-sequential so order independence and
-// id-vs-name correctness are observable in test output.
+// fixtureRegistry seeds a minimal frozen registry with a User-like type
+// (type_id=1). Field IDs are deliberately non-sequential so order
+// independence and id correctness are observable in test output.
+// Name-free per ADR-031: fields carry no names.
 func fixtureRegistry(t *testing.T) *schema.Registry {
 	t.Helper()
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: 1,
-		Name:   "User",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "email", Kind: schema.KindString},
-			{FieldID: 2, Name: "name", Kind: schema.KindString},
-			{FieldID: 3, Name: "age", Kind: schema.KindInteger},
-			{FieldID: 4, Name: "active", Kind: schema.KindBoolean},
-			{FieldID: 5, Name: "avatar", Kind: schema.KindBytes},
-			{FieldID: 6, Name: "created_at", Kind: schema.KindTimestamp},
-			{FieldID: 7, Name: "metadata", Kind: schema.KindJSON},
-			{FieldID: 8, Name: "status", Kind: schema.KindEnum, EnumValues: []string{"active", "banned"}},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindString},
+			{FieldID: 3, Kind: schema.KindInteger},
+			{FieldID: 4, Kind: schema.KindBoolean},
+			{FieldID: 5, Kind: schema.KindBytes},
+			{FieldID: 6, Kind: schema.KindTimestamp},
+			{FieldID: 7, Kind: schema.KindJSON},
+			{FieldID: 8, Kind: schema.KindEnum, EnumValues: []string{"active", "banned"}},
 		},
 	}); err != nil {
 		t.Fatalf("register: %v", err)
@@ -56,53 +57,50 @@ func mustStruct(t *testing.T, m map[string]any) *structpb.Struct {
 	return s
 }
 
-// TestStructToPayload_KeysAreFieldIDs is the central CLAUDE.md
-// invariant #6 test: marshal a Struct keyed by field NAMES and assert
-// the resulting map keys are field_ids (uint32), not names.
+// TestStructToPayload_KeysAreFieldIDs is the central ADR-031 / invariant
+// #6 test: the wire is field_id-keyed and the resulting map keys are the
+// same field_ids (uint32).
 func TestStructToPayload_KeysAreFieldIDs(t *testing.T) {
 	reg := fixtureRegistry(t)
 	s := mustStruct(t, map[string]any{
-		"email": "alice@example.com",
-		"name":  "Alice",
+		"1": "alice@example.com",
+		"2": "Alice",
 	})
-	got, err := StructToPayload(reg, "User", s)
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
 	if v, ok := got[1]; !ok || v != "alice@example.com" {
-		t.Fatalf("expected got[1]=email value, got %v (%T), full=%v", v, v, got)
+		t.Fatalf("expected got[1]=field-1 value, got %v (%T), full=%v", v, v, got)
 	}
 	if v, ok := got[2]; !ok || v != "Alice" {
-		t.Fatalf("expected got[2]=name value, got %v (%T), full=%v", v, v, got)
+		t.Fatalf("expected got[2]=field-2 value, got %v (%T), full=%v", v, v, got)
 	}
-	// No string keys leaked through (the map type forbids that, but
-	// also assert that the size is exactly 2 — no extras).
 	if len(got) != 2 {
 		t.Fatalf("expected 2 entries (id-keyed), got %d: %v", len(got), got)
 	}
 }
 
-func TestStructToPayload_DropsUnknownFields(t *testing.T) {
+// TestStructToPayload_NameKeyRejected: a non-digit (name) key is
+// INVALID_ARGUMENT — the server never translates names (ADR-031).
+func TestStructToPayload_NameKeyRejected(t *testing.T) {
 	reg := fixtureRegistry(t)
 	s := mustStruct(t, map[string]any{
-		"email":       "drop@example.com",
-		"ghost_field": "should be dropped",
+		"1":     "ok@example.com",
+		"email": "should reject",
 	})
-	got, err := StructToPayload(reg, "User", s)
-	if err != nil {
-		t.Fatalf("StructToPayload: %v", err)
+	_, err := StructToPayload(reg, 1, s)
+	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
+		t.Fatalf("expected INVALID_ARGUMENT for a name key, got %v", err)
 	}
-	if len(got) != 1 {
-		t.Fatalf("expected only known field after drop, got %v", got)
-	}
-	if _, ok := got[1]; !ok {
-		t.Fatalf("expected email (id=1) in result, got %v", got)
+	if !strings.Contains(err.Error(), "email") {
+		t.Fatalf("error should name the offending key, got: %v", err)
 	}
 }
 
 func TestStructToPayload_EmptyStructIsEmptyMap(t *testing.T) {
 	reg := fixtureRegistry(t)
-	got, err := StructToPayload(reg, "User", &structpb.Struct{})
+	got, err := StructToPayload(reg, 1, &structpb.Struct{})
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
@@ -112,7 +110,7 @@ func TestStructToPayload_EmptyStructIsEmptyMap(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected empty map, got %v", got)
 	}
-	got2, err := StructToPayload(reg, "User", nil)
+	got2, err := StructToPayload(reg, 1, nil)
 	if err != nil {
 		t.Fatalf("StructToPayload(nil): %v", err)
 	}
@@ -121,22 +119,24 @@ func TestStructToPayload_EmptyStructIsEmptyMap(t *testing.T) {
 	}
 }
 
-func TestStructToPayload_DigitKeyPassthrough(t *testing.T) {
+// TestStructToPayload_UnknownDigitKept: a digit key not on the schema is
+// kept verbatim (forward-compat — a field from a newer schema revision
+// round-trips on write, matching the egress forward-compat rule).
+func TestStructToPayload_UnknownDigitKept(t *testing.T) {
 	reg := fixtureRegistry(t)
-	// Pre-translated digit keys: id 1 is known (email), id 99 is not.
 	s := mustStruct(t, map[string]any{
 		"1":  "via@digit.com",
-		"99": "unknown id, drop",
+		"99": "unknown id, kept",
 	})
-	got, err := StructToPayload(reg, "User", s)
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
 	if v, ok := got[1]; !ok || v != "via@digit.com" {
-		t.Fatalf("expected digit-key passthrough, got %v", got)
+		t.Fatalf("expected digit-key coercion, got %v", got)
 	}
-	if _, ok := got[99]; ok {
-		t.Fatalf("unknown digit id should have been dropped, got %v", got)
+	if v, ok := got[99]; !ok || v != "unknown id, kept" {
+		t.Fatalf("unknown digit id should be kept verbatim, got %v", got)
 	}
 }
 
@@ -144,15 +144,15 @@ func TestStructToPayload_BytesBase64Coercion(t *testing.T) {
 	reg := fixtureRegistry(t)
 	original := []byte{0xde, 0xad, 0xbe, 0xef, 0x00, 0x01, 0x02}
 	encoded := base64.StdEncoding.EncodeToString(original)
-	s := mustStruct(t, map[string]any{"avatar": encoded})
+	s := mustStruct(t, map[string]any{"5": encoded})
 
-	got, err := StructToPayload(reg, "User", s)
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
 	v, ok := got[5].([]byte)
 	if !ok {
-		t.Fatalf("expected []byte for avatar, got %T (%v)", got[5], got[5])
+		t.Fatalf("expected []byte for field 5, got %T (%v)", got[5], got[5])
 	}
 	if !bytes.Equal(v, original) {
 		t.Fatalf("bytes round-trip mismatch: got %x want %x", v, original)
@@ -161,8 +161,8 @@ func TestStructToPayload_BytesBase64Coercion(t *testing.T) {
 
 func TestStructToPayload_BytesInvalidBase64IsInvalidArgument(t *testing.T) {
 	reg := fixtureRegistry(t)
-	s := mustStruct(t, map[string]any{"avatar": "***not base64***"})
-	_, err := StructToPayload(reg, "User", s)
+	s := mustStruct(t, map[string]any{"5": "***not base64***"})
+	_, err := StructToPayload(reg, 1, s)
 	if err == nil {
 		t.Fatal("expected error for invalid base64")
 	}
@@ -174,26 +174,26 @@ func TestStructToPayload_BytesInvalidBase64IsInvalidArgument(t *testing.T) {
 func TestStructToPayload_TimestampAndIntegerCoerced(t *testing.T) {
 	reg := fixtureRegistry(t)
 	s := mustStruct(t, map[string]any{
-		"age":        42.0,
-		"created_at": 1715000000000.0,
+		"3": 42.0,
+		"6": 1715000000000.0,
 	})
-	got, err := StructToPayload(reg, "User", s)
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
 	if v, ok := got[3].(int64); !ok || v != 42 {
-		t.Fatalf("expected age=int64(42), got %T(%v)", got[3], got[3])
+		t.Fatalf("expected field3=int64(42), got %T(%v)", got[3], got[3])
 	}
 	if v, ok := got[6].(int64); !ok || v != 1715000000000 {
-		t.Fatalf("expected created_at=int64(...), got %T(%v)", got[6], got[6])
+		t.Fatalf("expected field6=int64(...), got %T(%v)", got[6], got[6])
 	}
 }
 
 func TestStructToPayload_TimestampOutOfRange(t *testing.T) {
 	reg := fixtureRegistry(t)
 	// 2^54 — outside structpb safe integer range.
-	s := mustStruct(t, map[string]any{"created_at": float64(1) * (1 << 54)})
-	_, err := StructToPayload(reg, "User", s)
+	s := mustStruct(t, map[string]any{"6": float64(1) * (1 << 54)})
+	_, err := StructToPayload(reg, 1, s)
 	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
 		t.Fatalf("expected INVALID_ARGUMENT for out-of-range timestamp, got %v", err)
 	}
@@ -202,47 +202,34 @@ func TestStructToPayload_TimestampOutOfRange(t *testing.T) {
 // TestPayload_Int64Spectrum_BugC is the regression test for the int64
 // data-integrity landmine (Bug C, ADR-028). A typed INTEGER payload value
 // MUST survive round-trip exactly across the full int64 range, via the
-// typed EntValue carrier (which holds a real int64) — NOT the legacy
-// google.protobuf.Struct path, whose IEEE-754 doubles corrupt >2^53.
-//
-// Two paths are checked, since losslessness must hold at every hop:
-//
-//  1. Wire round-trip: PayloadToTyped -> TypedToPayload.
-//  2. At-rest round-trip: the value marshalled to payload_json and read
-//     back the way the store does (json.Decoder + UseNumber, so integers
-//     survive as json.Number rather than float64), then PayloadToTyped.
-//
-// The legacy Struct path remains lossy by design (ADR-028 retires it);
-// that is asserted separately in TestPayload_StructPathStillLossy_BugC.
+// typed EntValue carrier (which holds a real int64).
 func TestPayload_Int64Spectrum_BugC(t *testing.T) {
 	reg := fixtureRegistry(t)
-	// field_id 3 == "age", schema.KindInteger.
+	// field_id 3 == schema.KindInteger.
 	cases := []int64{
-		(1 << 53) + 1,          // 9007199254740993 — first unsafe odd int
-		10_000_000_000_000_001, // 10^16 + 1
-		(1 << 62) + 1,          // large but well within int64
-		math.MaxInt64 - 1,      // sentinel-adjacent
-		math.MaxInt64,          // MaxInt64 sentinel
-		-(1 << 53) - 1,         // negative side of the boundary
-		math.MinInt64,          // MinInt64 sentinel
+		(1 << 53) + 1,
+		10_000_000_000_000_001,
+		(1 << 62) + 1,
+		math.MaxInt64 - 1,
+		math.MaxInt64,
+		-(1 << 53) - 1,
+		math.MinInt64,
 	}
 	for _, want := range cases {
-		// 1) wire round-trip
-		ev, err := PayloadToTyped(reg, "User", map[uint32]any{3: want})
+		ev, err := PayloadToTyped(reg, 1, map[uint32]any{3: want})
 		if err != nil {
-			t.Errorf("PayloadToTyped(age=%d): %v", want, err)
+			t.Errorf("PayloadToTyped(field3=%d): %v", want, err)
 			continue
 		}
 		got, err := TypedToPayload(ev)
 		if err != nil {
-			t.Errorf("TypedToPayload(age=%d): %v", want, err)
+			t.Errorf("TypedToPayload(field3=%d): %v", want, err)
 			continue
 		}
 		if got[3] != any(want) {
 			t.Errorf("wire round-trip: wrote %d, read back %v (%T)", want, got[3], got[3])
 		}
 
-		// 2) at-rest round-trip through payload_json + UseNumber
 		raw, err := json.Marshal(map[string]any{"3": want})
 		if err != nil {
 			t.Fatalf("marshal: %v", err)
@@ -253,9 +240,9 @@ func TestPayload_Int64Spectrum_BugC(t *testing.T) {
 		if err := dec.Decode(&decoded); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		ev2, err := PayloadToTyped(reg, "User", map[uint32]any{3: decoded["3"]})
+		ev2, err := PayloadToTyped(reg, 1, map[uint32]any{3: decoded["3"]})
 		if err != nil {
-			t.Errorf("PayloadToTyped(at-rest age=%d): %v", want, err)
+			t.Errorf("PayloadToTyped(at-rest field3=%d): %v", want, err)
 			continue
 		}
 		got2, _ := TypedToPayload(ev2)
@@ -266,17 +253,15 @@ func TestPayload_Int64Spectrum_BugC(t *testing.T) {
 }
 
 // TestPayload_StructPathStillLossy_BugC documents that the retired
-// google.protobuf.Struct payload path remains lossy for int64 >2^53 — the
-// reason ADR-028 introduces the typed EntValue carrier. Kept as an
-// executable note so the contrast is explicit.
+// google.protobuf.Struct payload path remains lossy for int64 >2^53.
 func TestPayload_StructPathStillLossy_BugC(t *testing.T) {
 	reg := fixtureRegistry(t)
 	const want = int64(1)<<53 + 1
-	s, err := PayloadToStruct(reg, "User", map[uint32]any{3: want})
+	s, err := PayloadToStruct(reg, 1, map[uint32]any{3: want})
 	if err != nil {
 		t.Fatalf("PayloadToStruct: %v", err)
 	}
-	got, err := StructToPayload(reg, "User", s)
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
@@ -288,23 +273,23 @@ func TestPayload_StructPathStillLossy_BugC(t *testing.T) {
 func TestStructToPayload_JSONNestedMapPassthrough(t *testing.T) {
 	reg := fixtureRegistry(t)
 	s := mustStruct(t, map[string]any{
-		"metadata": map[string]any{
+		"7": map[string]any{
 			"key": "value",
 			"nested": map[string]any{
 				"deep": float64(1),
 			},
 		},
 	})
-	got, err := StructToPayload(reg, "User", s)
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
 	m, ok := got[7].(map[string]any)
 	if !ok {
-		t.Fatalf("expected map[string]any for metadata, got %T", got[7])
+		t.Fatalf("expected map[string]any for field 7, got %T", got[7])
 	}
 	if m["key"] != "value" {
-		t.Fatalf("expected metadata.key=value, got %v", m["key"])
+		t.Fatalf("expected field7.key=value, got %v", m["key"])
 	}
 	nested, ok := m["nested"].(map[string]any)
 	if !ok {
@@ -317,26 +302,26 @@ func TestStructToPayload_JSONNestedMapPassthrough(t *testing.T) {
 
 func TestStructToPayload_EnumStringPreserved(t *testing.T) {
 	reg := fixtureRegistry(t)
-	s := mustStruct(t, map[string]any{"status": "active"})
-	got, err := StructToPayload(reg, "User", s)
+	s := mustStruct(t, map[string]any{"8": "active"})
+	got, err := StructToPayload(reg, 1, s)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
 	if got[8] != "active" {
-		t.Fatalf("expected status=active, got %v", got[8])
+		t.Fatalf("expected field8=active, got %v", got[8])
 	}
 }
 
 func TestStructToPayload_FieldOrderIndependent(t *testing.T) {
 	reg := fixtureRegistry(t)
-	s1 := mustStruct(t, map[string]any{"email": "x@example.com", "name": "X"})
-	s2 := mustStruct(t, map[string]any{"name": "X", "email": "x@example.com"})
+	s1 := mustStruct(t, map[string]any{"1": "x@example.com", "2": "X"})
+	s2 := mustStruct(t, map[string]any{"2": "X", "1": "x@example.com"})
 
-	g1, err := StructToPayload(reg, "User", s1)
+	g1, err := StructToPayload(reg, 1, s1)
 	if err != nil {
 		t.Fatalf("s1: %v", err)
 	}
-	g2, err := StructToPayload(reg, "User", s2)
+	g2, err := StructToPayload(reg, 1, s2)
 	if err != nil {
 		t.Fatalf("s2: %v", err)
 	}
@@ -353,7 +338,7 @@ func TestPayloadToStruct_KeysAreStringifiedFieldIDs(t *testing.T) {
 		1: "alice@example.com",
 		2: "Alice",
 	}
-	got, err := PayloadToStruct(reg, "User", in)
+	got, err := PayloadToStruct(reg, 1, in)
 	if err != nil {
 		t.Fatalf("PayloadToStruct: %v", err)
 	}
@@ -362,17 +347,17 @@ func TestPayloadToStruct_KeysAreStringifiedFieldIDs(t *testing.T) {
 		t.Fatalf("expected 2 keys on the wire, got %d (%v)", len(keys), keys)
 	}
 	if v, ok := keys["1"]; !ok || v.GetStringValue() != "alice@example.com" {
-		t.Fatalf("expected keys[\"1\"]=email, got %v", keys)
+		t.Fatalf("expected keys[\"1\"], got %v", keys)
 	}
 	if v, ok := keys["2"]; !ok || v.GetStringValue() != "Alice" {
-		t.Fatalf("expected keys[\"2\"]=name, got %v", keys)
+		t.Fatalf("expected keys[\"2\"], got %v", keys)
 	}
 }
 
 func TestPayloadToStruct_BytesEncodedAsBase64(t *testing.T) {
 	reg := fixtureRegistry(t)
 	original := []byte{0xca, 0xfe, 0xba, 0xbe}
-	got, err := PayloadToStruct(reg, "User", map[uint32]any{5: original})
+	got, err := PayloadToStruct(reg, 1, map[uint32]any{5: original})
 	if err != nil {
 		t.Fatalf("PayloadToStruct: %v", err)
 	}
@@ -382,13 +367,9 @@ func TestPayloadToStruct_BytesEncodedAsBase64(t *testing.T) {
 	}
 }
 
-// TestStructToPayload_SchemalessIdKeyedAccepted: name-keyed ingress is
-// rejected on an unregistered type, but id-keyed ingress is accepted
-// and preserved verbatim. This is the schemaless contract: the SDK
-// pre-translates names to field_ids client-side, so the wire is
-// always id-keyed even when the server has no schema for the type.
+// TestStructToPayload_SchemalessIdKeyedAccepted: id-keyed ingress is
+// accepted and preserved verbatim even with no schema for the type.
 func TestStructToPayload_SchemalessIdKeyedAccepted(t *testing.T) {
-	// Empty (but frozen) registry — no types registered.
 	reg := schema.NewRegistry()
 	if _, err := reg.Freeze(); err != nil {
 		t.Fatalf("freeze: %v", err)
@@ -397,7 +378,8 @@ func TestStructToPayload_SchemalessIdKeyedAccepted(t *testing.T) {
 		"1": "alice@example.com",
 		"2": "Alice",
 	})
-	got, err := StructToPayload(reg, "Unknown", s)
+	// type_id 7 is unknown to the empty registry → schema-less branch.
+	got, err := StructToPayload(reg, 7, s)
 	if err != nil {
 		t.Fatalf("StructToPayload(schemaless, id-keyed): %v", err)
 	}
@@ -409,10 +391,8 @@ func TestStructToPayload_SchemalessIdKeyedAccepted(t *testing.T) {
 	}
 }
 
-// TestStructToPayload_SchemalessNameKeyedRejected: name-keyed ingress
-// on an unregistered type returns INVALID_ARGUMENT. Without a schema
-// the server has no name→id mapping; silently dropping the keys
-// (the prior behavior) caused silent data loss.
+// TestStructToPayload_SchemalessNameKeyedRejected: a name key is rejected
+// even schema-less (ADR-031 — the wire is always id-keyed).
 func TestStructToPayload_SchemalessNameKeyedRejected(t *testing.T) {
 	reg := schema.NewRegistry()
 	if _, err := reg.Freeze(); err != nil {
@@ -420,25 +400,19 @@ func TestStructToPayload_SchemalessNameKeyedRejected(t *testing.T) {
 	}
 	s := mustStruct(t, map[string]any{
 		"email": "alice@example.com",
-		"name":  "Alice",
 	})
-	_, err := StructToPayload(reg, "Unknown", s)
-	if err == nil {
-		t.Fatal("expected INVALID_ARGUMENT, got nil")
-	}
-	if !errors.Is(err, errs.ErrInvalidArgument) {
+	_, err := StructToPayload(reg, 7, s)
+	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
 		t.Fatalf("expected InvalidArgument, got %v", err)
 	}
-	// The error message should name the offending field so the SDK author
-	// can locate the bug.
-	if !strings.Contains(err.Error(), "email") && !strings.Contains(err.Error(), "name") {
-		t.Fatalf("error should mention offending field, got: %v", err)
+	if !strings.Contains(err.Error(), "email") {
+		t.Fatalf("error should mention offending key, got: %v", err)
 	}
 }
 
 func TestPayloadToStruct_TimestampInt64IsNumberValue(t *testing.T) {
 	reg := fixtureRegistry(t)
-	got, err := PayloadToStruct(reg, "User", map[uint32]any{6: int64(1715000000000)})
+	got, err := PayloadToStruct(reg, 1, map[uint32]any{6: int64(1715000000000)})
 	if err != nil {
 		t.Fatalf("PayloadToStruct: %v", err)
 	}
@@ -449,9 +423,7 @@ func TestPayloadToStruct_TimestampInt64IsNumberValue(t *testing.T) {
 }
 
 func TestPayloadToStruct_SchemaLessPassthrough(t *testing.T) {
-	// No registry, no type name — the wire still carries stringified
-	// field_id keys and primitive values pass through.
-	got, err := PayloadToStruct(nil, "", map[uint32]any{
+	got, err := PayloadToStruct(nil, 0, map[uint32]any{
 		1: "hello",
 		2: float64(3.14),
 		3: true,
@@ -473,9 +445,7 @@ func TestPayloadToStruct_SchemaLessPassthrough(t *testing.T) {
 
 func TestPayloadToStruct_UnknownFieldIDPreservedOnEgress(t *testing.T) {
 	reg := fixtureRegistry(t)
-	// Field ID 999 is not on the schema; egress must still emit it
-	// (forward-compat).
-	got, err := PayloadToStruct(reg, "User", map[uint32]any{
+	got, err := PayloadToStruct(reg, 1, map[uint32]any{
 		1:   "known",
 		999: "unknown but kept",
 	})
@@ -489,14 +459,14 @@ func TestPayloadToStruct_UnknownFieldIDPreservedOnEgress(t *testing.T) {
 
 func TestPayloadToStruct_EmptyPayloadIsEmptyStruct(t *testing.T) {
 	reg := fixtureRegistry(t)
-	got, err := PayloadToStruct(reg, "User", map[uint32]any{})
+	got, err := PayloadToStruct(reg, 1, map[uint32]any{})
 	if err != nil {
 		t.Fatalf("PayloadToStruct: %v", err)
 	}
 	if len(got.GetFields()) != 0 {
 		t.Fatalf("expected empty Struct, got %v", got)
 	}
-	got2, err := PayloadToStruct(reg, "User", nil)
+	got2, err := PayloadToStruct(reg, 1, nil)
 	if err != nil {
 		t.Fatalf("PayloadToStruct(nil): %v", err)
 	}
@@ -507,92 +477,74 @@ func TestPayloadToStruct_EmptyPayloadIsEmptyStruct(t *testing.T) {
 
 // --- Round-trip ----------------------------------------------------------
 
-func TestRoundTrip_NameKeyedToIDKeyedToWire(t *testing.T) {
+func TestRoundTrip_IDKeyedToWire(t *testing.T) {
 	reg := fixtureRegistry(t)
 	in := mustStruct(t, map[string]any{
-		"email":  "rt@example.com",
-		"name":   "Round Trip",
-		"age":    42.0,
-		"active": true,
+		"1": "rt@example.com",
+		"2": "Round Trip",
+		"3": 42.0,
+		"4": true,
 	})
-	mid, err := StructToPayload(reg, "User", in)
+	mid, err := StructToPayload(reg, 1, in)
 	if err != nil {
 		t.Fatalf("StructToPayload: %v", err)
 	}
-	out, err := PayloadToStruct(reg, "User", mid)
+	out, err := PayloadToStruct(reg, 1, mid)
 	if err != nil {
 		t.Fatalf("PayloadToStruct: %v", err)
 	}
-	// The wire should be id-keyed.
 	keys := out.GetFields()
-	wantKeys := []string{"1", "2", "3", "4"}
-	for _, k := range wantKeys {
+	for _, k := range []string{"1", "2", "3", "4"} {
 		if _, ok := keys[k]; !ok {
 			t.Fatalf("round-trip missing key %q (got %v)", k, keys)
 		}
 	}
 	if keys["1"].GetStringValue() != "rt@example.com" {
-		t.Fatalf("email round-trip mismatch")
+		t.Fatalf("field1 round-trip mismatch")
 	}
 	if keys["3"].GetNumberValue() != 42.0 {
-		t.Fatalf("age round-trip mismatch")
+		t.Fatalf("field3 round-trip mismatch")
 	}
 	if !keys["4"].GetBoolValue() {
-		t.Fatalf("active round-trip mismatch")
+		t.Fatalf("field4 round-trip mismatch")
 	}
 }
 
-// --- FilterNamesToIDs ----------------------------------------------------
+// --- FilterToIDs ---------------------------------------------------------
 
-func TestFilterNamesToIDs_TranslatesNames(t *testing.T) {
+func TestFilterToIDs_IDKeyed(t *testing.T) {
 	reg := fixtureRegistry(t)
-	got, err := FilterNamesToIDs(reg, "User", map[string]any{
-		"email": "alice@example.com",
-		"age":   42,
+	got, err := FilterToIDs(reg, 1, map[string]any{
+		"1": "alice@example.com",
+		"3": 42,
 	})
 	if err != nil {
-		t.Fatalf("FilterNamesToIDs: %v", err)
+		t.Fatalf("FilterToIDs: %v", err)
 	}
 	if got[1] != "alice@example.com" {
-		t.Fatalf("expected got[1]=email, got %v", got)
+		t.Fatalf("expected got[1], got %v", got)
 	}
 	if got[3] != 42 {
-		t.Fatalf("expected got[3]=age, got %v", got)
+		t.Fatalf("expected got[3], got %v", got)
 	}
 }
 
-func TestFilterNamesToIDs_DigitKeyPassthrough(t *testing.T) {
+func TestFilterToIDs_NameKeyIsInvalidArgument(t *testing.T) {
 	reg := fixtureRegistry(t)
-	got, err := FilterNamesToIDs(reg, "User", map[string]any{
-		"1": "via id",
+	_, err := FilterToIDs(reg, 1, map[string]any{
+		"email": "x",
 	})
-	if err != nil {
-		t.Fatalf("FilterNamesToIDs: %v", err)
+	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
+		t.Fatalf("expected INVALID_ARGUMENT for a name key, got %v", err)
 	}
-	if got[1] != "via id" {
-		t.Fatalf("expected got[1]=via id, got %v", got)
-	}
-}
-
-func TestFilterNamesToIDs_UnknownNameIsInvalidArgument(t *testing.T) {
-	reg := fixtureRegistry(t)
-	_, err := FilterNamesToIDs(reg, "User", map[string]any{
-		"ghost": "x",
-	})
-	if err == nil {
-		t.Fatal("expected error for unknown filter field")
-	}
-	if !errors.Is(err, errs.ErrInvalidArgument) {
-		t.Fatalf("expected INVALID_ARGUMENT, got %v", err)
-	}
-	if !strings.Contains(err.Error(), "ghost") {
-		t.Fatalf("expected error to mention field name, got %v", err)
+	if !strings.Contains(err.Error(), "email") {
+		t.Fatalf("expected error to mention key, got %v", err)
 	}
 }
 
-func TestFilterNamesToIDs_UnknownDigitIDIsInvalidArgument(t *testing.T) {
+func TestFilterToIDs_UnknownDigitIDIsInvalidArgument(t *testing.T) {
 	reg := fixtureRegistry(t)
-	_, err := FilterNamesToIDs(reg, "User", map[string]any{
+	_, err := FilterToIDs(reg, 1, map[string]any{
 		"999": "x",
 	})
 	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
@@ -600,149 +552,16 @@ func TestFilterNamesToIDs_UnknownDigitIDIsInvalidArgument(t *testing.T) {
 	}
 }
 
-func TestFilterNamesToIDs_SchemaLessRequiresDigitKeys(t *testing.T) {
-	got, err := FilterNamesToIDs(nil, "", map[string]any{"1": "x"})
+func TestFilterToIDs_SchemaLessRequiresDigitKeys(t *testing.T) {
+	got, err := FilterToIDs(nil, 0, map[string]any{"1": "x"})
 	if err != nil {
-		t.Fatalf("FilterNamesToIDs(schema-less, digit): %v", err)
+		t.Fatalf("FilterToIDs(schema-less, digit): %v", err)
 	}
 	if got[1] != "x" {
 		t.Fatalf("expected schema-less digit passthrough, got %v", got)
 	}
-	_, err = FilterNamesToIDs(nil, "", map[string]any{"name": "x"})
+	_, err = FilterToIDs(nil, 0, map[string]any{"name": "x"})
 	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
 		t.Fatalf("schema-less + name key should be INVALID_ARGUMENT, got %v", err)
-	}
-}
-
-// --- PayloadJSONToNames --------------------------------------------------
-
-func TestPayloadJSONToNames_TranslatesIDsToNames(t *testing.T) {
-	reg := fixtureRegistry(t)
-	got, err := PayloadJSONToNames(reg, "User", map[uint32]any{
-		1: "alice@example.com",
-		2: "Alice",
-	})
-	if err != nil {
-		t.Fatalf("PayloadJSONToNames: %v", err)
-	}
-	if got["email"] != "alice@example.com" {
-		t.Fatalf("expected email, got %v", got)
-	}
-	if got["name"] != "Alice" {
-		t.Fatalf("expected name, got %v", got)
-	}
-}
-
-func TestPayloadJSONToNames_UnknownIDPreservedAsString(t *testing.T) {
-	reg := fixtureRegistry(t)
-	got, err := PayloadJSONToNames(reg, "User", map[uint32]any{
-		1:   "known",
-		999: "future",
-	})
-	if err != nil {
-		t.Fatalf("PayloadJSONToNames: %v", err)
-	}
-	if got["email"] != "known" {
-		t.Fatalf("expected email=known, got %v", got)
-	}
-	if got["999"] != "future" {
-		t.Fatalf("expected unknown id preserved as decimal-string key, got %v", got)
-	}
-}
-
-func TestPayloadJSONToNames_SchemaLessUsesDecimalKeys(t *testing.T) {
-	got, err := PayloadJSONToNames(nil, "", map[uint32]any{
-		1: "v1",
-		2: "v2",
-	})
-	if err != nil {
-		t.Fatalf("PayloadJSONToNames(schema-less): %v", err)
-	}
-	if got["1"] != "v1" || got["2"] != "v2" {
-		t.Fatalf("expected decimal-keyed map, got %v", got)
-	}
-}
-
-func TestPayloadJSONToNames_EmptyInput(t *testing.T) {
-	reg := fixtureRegistry(t)
-	got, err := PayloadJSONToNames(reg, "User", map[uint32]any{})
-	if err != nil {
-		t.Fatalf("PayloadJSONToNames: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected non-nil empty map")
-	}
-	if len(got) != 0 {
-		t.Fatalf("expected empty result, got %v", got)
-	}
-}
-
-// PayloadJSONToNames is the inverse of StructToPayload for the
-// schema-aware case (modulo proto Value vs Go any boxing).
-func TestPayloadJSONToNames_InverseOfStructToPayload(t *testing.T) {
-	reg := fixtureRegistry(t)
-	in := mustStruct(t, map[string]any{
-		"email": "round@example.com",
-		"name":  "Round",
-	})
-	mid, err := StructToPayload(reg, "User", in)
-	if err != nil {
-		t.Fatalf("StructToPayload: %v", err)
-	}
-	out, err := PayloadJSONToNames(reg, "User", mid)
-	if err != nil {
-		t.Fatalf("PayloadJSONToNames: %v", err)
-	}
-	if out["email"] != "round@example.com" {
-		t.Fatalf("expected email round-trip, got %v", out)
-	}
-	if out["name"] != "Round" {
-		t.Fatalf("expected name round-trip, got %v", out)
-	}
-}
-
-// --- Schema-less ingress -------------------------------------------------
-
-// Schema-less ingress accepts id-keyed payloads (CLAUDE.md invariant #6:
-// the SDKs pre-translate names client-side from the proto descriptor,
-// so the wire is always id-keyed). A mixed payload with even one
-// name key is rejected — that signals a misconfigured or out-of-date
-// SDK and the prior silent-drop behavior caused silent data loss.
-func TestStructToPayload_SchemaLessDigitKeyPassthrough(t *testing.T) {
-	// Pure id-keyed: accepted, passed through verbatim.
-	got, err := StructToPayload(nil, "", mustStruct(t, map[string]any{
-		"1": "id-keyed",
-		"2": "also-id-keyed",
-	}))
-	if err != nil {
-		t.Fatalf("StructToPayload(schema-less, id-keyed): %v", err)
-	}
-	if got[1] != "id-keyed" || got[2] != "also-id-keyed" {
-		t.Fatalf("expected id-keyed passthrough, got %v", got)
-	}
-	if len(got) != 2 {
-		t.Fatalf("expected 2 entries, got %d (%v)", len(got), got)
-	}
-
-	// Mixed payload with a name key: rejected.
-	_, err = StructToPayload(nil, "", mustStruct(t, map[string]any{
-		"1":    "id-keyed",
-		"name": "name-keyed-but-no-schema",
-	}))
-	if err == nil || !errors.Is(err, errs.ErrInvalidArgument) {
-		t.Fatalf("expected InvalidArgument for mixed payload, got %v", err)
-	}
-}
-
-func TestStructToPayload_UnknownTypeNameSchemaLess(t *testing.T) {
-	reg := fixtureRegistry(t)
-	got, err := StructToPayload(reg, "DoesNotExist", mustStruct(t, map[string]any{
-		"1": "passthrough",
-	}))
-	if err != nil {
-		t.Fatalf("StructToPayload: %v", err)
-	}
-	if got[1] != "passthrough" {
-		t.Fatalf("expected schema-less passthrough for unknown type, got %v", got)
 	}
 }

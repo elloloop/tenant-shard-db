@@ -80,11 +80,12 @@ func entValueToGo(v *pb.EntValue) (any, error) {
 // PayloadToTyped converts an id-keyed internal payload (as read from
 // payload_json, where the store decodes numbers with UseNumber so int64
 // survives as json.Number) into the wire map<uint32, EntValue>. The schema
-// disambiguates the on-disk JSON representation per field kind; schema-less
-// values fall back to Go-type inference.
-func PayloadToTyped(reg *schema.Registry, nodeTypeName string, p map[uint32]any) (map[uint32]*pb.EntValue, error) {
+// (resolved by type_id, name-free per ADR-031) disambiguates the on-disk
+// JSON representation per field kind; schema-less values fall back to
+// Go-type inference.
+func PayloadToTyped(reg *schema.Registry, typeID int32, p map[uint32]any) (map[uint32]*pb.EntValue, error) {
 	out := make(map[uint32]*pb.EntValue, len(p))
-	nt := lookupNodeType(reg, nodeTypeName)
+	nt := lookupNodeType(reg, typeID)
 	for id, raw := range p {
 		var f *schema.FieldDef
 		if nt != nil {
@@ -111,35 +112,35 @@ func goToEntValue(f *schema.FieldDef, raw any) (*pb.EntValue, error) {
 		n, err := anyToInt64(raw)
 		if err != nil {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (%s): %v", f.Name, f.Kind, err)
+				"payload: field_id %d (%s): %v", f.FieldID, f.Kind, err)
 		}
 		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: n}}, nil
 	case schema.KindFloat:
 		d, err := anyToFloat64(raw)
 		if err != nil {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (float): %v", f.Name, err)
+				"payload: field_id %d (float): %v", f.FieldID, err)
 		}
 		return &pb.EntValue{V: &pb.EntValue_DoubleValue{DoubleValue: d}}, nil
 	case schema.KindBoolean:
 		b, ok := raw.(bool)
 		if !ok {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (bool): got %T", f.Name, raw)
+				"payload: field_id %d (bool): got %T", f.FieldID, raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_BoolValue{BoolValue: b}}, nil
 	case schema.KindBytes:
 		b, err := anyToBytes(raw)
 		if err != nil {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (bytes): %v", f.Name, err)
+				"payload: field_id %d (bytes): %v", f.FieldID, err)
 		}
 		return &pb.EntValue{V: &pb.EntValue_BytesValue{BytesValue: b}}, nil
 	case schema.KindString, schema.KindEnum, schema.KindReference:
 		s, ok := raw.(string)
 		if !ok {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (%s): got %T", f.Name, f.Kind, raw)
+				"payload: field_id %d (%s): got %T", f.FieldID, f.Kind, raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_StringValue{StringValue: s}}, nil
 	default:

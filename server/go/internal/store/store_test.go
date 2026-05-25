@@ -528,7 +528,7 @@ func TestEnsureUniqueIndexIdempotent(t *testing.T) {
 		t.Fatalf("EnsureQueryIndex: %v", err)
 	}
 	if err := cs.EnsureCompositeUniqueIndex(ctx, "t1", 7, []store.CompositeUnique{
-		{Name: "by_email", FieldIDs: []uint32{1, 2}},
+		{FieldIDs: []uint32{1, 2}},
 	}); err != nil {
 		t.Fatalf("EnsureCompositeUniqueIndex: %v", err)
 	}

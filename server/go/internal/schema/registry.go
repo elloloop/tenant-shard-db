@@ -13,15 +13,15 @@ import (
 var ErrFrozen = errors.New("schema: registry is frozen")
 
 // ErrDuplicateRegistration is returned by RegisterNode/RegisterEdge
-// when the type_id or name collides with an already-registered type.
+// when the type_id collides with an already-registered type.
 var ErrDuplicateRegistration = errors.New("schema: duplicate registration")
 
 // ErrSchemaConflict is returned by RegisterOrVerifyNode /
 // RegisterOrVerifyEdge under the establish-or-reject policy when a type
-// is already registered under the same identity (type_id or name) but
-// with a DIFFERENT definition. The errs package maps this to
-// FAILED_PRECONDITION at the gRPC boundary. Online evolution / ALTER is
-// out of scope, so a conflicting redefinition is always rejected.
+// is already registered under the same type_id but with a DIFFERENT
+// definition. The errs package maps this to FAILED_PRECONDITION at the
+// gRPC boundary. Online evolution / ALTER is out of scope, so a
+// conflicting redefinition is always rejected.
 var ErrSchemaConflict = errors.New("schema: conflicting type definition")
 
 // snapshot is the immutable container of the registry's maps. It is
@@ -37,64 +37,27 @@ var ErrSchemaConflict = errors.New("schema: conflicting type definition")
 // while gRPC read handlers run concurrently) without a process-wide
 // read lock on the hot path.
 type snapshot struct {
-	nodes       map[int32]*NodeTypeDef
-	nodesByName map[string]*NodeTypeDef
-	edges       map[int32]*EdgeTypeDef
-	edgesByName map[string]*EdgeTypeDef
-
-	// Per-type field name<->id maps. Always populated (lazily-empty-safe)
-	// so the translate.go lookups can stay lock-free in both frozen and
-	// runtime-mutable modes.
-	fieldNameToID map[int32]map[string]uint32
-	fieldIDToName map[int32]map[uint32]string
+	nodes map[int32]*NodeTypeDef
+	edges map[int32]*EdgeTypeDef
 }
 
 // clone returns a shallow copy of s with fresh top-level maps. The
-// values (*NodeTypeDef / *EdgeTypeDef and the inner field maps) are
-// shared with the parent snapshot — they are never mutated in place
-// (establish-or-reject never edits an existing type), so sharing them is
-// safe and keeps a registration O(types) rather than O(fields).
+// values (*NodeTypeDef / *EdgeTypeDef) are shared with the parent
+// snapshot — they are never mutated in place (establish-or-reject never
+// edits an existing type), so sharing them is safe and keeps a
+// registration O(types) rather than O(fields).
 func (s *snapshot) clone() *snapshot {
 	out := &snapshot{
-		nodes:         make(map[int32]*NodeTypeDef, len(s.nodes)+1),
-		nodesByName:   make(map[string]*NodeTypeDef, len(s.nodesByName)+1),
-		edges:         make(map[int32]*EdgeTypeDef, len(s.edges)+1),
-		edgesByName:   make(map[string]*EdgeTypeDef, len(s.edgesByName)+1),
-		fieldNameToID: make(map[int32]map[string]uint32, len(s.fieldNameToID)+1),
-		fieldIDToName: make(map[int32]map[uint32]string, len(s.fieldIDToName)+1),
+		nodes: make(map[int32]*NodeTypeDef, len(s.nodes)+1),
+		edges: make(map[int32]*EdgeTypeDef, len(s.edges)+1),
 	}
 	for k, v := range s.nodes {
 		out.nodes[k] = v
 	}
-	for k, v := range s.nodesByName {
-		out.nodesByName[k] = v
-	}
 	for k, v := range s.edges {
 		out.edges[k] = v
 	}
-	for k, v := range s.edgesByName {
-		out.edgesByName[k] = v
-	}
-	for k, v := range s.fieldNameToID {
-		out.fieldNameToID[k] = v
-	}
-	for k, v := range s.fieldIDToName {
-		out.fieldIDToName[k] = v
-	}
 	return out
-}
-
-// buildFieldMaps returns the name<->id translation maps for a single
-// node type. Used when a node is added to a snapshot.
-func buildFieldMaps(n *NodeTypeDef) (map[string]uint32, map[uint32]string) {
-	nm := make(map[string]uint32, len(n.Fields))
-	im := make(map[uint32]string, len(n.Fields))
-	for i := range n.Fields {
-		f := &n.Fields[i]
-		nm[f.Name] = f.FieldID
-		im[f.FieldID] = f.Name
-	}
-	return nm, im
 }
 
 // Registry is the process-wide singleton schema store.
@@ -129,12 +92,8 @@ type Registry struct {
 func NewRegistry() *Registry {
 	r := &Registry{}
 	r.snap.Store(&snapshot{
-		nodes:         map[int32]*NodeTypeDef{},
-		nodesByName:   map[string]*NodeTypeDef{},
-		edges:         map[int32]*EdgeTypeDef{},
-		edgesByName:   map[string]*EdgeTypeDef{},
-		fieldNameToID: map[int32]map[string]uint32{},
-		fieldIDToName: map[int32]map[uint32]string{},
+		nodes: map[int32]*NodeTypeDef{},
+		edges: map[int32]*EdgeTypeDef{},
 	})
 	return r
 }
@@ -162,8 +121,8 @@ func (r *Registry) Fingerprint() string {
 }
 
 // RegisterNode adds nt to the registry. Returns ErrFrozen if the
-// registry is frozen, ErrDuplicateRegistration if the type_id or name
-// is already taken, or a validation error if nt is malformed.
+// registry is frozen, ErrDuplicateRegistration if the type_id is already
+// taken, or a validation error if nt is malformed.
 //
 // nt is validated before insertion; on error the registry is unchanged.
 func (r *Registry) RegisterNode(nt *NodeTypeDef) error {
@@ -176,19 +135,13 @@ func (r *Registry) RegisterNode(nt *NodeTypeDef) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.frozen.Load() {
-		return fmt.Errorf("%w: cannot register node type %q", ErrFrozen, nt.Name)
+		return fmt.Errorf("%w: cannot register node type_id %d", ErrFrozen, nt.TypeID)
 	}
 	cur := r.load()
-	if existing, ok := cur.nodes[nt.TypeID]; ok {
+	if _, ok := cur.nodes[nt.TypeID]; ok {
 		return fmt.Errorf(
-			"%w: type_id %d already registered as %q",
-			ErrDuplicateRegistration, nt.TypeID, existing.Name,
-		)
-	}
-	if existing, ok := cur.nodesByName[nt.Name]; ok {
-		return fmt.Errorf(
-			"%w: node type name %q already registered with type_id %d",
-			ErrDuplicateRegistration, nt.Name, existing.TypeID,
+			"%w: type_id %d already registered",
+			ErrDuplicateRegistration, nt.TypeID,
 		)
 	}
 	r.publishNode(cur, nt)
@@ -208,19 +161,13 @@ func (r *Registry) RegisterEdge(et *EdgeTypeDef) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.frozen.Load() {
-		return fmt.Errorf("%w: cannot register edge type %q", ErrFrozen, et.Name)
+		return fmt.Errorf("%w: cannot register edge type_id %d", ErrFrozen, et.EdgeID)
 	}
 	cur := r.load()
-	if existing, ok := cur.edges[et.EdgeID]; ok {
+	if _, ok := cur.edges[et.EdgeID]; ok {
 		return fmt.Errorf(
-			"%w: edge_id %d already registered as %q",
-			ErrDuplicateRegistration, et.EdgeID, existing.Name,
-		)
-	}
-	if existing, ok := cur.edgesByName[et.Name]; ok {
-		return fmt.Errorf(
-			"%w: edge type name %q already registered with edge_id %d",
-			ErrDuplicateRegistration, et.Name, existing.EdgeID,
+			"%w: edge_id %d already registered",
+			ErrDuplicateRegistration, et.EdgeID,
 		)
 	}
 	if et.OnSubjectExit == "" {
@@ -235,10 +182,6 @@ func (r *Registry) RegisterEdge(et *EdgeTypeDef) error {
 func (r *Registry) publishNode(cur *snapshot, nt *NodeTypeDef) {
 	next := cur.clone()
 	next.nodes[nt.TypeID] = nt
-	next.nodesByName[nt.Name] = nt
-	nm, im := buildFieldMaps(nt)
-	next.fieldNameToID[nt.TypeID] = nm
-	next.fieldIDToName[nt.TypeID] = im
 	r.snap.Store(next)
 }
 
@@ -247,19 +190,18 @@ func (r *Registry) publishNode(cur *snapshot, nt *NodeTypeDef) {
 func (r *Registry) publishEdge(cur *snapshot, et *EdgeTypeDef) {
 	next := cur.clone()
 	next.edges[et.EdgeID] = et
-	next.edgesByName[et.Name] = et
 	r.snap.Store(next)
 }
 
 // RegisterOrVerifyNode implements the establish-or-reject policy for
-// SELF-DESCRIBING WRITES:
+// SELF-DESCRIBING WRITES. Types are identified solely by type_id
+// (name-free, ADR-031):
 //
-//   - absent (neither type_id nor name registered): register nt and
-//     recompute the fingerprint. Returns (registered=true, nil).
+//   - absent (type_id not registered): register nt and recompute the
+//     fingerprint. Returns (registered=true, nil).
 //   - present and byte-identical to the stored definition: no-op.
 //     Returns (false, nil) — idempotent.
-//   - present but DIFFERENT (or a partial identity collision, e.g. the
-//     same type_id under a different name): reject with ErrSchemaConflict.
+//   - present but DIFFERENT: reject with ErrSchemaConflict.
 //
 // Works on a runtime-mutable (non-frozen) registry. Calling it on a
 // frozen registry returns ErrFrozen UNLESS the type is already present
@@ -277,35 +219,18 @@ func (r *Registry) RegisterOrVerifyNode(nt *NodeTypeDef) (registered bool, err e
 	defer r.mu.Unlock()
 	cur := r.load()
 
-	byID, hasID := cur.nodes[nt.TypeID]
-	byName, hasName := cur.nodesByName[nt.Name]
-
-	if hasID || hasName {
-		// Identity collision. Both must resolve to the SAME stored type,
-		// and that stored type must be byte-identical to nt; anything
-		// else is a conflict (establish-or-reject; no ALTER).
-		if hasID && hasName && byID == byName && nodeDefEqual(byID, nt) {
+	if byID, hasID := cur.nodes[nt.TypeID]; hasID {
+		if nodeDefEqual(byID, nt) {
 			return false, nil // idempotent no-op
 		}
-		switch {
-		case hasID && !nodeDefEqual(byID, nt):
-			return false, fmt.Errorf(
-				"%w: node type_id %d is registered as %q which differs from the supplied %q",
-				ErrSchemaConflict, nt.TypeID, byID.Name, nt.Name)
-		case hasName && (!hasID || byName.TypeID != nt.TypeID):
-			return false, fmt.Errorf(
-				"%w: node name %q is registered with type_id %d which differs from the supplied type_id %d",
-				ErrSchemaConflict, nt.Name, byName.TypeID, nt.TypeID)
-		default:
-			return false, fmt.Errorf(
-				"%w: node type %q (type_id %d) differs from the registered definition",
-				ErrSchemaConflict, nt.Name, nt.TypeID)
-		}
+		return false, fmt.Errorf(
+			"%w: node type_id %d differs from the registered definition",
+			ErrSchemaConflict, nt.TypeID)
 	}
 
 	// Absent → establish. Frozen registries cannot grow.
 	if r.frozen.Load() {
-		return false, fmt.Errorf("%w: cannot register node type %q", ErrFrozen, nt.Name)
+		return false, fmt.Errorf("%w: cannot register node type_id %d", ErrFrozen, nt.TypeID)
 	}
 	r.publishNode(cur, nt)
 	if err := r.recomputeFingerprintLocked(); err != nil {
@@ -315,7 +240,7 @@ func (r *Registry) RegisterOrVerifyNode(nt *NodeTypeDef) (registered bool, err e
 }
 
 // RegisterOrVerifyEdge is the edge counterpart of RegisterOrVerifyNode.
-// Same establish-or-reject semantics.
+// Same establish-or-reject semantics, keyed by edge_id.
 func (r *Registry) RegisterOrVerifyEdge(et *EdgeTypeDef) (registered bool, err error) {
 	if et == nil {
 		return false, errors.New("schema: nil EdgeTypeDef")
@@ -330,31 +255,17 @@ func (r *Registry) RegisterOrVerifyEdge(et *EdgeTypeDef) (registered bool, err e
 	defer r.mu.Unlock()
 	cur := r.load()
 
-	byID, hasID := cur.edges[et.EdgeID]
-	byName, hasName := cur.edgesByName[et.Name]
-
-	if hasID || hasName {
-		if hasID && hasName && byID == byName && edgeDefEqual(byID, et) {
+	if byID, hasID := cur.edges[et.EdgeID]; hasID {
+		if edgeDefEqual(byID, et) {
 			return false, nil // idempotent no-op
 		}
-		switch {
-		case hasID && !edgeDefEqual(byID, et):
-			return false, fmt.Errorf(
-				"%w: edge_id %d is registered as %q which differs from the supplied %q",
-				ErrSchemaConflict, et.EdgeID, byID.Name, et.Name)
-		case hasName && (!hasID || byName.EdgeID != et.EdgeID):
-			return false, fmt.Errorf(
-				"%w: edge name %q is registered with edge_id %d which differs from the supplied edge_id %d",
-				ErrSchemaConflict, et.Name, byName.EdgeID, et.EdgeID)
-		default:
-			return false, fmt.Errorf(
-				"%w: edge type %q (edge_id %d) differs from the registered definition",
-				ErrSchemaConflict, et.Name, et.EdgeID)
-		}
+		return false, fmt.Errorf(
+			"%w: edge_id %d differs from the registered definition",
+			ErrSchemaConflict, et.EdgeID)
 	}
 
 	if r.frozen.Load() {
-		return false, fmt.Errorf("%w: cannot register edge type %q", ErrFrozen, et.Name)
+		return false, fmt.Errorf("%w: cannot register edge type_id %d", ErrFrozen, et.EdgeID)
 	}
 	r.publishEdge(cur, et)
 	if err := r.recomputeFingerprintLocked(); err != nil {
@@ -381,11 +292,6 @@ func (r *Registry) recomputeFingerprintLocked() error {
 // flag atomically. Subsequent RegisterNode/RegisterEdge calls return
 // ErrFrozen. Calling Freeze twice returns ErrFrozen on the second
 // call.
-//
-// After Freeze returns, the per-type field name<->id maps are already
-// present in the snapshot (every publishNode builds them), so
-// translate.FieldIDByName / translate.FieldNameByID stay lock-free in
-// both modes.
 func (r *Registry) Freeze() (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -401,14 +307,12 @@ func (r *Registry) Freeze() (string, error) {
 	return fp, nil
 }
 
-// NodeType returns the node type by id (int / int32) or name (string).
-// Returns nil if not found. Lock-free.
-//
-// Callers that already have a typed argument should prefer the explicit
-// helpers below for compile-time safety.
-func (r *Registry) NodeType(idOrName any) *NodeTypeDef {
+// NodeType returns the node type by id (int / int32 / int64 / uint32).
+// Returns nil if not found. Lock-free. Name-free per ADR-031: types are
+// addressed only by their numeric id.
+func (r *Registry) NodeType(id any) *NodeTypeDef {
 	s := r.load()
-	switch v := idOrName.(type) {
+	switch v := id.(type) {
 	case int32:
 		return s.nodes[v]
 	case int:
@@ -417,8 +321,6 @@ func (r *Registry) NodeType(idOrName any) *NodeTypeDef {
 		return s.nodes[int32(v)]
 	case uint32:
 		return s.nodes[int32(v)]
-	case string:
-		return s.nodesByName[v]
 	}
 	return nil
 }
@@ -426,13 +328,10 @@ func (r *Registry) NodeType(idOrName any) *NodeTypeDef {
 // NodeTypeByID is the explicit-id helper.
 func (r *Registry) NodeTypeByID(id int32) *NodeTypeDef { return r.load().nodes[id] }
 
-// NodeTypeByName is the explicit-name helper.
-func (r *Registry) NodeTypeByName(name string) *NodeTypeDef { return r.load().nodesByName[name] }
-
 // EdgeType is the edge counterpart of NodeType.
-func (r *Registry) EdgeType(idOrName any) *EdgeTypeDef {
+func (r *Registry) EdgeType(id any) *EdgeTypeDef {
 	s := r.load()
-	switch v := idOrName.(type) {
+	switch v := id.(type) {
 	case int32:
 		return s.edges[v]
 	case int:
@@ -441,17 +340,12 @@ func (r *Registry) EdgeType(idOrName any) *EdgeTypeDef {
 		return s.edges[int32(v)]
 	case uint32:
 		return s.edges[int32(v)]
-	case string:
-		return s.edgesByName[v]
 	}
 	return nil
 }
 
 // EdgeTypeByID is the explicit-id helper.
 func (r *Registry) EdgeTypeByID(id int32) *EdgeTypeDef { return r.load().edges[id] }
-
-// EdgeTypeByName is the explicit-name helper.
-func (r *Registry) EdgeTypeByName(name string) *EdgeTypeDef { return r.load().edgesByName[name] }
 
 // NodeTypes returns the registered node types in deterministic order
 // (sorted by type_id). The returned slice is a copy; callers may
@@ -549,18 +443,18 @@ func (r *Registry) SearchableFieldIDs(typeID int32) []uint32 {
 	return out
 }
 
-// PIIFields returns the names of PII-marked, non-deprecated fields on
-// the type. Returns nil for unknown types.
-func (r *Registry) PIIFields(typeID int32) []string {
+// PIIFieldIDs returns the field_ids of PII-marked, non-deprecated fields
+// on the type. Returns nil for unknown types. Name-free per ADR-031.
+func (r *Registry) PIIFieldIDs(typeID int32) []uint32 {
 	n := r.load().nodes[typeID]
 	if n == nil {
 		return nil
 	}
-	out := make([]string, 0)
+	out := make([]uint32, 0)
 	for i := range n.Fields {
 		f := &n.Fields[i]
 		if f.PII && !f.Deprecated {
-			out = append(out, f.Name)
+			out = append(out, f.FieldID)
 		}
 	}
 	return out
@@ -581,14 +475,14 @@ func (r *Registry) DataPolicyOf(typeID int32) DataPolicy {
 	return DataPolicyPersonal
 }
 
-// SubjectField returns the subject field name for a node type, or
-// empty string if unset / unknown.
-func (r *Registry) SubjectField(typeID int32) string {
+// SubjectFieldID returns the subject field_id for a node type, or
+// (0, false) if unset / unknown. Name-free per ADR-031.
+func (r *Registry) SubjectFieldID(typeID int32) (uint32, bool) {
 	n := r.load().nodes[typeID]
 	if n == nil || n.SubjectField == nil {
-		return ""
+		return 0, false
 	}
-	return *n.SubjectField
+	return *n.SubjectField, true
 }
 
 // ValidateAll cross-references edge from_type_id / to_type_id against
@@ -600,14 +494,14 @@ func (r *Registry) ValidateAll() []string {
 	for _, e := range s.edges {
 		if _, ok := s.nodes[e.FromTypeID]; !ok {
 			errs = append(errs, fmt.Sprintf(
-				"edge %q (edge_id=%d) references unknown from_type_id %d",
-				e.Name, e.EdgeID, e.FromTypeID,
+				"edge_id=%d references unknown from_type_id %d",
+				e.EdgeID, e.FromTypeID,
 			))
 		}
 		if _, ok := s.nodes[e.ToTypeID]; !ok {
 			errs = append(errs, fmt.Sprintf(
-				"edge %q (edge_id=%d) references unknown to_type_id %d",
-				e.Name, e.EdgeID, e.ToTypeID,
+				"edge_id=%d references unknown to_type_id %d",
+				e.EdgeID, e.ToTypeID,
 			))
 		}
 	}
@@ -617,8 +511,8 @@ func (r *Registry) ValidateAll() []string {
 			if f.RefTypeID != nil {
 				if _, ok := s.nodes[*f.RefTypeID]; !ok {
 					errs = append(errs, fmt.Sprintf(
-						"field %q in node type %q references unknown type_id %d",
-						f.Name, n.Name, *f.RefTypeID,
+						"field_id %d in node type_id %d references unknown type_id %d",
+						f.FieldID, n.TypeID, *f.RefTypeID,
 					))
 				}
 			}

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/jsonnum"
@@ -13,9 +14,9 @@ import (
 )
 
 // Node is the in-Go representation of one row of the `nodes` table.
-// Field-id-keyed payload JSON is exposed verbatim — translation to
-// proto Node (with Field-name-keyed fields) is the payload package's
-// job, not this one (CLAUDE.md invariant #6).
+// Field-id-keyed payload JSON is exposed verbatim — the wire stays
+// field_id-keyed too (name-free, ADR-031); the SDK resolves names
+// client-side from its proto (CLAUDE.md invariant #6).
 // StorageMode classifies which physical store a node belongs to. The
 // integer values mirror entdb.v1.StorageMode on the wire so the column
 // round-trips the proto enum without translation. The store package owns
@@ -855,14 +856,18 @@ func (s *CanonicalStore) ExportUserData(
 		}
 
 		// Schema lookups: missing type → PERSONAL, no subject field.
+		// Per ADR-031 the subject field is identified by its field_id; the
+		// payload map is keyed by stringified field_id (ADR-018), so the
+		// lookup uses the decimal-string id key directly.
 		var (
-			policy       schema.DataPolicy = schema.DataPolicyPersonal
-			subjectField string
+			policy          schema.DataPolicy = schema.DataPolicyPersonal
+			subjectFieldID  uint32
+			hasSubjectField bool
 		)
 		if reg != nil {
 			if nt := reg.NodeTypeByID(typeID); nt != nil {
 				policy = reg.DataPolicyOf(typeID)
-				subjectField = reg.SubjectField(typeID)
+				subjectFieldID, hasSubjectField = reg.SubjectFieldID(typeID)
 			}
 		}
 
@@ -877,7 +882,7 @@ func (s *CanonicalStore) ExportUserData(
 
 		isOwner := owner == principal
 		isSubject := false
-		if subjectField != "" {
+		if hasSubjectField {
 			// Strip the `user:` prefix from `principal` before
 			// comparing to the subject field value (which stores the
 			// bare user_id, e.g. "alice", not the principal form).
@@ -885,7 +890,8 @@ func (s *CanonicalStore) ExportUserData(
 			if len(subjectID) > 5 && subjectID[:5] == "user:" {
 				subjectID = subjectID[5:]
 			}
-			if v, ok := payload[subjectField]; ok && v == subjectID {
+			key := strconv.FormatUint(uint64(subjectFieldID), 10)
+			if v, ok := payload[key]; ok && v == subjectID {
 				isSubject = true
 			}
 		}

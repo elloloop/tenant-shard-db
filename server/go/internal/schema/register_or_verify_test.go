@@ -8,10 +8,9 @@ import (
 func userNodeDef(emailUnique bool) *NodeTypeDef {
 	return &NodeTypeDef{
 		TypeID: 1,
-		Name:   "User",
 		Fields: []FieldDef{
-			{FieldID: 1, Name: "email", Kind: KindString, Unique: emailUnique},
-			{FieldID: 2, Name: "name", Kind: KindString},
+			{FieldID: 1, Kind: KindString, Unique: emailUnique},
+			{FieldID: 2, Kind: KindString},
 		},
 	}
 }
@@ -33,18 +32,11 @@ func TestRegisterOrVerifyNode_Establish(t *testing.T) {
 	if r.NodeTypeByID(1) == nil {
 		t.Fatalf("type 1 not visible after establish")
 	}
-	if r.NodeTypeByName("User") == nil {
-		t.Fatalf("type User not visible by name after establish")
-	}
 	if got := r.UniqueFieldIDs(1); len(got) != 1 || got[0] != 1 {
 		t.Fatalf("UniqueFieldIDs(1) = %v, want [1]", got)
 	}
 	if r.Fingerprint() == "" {
 		t.Fatalf("fingerprint not recomputed after establish")
-	}
-	// Field translation maps must be populated (lock-free read path).
-	if id, ok := r.FieldIDByNameForType(1, "email"); !ok || id != 1 {
-		t.Fatalf("FieldIDByNameForType(1, email) = (%d, %v), want (1, true)", id, ok)
 	}
 }
 
@@ -78,14 +70,14 @@ func TestRegisterOrVerifyNode_Conflict(t *testing.T) {
 	}
 	fp1 := r.Fingerprint()
 
-	_, err := r.RegisterOrVerifyNode(userNodeDef(false)) // email no longer unique
+	_, err := r.RegisterOrVerifyNode(userNodeDef(false)) // field 1 no longer unique
 	if err == nil {
 		t.Fatalf("conflicting RegisterOrVerifyNode: expected error, got nil")
 	}
 	if !errors.Is(err, ErrSchemaConflict) {
 		t.Fatalf("error = %v, want ErrSchemaConflict", err)
 	}
-	// Unchanged: email still unique, fingerprint stable.
+	// Unchanged: field 1 still unique, fingerprint stable.
 	if got := r.UniqueFieldIDs(1); len(got) != 1 || got[0] != 1 {
 		t.Fatalf("after conflict UniqueFieldIDs(1) = %v, want [1]", got)
 	}
@@ -94,18 +86,26 @@ func TestRegisterOrVerifyNode_Conflict(t *testing.T) {
 	}
 }
 
-// TestRegisterOrVerifyNode_NameTypeIDMismatch rejects the same name under
-// a different type_id (and vice versa) as a conflict.
-func TestRegisterOrVerifyNode_NameTypeIDMismatch(t *testing.T) {
+// TestRegisterOrVerifyNode_DistinctTypeID confirms that a different
+// type_id is a separate establish (no conflict) — name-free, identity is
+// the type_id alone (ADR-031).
+func TestRegisterOrVerifyNode_DistinctTypeID(t *testing.T) {
 	r := NewRegistry()
 	if _, err := r.RegisterOrVerifyNode(userNodeDef(true)); err != nil {
 		t.Fatalf("first RegisterOrVerifyNode: %v", err)
 	}
-	// Same name "User", different type_id.
-	rename := userNodeDef(true)
-	rename.TypeID = 9
-	if _, err := r.RegisterOrVerifyNode(rename); !errors.Is(err, ErrSchemaConflict) {
-		t.Fatalf("name reused under new type_id: err = %v, want ErrSchemaConflict", err)
+	// Same shape under a different type_id is an independent type.
+	other := userNodeDef(true)
+	other.TypeID = 9
+	registered, err := r.RegisterOrVerifyNode(other)
+	if err != nil {
+		t.Fatalf("distinct type_id establish: %v", err)
+	}
+	if !registered {
+		t.Fatalf("registered = false for a distinct type_id, want true")
+	}
+	if r.NodeTypeByID(9) == nil {
+		t.Fatalf("type 9 not visible after establish")
 	}
 }
 
@@ -129,7 +129,7 @@ func TestRegisterOrVerifyNode_FrozenRejectsNew(t *testing.T) {
 		t.Fatalf("registered = true verifying on a frozen registry")
 	}
 	// New type on a frozen registry: ErrFrozen.
-	other := &NodeTypeDef{TypeID: 2, Name: "Doc", Fields: []FieldDef{{FieldID: 1, Name: "title", Kind: KindString}}}
+	other := &NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
 	if _, err := r.RegisterOrVerifyNode(other); !errors.Is(err, ErrFrozen) {
 		t.Fatalf("establish on frozen registry: err = %v, want ErrFrozen", err)
 	}
@@ -139,7 +139,7 @@ func TestRegisterOrVerifyNode_FrozenRejectsNew(t *testing.T) {
 // on_subject_exit default normalisation.
 func TestRegisterOrVerifyEdge_Establish(t *testing.T) {
 	r := NewRegistry()
-	et := &EdgeTypeDef{EdgeID: 1, Name: "Follows", FromTypeID: 1, ToTypeID: 1}
+	et := &EdgeTypeDef{EdgeID: 1, FromTypeID: 1, ToTypeID: 1}
 	registered, err := r.RegisterOrVerifyEdge(et)
 	if err != nil {
 		t.Fatalf("RegisterOrVerifyEdge: %v", err)
@@ -155,7 +155,7 @@ func TestRegisterOrVerifyEdge_Establish(t *testing.T) {
 		t.Fatalf("OnSubjectExit = %q, want %q (default)", got.OnSubjectExit, OnSubjectExitBoth)
 	}
 	// Re-registering the same edge (with the default normalised) is a no-op.
-	registered, err = r.RegisterOrVerifyEdge(&EdgeTypeDef{EdgeID: 1, Name: "Follows", FromTypeID: 1, ToTypeID: 1})
+	registered, err = r.RegisterOrVerifyEdge(&EdgeTypeDef{EdgeID: 1, FromTypeID: 1, ToTypeID: 1})
 	if err != nil {
 		t.Fatalf("identical edge re-register: %v", err)
 	}

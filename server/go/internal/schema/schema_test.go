@@ -1,5 +1,6 @@
 // Tests for the schema package. Covers JSON round-trip, freeze
-// semantics, fingerprint determinism, and field-id <-> name lookup.
+// semantics, fingerprint determinism, and id-keyed lookup. NAME-FREE per
+// ADR-031: the registry, JSON contract, and fingerprint carry no names.
 
 package schema
 
@@ -11,52 +12,51 @@ import (
 )
 
 // pythonSampleJSON is the cross-language fixture for the SDK / server
-// schema JSON contract. Two node types (User, Task) plus one edge type
-// (AssignedTo). Sorted-key, compact-separator canonical form.
+// schema JSON contract. Two node types (1, 2) plus one edge type (10).
+// Sorted-key, compact-separator canonical form. Name-free (ADR-031):
+// types/fields are identified by id only.
 const pythonSampleJSON = `{
   "node_types": [
     {
       "type_id": 1,
-      "name": "User",
       "fields": [
-        {"field_id": 1, "name": "email", "kind": "str", "required": true, "indexed": true, "unique": true, "pii": true},
-        {"field_id": 2, "name": "display_name", "kind": "str", "searchable": true},
-        {"field_id": 3, "name": "status", "kind": "enum", "enum_values": ["active", "inactive", "banned"]}
+        {"field_id": 1, "kind": "str", "required": true, "indexed": true, "unique": true, "pii": true},
+        {"field_id": 2, "kind": "str", "searchable": true},
+        {"field_id": 3, "kind": "enum", "enum_values": ["active", "inactive", "banned"]}
       ],
       "default_acl": [{"principal": "role:admin", "permission": "admin"}],
       "data_policy": "personal",
-      "subject_field": "email"
+      "subject_field": 1
     },
     {
       "type_id": 2,
-      "name": "Task",
       "fields": [
-        {"field_id": 1, "name": "title", "kind": "str", "required": true, "searchable": true},
-        {"field_id": 2, "name": "owner_id", "kind": "ref", "ref_type_id": 1},
-        {"field_id": 3, "name": "priority", "kind": "int", "indexed": true},
-        {"field_id": 4, "name": "tag", "kind": "str"}
+        {"field_id": 1, "kind": "str", "required": true, "searchable": true},
+        {"field_id": 2, "kind": "ref", "ref_type_id": 1},
+        {"field_id": 3, "kind": "int", "indexed": true},
+        {"field_id": 4, "kind": "str"}
       ],
-      "composite_unique": [{"name": "owner_title", "field_ids": [2, 1]}]
+      "composite_unique": [{"field_ids": [2, 1]}]
     }
   ],
   "edge_types": [
     {
       "edge_id": 10,
-      "name": "AssignedTo",
       "from_type_id": 2,
       "to_type_id": 1,
       "props": [
-        {"field_id": 1, "name": "role", "kind": "enum", "enum_values": ["primary", "reviewer"]}
+        {"field_id": 1, "kind": "enum", "enum_values": ["primary", "reviewer"]}
       ],
       "on_subject_exit": "both"
     }
   ]
 }`
 
-// pythonReferenceFingerprint is the expected fingerprint for pythonSampleJSON.
-// Keep in sync with the cross-language fixture; if the canonical encoder
-// changes the two must be regenerated together.
-const pythonReferenceFingerprint = "sha256:5822499c748bb30ab35473658f8000f9cba89250d6bafdeabc6ca833fcc85fe2"
+// pythonReferenceFingerprint is the expected fingerprint for
+// pythonSampleJSON in its name-free form (ADR-031). Keep in sync with the
+// cross-language fixture; if the canonical encoder changes the two must
+// be regenerated together.
+const pythonReferenceFingerprint = "sha256:6179549ada4a93571edd51dfea150747c5c25d76ece723b8347ec7d9329b7c7a"
 
 func TestLoadFromJSON_Sample(t *testing.T) {
 	r, err := LoadFromJSON([]byte(pythonSampleJSON))
@@ -64,52 +64,49 @@ func TestLoadFromJSON_Sample(t *testing.T) {
 		t.Fatalf("LoadFromJSON: %v", err)
 	}
 
-	user := r.NodeTypeByName("User")
+	user := r.NodeTypeByID(1)
 	if user == nil {
-		t.Fatal("User node type missing")
+		t.Fatal("node type_id=1 missing")
 	}
 	if user.TypeID != 1 {
-		t.Errorf("User.TypeID = %d, want 1", user.TypeID)
-	}
-	if got := r.NodeTypeByID(1); got != user {
-		t.Errorf("NodeTypeByID(1) returned different pointer than ByName")
+		t.Errorf("user.TypeID = %d, want 1", user.TypeID)
 	}
 	if dp := r.DataPolicyOf(1); dp != DataPolicyPersonal {
 		t.Errorf("DataPolicyOf(1) = %q, want %q", dp, DataPolicyPersonal)
 	}
-	if sf := r.SubjectField(1); sf != "email" {
-		t.Errorf("SubjectField(1) = %q, want email", sf)
+	if sf, ok := r.SubjectFieldID(1); !ok || sf != 1 {
+		t.Errorf("SubjectFieldID(1) = %d,%v, want 1,true", sf, ok)
 	}
 
 	if got := r.UniqueFieldIDs(1); len(got) != 1 || got[0] != 1 {
 		t.Errorf("UniqueFieldIDs(1) = %v, want [1]", got)
 	}
 	if got := r.IndexedFieldIDs(1); len(got) != 0 {
-		// "email" is indexed AND unique → excluded from indexed list.
+		// field_id=1 is indexed AND unique → excluded from indexed list.
 		t.Errorf("IndexedFieldIDs(1) = %v, want []", got)
 	}
 	if got := r.SearchableFieldIDs(1); len(got) != 1 || got[0] != 2 {
 		t.Errorf("SearchableFieldIDs(1) = %v, want [2]", got)
 	}
-	if got := r.PIIFields(1); len(got) != 1 || got[0] != "email" {
-		t.Errorf("PIIFields(1) = %v, want [email]", got)
+	if got := r.PIIFieldIDs(1); len(got) != 1 || got[0] != 1 {
+		t.Errorf("PIIFieldIDs(1) = %v, want [1]", got)
 	}
 
-	task := r.NodeTypeByName("Task")
+	task := r.NodeTypeByID(2)
 	if task == nil {
-		t.Fatal("Task node type missing")
+		t.Fatal("node type_id=2 missing")
 	}
 	cu := r.CompositeUnique(2)
-	if len(cu) != 1 || cu[0].Name != "owner_title" || len(cu[0].FieldIDs) != 2 {
+	if len(cu) != 1 || len(cu[0].FieldIDs) != 2 {
 		t.Errorf("CompositeUnique(2) = %+v", cu)
 	}
 
-	edge := r.EdgeTypeByName("AssignedTo")
+	edge := r.EdgeTypeByID(10)
 	if edge == nil {
-		t.Fatal("AssignedTo edge type missing")
+		t.Fatal("edge_id=10 missing")
 	}
 	if edge.EdgeID != 10 || edge.FromTypeID != 2 || edge.ToTypeID != 1 {
-		t.Errorf("AssignedTo: %+v", edge)
+		t.Errorf("edge: %+v", edge)
 	}
 	if edge.OnSubjectExit != OnSubjectExitBoth {
 		t.Errorf("OnSubjectExit = %q, want both", edge.OnSubjectExit)
@@ -124,6 +121,10 @@ func TestRoundTrip(t *testing.T) {
 	out, err := json.Marshal(r)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
+	}
+	// The serialised form must be name-free.
+	if strings.Contains(string(out), `"name"`) {
+		t.Fatalf("registry JSON contains a name key (ADR-031 violation):\n%s", out)
 	}
 	r2, err := LoadFromJSON(out)
 	if err != nil {
@@ -168,11 +169,11 @@ func TestFingerprint_DeterministicAcrossLoads(t *testing.T) {
 	}
 }
 
-func TestFingerprint_PythonByteParity(t *testing.T) {
-	// This test pins byte-for-byte parity with the expected reference
-	// fingerprint for the shared fixture. If it breaks, the canonical
+func TestFingerprint_ReferenceParity(t *testing.T) {
+	// Pins byte-for-byte parity with the expected reference fingerprint
+	// for the name-free shared fixture. If it breaks, the canonical
 	// encoder in fingerprint.go has drifted from the sort-keys,
-	// no-whitespace compact JSON format.
+	// no-whitespace compact JSON format (or the fixture changed).
 	r, err := LoadFromJSON([]byte(pythonSampleJSON))
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -203,9 +204,9 @@ func TestFingerprint_ChangesOnFieldAdd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load 2: %v", err)
 	}
-	user := r2.NodeTypeByName("User")
+	user := r2.NodeTypeByID(1)
 	user.Fields = append(user.Fields, FieldDef{
-		FieldID: 99, Name: "extra", Kind: KindString,
+		FieldID: 99, Kind: KindString,
 	})
 	fp2, err := r2.Freeze()
 	if err != nil {
@@ -216,7 +217,9 @@ func TestFingerprint_ChangesOnFieldAdd(t *testing.T) {
 	}
 }
 
-func TestFingerprint_ChangesOnFieldRename(t *testing.T) {
+func TestFingerprint_ChangesOnFieldKindChange(t *testing.T) {
+	// Name-free: there is no rename to fingerprint, but a kind change
+	// (a real, attribute-level change) must move the fingerprint.
 	r1, err := LoadFromJSON([]byte(pythonSampleJSON))
 	if err != nil {
 		t.Fatalf("load: %v", err)
@@ -230,17 +233,14 @@ func TestFingerprint_ChangesOnFieldRename(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load 2: %v", err)
 	}
-	user := r2.NodeTypeByName("User")
-	user.Fields[0].Name = "email_addr"
-	// Rebuild byName map entry not needed — Freeze rebuilds the
-	// translation maps from scratch and the fingerprint is computed
-	// over the fields directly.
+	user := r2.NodeTypeByID(1)
+	user.Fields[1].Kind = KindInteger
 	fp2, err := r2.Freeze()
 	if err != nil {
 		t.Fatalf("freeze 2: %v", err)
 	}
 	if fp1 == fp2 {
-		t.Errorf("fingerprint unchanged after renaming field: %s", fp1)
+		t.Errorf("fingerprint unchanged after changing field kind: %s", fp1)
 	}
 }
 
@@ -254,15 +254,15 @@ func TestFreeze_PreventsRegistration(t *testing.T) {
 	}
 
 	err = r.RegisterNode(&NodeTypeDef{
-		TypeID: 99, Name: "Late",
-		Fields: []FieldDef{{FieldID: 1, Name: "x", Kind: KindString}},
+		TypeID: 99,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindString}},
 	})
 	if err == nil || !errors.Is(err, ErrFrozen) {
 		t.Errorf("RegisterNode after freeze err = %v, want ErrFrozen", err)
 	}
 
 	err = r.RegisterEdge(&EdgeTypeDef{
-		EdgeID: 99, Name: "LateEdge", FromTypeID: 1, ToTypeID: 2,
+		EdgeID: 99, FromTypeID: 1, ToTypeID: 2,
 	})
 	if err == nil || !errors.Is(err, ErrFrozen) {
 		t.Errorf("RegisterEdge after freeze err = %v, want ErrFrozen", err)
@@ -276,12 +276,12 @@ func TestFreeze_PreventsRegistration(t *testing.T) {
 func TestRegister_DuplicateTypeID(t *testing.T) {
 	r := NewRegistry()
 	a := &NodeTypeDef{
-		TypeID: 1, Name: "A",
-		Fields: []FieldDef{{FieldID: 1, Name: "x", Kind: KindString}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindString}},
 	}
 	b := &NodeTypeDef{
-		TypeID: 1, Name: "B",
-		Fields: []FieldDef{{FieldID: 1, Name: "y", Kind: KindString}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindString}},
 	}
 	if err := r.RegisterNode(a); err != nil {
 		t.Fatalf("register A: %v", err)
@@ -292,80 +292,6 @@ func TestRegister_DuplicateTypeID(t *testing.T) {
 	}
 }
 
-func TestRegister_DuplicateName(t *testing.T) {
-	r := NewRegistry()
-	a := &NodeTypeDef{
-		TypeID: 1, Name: "A",
-		Fields: []FieldDef{{FieldID: 1, Name: "x", Kind: KindString}},
-	}
-	b := &NodeTypeDef{
-		TypeID: 2, Name: "A",
-		Fields: []FieldDef{{FieldID: 1, Name: "y", Kind: KindString}},
-	}
-	if err := r.RegisterNode(a); err != nil {
-		t.Fatalf("register A: %v", err)
-	}
-	err := r.RegisterNode(b)
-	if err == nil || !errors.Is(err, ErrDuplicateRegistration) {
-		t.Errorf("duplicate name err = %v, want ErrDuplicateRegistration", err)
-	}
-}
-
-func TestFieldIDByName_AndInverse(t *testing.T) {
-	r, err := LoadFromJSON([]byte(pythonSampleJSON))
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-
-	// Pre-freeze (linear scan path).
-	id, ok := r.FieldIDByName("User", "email")
-	if !ok || id != 1 {
-		t.Errorf("pre-freeze FieldIDByName(User,email) = %d,%v", id, ok)
-	}
-	name, ok := r.FieldNameByID("User", 2)
-	if !ok || name != "display_name" {
-		t.Errorf("pre-freeze FieldNameByID(User,2) = %q,%v", name, ok)
-	}
-
-	if _, err := r.Freeze(); err != nil {
-		t.Fatalf("freeze: %v", err)
-	}
-
-	// Post-freeze (map path).
-	id, ok = r.FieldIDByName("User", "email")
-	if !ok || id != 1 {
-		t.Errorf("post-freeze FieldIDByName(User,email) = %d,%v", id, ok)
-	}
-	id, ok = r.FieldIDByName("User", "status")
-	if !ok || id != 3 {
-		t.Errorf("post-freeze FieldIDByName(User,status) = %d,%v", id, ok)
-	}
-	if _, ok := r.FieldIDByName("User", "nope"); ok {
-		t.Errorf("FieldIDByName(User,nope) ok = true, want false")
-	}
-	if _, ok := r.FieldIDByName("Nope", "email"); ok {
-		t.Errorf("FieldIDByName(Nope,email) ok = true, want false")
-	}
-
-	name, ok = r.FieldNameByID("User", 1)
-	if !ok || name != "email" {
-		t.Errorf("post-freeze FieldNameByID(User,1) = %q,%v", name, ok)
-	}
-	if _, ok := r.FieldNameByID("User", 999); ok {
-		t.Errorf("FieldNameByID(User,999) ok = true, want false")
-	}
-
-	// Type-id-keyed variants.
-	id, ok = r.FieldIDByNameForType(1, "email")
-	if !ok || id != 1 {
-		t.Errorf("FieldIDByNameForType(1,email) = %d,%v", id, ok)
-	}
-	name, ok = r.FieldNameByIDForType(1, 3)
-	if !ok || name != "status" {
-		t.Errorf("FieldNameByIDForType(1,3) = %q,%v", name, ok)
-	}
-}
-
 func TestNodeType_GenericLookup(t *testing.T) {
 	r, err := LoadFromJSON([]byte(pythonSampleJSON))
 	if err != nil {
@@ -373,34 +299,34 @@ func TestNodeType_GenericLookup(t *testing.T) {
 	}
 	cases := []struct {
 		key  any
-		want string
+		want int32
 	}{
-		{int32(1), "User"},
-		{int(1), "User"},
-		{int64(1), "User"},
-		{uint32(1), "User"},
-		{"User", "User"},
-		{int32(99), ""},
-		{"missing", ""},
+		{int32(1), 1},
+		{int(1), 1},
+		{int64(1), 1},
+		{uint32(1), 1},
+		{int32(99), 0},
+		// A string key is meaningless in the name-free registry — returns nil.
+		{"User", 0},
 	}
 	for _, tc := range cases {
 		got := r.NodeType(tc.key)
-		var name string
+		var id int32
 		if got != nil {
-			name = got.Name
+			id = got.TypeID
 		}
-		if name != tc.want {
-			t.Errorf("NodeType(%v) = %q, want %q", tc.key, name, tc.want)
+		if id != tc.want {
+			t.Errorf("NodeType(%v) = type_id %d, want %d", tc.key, id, tc.want)
 		}
 	}
 }
 
 func TestValidate_DuplicateFieldID(t *testing.T) {
 	bad := &NodeTypeDef{
-		TypeID: 1, Name: "Bad",
+		TypeID: 1,
 		Fields: []FieldDef{
-			{FieldID: 1, Name: "a", Kind: KindString},
-			{FieldID: 1, Name: "b", Kind: KindString},
+			{FieldID: 1, Kind: KindString},
+			{FieldID: 1, Kind: KindString},
 		},
 	}
 	if err := bad.Validate(); err == nil {
@@ -416,50 +342,35 @@ func TestValidate_CompositeUniqueRules(t *testing.T) {
 		{
 			name: "single-field-composite",
 			nt: &NodeTypeDef{
-				TypeID: 1, Name: "X",
+				TypeID: 1,
 				Fields: []FieldDef{
-					{FieldID: 1, Name: "a", Kind: KindString},
-					{FieldID: 2, Name: "b", Kind: KindString},
+					{FieldID: 1, Kind: KindString},
+					{FieldID: 2, Kind: KindString},
 				},
-				CompositeUnique: []CompositeUniqueDef{{Name: "c", FieldIDs: []uint32{1}}},
+				CompositeUnique: []CompositeUniqueDef{{FieldIDs: []uint32{1}}},
 			},
 		},
 		{
 			name: "unknown-field-id",
 			nt: &NodeTypeDef{
-				TypeID: 1, Name: "X",
+				TypeID: 1,
 				Fields: []FieldDef{
-					{FieldID: 1, Name: "a", Kind: KindString},
+					{FieldID: 1, Kind: KindString},
 				},
-				CompositeUnique: []CompositeUniqueDef{{Name: "c", FieldIDs: []uint32{1, 99}}},
-			},
-		},
-		{
-			name: "duplicate-name",
-			nt: &NodeTypeDef{
-				TypeID: 1, Name: "X",
-				Fields: []FieldDef{
-					{FieldID: 1, Name: "a", Kind: KindString},
-					{FieldID: 2, Name: "b", Kind: KindString},
-					{FieldID: 3, Name: "c", Kind: KindString},
-				},
-				CompositeUnique: []CompositeUniqueDef{
-					{Name: "dup", FieldIDs: []uint32{1, 2}},
-					{Name: "dup", FieldIDs: []uint32{2, 3}},
-				},
+				CompositeUnique: []CompositeUniqueDef{{FieldIDs: []uint32{1, 99}}},
 			},
 		},
 		{
 			name: "duplicate-signature",
 			nt: &NodeTypeDef{
-				TypeID: 1, Name: "X",
+				TypeID: 1,
 				Fields: []FieldDef{
-					{FieldID: 1, Name: "a", Kind: KindString},
-					{FieldID: 2, Name: "b", Kind: KindString},
+					{FieldID: 1, Kind: KindString},
+					{FieldID: 2, Kind: KindString},
 				},
 				CompositeUnique: []CompositeUniqueDef{
-					{Name: "ab", FieldIDs: []uint32{1, 2}},
-					{Name: "ba", FieldIDs: []uint32{2, 1}},
+					{FieldIDs: []uint32{1, 2}},
+					{FieldIDs: []uint32{2, 1}},
 				},
 			},
 		},
@@ -476,14 +387,14 @@ func TestValidate_CompositeUniqueRules(t *testing.T) {
 func TestValidateAll_CrossReferences(t *testing.T) {
 	r := NewRegistry()
 	if err := r.RegisterNode(&NodeTypeDef{
-		TypeID: 1, Name: "User",
-		Fields: []FieldDef{{FieldID: 1, Name: "x", Kind: KindString}},
+		TypeID: 1,
+		Fields: []FieldDef{{FieldID: 1, Kind: KindString}},
 	}); err != nil {
 		t.Fatalf("register user: %v", err)
 	}
 	// Edge points at unregistered type 2.
 	if err := r.RegisterEdge(&EdgeTypeDef{
-		EdgeID: 1, Name: "E", FromTypeID: 1, ToTypeID: 2,
+		EdgeID: 1, FromTypeID: 1, ToTypeID: 2,
 		OnSubjectExit: OnSubjectExitBoth,
 	}); err != nil {
 		t.Fatalf("register edge: %v", err)
@@ -497,17 +408,17 @@ func TestValidateAll_CrossReferences(t *testing.T) {
 func TestEdge_OnSubjectExitDefault(t *testing.T) {
 	// Loader fills in OnSubjectExit when JSON omits it.
 	body := `{"node_types": [
-		{"type_id": 1, "name": "A", "fields": [{"field_id": 1, "name": "x", "kind": "str"}]},
-		{"type_id": 2, "name": "B", "fields": [{"field_id": 1, "name": "y", "kind": "str"}]}
+		{"type_id": 1, "fields": [{"field_id": 1, "kind": "str"}]},
+		{"type_id": 2, "fields": [{"field_id": 1, "kind": "str"}]}
 	],
 	"edge_types": [
-		{"edge_id": 1, "name": "E", "from_type_id": 1, "to_type_id": 2, "props": []}
+		{"edge_id": 1, "from_type_id": 1, "to_type_id": 2, "props": []}
 	]}`
 	r, err := LoadFromJSON([]byte(body))
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	e := r.EdgeTypeByName("E")
+	e := r.EdgeTypeByID(1)
 	if e == nil {
 		t.Fatal("edge missing")
 	}

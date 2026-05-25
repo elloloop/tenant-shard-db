@@ -177,7 +177,7 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 
 	out := make([]*pb.Node, 0, len(collected))
 	for _, n := range collected {
-		pn, perr := s.storeNodeToProto("", n)
+		pn, perr := s.storeNodeToProto(0, n)
 		if perr != nil {
 			// A row that will not marshal is corrupt stored state, not an
 			// absent result — surface it rather than dropping rows.

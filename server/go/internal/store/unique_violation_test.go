@@ -33,15 +33,14 @@ func oauthIdentityRegistry(t *testing.T) *schema.Registry {
 	reg := schema.NewRegistry()
 	nt := &schema.NodeTypeDef{
 		TypeID: 201,
-		Name:   "OAuthIdentity",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "provider", Kind: schema.KindString},
-			{FieldID: 2, Name: "provider_user_id", Kind: schema.KindString},
-			{FieldID: 3, Name: "email", Kind: schema.KindString, Unique: true},
-			{FieldID: 4, Name: "external_serial", Kind: schema.KindInteger},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindString},
+			{FieldID: 3, Kind: schema.KindString, Unique: true},
+			{FieldID: 4, Kind: schema.KindInteger},
 		},
 		CompositeUnique: []schema.CompositeUniqueDef{
-			{Name: "provider_user_id", FieldIDs: []uint32{1, 2}},
+			{FieldIDs: []uint32{1, 2}},
 		},
 	}
 	if err := reg.RegisterNode(nt); err != nil {
@@ -107,8 +106,10 @@ func TestBuildUniqueViolationDetail_Composite(t *testing.T) {
 	if !ok {
 		t.Fatalf("BuildUniqueViolationDetail did not recognise the violation: %v", err)
 	}
+	// Name-free (ADR-031): the constraint identity is its field_id tuple,
+	// rendered as '(1,2)'.
 	want := "Composite unique constraint violation: tenant=t1 type_id=201 " +
-		"constraint='provider_user_id' fields=[1, 2] values=['google', 'uid-1'] already exists"
+		"constraint='(1,2)' fields=[1, 2] values=['google', 'uid-1'] already exists"
 	if detail != want {
 		t.Fatalf("detail mismatch:\n got=%q\nwant=%q", detail, want)
 	}
@@ -147,13 +148,12 @@ func TestBuildUniqueViolationDetail_BigIntComposite(t *testing.T) {
 	reg := schema.NewRegistry()
 	nt := &schema.NodeTypeDef{
 		TypeID: 301,
-		Name:   "BigKey",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "provider", Kind: schema.KindString},
-			{FieldID: 2, Name: "serial", Kind: schema.KindInteger},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindInteger},
 		},
 		CompositeUnique: []schema.CompositeUniqueDef{
-			{Name: "provider_serial", FieldIDs: []uint32{1, 2}},
+			{FieldIDs: []uint32{1, 2}},
 		},
 	}
 	if err := reg.RegisterNode(nt); err != nil {
@@ -187,7 +187,7 @@ func TestBuildUniqueViolationDetail_BigIntComposite(t *testing.T) {
 		t.Fatalf("big int rendered in scientific notation: %q", detail)
 	}
 	want := "Composite unique constraint violation: tenant=t1 type_id=301 " +
-		"constraint='provider_serial' fields=[1, 2] values=['google', 9223372036854775807] already exists"
+		"constraint='(1,2)' fields=[1, 2] values=['google', 9223372036854775807] already exists"
 	if detail != want {
 		t.Fatalf("detail mismatch:\n got=%q\nwant=%q", detail, want)
 	}
@@ -253,7 +253,9 @@ func TestEnsureFieldIndexesTx_CreatesCompositeIndex(t *testing.T) {
 	if dupErr == nil {
 		t.Fatalf("expected composite collision inside txn")
 	}
-	if name := indexNameForTest(dupErr); !strings.Contains(name, "idx_unique_t201_cprovider_user_id") {
+	// Name-free (ADR-031): the composite index suffix is the field_id
+	// tuple "f1_2", so the index name is idx_unique_t201_cf1_2.
+	if name := indexNameForTest(dupErr); !strings.Contains(name, "idx_unique_t201_cf1_2") {
 		t.Fatalf("collision did not name the composite index: %v", dupErr)
 	}
 }

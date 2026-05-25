@@ -34,22 +34,28 @@ var sqliteIndexNameRE = regexp.MustCompile(`index '([^']+)'`)
 // uniqueViolationParts is the parsed coordinates of a UNIQUE-constraint
 // failure, ready to be lowered into the structured ALREADY_EXISTS
 // detail. Composite is true when the violated index is a composite
-// (multi-field) constraint; for single-field violations ConstraintName
-// is empty and FieldIDs holds exactly one id.
+// (multi-field) constraint; for single-field violations FieldIDs holds
+// exactly one id. Per ADR-031 a composite constraint is identified by
+// its FieldIDs tuple (Constraint carries the tuple signature, e.g.
+// "(1,2)", not a name).
 type uniqueViolationParts struct {
-	Composite      bool
-	TypeID         int32
-	ConstraintName string
-	FieldIDs       []uint32
+	Composite  bool
+	TypeID     int32
+	Constraint string
+	FieldIDs   []uint32
 }
 
 // parseUniqueIndexName decodes an index name minted by indexes.go back
 // into its constraint coordinates. Returns ok=false when the name is
 // not one of our unique-index names (e.g. a UNIQUE failure on a
-// built-in table constraint such as applied_events). The registry is
-// consulted to map a single-field index back to its field_id and a
-// composite index back to its declared field_id tuple — the index name
-// only carries the type_id and (for composites) the constraint name.
+// built-in table constraint such as applied_events).
+//
+// NAME-FREE per ADR-031: the composite index suffix is a field_id tuple
+// "f<id>_<id>_...", so the field_ids are recovered directly from the
+// index name. The registry is consulted only to canonicalise the tuple
+// to declaration order; if it has no match (e.g. WAL retention dropped
+// the register_schema op) the tuple parsed from the index name is used
+// as-is.
 func (s *CanonicalStore) parseUniqueIndexName(name string) (uniqueViolationParts, bool) {
 	// Single-field: idx_unique_t<T>_f<F>
 	if m := singleFieldIndexRE.FindStringSubmatch(name); m != nil {
@@ -64,39 +70,69 @@ func (s *CanonicalStore) parseUniqueIndexName(name string) (uniqueViolationParts
 		}
 		return uniqueViolationParts{}, false
 	}
-	// Composite: idx_unique_t<T>_c<safeName>
+	// Composite: idx_unique_t<T>_c<suffix> where suffix is "f<id>_<id>_...".
 	if m := compositeIndexRE.FindStringSubmatch(name); m != nil {
 		t, err := strconv.Atoi(m[1])
 		if err != nil {
 			return uniqueViolationParts{}, false
 		}
 		typeID := int32(t)
-		safe := m[2]
-		// Resolve the safe-name suffix back to the declared constraint
-		// via the registry so we recover the real (un-sanitized) name
-		// and the field_id tuple in declaration order.
+		suffix := m[2]
+		fieldIDs, parsed := parseCompositeSuffix(suffix)
+		if !parsed {
+			return uniqueViolationParts{}, false
+		}
+		// Canonicalise against the registry so the tuple is in declared
+		// order; fall back to the parsed (sorted-by-suffix) order.
 		if s.registry != nil {
 			for _, c := range s.registry.CompositeUnique(typeID) {
-				if compositeIndexSuffix(c.Name, c.FieldIDs) == safe {
-					return uniqueViolationParts{
-						Composite:      true,
-						TypeID:         typeID,
-						ConstraintName: c.Name,
-						FieldIDs:       append([]uint32(nil), c.FieldIDs...),
-					}, true
+				if compositeIndexSuffix(c.FieldIDs) == suffix {
+					fieldIDs = append([]uint32(nil), c.FieldIDs...)
+					break
 				}
 			}
 		}
-		// No registry match — surface what we can (the safe suffix as a
-		// best-effort name). Still flagged composite so the SDK routes
-		// to the composite branch.
 		return uniqueViolationParts{
-			Composite:      true,
-			TypeID:         typeID,
-			ConstraintName: safe,
+			Composite:  true,
+			TypeID:     typeID,
+			Constraint: signatureOf(fieldIDs),
+			FieldIDs:   fieldIDs,
 		}, true
 	}
 	return uniqueViolationParts{}, false
+}
+
+// parseCompositeSuffix decodes a composite index suffix
+// "f<id>_<id>_..." back into the field_id tuple. Returns ok=false for a
+// malformed suffix.
+func parseCompositeSuffix(suffix string) ([]uint32, bool) {
+	if len(suffix) < 2 || suffix[0] != 'f' {
+		return nil, false
+	}
+	parts := strings.Split(suffix[1:], "_")
+	out := make([]uint32, 0, len(parts))
+	for _, p := range parts {
+		n, err := strconv.ParseUint(p, 10, 32)
+		if err != nil {
+			return nil, false
+		}
+		out = append(out, uint32(n))
+	}
+	if len(out) == 0 {
+		return nil, false
+	}
+	return out, true
+}
+
+// signatureOf renders a field_id tuple as "(<id>,<id>,...)" in the given
+// order — the name-free constraint identity surfaced in the composite
+// ALREADY_EXISTS detail (ADR-031).
+func signatureOf(ids []uint32) string {
+	parts := make([]string, 0, len(ids))
+	for _, f := range ids {
+		parts = append(parts, strconv.FormatUint(uint64(f), 10))
+	}
+	return "(" + strings.Join(parts, ",") + ")"
 }
 
 var (
@@ -132,8 +168,8 @@ func indexNameFromSQLiteError(err error) string {
 //
 //	single-field:
 //	  Unique constraint violation: tenant=<t> type_id=<T> field_id=<F> value=<repr> already exists
-//	composite:
-//	  Composite unique constraint violation: tenant=<t> type_id=<T> constraint='<name>' fields=[<F>, ...] values=[<repr>, ...] already exists
+//	composite (name-free, ADR-031 — constraint identity is the field_id tuple):
+//	  Composite unique constraint violation: tenant=<t> type_id=<T> constraint='(<F>,...)' fields=[<F>, ...] values=[<repr>, ...] already exists
 func (s *CanonicalStore) BuildUniqueViolationDetail(tenantID string, payload map[string]any, err error) (detail string, ok bool) {
 	idxName := indexNameFromSQLiteError(err)
 	if idxName == "" {
@@ -169,7 +205,7 @@ func formatCompositeUniqueDetail(tenantID string, parts uniqueViolationParts, pa
 	}
 	return fmt.Sprintf(
 		"Composite unique constraint violation: tenant=%s type_id=%d constraint=%s fields=[%s] values=[%s] already exists",
-		tenantID, parts.TypeID, pyReprString(parts.ConstraintName),
+		tenantID, parts.TypeID, pyReprString(parts.Constraint),
 		strings.Join(fieldStrs, ", "), strings.Join(valStrs, ", "),
 	)
 }
@@ -250,15 +286,17 @@ func pyReprString(s string) string {
 	return b.String()
 }
 
-// compositeIndexSuffix returns the index-name suffix EnsureCompositeUniqueIndex
-// mints for a constraint, so parseUniqueIndexName can match a SQLite
-// index name back to its declared constraint. Kept here next to the
-// parser and exercised by indexes.go to guarantee the two agree.
-func compositeIndexSuffix(name string, fieldIDs []uint32) string {
-	safe := safeIdent(name)
-	if safe != "" {
-		return safe
-	}
+// compositeIndexSuffix returns the index-name suffix
+// EnsureCompositeUniqueIndex mints for a constraint, so
+// parseUniqueIndexName can match a SQLite index name back to its declared
+// constraint. Kept here next to the parser and exercised by indexes.go to
+// guarantee the two agree.
+//
+// NAME-FREE per ADR-031: the suffix is derived solely from the field_id
+// TUPLE (no constraint name). The form is "f<id>_<id>_..." in
+// declaration order, which round-trips through parseUniqueIndexName back
+// into the field_id tuple, identifying which constraint fired.
+func compositeIndexSuffix(fieldIDs []uint32) string {
 	parts := make([]string, 0, len(fieldIDs))
 	for _, f := range fieldIDs {
 		parts = append(parts, strconv.FormatUint(uint64(f), 10))

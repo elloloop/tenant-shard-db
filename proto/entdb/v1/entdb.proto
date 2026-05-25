@@ -220,6 +220,12 @@ message ExecuteAtomicRequest {
 // schema JSON contract (server/go/internal/schema/types.go) field-for-
 // field; the proto field NUMBERS here are wire ids, NOT the schema
 // ``field_id`` values (those live in SchemaFieldDef.field_id).
+//
+// NAME-FREE (ADR-031): types are identified by type_id / edge_id and
+// fields by field_id only. No field name, type name, or constraint name
+// is carried on the wire — names live only in the client's proto and are
+// resolved by the SDK. The ``name`` field numbers are RESERVED so they
+// are never reused.
 message SchemaDescriptor {
     repeated SchemaNodeTypeDef node_types = 1;
     repeated SchemaEdgeTypeDef edge_types = 2;
@@ -227,10 +233,12 @@ message SchemaDescriptor {
 
 // SchemaFieldDef mirrors schema.FieldDef. ``field_id`` is the stable
 // on-disk/wire field id (the proto field number of the user's own
-// message per ADR-018), NOT this message's field numbers.
+// message per ADR-018), NOT this message's field numbers. Name-free
+// (ADR-031): no field name is carried.
 message SchemaFieldDef {
+    reserved 2; // was: name (ADR-031 name-free)
+    reserved "name";
     uint32 field_id = 1;
-    string name = 2;
     // kind is the schema.FieldKind wire string: str / int / float / bool
     // / timestamp / json / bytes / enum / ref / list_str / list_int /
     // list_ref.
@@ -247,19 +255,24 @@ message SchemaFieldDef {
     bool unique = 12;
 }
 
-// SchemaCompositeUniqueDef mirrors schema.CompositeUniqueDef.
+// SchemaCompositeUniqueDef mirrors schema.CompositeUniqueDef. Name-free
+// (ADR-031): a composite constraint is identified solely by its
+// field_ids tuple; no constraint name is carried.
 message SchemaCompositeUniqueDef {
-    string name = 1;
+    reserved 1; // was: name (ADR-031 name-free)
+    reserved "name";
     repeated uint32 field_ids = 2;
 }
 
 // SchemaNodeTypeDef mirrors schema.NodeTypeDef. Only the fields the
 // server needs to enforce uniqueness / indexes / search / validation are
 // carried; GDPR/ACL policy metadata can be added later without breaking
-// the wire (additive field numbers).
+// the wire (additive field numbers). Name-free (ADR-031): identified by
+// type_id only.
 message SchemaNodeTypeDef {
+    reserved 2; // was: name (ADR-031 name-free)
+    reserved "name";
     int32 type_id = 1;
-    string name = 2;
     repeated SchemaFieldDef fields = 3;
     bool deprecated = 4;
     string description = 5;
@@ -267,17 +280,20 @@ message SchemaNodeTypeDef {
     // business / financial / audit / ephemeral / healthcare); empty
     // means unset.
     string data_policy = 6;
-    // subject_field / legal_basis are optional GDPR metadata; absent
-    // means unset.
-    optional string subject_field = 7;
+    // subject_field is the optional GDPR subject field_id (ADR-031:
+    // name-free); legal_basis is optional GDPR metadata. Absent means
+    // unset.
+    optional uint32 subject_field = 7;
     optional string legal_basis = 8;
     repeated SchemaCompositeUniqueDef composite_unique = 9;
 }
 
-// SchemaEdgeTypeDef mirrors schema.EdgeTypeDef.
+// SchemaEdgeTypeDef mirrors schema.EdgeTypeDef. Name-free (ADR-031):
+// identified by edge_id only.
 message SchemaEdgeTypeDef {
+    reserved 2; // was: name (ADR-031 name-free)
+    reserved "name";
     int32 edge_id = 1;
-    string name = 2;
     int32 from_type_id = 3;
     int32 to_type_id = 4;
     repeated SchemaFieldDef props = 5;

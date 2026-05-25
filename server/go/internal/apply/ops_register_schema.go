@@ -23,12 +23,14 @@ import (
 //     EnsureFieldIndexesTx call).
 //
 // Op shape (mirrors the cross-language schema JSON contract — the same
-// shape schema.LoadFromJSON consumes):
+// shape schema.LoadFromJSON consumes). NAME-FREE per ADR-031: types are
+// keyed by type_id / edge_id, fields by field_id, composites by their
+// field_ids tuple. No names appear anywhere:
 //
 //	{
 //	  "op": "register_schema",
-//	  "node_types": [ {type_id, name, fields:[...], composite_unique:[...], ...} ],
-//	  "edge_types": [ {edge_id, name, from_type_id, to_type_id, props:[...], ...} ]
+//	  "node_types": [ {type_id, fields:[...], composite_unique:[...], ...} ],
+//	  "edge_types": [ {edge_id, from_type_id, to_type_id, props:[...], ...} ]
 //	}
 //
 // Conflict handling (deterministic outcomes, NOT poison):
@@ -66,7 +68,7 @@ func (a *Applier) applyRegisterSchema(ctx context.Context, tx *BatchTxn, ev *Eve
 			// A malformed type that slips past the handler's own
 			// validation is a poison event (deterministic, but not a
 			// recoverable client outcome).
-			return fmt.Errorf("%w: register_schema node %q: %v", ErrPoisonEvent, nt.Name, err)
+			return fmt.Errorf("%w: register_schema node type_id %d: %v", ErrPoisonEvent, nt.TypeID, err)
 		}
 		// Ensure this type's unique / composite-unique / query indexes
 		// exist on the txn connection BEFORE the data ops run. Idempotent
@@ -82,7 +84,7 @@ func (a *Applier) applyRegisterSchema(ctx context.Context, tx *BatchTxn, ev *Eve
 			if errors.Is(err, schema.ErrSchemaConflict) {
 				return &SchemaConflict{Detail: err.Error()}
 			}
-			return fmt.Errorf("%w: register_schema edge %q: %v", ErrPoisonEvent, et.Name, err)
+			return fmt.Errorf("%w: register_schema edge edge_id %d: %v", ErrPoisonEvent, et.EdgeID, err)
 		}
 	}
 	return nil

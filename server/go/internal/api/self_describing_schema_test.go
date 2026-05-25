@@ -61,17 +61,17 @@ func newSelfDescribingFixture(t *testing.T) *xaFixture {
 	return &xaFixture{t: t, wal: w, store: cs, registry: reg, srv: srv, applier: a}
 }
 
-// userSchemaDescriptor returns a SchemaDescriptor for a User node type
-// (type_id=1) whose `email` field is unique. emailUnique toggles the
+// userSchemaDescriptor returns a SchemaDescriptor for a node type
+// (type_id=1) whose field_id=1 is unique. emailUnique toggles the
 // unique flag so the conflict test can supply a divergent definition.
+// Name-free per ADR-031: types/fields are id-only on the wire.
 func userSchemaDescriptor(emailUnique bool) *pb.SchemaDescriptor {
 	return &pb.SchemaDescriptor{
 		NodeTypes: []*pb.SchemaNodeTypeDef{{
 			TypeId: 1,
-			Name:   "User",
 			Fields: []*pb.SchemaFieldDef{
-				{FieldId: 1, Name: "email", Kind: "str", Unique: emailUnique},
-				{FieldId: 2, Name: "name", Kind: "str"},
+				{FieldId: 1, Kind: "str", Unique: emailUnique},
+				{FieldId: 2, Kind: "str"},
 			},
 		}},
 	}

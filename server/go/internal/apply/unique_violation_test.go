@@ -61,14 +61,13 @@ func compositeRegistry(t *testing.T) *schema.Registry {
 	reg := schema.NewRegistry()
 	nt := &schema.NodeTypeDef{
 		TypeID: 201,
-		Name:   "OAuthIdentity",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "provider", Kind: schema.KindString},
-			{FieldID: 2, Name: "provider_user_id", Kind: schema.KindString},
-			{FieldID: 3, Name: "serial", Kind: schema.KindInteger},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindString},
+			{FieldID: 3, Kind: schema.KindInteger},
 		},
 		CompositeUnique: []schema.CompositeUniqueDef{
-			{Name: "provider_user_id", FieldIDs: []uint32{1, 2}},
+			{FieldIDs: []uint32{1, 2}},
 		},
 	}
 	if err := reg.RegisterNode(nt); err != nil {
@@ -123,7 +122,7 @@ func TestApplier_CompositeUniqueViolation(t *testing.T) {
 		t.Fatalf("failure_json decode: %v", err)
 	}
 	want := "Composite unique constraint violation: tenant=tenant_a type_id=201 " +
-		"constraint='provider_user_id' fields=[1, 2] values=['google', 'uid-1'] already exists"
+		"constraint='(1,2)' fields=[1, 2] values=['google', 'uid-1'] already exists"
 	if uv.Detail != want {
 		t.Fatalf("detail mismatch:\n got=%q\nwant=%q", uv.Detail, want)
 	}
