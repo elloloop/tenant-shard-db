@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779710308749,
+  "lastUpdate": 1779714953199,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -7992,6 +7992,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0005794289670566908",
             "extra": "mean: 6.4213825069442025 msec\nrounds: 144"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7c71502fee7c73736212f3e31ea93a002ba936ab",
+          "message": "fix(mailbox): exclude USER_MAILBOX nodes from plain tenant by-id reads (#568) + cross-stack tests (#594)\n\nA new Go-SDK real-server integration test surfaced a privacy gap shipped\nin v1.32.0: QueryNodes/SearchNodes exclude mailbox-private nodes from a\nplain tenant read (no target_user), but GetNode/GetNodes by id returned\nthem — so a leaked or guessed node id exposed a user's private mailbox\ncontent. GetNode/GetNodes now treat a USER_MAILBOX node as not-found on a\nplain tenant read, consistent with the scan path; mailbox content is\nreachable only through the mailbox scope (target_user set).\n\nTest coverage added across the layers exercised by the v1.24–v1.32\nfeatures:\n  - E2E (Python SDK ↔ docker stack): query() + edges_out() keyset\n    auto-follow return the complete set over 150 / 120 rows; USER_MAILBOX\n    read via the mailbox scope + the tenant-read privacy exclusion.\n  - Go SDK integration (real server): mailbox round-trip + privacy (the\n    test that caught this bug).\n  - Server unit: GetNode/GetNodes by-id mailbox exclusion.\n\nCloses the privacy gap; refs #568.",
+          "timestamp": "2026-05-25T14:13:25+01:00",
+          "tree_id": "bcccf6d7f7ba3bb47e41690bff6dbd6df3ce1159",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/7c71502fee7c73736212f3e31ea93a002ba936ab"
+        },
+        "date": 1779714952316,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2526.2440206829488,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002590314028533497",
+            "extra": "mean: 395.8445786759976 usec\nrounds: 1163"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1723.4861383901412,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005919560198855018",
+            "extra": "mean: 580.2193459670475 usec\nrounds: 1029"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 886.4954191207406,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00046301743514737937",
+            "extra": "mean: 1.1280374138783902 msec\nrounds: 807"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 425.05085119670923,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004326165333806734",
+            "extra": "mean: 2.3526596810347526 msec\nrounds: 348"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1176.0041153591171,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0021003709829834107",
+            "extra": "mean: 850.3371603377675 usec\nrounds: 1422"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1092.540305808035,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002738338176166966",
+            "extra": "mean: 915.2980395175508 usec\nrounds: 1493"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1242.207318869086,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018528683276665045",
+            "extra": "mean: 805.0186026197357 usec\nrounds: 1374"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1419.6254548345066,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00023527894726460915",
+            "extra": "mean: 704.4111505570146 usec\nrounds: 1076"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1450.0678605293551,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003255846291334264",
+            "extra": "mean: 689.6228978104132 usec\nrounds: 411"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1255.1226891212618,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004930002995599919",
+            "extra": "mean: 796.7348600001179 usec\nrounds: 1050"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2079.6513372719464,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002720173570839824",
+            "extra": "mean: 480.8498338532959 usec\nrounds: 1601"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 142.75641522834349,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00036833938911079396",
+            "extra": "mean: 7.004939136363629 msec\nrounds: 132"
           }
         ]
       }
