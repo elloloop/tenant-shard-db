@@ -1438,23 +1438,63 @@ class DbClient:
         *,
         limit: int = 50,
         offset: int = 0,
+        page_size: int = 0,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
         """Full-text search across searchable fields of a node type.
+
+        ADR-029 FTS carve-out: search is relevance-ranked top-N and is
+        OFFSET-paged, NOT cursor-paged — it does NOT auto-follow. Page
+        deliberately with ``page_size`` + ``offset``. Use
+        :meth:`search_nodes_page` if you also need ``has_more``.
 
         Args:
             node_type: Node type to search
             tenant_id: Tenant identifier
             actor: Actor making request
             query: FTS5 match expression
-            limit: Maximum results
-            offset: Pagination offset
+            limit: Maximum results (legacy; ``page_size`` takes precedence)
+            offset: Pagination offset within the ranked result set
+            page_size: AIP-158 alias for ``limit``; wins when both are set
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
         Returns:
             List of matching nodes ordered by relevance
+        """
+        nodes, _ = await self.search_nodes_page(
+            node_type,
+            tenant_id,
+            actor,
+            query,
+            limit=limit,
+            offset=offset,
+            page_size=page_size,
+            trace_id=trace_id,
+            timeout=timeout,
+        )
+        return nodes
+
+    async def search_nodes_page(
+        self,
+        node_type: NodeTypeDef,
+        tenant_id: str,
+        actor: str,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        page_size: int = 0,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[list[Node], bool]:
+        """:meth:`search_nodes` that also reports ``has_more``.
+
+        Returns ``(nodes, has_more)`` where ``has_more`` is True when the
+        ranked result set has rows beyond this page. Page with ``offset``
+        to fetch the next slice — there is no cursor for search (ADR-029
+        FTS carve-out).
         """
         self._ensure_connected()
         trace_id = trace_id or str(uuid.uuid4())
@@ -1466,6 +1506,7 @@ class DbClient:
             query=query,
             limit=limit,
             offset=offset,
+            page_size=page_size,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -1686,7 +1727,7 @@ class DbClient:
         tenant_id: str,
         actor: str,
         *,
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         after_offset: str | None | _Unset = _UNSET,
         trace_id: str | None = None,
@@ -1694,11 +1735,18 @@ class DbClient:
     ) -> list[Node]:
         """List nodes shared with the calling actor.
 
+        Auto-follows the ADR-029 UNIFIED keyset cursor across BOTH merged
+        sources (per-tenant ``node_access`` + cross-tenant
+        ``shared_index``), so this returns the COMPLETE set by default
+        (``limit <= 0``) — never a silent 100-row prefix. A positive
+        ``limit`` caps the total. The deprecated ``offset`` falls back to a
+        single non-cursor request.
+
         Args:
             tenant_id: Tenant identifier
             actor: Actor making request
-            limit: Maximum nodes to return
-            offset: Pagination offset
+            limit: Maximum nodes; ``<= 0`` (default) returns all via auto-follow.
+            offset: DEPRECATED legacy offset (single non-cursor request).
             after_offset: Wait for this stream position before reading.
                 Omit to use automatic offset tracking.
                 Pass None to opt out of offset tracking.

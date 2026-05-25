@@ -23,6 +23,14 @@
 //   - Order of operations: tenant -> validate query -> searchable
 //     lookup -> SQL -> ACL trim -> proto convert. Swapping any two
 //     breaks at least one contract test.
+//   - Pagination (ADR-029 FTS carve-out): SearchNodes keeps OFFSET
+//     paging — it is NOT keyset/cursor-paginated. FTS5 `rank` is computed
+//     by the MATCH and cannot be filtered in a WHERE seek, so it is not a
+//     stable keyset column, and deep-paging relevance-ranked results is an
+//     anti-pattern. `page_size` is the AIP-158 alias for `limit` and takes
+//     precedence; `offset` advances within the ranked set. `has_more` is
+//     exact: the store is asked for limit+1 rows and the probe row is
+//     trimmed before egress. There is NO `next_page_token` for search.
 //
 // Error contract:
 //
@@ -125,16 +133,29 @@ func (s *Server) SearchNodes(
 		return nil, errs.Errorf(errs.Code(err), "SearchNodes: open tenant: %v", err)
 	}
 
-	limit := int(req.GetLimit())
-	if limit == 0 {
+	// Page size: prefer the AIP-158 page_size, fall back to the legacy
+	// limit, then the default. ADR-029 carve-out: SearchNodes keeps
+	// OFFSET paging because FTS5 `rank` is computed by the MATCH and is
+	// not a stable keyset column — there is no `page_token` here.
+	limit := int(req.GetPageSize())
+	if limit <= 0 {
+		limit = int(req.GetLimit())
+	}
+	if limit <= 0 {
 		limit = 50
 	}
 	// SEC-4 (#135): cap oversized page requests before the FTS JOIN
 	// materialises rows.
 	limit = clampPageSize(limit)
 	offset := int(req.GetOffset())
+	if offset < 0 {
+		offset = 0
+	}
 
-	rows, ferr := s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit, offset)
+	// Fetch one extra row so has_more is exact: if the store returns
+	// limit+1 rows there is at least one more page. The probe row is
+	// trimmed before egress so the caller never sees more than limit.
+	rows, ferr := s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit+1, offset)
 	if ferr != nil {
 		outcome = "error"
 		// A malformed FTS5 MATCH query is a CLIENT error: surface it as
@@ -149,6 +170,17 @@ func (s *Server) SearchNodes(
 			return nil, errs.Errorf(c, "SearchNodes: %v", ferr)
 		}
 		return nil, errs.Internal(ctx, "SearchNodes: store", ferr)
+	}
+
+	// has_more is computed from the RAW store result (before the ACL
+	// trim): the store returned more than `limit` rows iff another ranked
+	// page exists. Trim the probe row so egress is capped at `limit`. The
+	// cross-tenant ACL post-filter below can only drop rows from the page,
+	// so this is a conservative over-report at worst, never under-report —
+	// it cannot hide the existence of a next page (ADR-029 invariant 3).
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
 	}
 
 	// 5. ACL post-filter — only when the actor is classified
@@ -172,7 +204,7 @@ func (s *Server) SearchNodes(
 		}
 		out = append(out, pn)
 	}
-	return &pb.SearchNodesResponse{Nodes: out}, nil
+	return &pb.SearchNodesResponse{Nodes: out, HasMore: hasMore}, nil
 }
 
 // isCrossTenantReader returns true when trusted is NOT a member of

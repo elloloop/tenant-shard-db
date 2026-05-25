@@ -1788,23 +1788,32 @@ class GrpcClient:
         *,
         limit: int = 50,
         offset: int = 0,
+        page_size: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
-    ) -> list[Node]:
+    ) -> tuple[list[Node], bool]:
         """Full-text search across searchable fields of a node type.
+
+        ADR-029 FTS carve-out: search is relevance-ranked top-N and is
+        OFFSET-paged, NOT cursor-paged — FTS5 ``rank`` is not a stable
+        keyset column. This does NOT auto-follow to completion (unlike
+        ``query_nodes`` / ``get_edges_*`` / ``list_shared_with_me``). Page
+        deliberately with ``page_size`` + ``offset``; ``has_more`` tells you
+        whether more ranked rows exist beyond the page.
 
         Args:
             tenant_id: Tenant identifier
             actor: Actor making request
             type_id: Node type ID
             query: FTS5 match expression
-            limit: Maximum results
-            offset: Pagination offset
+            limit: Maximum results (legacy; ``page_size`` takes precedence)
+            offset: Pagination offset within the ranked result set
+            page_size: AIP-158 alias for ``limit``; wins when both are set
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
         Returns:
-            List of matching nodes ordered by relevance
+            Tuple of (matching nodes ordered by relevance, has_more)
         """
         stub = self._ensure_connected()
         metadata = self._build_metadata()
@@ -1816,6 +1825,7 @@ class GrpcClient:
             query=query,
             limit=limit,
             offset=offset,
+            page_size=page_size,
         )
 
         response = await self._retry(
@@ -1826,7 +1836,7 @@ class GrpcClient:
             tenant_id=tenant_id,
         )
 
-        return [_node_from_proto(n, self._registry) for n in response.nodes]
+        return [_node_from_proto(n, self._registry) for n in response.nodes], response.has_more
 
     async def get_mailbox(
         self,
@@ -2107,44 +2117,83 @@ class GrpcClient:
         tenant_id: str,
         actor: str,
         *,
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[Node], bool]:
         """List nodes shared with the calling actor.
 
+        Follows the ADR-029 UNIFIED keyset cursor — which spans BOTH merged
+        sources (per-tenant ``node_access`` + cross-tenant
+        ``shared_index``) — to return the COMPLETE set by default
+        (``limit <= 0``); a positive ``limit`` caps the total. The
+        deprecated ``offset`` falls back to a single non-cursor request
+        (offset and page_token are mutually exclusive server-side).
+
         Args:
             tenant_id: Tenant identifier
             actor: Actor making request
-            limit: Maximum nodes to return
-            offset: Pagination offset
+            limit: Maximum nodes; ``<= 0`` (default) returns all via auto-follow.
+            offset: DEPRECATED legacy offset (single non-cursor request).
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
         Returns:
-            Tuple of (nodes, has_more)
+            Tuple of (nodes, has_more). When auto-following to completion
+            has_more is False; with a positive ``limit`` cap it reports
+            whether the server had more rows beyond the cap.
         """
         stub = self._ensure_connected()
         metadata = self._build_metadata()
 
-        request = ListSharedWithMeRequest(
-            context=self._make_context(tenant_id, actor, trace_id),
-            limit=limit,
-            offset=offset,
-        )
+        # Deprecated offset path: a single legacy request, no auto-follow
+        # (offset and page_token are mutually exclusive server-side).
+        if offset and offset > 0:
+            response = await self._retry(
+                stub.ListSharedWithMe,
+                ListSharedWithMeRequest(
+                    context=self._make_context(tenant_id, actor, trace_id),
+                    limit=limit or 100,
+                    offset=offset,
+                ),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+                tenant_id=tenant_id,
+            )
+            nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
+            return nodes, response.has_more
 
-        response = await self._retry(
-            stub.ListSharedWithMe,
-            request,
-            timeout=timeout or _DEFAULT_TIMEOUT,
-            metadata=metadata,
-            tenant_id=tenant_id,
-        )
-
-        nodes = [_node_from_proto(n, self._registry) for n in response.nodes]
-
-        return nodes, response.has_more
+        # Keyset auto-follow (ADR-029): loop next_page_token to exhaustion
+        # (or until `limit` rows when a positive cap is given).
+        out: list[Node] = []
+        page_token = ""
+        has_more = False
+        capped = limit and limit > 0
+        while True:
+            page_size = _MAX_PAGE_SIZE
+            if capped:
+                page_size = min(_MAX_PAGE_SIZE, limit - len(out))
+            response = await self._retry(
+                stub.ListSharedWithMe,
+                ListSharedWithMeRequest(
+                    context=self._make_context(tenant_id, actor, trace_id),
+                    page_size=page_size,
+                    page_token=page_token,
+                ),
+                timeout=timeout or _DEFAULT_TIMEOUT,
+                metadata=metadata,
+                tenant_id=tenant_id,
+            )
+            out.extend(_node_from_proto(n, self._registry) for n in response.nodes)
+            page_token = response.next_page_token
+            if capped and len(out) >= limit:
+                out = out[:limit]
+                has_more = bool(page_token) or response.has_more
+                break
+            if not page_token:
+                break
+        return out, has_more
 
     async def add_group_member(
         self,

@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 
@@ -358,5 +360,201 @@ func TestListSharedWithMe_Pagination(t *testing.T) {
 		if seen[id] != 1 {
 			t.Fatalf("node %q appeared %d times across both pages, want 1", id, seen[id])
 		}
+	}
+}
+
+// makeKeysetReq builds a page_size + page_token request (no offset).
+func makeKeysetReq(tenantID, actor string, pageSize int32, pageToken string) *pb.ListSharedWithMeRequest {
+	return &pb.ListSharedWithMeRequest{
+		Context:   &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		PageSize:  pageSize,
+		PageToken: pageToken,
+	}
+}
+
+// TestListSharedWithMe_KeysetPaging_PerTenant: the unified keyset cursor
+// (ADR-029) walks the per-tenant node_access source page-by-page,
+// returning every row exactly once with no duplicates and an exact
+// has_more / next_page_token contract.
+func TestListSharedWithMe_KeysetPaging_PerTenant(t *testing.T) {
+	t.Parallel()
+	cs := newCanonicalStoreForTest(t)
+	want := map[string]bool{}
+	for _, id := range []string{"n1", "n2", "n3", "n4", "n5"} {
+		seedSharedNode(t, cs, "acme", id, "user:owner", "user:alice", "read")
+		want[id] = true
+	}
+
+	srv := api.New(api.WithStore(cs))
+
+	seen := map[string]int{}
+	pageToken := ""
+	pages := 0
+	for {
+		pages++
+		if pages > 20 {
+			t.Fatalf("keyset paging did not terminate")
+		}
+		resp, err := srv.ListSharedWithMe(context.Background(), makeKeysetReq("acme", "user:alice", 2, pageToken))
+		if err != nil {
+			t.Fatalf("ListSharedWithMe page %d: %v", pages, err)
+		}
+		for _, n := range resp.GetNodes() {
+			seen[n.GetNodeId()]++
+		}
+		// ADR-029 invariant 3: a non-final page (has_more) MUST carry a
+		// token; a final page MUST NOT.
+		if resp.GetHasMore() && resp.GetNextPageToken() == "" {
+			t.Fatalf("page %d: has_more=true but next_page_token empty", pages)
+		}
+		if !resp.GetHasMore() && resp.GetNextPageToken() != "" {
+			t.Fatalf("page %d: has_more=false but next_page_token set", pages)
+		}
+		pageToken = resp.GetNextPageToken()
+		if pageToken == "" {
+			break
+		}
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("distinct nodes: got %d, want %d (seen=%v)", len(seen), len(want), seen)
+	}
+	for id := range want {
+		if seen[id] != 1 {
+			t.Fatalf("node %q appeared %d times across pages, want exactly 1", id, seen[id])
+		}
+	}
+}
+
+// TestListSharedWithMe_KeysetPaging_CrossSource: the unified keyset merges
+// BOTH sources — per-tenant node_access (home tenant) and the cross-tenant
+// shared_index — into one stream. Paging with a small page_size walks the
+// merged stream returning every distinct (tenant, node) exactly once.
+func TestListSharedWithMe_KeysetPaging_CrossSource(t *testing.T) {
+	t.Parallel()
+	cs := newCanonicalStoreForTest(t)
+	gs := newGlobalStore(t)
+	for _, tn := range []string{"alice-tenant", "acme", "globex"} {
+		if _, err := gs.CreateTenant(context.Background(), tn, tn, ""); err != nil {
+			t.Fatalf("CreateTenant(%q): %v", tn, err)
+		}
+	}
+
+	type key struct{ t, n string }
+	want := map[key]bool{}
+
+	// Two same-tenant grants in alice's home tenant.
+	for _, id := range []string{"home-1", "home-2"} {
+		seedSharedNode(t, cs, "alice-tenant", id, "user:owner", "user:alice", "read")
+		want[key{"alice-tenant", id}] = true
+	}
+	// Three cross-tenant shares (acme x2, globex x1).
+	xshares := []struct{ tenant, node string }{
+		{"acme", "remote-acme-1"},
+		{"acme", "remote-acme-2"},
+		{"globex", "remote-globex-1"},
+	}
+	for _, x := range xshares {
+		seedSharedNode(t, cs, x.tenant, x.node, "user:bob", "user:alice", "read")
+		if err := gs.AddShared(context.Background(), "user:alice", x.tenant, x.node, "read"); err != nil {
+			t.Fatalf("AddShared(%s/%s): %v", x.tenant, x.node, err)
+		}
+		want[key{x.tenant, x.node}] = true
+	}
+
+	srv := api.New(api.WithStore(cs), api.WithGlobalStore(gs))
+
+	seen := map[key]int{}
+	pageToken := ""
+	pages := 0
+	for {
+		pages++
+		if pages > 20 {
+			t.Fatalf("keyset paging did not terminate")
+		}
+		resp, err := srv.ListSharedWithMe(context.Background(), makeKeysetReq("alice-tenant", "user:alice", 2, pageToken))
+		if err != nil {
+			t.Fatalf("ListSharedWithMe page %d: %v", pages, err)
+		}
+		for _, n := range resp.GetNodes() {
+			seen[key{n.GetTenantId(), n.GetNodeId()}]++
+		}
+		if resp.GetHasMore() && resp.GetNextPageToken() == "" {
+			t.Fatalf("page %d: has_more=true but next_page_token empty", pages)
+		}
+		pageToken = resp.GetNextPageToken()
+		if pageToken == "" {
+			break
+		}
+	}
+
+	if len(seen) != len(want) {
+		t.Fatalf("distinct (tenant,node): got %d, want %d (seen=%v)", len(seen), len(want), seen)
+	}
+	for k := range want {
+		if seen[k] != 1 {
+			t.Fatalf("(tenant=%s,node=%s) appeared %d times, want exactly 1", k.t, k.n, seen[k])
+		}
+	}
+}
+
+// TestListSharedWithMe_CrossQueryTokenRejected: a page_token minted for
+// one recipient/tenant is rejected with INVALID_ARGUMENT when replayed for
+// a different recipient (ADR-029 invariant 2).
+func TestListSharedWithMe_CrossQueryTokenRejected(t *testing.T) {
+	t.Parallel()
+	cs := newCanonicalStoreForTest(t)
+	for _, id := range []string{"n1", "n2", "n3"} {
+		seedSharedNode(t, cs, "acme", id, "user:owner", "user:alice", "read")
+	}
+	// bob also has shares so his query is valid on its own.
+	for _, id := range []string{"b1", "b2", "b3"} {
+		seedSharedNode(t, cs, "acme", id, "user:owner", "user:bob", "read")
+	}
+
+	srv := api.New(api.WithStore(cs))
+
+	// Mint a token as alice.
+	resp, err := srv.ListSharedWithMe(context.Background(), makeKeysetReq("acme", "user:alice", 2, ""))
+	if err != nil {
+		t.Fatalf("ListSharedWithMe(alice): %v", err)
+	}
+	tok := resp.GetNextPageToken()
+	if tok == "" {
+		t.Fatalf("expected a next_page_token for alice's first page")
+	}
+
+	// Replay alice's token as bob -> INVALID_ARGUMENT (fingerprint binds
+	// the token to the recipient).
+	_, err = srv.ListSharedWithMe(context.Background(), makeKeysetReq("acme", "user:bob", 2, tok))
+	if codeOf(err) != codes.InvalidArgument {
+		t.Fatalf("cross-recipient token: got code %v, want InvalidArgument (err=%v)", codeOf(err), err)
+	}
+}
+
+// TestListSharedWithMe_TokenAndOffsetMutuallyExclusive: supplying both a
+// page_token and the deprecated offset is INVALID_ARGUMENT.
+func TestListSharedWithMe_TokenAndOffsetMutuallyExclusive(t *testing.T) {
+	t.Parallel()
+	cs := newCanonicalStoreForTest(t)
+	for _, id := range []string{"n1", "n2", "n3"} {
+		seedSharedNode(t, cs, "acme", id, "user:owner", "user:alice", "read")
+	}
+	srv := api.New(api.WithStore(cs))
+
+	resp, err := srv.ListSharedWithMe(context.Background(), makeKeysetReq("acme", "user:alice", 2, ""))
+	if err != nil {
+		t.Fatalf("ListSharedWithMe: %v", err)
+	}
+	tok := resp.GetNextPageToken()
+	if tok == "" {
+		t.Fatalf("expected a next_page_token")
+	}
+
+	req := makeKeysetReq("acme", "user:alice", 2, tok)
+	req.Offset = 1
+	_, err = srv.ListSharedWithMe(context.Background(), req)
+	if codeOf(err) != codes.InvalidArgument {
+		t.Fatalf("token+offset: got code %v, want InvalidArgument (err=%v)", codeOf(err), err)
 	}
 }

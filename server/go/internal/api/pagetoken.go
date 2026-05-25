@@ -198,6 +198,58 @@ func decodeUserPageToken(token, fingerprint string) (userPageCursor, error) {
 	return c, nil
 }
 
+// ── Shared-with-me keyset tokens (ADR-029, ListSharedWithMe) ────────
+//
+// ListSharedWithMe merges two differently-keyed sources — the per-tenant
+// node_access index (ordered by granted_at) and the cross-tenant
+// shared_index (ordered by shared_at) — into ONE stream sorted
+// (timestamp DESC, source_tenant DESC, node_id DESC). The cursor carries
+// that unified tuple so the next page seeks strictly after it in BOTH
+// sources, then the handler re-merges. (source_tenant, node_id) uniquely
+// identifies a shared node, so the order is total and the seek is
+// unambiguous.
+
+// sharedPageCursor is the decoded payload of a ListSharedWithMe token.
+type sharedPageCursor struct {
+	Fingerprint  string `json:"f"`
+	Timestamp    int64  `json:"t"`
+	SourceTenant string `json:"s"`
+	NodeID       string `json:"n"`
+}
+
+// sharedFingerprint binds a ListSharedWithMe token to the calling actor
+// (the recipient) and the tenant the query was issued against, so a token
+// minted for one recipient/tenant cannot be replayed for another.
+func sharedFingerprint(tenantID, actor string) string {
+	h := sha256.New()
+	h.Write([]byte("listsharedwithme\x00"))
+	h.Write([]byte(tenantID))
+	h.Write([]byte{0})
+	h.Write([]byte(actor))
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+}
+
+func encodeSharedPageToken(c sharedPageCursor) string {
+	b, _ := json.Marshal(c)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func decodeSharedPageToken(token, fingerprint string) (sharedPageCursor, error) {
+	var c sharedPageCursor
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return c, errs.Errorf(codes.InvalidArgument, "page_token: malformed: %v", err)
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return c, errs.Errorf(codes.InvalidArgument, "page_token: malformed: %v", err)
+	}
+	if c.Fingerprint != fingerprint {
+		return c, errs.Errorf(codes.InvalidArgument,
+			"page_token: does not match this query (recipient / tenant changed)")
+	}
+	return c, nil
+}
+
 // cursorOrderValue coerces a JSON-decoded cursor order value back to the
 // Go type the store expects for the effective order column. created_at /
 // updated_at / type_id are integer columns (JSON decodes them as

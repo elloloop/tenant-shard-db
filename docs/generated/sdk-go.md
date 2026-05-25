@@ -207,7 +207,20 @@ func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts .
     syntax. Only fields declared with (entdb.field).searchable = true are
     searched.
 
-        results, err := entdb.Search[*shop.Product](ctx, scope, "widget")
+    ADR-029 FTS carve-out: search is relevance-ranked top-N and is OFFSET-paged,
+    NOT cursor-paged — it does NOT auto-follow to completion the way Query /
+    Scope.EdgesFrom / Scope.SharedWithMe do. Use WithLimit to set the page
+    size (alias for page_size) and WithOffset to advance within the ranked
+    result set. To learn whether more ranked rows exist beyond the page,
+    use SearchPage.
+
+        results, err := entdb.Search[*shop.Product](ctx, scope, "widget",
+            entdb.WithLimit(20), entdb.WithOffset(20))
+
+func SearchPage[T proto.Message](ctx context.Context, s *Scope, query string, opts ...QueryOption) ([]T, bool, error)
+    SearchPage is Search that also reports has_more — true when the ranked
+    result set has rows beyond this page. Page with WithOffset to fetch the next
+    slice. There is no cursor for search (ADR-029 FTS carve-out).
 
 func WithAfterOffset(ctx context.Context, streamPosition string) context.Context
     WithAfterOffset returns a context that pins the next read to the given
@@ -1158,11 +1171,15 @@ func (s *Scope) Share(ctx context.Context, nodeID string, grantee Actor, perm Pe
     Share stays a regular method because it does not need a type parameter — the
     node_id fully identifies the row.
 
-func (s *Scope) SharedWithMe(ctx context.Context, limit, offset int32) ([]*Node, error)
+func (s *Scope) SharedWithMe(ctx context.Context, limit int32) ([]*Node, error)
     SharedWithMe returns nodes other actors have shared with this scope's actor
     — including cross-tenant shares routed through the global shared_index.
 
-    “limit“/“offset“ of zero use the server defaults.
+    The transport auto-follows the ADR-029 unified keyset cursor across both
+    merged sources, so this returns the COMPLETE set by default — never a
+    silent 100-row prefix. A positive “limit“ caps the total; “limit <= 0“ (the
+    default) returns every shared node. (The deprecated per-source “offset“ is
+    superseded by the cursor and no longer exposed here.)
 
 func (s *Scope) TenantID() string
     TenantID returns the tenant this scope is bound to.
@@ -1307,7 +1324,14 @@ type Transport interface {
 	// GetEdgesTo retrieves incoming edges to a node.
 	GetEdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error)
 	// SearchNodes performs full-text search across searchable fields.
-	SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string) ([]*Node, error)
+	//
+	// ADR-029 FTS carve-out: search is relevance-ranked top-N and is
+	// OFFSET-paged, NOT cursor-paged — FTS5 `rank` is not a stable keyset
+	// column. The transport does NOT auto-follow to completion (unlike
+	// QueryNodes / GetEdges / shared-with-me). pageSize bounds one page
+	// (alias for the legacy limit); offset advances within the ranked set.
+	// Returns the page plus has_more so callers can page deliberately.
+	SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string, pageSize, offset int32) ([]*Node, bool, error)
 	// GetTenantQuota retrieves the tenant's quota configuration
 	// and current usage (monthly writes + per-tenant / per-user
 	// RPS buckets).
@@ -1327,8 +1351,11 @@ type Transport interface {
 	// edges of ``edgeTypeID`` — server-side ACL filtered.
 	GetConnectedNodes(ctx context.Context, tenantID, actor, nodeID string, edgeTypeID int) ([]*Node, error)
 	// ListSharedWithMe returns nodes other actors have shared with
-	// the calling actor (cross-tenant included).
-	ListSharedWithMe(ctx context.Context, tenantID, actor string, limit, offset int32) ([]*Node, error)
+	// the calling actor (cross-tenant included). The transport follows
+	// the ADR-029 unified keyset cursor across pages so the COMPLETE set
+	// is returned, never a silent prefix. limit caps the total when
+	// positive; limit <= 0 returns every shared node.
+	ListSharedWithMe(ctx context.Context, tenantID, actor string, limit int32) ([]*Node, error)
 	// RevokeAccess removes a previously-shared grant from a node.
 	RevokeAccess(ctx context.Context, tenantID, actor, nodeID, granteeActor string) (bool, error)
 	// TransferOwnership reassigns ``nodeID``'s ``owner_actor`` to

@@ -93,7 +93,8 @@ Extracted from `sdk/python/entdb_sdk` — `__all__` plus the public methods of `
 | `async revoke(node_id, actor_id, tenant_id, actor, *, trace_id=..., timeout=...)` | Revoke access from an actor on a node. |
 | `async revoke_all_user_access(tenant_id, user_id, *, actor=..., timeout=...)` | Remove all access for a user in a tenant (instant termination). |
 | `async search(query, user_id, tenant_id, actor, types=..., limit=..., *, trace_id=..., timeout=...)` | Search user's mailbox. |
-| `async search_nodes(node_type, tenant_id, actor, query, *, limit=..., offset=..., trace_id=..., timeout=...)` | Full-text search across searchable fields of a node type. |
+| `async search_nodes(node_type, tenant_id, actor, query, *, limit=..., offset=..., page_size=..., trace_id=..., timeout=...)` | Full-text search across searchable fields of a node type. |
+| `async search_nodes_page(node_type, tenant_id, actor, query, *, limit=..., offset=..., page_size=..., trace_id=..., timeout=...)` | :meth:`search_nodes` that also reports ``has_more``. |
 | `async set_legal_hold(tenant_id, enabled=..., *, actor=..., timeout=...)` | Enable or disable legal hold on a tenant. |
 | `async share(node_id, actor_id, tenant_id, actor, permission=..., *, actor_type=..., expires_at=..., trace_id=..., timeout=...)` | Share a node with an actor. |
 | `async shared_with_me(tenant_id, actor, *, limit=..., offset=..., after_offset=..., trace_id=..., timeout=...)` | List nodes shared with the calling actor. |

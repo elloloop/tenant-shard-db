@@ -962,13 +962,36 @@ message RevokeAccessResponse {
 
 message ListSharedWithMeRequest {
     RequestContext context = 1;
+
+    // Pagination. `offset` is DEPRECATED (ADR-029): it is applied
+    // independently to each merged source, so page boundaries do not
+    // line up. Use keyset cursor pagination via `page_size` +
+    // `page_token` below.
     int32 limit = 2;
-    int32 offset = 3;
+    int32 offset = 3 [deprecated = true];
+
+    // Keyset cursor pagination (ADR-029, AIP-158). `page_size` bounds one
+    // page (alias for `limit`, takes precedence); `page_token` is the
+    // opaque `next_page_token` from a prior response. The cursor is a
+    // UNIFIED seek over `(timestamp, source_tenant, node_id)` across BOTH
+    // merged sources — the per-tenant `node_access` index (keyed on
+    // `granted_at`) and the cross-tenant `shared_index` (keyed on
+    // `shared_at`) — so the merged stream resumes exactly after the last
+    // row without skip/duplicate. The token is bound to the calling actor
+    // by a fingerprint; mixing `page_token` with the deprecated `offset`
+    // is INVALID_ARGUMENT.
+    int32 page_size = 4;
+    string page_token = 5;
 }
 
 message ListSharedWithMeResponse {
     repeated Node nodes = 1;
     bool has_more = 2;
+
+    // Opaque keyset cursor for the next page (ADR-029). Empty on the last
+    // page; non-empty whenever rows were omitted, so shared-with-me reads
+    // never silently truncate.
+    string next_page_token = 3;
 }
 
 message GroupMemberRequest {
@@ -1354,9 +1377,24 @@ message SearchNodesRequest {
     // FTS5 match expression (supports AND/OR/NOT/phrase/prefix)
     string query = 4;
     int32 limit = 5;
+
+    // Offset paging is RETAINED here, NOT keyset (ADR-029 FTS carve-out).
+    // FTS5 `rank` is computed by the MATCH and cannot be filtered in a
+    // WHERE seek, so it is not a stable keyset column. Search is
+    // relevance-ranked top-N; deep-paging ranked results is an
+    // anti-pattern. `page_size` is an alias for `limit` and takes
+    // precedence when both are set; `offset` advances within the ranked
+    // result set.
     int32 offset = 6;
+    int32 page_size = 7;
 }
 
 message SearchNodesResponse {
     repeated Node nodes = 1;
+
+    // True when the ranked result set has more rows beyond this page.
+    // Page with `offset` to fetch the next slice. There is NO
+    // `next_page_token` for search — ranked results are offset-paged, not
+    // cursor-paged (ADR-029 FTS carve-out).
+    bool has_more = 2;
 }

@@ -217,7 +217,7 @@ func TestGrpcTransport_ListSharedWithMe_HappyPath(t *testing.T) {
 	tr := startFakeServer(t, svc)
 
 	got, err := tr.ListSharedWithMe(
-		context.Background(), "acme", "user:alice", 50, 0,
+		context.Background(), "acme", "user:alice", 50,
 	)
 	if err != nil {
 		t.Fatalf("ListSharedWithMe: %v", err)
@@ -229,8 +229,14 @@ func TestGrpcTransport_ListSharedWithMe_HappyPath(t *testing.T) {
 	if got[0].TenantID != "globex" {
 		t.Errorf("expected cross-tenant tenant_id, got %q", got[0].TenantID)
 	}
-	if svc.sharedReq.GetLimit() != 50 || svc.sharedReq.GetOffset() != 0 {
-		t.Errorf("paging shape wrong: %+v", svc.sharedReq)
+	// ADR-029: the transport uses the keyset page_size shape (not the
+	// deprecated limit/offset). With limit=50 < the 1000 default page, the
+	// first page requests page_size=50.
+	if svc.sharedReq.GetPageSize() != 50 {
+		t.Errorf("paging shape wrong: page_size = %d, want 50 (%+v)", svc.sharedReq.GetPageSize(), svc.sharedReq)
+	}
+	if svc.sharedReq.GetPageToken() != "" {
+		t.Errorf("first page token = %q, want empty", svc.sharedReq.GetPageToken())
 	}
 }
 

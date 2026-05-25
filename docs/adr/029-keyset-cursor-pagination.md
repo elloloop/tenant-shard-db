@@ -10,11 +10,17 @@ is now green (un-xfailed). **`GetEdgesFrom`/`GetEdgesTo`** (#580): keyset over
 **`ListUsers`** (#580): keyset over `(created_at, user_id)` + Python
 auto-follow (the Go SDK does not expose ListUsers); also fixed its
 swallow (#573-class) to surface store faults.
-**Remaining (tracked, #580) — each needs a design decision, not a
-mechanical extension:** `SearchNodes` (FTS5 `rank` is not a stable keyset
-column), `ListSharedWithMe` (merges two differently-sorted sources — no
-single total order), and `GetConnectedNodes` (BFS traversal — keyset
-ill-defined; likely stays a documented bounded read).
+**`ListSharedWithMe`** (#580): UNIFIED keyset over
+`(timestamp, source_tenant, node_id)` spanning BOTH merged sources —
+per-tenant `node_access` (keyed on `granted_at`) and global `shared_index`
+(keyed on `shared_at`) — with both-SDK auto-follow. See "Resolved:
+`ListSharedWithMe` — unified merge-cursor" below.
+**`SearchNodes`** (#580): RESOLVED as offset-paged, NOT keyset — FTS5
+`rank` is not a stable keyset column. See "Resolved: `SearchNodes` —
+offset-paged ranked search (FTS carve-out)" below.
+**`GetConnectedNodes`** (#580): RESOLVED as an intentionally bounded
+traversal, NOT cursor-paginated. See "Resolved: `GetConnectedNodes` —
+bounded traversal, not cursor-paginated" below.
 **Decided:** 2026-05-23
 **Tags:** api, pagination, query, sdk, consistency, read-path
 **Complements:** [ADR-023](023-declarative-query-indexes.md) (declarative
@@ -44,8 +50,10 @@ Reads adopt **keyset (seek) cursor pagination** in the
   `ORDER BY order_by_col, node_id`, `LIMIT page_size`. `node_id` (unique)
   is always appended as the final sort key so the ordering is a **total
   order** and the cursor is unambiguous.
-- Applies to `QueryNodes`, `SearchNodes`, `GetEdgesFrom`/`GetEdgesTo`, and
-  the `List*` RPCs.
+- Applies to `QueryNodes`, `GetEdgesFrom`/`GetEdgesTo`, and the `List*`
+  RPCs (including `ListSharedWithMe` via a unified merge-cursor). Three
+  reads are carve-outs, resolved below: `SearchNodes` (offset-paged ranked
+  search) and `GetConnectedNodes` (bounded BFS traversal) are NOT keyset.
 
 `page_size` defaults to 100 (unchanged) and is clamped to `MaxPageSize`
 (1000). The point is no longer the per-page cap — it is that **the client
@@ -58,6 +66,61 @@ never a silent prefix.
 
 The legacy `offset` field is retained for backward compatibility but
 **deprecated**; new code uses the cursor.
+
+### Resolved: `SearchNodes` — offset-paged ranked search (FTS carve-out)
+
+`SearchNodes` is a **carve-out: it is offset-paged, not keyset-paged.**
+FTS5 `rank` (bm25) is computed by the `MATCH` operator at query time and
+is **not a column you can filter in a `WHERE` seek** — there is no
+`WHERE rank > :cursor` that the index can serve, so a keyset cursor over
+relevance order is impossible. Materialising `(rank, node_id)` into a
+sortable column was considered and rejected: rank is query-dependent (it
+changes with the match expression), so it cannot be precomputed per row.
+
+The deeper point is that **deep-paging relevance-ranked results is an
+anti-pattern**: search is "top-N by relevance," and page 50 of a ranked
+result set is noise. So `SearchNodes` keeps `limit`/`offset` (now with
+`page_size` as the AIP-158 alias that takes precedence over `limit`), adds
+an **exact `has_more`** (the server asks the store for `limit+1` rows and
+trims the probe), and has **no `next_page_token`**. The SDK `search`
+helpers expose `page_size` + `offset` and **do NOT auto-follow to
+completion** — unlike `query`/`edges`/`shared-with-me`, which do. This is
+the one read where returning a bounded top-N prefix is the correct
+contract, not a defect.
+
+### Resolved: `ListSharedWithMe` — unified merge-cursor
+
+`ListSharedWithMe` merges two sources — the per-tenant `node_access` index
+(ordered by `granted_at`) and the global cross-tenant `shared_index`
+(ordered by `shared_at`). Both timestamps are integer columns, and
+`(source_tenant, node_id)` uniquely identifies a shared node, so the two
+streams share **one total order**: `(timestamp DESC, source_tenant DESC,
+node_id DESC)`. A single keyset cursor over that tuple drives BOTH
+sources: each is queried `WHERE (ts, source_tenant, node_id) < cursor
+ORDER BY ts DESC, source_tenant DESC, node_id DESC LIMIT page_size+1`, the
+two result sets are merged, deduped by `(source_tenant, node_id)` (a node
+in both sources collapses to its higher-timestamp position), the top
+`page_size` are returned, and the cursor for the next page is the tuple of
+the last merged row. Fetching `page_size+1` from **each** source is
+sufficient because the globally-next `page_size+1` distinct tuples are a
+subset of the union of each source's own next `page_size+1` tuples — so
+`has_more` and the page are exact. The token is fingerprint-bound to the
+recipient + tenant and is mutually exclusive with the deprecated `offset`.
+Both SDKs auto-follow this cursor to completion.
+
+### Resolved: `GetConnectedNodes` — bounded traversal, not cursor-paginated
+
+`GetConnectedNodes` is a **BFS graph traversal**, not an ordered scan over
+a single index, so a keyset cursor is **ill-defined**: the "last row" of a
+page is not a stable seek anchor for the next, because the frontier is
+recomputed from the edge set, ACL-pruned per step, and deduped across
+fan-in. It stays a deliberately **bounded read**: it returns at most
+`limit` reachable, ACL-visible nodes within `MaxConnectedDepth`, with an
+**exact `has_more`** (the traversal collects one probe node beyond `limit`
+to distinguish "page full" from "more exist"). There is no
+`next_page_token`; callers needing the full neighbourhood raise `limit`.
+This is documented in the handler header and is not a truncation defect —
+the traversal is explicitly bounded by contract.
 
 ## Context
 
