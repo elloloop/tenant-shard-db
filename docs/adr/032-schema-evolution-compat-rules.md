@@ -1,6 +1,6 @@
 # ADR-032: Schema-evolution compatibility rules + a customer-runnable gate
 
-**Status:** Proposed
+**Status:** Accepted
 **Decided:** 2026-05-25
 **Tags:** schema, proto, wire-contract, sdk, tooling, ci, integrity
 
