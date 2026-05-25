@@ -77,6 +77,20 @@ type Transport interface {
 	// found nodes plus the slice of ids that were missing — both in
 	// input order is NOT guaranteed.
 	GetNodes(ctx context.Context, tenantID, actor string, typeID int, nodeIDs []string) ([]*Node, []string, error)
+
+	// ── Mailbox-scoped reads (#568) ──────────────────────────────────
+	// Each method mirrors its tenant-scoped counterpart but restricts the
+	// read to one user's USER_MAILBOX nodes (target_user is a bare user id
+	// such as "alice", not a "user:alice" principal). A node that is not a
+	// mailbox node owned by target_user reads as not-found, never leaked.
+	//
+	// GetMailboxNode retrieves a single mailbox node by id.
+	GetMailboxNode(ctx context.Context, tenantID, actor, targetUser string, typeID int, nodeID string) (*Node, error)
+	// QueryMailboxNodes returns mailbox nodes matching a filter. Follows
+	// the keyset cursor across pages, same as QueryNodes.
+	QueryMailboxNodes(ctx context.Context, tenantID, actor, targetUser string, typeID int, filter map[string]any, limit int) ([]*Node, error)
+	// SearchMailboxNodes runs FTS over one user's mailbox nodes.
+	SearchMailboxNodes(ctx context.Context, tenantID, actor, targetUser string, typeID int, query string) ([]*Node, error)
 	// GetReceiptStatus polls a transaction by its idempotency key.
 	GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error)
 	// WaitForOffset blocks (server-side) until the applier has
@@ -690,6 +704,114 @@ func (t *grpcTransport) GetNodes(ctx context.Context, tenantID, actor string, ty
 		out = append(out, nodeFromProto(n))
 	}
 	return out, resp.GetMissingIds(), nil
+}
+
+// GetMailboxNode is GetNode scoped to one user's mailbox (#568).
+func (t *grpcTransport) GetMailboxNode(ctx context.Context, tenantID, actor, targetUser string, typeID int, nodeID string) (*Node, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	offset := t.offsets.resolve(ctx, tenantID)
+	var trailer metadata.MD
+	resp, err := client.GetNode(t.callContext(ctx, tenantID), &pb.GetNodeRequest{
+		Context:       &pb.RequestContext{TenantId: tenantID, Actor: actor},
+		TypeId:        int32(typeID),
+		NodeId:        nodeID,
+		TargetUser:    targetUser,
+		AfterOffset:   offset,
+		WaitTimeoutMs: waitTimeoutForOffset(offset),
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	if !resp.GetFound() {
+		return nil, nil
+	}
+	return nodeFromProto(resp.GetNode()), nil
+}
+
+// QueryMailboxNodes is QueryNodes scoped to one user's mailbox (#568). It
+// follows the keyset cursor across pages exactly like QueryNodes.
+func (t *grpcTransport) QueryMailboxNodes(ctx context.Context, tenantID, actor, targetUser string, typeID int, filter map[string]any, limit int) ([]*Node, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	filters, err := filterToProto(filter)
+	if err != nil {
+		return nil, err
+	}
+	offset := t.offsets.resolve(ctx, tenantID)
+
+	var out []*Node
+	pageToken := ""
+	capped := limit > 0
+	for page := 0; ; page++ {
+		if page > maxAutoFollowPages {
+			return nil, fmt.Errorf("entdb: QueryMailboxNodes: pagination did not terminate after %d pages", maxAutoFollowPages)
+		}
+		pageSize := int32(maxQueryPageSize)
+		if capped {
+			if rem := limit - len(out); rem < int(pageSize) {
+				pageSize = int32(rem)
+			}
+		}
+		req := &pb.QueryNodesRequest{
+			Context:    &pb.RequestContext{TenantId: tenantID, Actor: actor},
+			TypeId:     int32(typeID),
+			Filters:    filters,
+			TargetUser: targetUser,
+			PageSize:   pageSize,
+			PageToken:  pageToken,
+		}
+		if page == 0 {
+			req.AfterOffset = offset
+			req.WaitTimeoutMs = waitTimeoutForOffset(offset)
+		}
+		var trailer metadata.MD
+		resp, err := client.QueryNodes(t.callContext(ctx, tenantID), req, grpc.Trailer(&trailer))
+		if err != nil {
+			return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+		}
+		for _, n := range resp.GetNodes() {
+			out = append(out, nodeFromProto(n))
+		}
+		pageToken = resp.GetNextPageToken()
+		if capped && len(out) >= limit {
+			out = out[:limit]
+			break
+		}
+		if pageToken == "" {
+			break
+		}
+	}
+	return out, nil
+}
+
+// SearchMailboxNodes is SearchNodes scoped to one user's mailbox (#568).
+func (t *grpcTransport) SearchMailboxNodes(ctx context.Context, tenantID, actor, targetUser string, typeID int, query string) ([]*Node, error) {
+	client, err := t.ensureReady()
+	if err != nil {
+		return nil, err
+	}
+	var trailer metadata.MD
+	resp, err := client.SearchNodes(t.callContext(ctx, tenantID), &pb.SearchNodesRequest{
+		TenantId:   tenantID,
+		Actor:      actor,
+		TypeId:     int32(typeID),
+		Query:      query,
+		TargetUser: targetUser,
+	}, grpc.Trailer(&trailer))
+	if err != nil {
+		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	nodes := resp.GetNodes()
+	out := make([]*Node, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, nodeFromProto(n))
+	}
+	return out, nil
 }
 
 func (t *grpcTransport) GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error) {

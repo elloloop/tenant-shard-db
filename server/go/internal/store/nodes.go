@@ -16,6 +16,28 @@ import (
 // Field-id-keyed payload JSON is exposed verbatim — translation to
 // proto Node (with Field-name-keyed fields) is the payload package's
 // job, not this one (CLAUDE.md invariant #6).
+// StorageMode classifies which physical store a node belongs to. The
+// integer values mirror entdb.v1.StorageMode on the wire so the column
+// round-trips the proto enum without translation. The store package owns
+// its own copy (rather than importing pb) to keep the dependency arrow
+// pointing pb -> store, never the reverse.
+type StorageMode int32
+
+const (
+	// StorageModeTenant — node lives in the per-tenant SQLite file and is
+	// sharable via ACL within the tenant. The zero value, so every legacy
+	// row and every caller that omits the field is a plain tenant node.
+	StorageModeTenant StorageMode = 0
+	// StorageModeUserMailbox — node is private to exactly one user
+	// (target_user_id). Tenant-backed today (ADR-014): the row lives in
+	// the tenant file, scoped by target_user_id, not a separate per-user
+	// SQLite file.
+	StorageModeUserMailbox StorageMode = 1
+	// StorageModePublic — reserved for the singleton public store (not
+	// generally enabled per ADR-014).
+	StorageModePublic StorageMode = 2
+)
+
 type Node struct {
 	TenantID    string
 	NodeID      string
@@ -25,6 +47,12 @@ type Node struct {
 	UpdatedAt   int64  // unix ms
 	OwnerActor  string
 	ACLJSON     string // raw JSON list of {principal, permission} entries
+	// StorageMode mirrors entdb.v1.StorageMode (0=TENANT, 1=USER_MAILBOX,
+	// 2=PUBLIC). TargetUserID is the owning user for USER_MAILBOX nodes
+	// and "" for every other mode. Both are immutable after creation
+	// (ADR-020).
+	StorageMode  int32
+	TargetUserID string
 }
 
 // NodeInput is the input shape of CreateNodeRaw. The payload map must
@@ -37,7 +65,37 @@ type NodeInput struct {
 	OwnerActor string         // required
 	ACL        []ACLEntry     // optional, default []
 	CreatedAt  int64          // optional, defaults to now()
+	// StorageMode/TargetUserID classify where the node lives (ADR-020).
+	// Default (0, "") creates a plain TENANT node, preserving the
+	// behaviour of every pre-existing caller. TargetUserID MUST be set
+	// when StorageMode is USER_MAILBOX (1).
+	StorageMode  int32
+	TargetUserID string
 }
+
+// scanner is the minimal surface shared by *sql.Row and *sql.Rows.
+type scanner interface {
+	Scan(dest ...any) error
+}
+
+// scanNode reads one node row in the canonical column order. Every read
+// path uses this so adding a column is a single edit, not a fan-out of
+// brittle Scan() lists.
+func scanNode(sc scanner) (*Node, error) {
+	n := &Node{}
+	if err := sc.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
+		&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON,
+		&n.StorageMode, &n.TargetUserID); err != nil {
+		return nil, err
+	}
+	return n, nil
+}
+
+// nodeColumns is the SELECT projection shared by all node read paths. It
+// must stay positionally aligned with scanNode.
+const nodeColumns = `tenant_id, node_id, type_id, payload_json,
+	created_at, updated_at, owner_actor, acl_blob,
+	storage_mode, target_user_id`
 
 // ACLEntry mirrors the per-node `acl_blob` JSON shape ({principal,
 // permission}). Stored verbatim alongside the node row; full ACL
@@ -55,19 +113,32 @@ func (s *CanonicalStore) GetNode(ctx context.Context, tenantID, nodeID string) (
 		return nil, err
 	}
 	row := db.QueryRowContext(ctx, `
-		SELECT tenant_id, node_id, type_id, payload_json,
-		       created_at, updated_at, owner_actor, acl_blob
+		SELECT `+nodeColumns+`
 		FROM nodes WHERE tenant_id = ? AND node_id = ?`,
 		tenantID, nodeID,
 	)
-	n := &Node{}
-	err = row.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
-		&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON)
+	n, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("%w: %s/%s", ErrNodeNotFound, tenantID, nodeID)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("store: GetNode: %w", err)
+	}
+	return n, nil
+}
+
+// GetMailboxNode fetches one node by (tenant, node_id) and enforces that
+// it belongs to targetUser's mailbox. Returns ErrNodeNotFound when the
+// row is missing OR is not a USER_MAILBOX node owned by targetUser — the
+// caller cannot distinguish "absent" from "not yours", which is the
+// intended privacy boundary for mailbox-scoped reads.
+func (s *CanonicalStore) GetMailboxNode(ctx context.Context, tenantID, targetUser, nodeID string) (*Node, error) {
+	n, err := s.GetNode(ctx, tenantID, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	if n.TargetUserID != targetUser || n.StorageMode != int32(StorageModeUserMailbox) {
+		return nil, fmt.Errorf("%w: %s/%s", ErrNodeNotFound, tenantID, nodeID)
 	}
 	return n, nil
 }
@@ -96,16 +167,13 @@ func (s *CanonicalStore) GetNodeByKey(ctx context.Context, tenantID string, type
 		return nil, err
 	}
 	q := fmt.Sprintf(`
-		SELECT tenant_id, node_id, type_id, payload_json,
-		       created_at, updated_at, owner_actor, acl_blob
+		SELECT `+nodeColumns+`
 		FROM nodes
 		WHERE tenant_id = ? AND type_id = ?
 		  AND json_extract(payload_json, '$."%d"') = ?
 		LIMIT 1`, fieldID)
 	row := db.QueryRowContext(ctx, q, tenantID, typeID, value)
-	n := &Node{}
-	err = row.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
-		&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON)
+	n, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -137,16 +205,13 @@ func (s *CanonicalStore) GetNodeByCompositeKey(ctx context.Context, tenantID str
 	args = append(args, tenantID, typeID)
 	args = append(args, values...)
 	q := fmt.Sprintf(`
-		SELECT tenant_id, node_id, type_id, payload_json,
-		       created_at, updated_at, owner_actor, acl_blob
+		SELECT `+nodeColumns+`
 		FROM nodes
 		WHERE tenant_id = ? AND type_id = ?
 		  AND %s
 		LIMIT 1`, strings.Join(clauses, " AND "))
 	row := db.QueryRowContext(ctx, q, args...)
-	n := &Node{}
-	err = row.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
-		&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON)
+	n, err := scanNode(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -175,8 +240,7 @@ func (s *CanonicalStore) GetNodes(ctx context.Context, tenantID string, nodeIDs 
 		args = append(args, id)
 	}
 	q := fmt.Sprintf(`
-		SELECT tenant_id, node_id, type_id, payload_json,
-		       created_at, updated_at, owner_actor, acl_blob
+		SELECT `+nodeColumns+`
 		FROM nodes
 		WHERE tenant_id = ? AND node_id IN (%s)`, placeholders)
 	rows, err := db.QueryContext(ctx, q, args...)
@@ -186,9 +250,8 @@ func (s *CanonicalStore) GetNodes(ctx context.Context, tenantID string, nodeIDs 
 	defer rows.Close()
 	seen := map[string]struct{}{}
 	for rows.Next() {
-		n := &Node{}
-		if err := rows.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
-			&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON); err != nil {
+		n, err := scanNode(rows)
+		if err != nil {
 			return nil, nil, fmt.Errorf("store: GetNodes scan: %w", err)
 		}
 		nodes = append(nodes, n)
@@ -302,6 +365,13 @@ type QueryNodesArgs struct {
 	Limit      int
 	Offset     int
 
+	// MailboxUser scopes the query to a single user's mailbox when set:
+	// only USER_MAILBOX nodes with target_user_id == MailboxUser match.
+	// Empty (the default) leaves the query unscoped, so every existing
+	// caller is unaffected — tenant reads never see mailbox-private rows
+	// only because nothing sets target_user_id on tenant nodes.
+	MailboxUser string
+
 	// Keyset cursor (ADR-029). When Cursor != nil the query seeks past
 	// the (Cursor.OrderValue, Cursor.NodeID) tuple instead of applying
 	// Offset — a stable continuation that never skips or duplicates a row
@@ -376,6 +446,19 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 
 	whereParts := []string{"tenant_id = ?", "type_id = ?"}
 	params := []any{args.TenantID, args.TypeID}
+	// Mailbox scope (#568, ADR-020). USER_MAILBOX nodes are private to one
+	// user and must never leak into a tenant-scoped read:
+	//   - MailboxUser set -> return ONLY that user's mailbox nodes.
+	//   - MailboxUser empty -> a tenant query EXCLUDES every mailbox node
+	//     (storage_mode <> USER_MAILBOX), so mailbox-private rows are
+	//     reachable only through the explicit mailbox scope.
+	if args.MailboxUser != "" {
+		whereParts = append(whereParts, "target_user_id = ?", "storage_mode = ?")
+		params = append(params, args.MailboxUser, int32(StorageModeUserMailbox))
+	} else {
+		whereParts = append(whereParts, "storage_mode <> ?")
+		params = append(params, int32(StorageModeUserMailbox))
+	}
 	for fid, val := range args.EqualityFilters {
 		whereParts = append(whereParts, fmt.Sprintf(
 			`json_extract(payload_json, '$."%d"') = ?`, fid,
@@ -416,8 +499,7 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 		orderClause += fmt.Sprintf(", node_id %s", dir)
 	}
 	q := fmt.Sprintf(`
-		SELECT tenant_id, node_id, type_id, payload_json,
-		       created_at, updated_at, owner_actor, acl_blob
+		SELECT `+nodeColumns+`
 		FROM nodes WHERE %s
 		ORDER BY %s %s`,
 		strings.Join(whereParts, " AND "), orderClause, tail,
@@ -429,9 +511,8 @@ func (s *CanonicalStore) QueryNodes(ctx context.Context, args QueryNodesArgs) ([
 	defer rows.Close()
 	var out []*Node
 	for rows.Next() {
-		n := &Node{}
-		if err := rows.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
-			&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON); err != nil {
+		n, err := scanNode(rows)
+		if err != nil {
 			return nil, fmt.Errorf("store: QueryNodes scan: %w", err)
 		}
 		out = append(out, n)
@@ -454,6 +535,15 @@ func (s *CanonicalStore) CreateNodeRaw(ctx context.Context, tenantID string, in 
 	}
 	if in.NodeID == "" {
 		return nil, fmt.Errorf("store: CreateNodeRaw: node_id required (caller assigns)")
+	}
+	// A USER_MAILBOX node must name its owning user; a non-mailbox node
+	// must NOT carry a target user (ADR-020: storage_mode is the source
+	// of truth, target_user_id is meaningful only for mailbox nodes).
+	if in.StorageMode == int32(StorageModeUserMailbox) && in.TargetUserID == "" {
+		return nil, fmt.Errorf("store: CreateNodeRaw: target_user_id required for USER_MAILBOX")
+	}
+	if in.StorageMode != int32(StorageModeUserMailbox) && in.TargetUserID != "" {
+		return nil, fmt.Errorf("store: CreateNodeRaw: target_user_id only valid for USER_MAILBOX")
 	}
 	now := in.CreatedAt
 	if now == 0 {
@@ -483,10 +573,12 @@ func (s *CanonicalStore) CreateNodeRaw(ctx context.Context, tenantID string, in 
 	err = s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		_, err := conn.ExecContext(ctx, `
 			INSERT INTO nodes (tenant_id, node_id, type_id, payload_json,
-			                   created_at, updated_at, owner_actor, acl_blob)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			                   created_at, updated_at, owner_actor, acl_blob,
+			                   storage_mode, target_user_id)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			tenantID, in.NodeID, in.TypeID, string(payloadStr),
 			now, now, in.OwnerActor, string(aclStr),
+			in.StorageMode, in.TargetUserID,
 		)
 		if err != nil {
 			if isUniqueViolation(err) {
@@ -507,14 +599,16 @@ func (s *CanonicalStore) CreateNodeRaw(ctx context.Context, tenantID string, in 
 		return nil, err
 	}
 	return &Node{
-		TenantID:    tenantID,
-		NodeID:      in.NodeID,
-		TypeID:      in.TypeID,
-		PayloadJSON: string(payloadStr),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		OwnerActor:  in.OwnerActor,
-		ACLJSON:     string(aclStr),
+		TenantID:     tenantID,
+		NodeID:       in.NodeID,
+		TypeID:       in.TypeID,
+		PayloadJSON:  string(payloadStr),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		OwnerActor:   in.OwnerActor,
+		ACLJSON:      string(aclStr),
+		StorageMode:  in.StorageMode,
+		TargetUserID: in.TargetUserID,
 	}, nil
 }
 
@@ -530,7 +624,8 @@ func (s *CanonicalStore) UpdateNode(ctx context.Context, tenantID, nodeID string
 	err := s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		row := conn.QueryRowContext(ctx, `
 			SELECT tenant_id, node_id, type_id, payload_json,
-			       created_at, owner_actor, acl_blob
+			       created_at, owner_actor, acl_blob,
+			       storage_mode, target_user_id
 			FROM nodes WHERE tenant_id = ? AND node_id = ?`,
 			tenantID, nodeID,
 		)
@@ -539,8 +634,11 @@ func (s *CanonicalStore) UpdateNode(ctx context.Context, tenantID, nodeID string
 			typeID               int32
 			payloadJSON, aclJSON string
 			createdAt            int64
+			storageMode          int32
+			targetUserID         string
 		)
-		err := row.Scan(&tID, &nID, &typeID, &payloadJSON, &createdAt, &ownerActor, &aclJSON)
+		err := row.Scan(&tID, &nID, &typeID, &payloadJSON, &createdAt, &ownerActor, &aclJSON,
+			&storageMode, &targetUserID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("%w: %s/%s", ErrNodeNotFound, tenantID, nodeID)
 		}
@@ -569,14 +667,16 @@ func (s *CanonicalStore) UpdateNode(ctx context.Context, tenantID, nodeID string
 			return fmt.Errorf("store: update node: %w", err)
 		}
 		updated = &Node{
-			TenantID:    tenantID,
-			NodeID:      nodeID,
-			TypeID:      typeID,
-			PayloadJSON: string(mergedStr),
-			CreatedAt:   createdAt,
-			UpdatedAt:   now,
-			OwnerActor:  ownerActor,
-			ACLJSON:     aclJSON,
+			TenantID:     tenantID,
+			NodeID:       nodeID,
+			TypeID:       typeID,
+			PayloadJSON:  string(mergedStr),
+			CreatedAt:    createdAt,
+			UpdatedAt:    now,
+			OwnerActor:   ownerActor,
+			ACLJSON:      aclJSON,
+			StorageMode:  storageMode,
+			TargetUserID: targetUserID,
 		}
 		return nil
 	})

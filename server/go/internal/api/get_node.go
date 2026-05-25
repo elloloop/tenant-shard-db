@@ -137,7 +137,18 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 
 	// 6. The actual read. Missing -> Found=false with status OK. Per
 	//    spec, type_id is NOT used as a filter.
-	n, err := s.store.GetNode(ctx, tenantID, nodeID)
+	//
+	//    Mailbox scope (#568): when target_user is set, the read is
+	//    confined to that user's USER_MAILBOX nodes — a node that is not a
+	//    mailbox node owned by this user reads as Found=false, the same
+	//    not-found signal a missing id produces, which is the intended
+	//    privacy boundary.
+	var n *store.Node
+	if tu := req.GetTargetUser(); tu != "" {
+		n, err = s.store.GetMailboxNode(ctx, tenantID, tu, nodeID)
+	} else {
+		n, err = s.store.GetNode(ctx, tenantID, nodeID)
+	}
 	if err != nil {
 		if errors.Is(err, store.ErrNodeNotFound) {
 			return &pb.GetNodeResponse{Found: false}, nil

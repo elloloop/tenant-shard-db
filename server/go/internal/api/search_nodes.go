@@ -152,10 +152,19 @@ func (s *Server) SearchNodes(
 		offset = 0
 	}
 
-	// Fetch one extra row so has_more is exact: if the store returns
-	// limit+1 rows there is at least one more page. The probe row is
-	// trimmed before egress so the caller never sees more than limit.
-	rows, ferr := s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit+1, offset)
+	// Mailbox scope (#568): when target_user is set, restrict the FTS JOIN
+	// to that user's USER_MAILBOX nodes; an ordinary tenant search (empty
+	// target_user) is unchanged. Fetch one extra row so has_more is exact
+	// (#580) — the probe row is trimmed before egress.
+	var (
+		rows []*store.Node
+		ferr error
+	)
+	if tu := req.GetTargetUser(); tu != "" {
+		rows, ferr = s.store.SearchMailboxNodes(ctx, tenantID, tu, typeID, q, searchableFIDs, limit+1, offset)
+	} else {
+		rows, ferr = s.store.SearchNodes(ctx, tenantID, typeID, q, searchableFIDs, limit+1, offset)
+	}
 	if ferr != nil {
 		outcome = "error"
 		// A malformed FTS5 MATCH query is a CLIENT error: surface it as

@@ -22,19 +22,32 @@ CREATE TABLE IF NOT EXISTS schema_version (
 );
 
 CREATE TABLE IF NOT EXISTS nodes (
-    tenant_id    TEXT NOT NULL,
-    node_id      TEXT NOT NULL,
-    type_id      INTEGER NOT NULL,
-    payload_json TEXT NOT NULL DEFAULT '{}',
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL,
-    owner_actor  TEXT NOT NULL,
-    acl_blob     TEXT NOT NULL DEFAULT '[]',
+    tenant_id      TEXT NOT NULL,
+    node_id        TEXT NOT NULL,
+    type_id        INTEGER NOT NULL,
+    payload_json   TEXT NOT NULL DEFAULT '{}',
+    created_at     INTEGER NOT NULL,
+    updated_at     INTEGER NOT NULL,
+    owner_actor    TEXT NOT NULL,
+    acl_blob       TEXT NOT NULL DEFAULT '[]',
+    -- storage_mode mirrors entdb.v1.StorageMode (0=TENANT, 1=USER_MAILBOX,
+    -- 2=PUBLIC). It is immutable after creation (ADR-020). target_user_id
+    -- is the owning user for USER_MAILBOX nodes ('' for every other mode);
+    -- mailbox reads scope by (tenant_id, target_user_id). USER_MAILBOX
+    -- nodes are tenant-backed (stored in this file), which is the
+    -- explicitly-sanctioned path until per-user files exist (ADR-014).
+    storage_mode   INTEGER NOT NULL DEFAULT 0,
+    target_user_id TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (tenant_id, node_id)
 );
 CREATE INDEX IF NOT EXISTS idx_nodes_type    ON nodes(tenant_id, type_id);
 CREATE INDEX IF NOT EXISTS idx_nodes_owner   ON nodes(tenant_id, owner_actor);
 CREATE INDEX IF NOT EXISTS idx_nodes_updated ON nodes(tenant_id, updated_at DESC);
+-- Mailbox read path: scope nodes to one user's mailbox. The partial
+-- predicate keeps the index small (only USER_MAILBOX rows participate).
+CREATE INDEX IF NOT EXISTS idx_nodes_mailbox
+    ON nodes(tenant_id, target_user_id, type_id)
+    WHERE target_user_id <> '';
 
 CREATE TABLE IF NOT EXISTS edges (
     tenant_id      TEXT NOT NULL,
@@ -148,6 +161,28 @@ func initSchema(ctx context.Context, db *sql.DB) error {
 		`ALTER TABLE applied_events ADD COLUMN failure_json TEXT`,
 	); err != nil {
 		return err
+	}
+	// Mailbox read surface (#568): tenant DBs created before USER_MAILBOX
+	// reads existed lack the storage_mode/target_user_id columns. Add them
+	// in-place (default 0/'' keeps every legacy row a plain TENANT node)
+	// and (re)create the partial mailbox index, which CREATE TABLE's inline
+	// DDL skips when the table already exists.
+	if err := addColumnIfMissing(ctx, db, "nodes", "storage_mode",
+		`ALTER TABLE nodes ADD COLUMN storage_mode INTEGER NOT NULL DEFAULT 0`,
+	); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "nodes", "target_user_id",
+		`ALTER TABLE nodes ADD COLUMN target_user_id TEXT NOT NULL DEFAULT ''`,
+	); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `
+		CREATE INDEX IF NOT EXISTS idx_nodes_mailbox
+		    ON nodes(tenant_id, target_user_id, type_id)
+		    WHERE target_user_id <> ''`,
+	); err != nil {
+		return fmt.Errorf("store: create mailbox index: %w", err)
 	}
 	return nil
 }

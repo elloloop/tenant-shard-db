@@ -51,6 +51,20 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		}
 	}
 
+	// Storage classification (#568, ADR-020). The op carries the internal
+	// string name ("USER_MAILBOX"/"PUBLIC"); TENANT is the absent default.
+	// target_user_id names the owning user for mailbox nodes. Both are
+	// immutable after creation and persisted alongside the node row so the
+	// mailbox read path can scope by (tenant_id, target_user_id).
+	storageModeVal := storageModeCode(stringField(op, "storage_mode"))
+	targetUserID := stringField(op, "target_user_id")
+	if storageModeVal == storageModeUserMailbox && targetUserID == "" {
+		return fmt.Errorf("%w: USER_MAILBOX create_node missing target_user_id", ErrPoisonEvent)
+	}
+	if storageModeVal != storageModeUserMailbox && targetUserID != "" {
+		return fmt.Errorf("%w: target_user_id only valid for USER_MAILBOX", ErrPoisonEvent)
+	}
+
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
 		return fmt.Errorf("apply create_node: marshal payload: %w", err)
@@ -76,10 +90,12 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 	conn := tx.Conn()
 	if _, err := conn.ExecContext(ctx, `
 		INSERT INTO nodes (tenant_id, node_id, type_id, payload_json,
-		                   created_at, updated_at, owner_actor, acl_blob)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		                   created_at, updated_at, owner_actor, acl_blob,
+		                   storage_mode, target_user_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		ev.TenantID, nodeID, typeID, string(payloadJSON),
 		now, now, ev.Actor, string(aclJSON),
+		storageModeVal, targetUserID,
 	); err != nil {
 		// A declared unique/composite constraint trip is an EXPECTED,
 		// deterministic outcome — translate it to the typed
@@ -95,11 +111,40 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		return err
 	}
 
+	// Maintain the FTS5 search index in the SAME transaction as the node
+	// insert so search results never lag (or precede) the canonical row.
+	// Mailbox and tenant nodes are indexed identically; the mailbox read
+	// path scopes the JOIN by target_user_id at query time.
+	if err := a.indexNodeFTS(ctx, conn, ev.TenantID, int32(typeID), nodeID, payload); err != nil {
+		return fmt.Errorf("apply create_node: fts index: %w", err)
+	}
+
 	if alias := stringField(op, "as"); alias != "" {
 		aliases[alias] = nodeID
 	}
 	res.CreatedNodes = append(res.CreatedNodes, nodeID)
 	return nil
+}
+
+// storageMode internal codes, mirroring entdb.v1.StorageMode and the
+// names produced by api.storageModeName.
+const (
+	storageModeTenant      int32 = 0
+	storageModeUserMailbox int32 = 1
+	storageModePublic      int32 = 2
+)
+
+// storageModeCode maps the internal op string ("USER_MAILBOX"/"PUBLIC"/
+// "" -> TENANT) to the integer column value stored on the node row.
+func storageModeCode(name string) int32 {
+	switch name {
+	case "USER_MAILBOX":
+		return storageModeUserMailbox
+	case "PUBLIC":
+		return storageModePublic
+	default:
+		return storageModeTenant
+	}
 }
 
 // aclEntry mirrors store.ACLEntry; we don't import store here because

@@ -553,6 +553,14 @@ message GetNodeRequest {
     // Wait for this stream position to be applied before reading
     string after_offset = 10;
     int32 wait_timeout_ms = 11;
+
+    // Mailbox scope (#568). When set, the read is restricted to the named
+    // user's USER_MAILBOX nodes: a node that is not a mailbox node owned
+    // by this user reads as not-found (the privacy boundary). Empty (the
+    // default) is an ordinary tenant read, unchanged. The value is a bare
+    // user id (e.g. "alice"), not a "user:alice" principal — the SDK does
+    // the wire translation.
+    string target_user = 12;
 }
 
 message GetNodeResponse {
@@ -568,6 +576,11 @@ message GetNodesRequest {
     // Wait for this stream position to be applied before reading
     string after_offset = 10;
     int32 wait_timeout_ms = 11;
+
+    // Mailbox scope (#568). Same semantics as GetNodeRequest.target_user:
+    // when set, only the named user's USER_MAILBOX nodes are returned;
+    // every other requested id lands in missing_ids.
+    string target_user = 12;
 }
 
 message GetNodesResponse {
@@ -616,6 +629,13 @@ message QueryNodesRequest {
     // the deprecated `offset`.
     int32 page_size = 12;
     string page_token = 13;
+
+    // Mailbox scope (#568). When set, the query is restricted to the named
+    // user's USER_MAILBOX nodes (target_user_id == target_user AND
+    // storage_mode == USER_MAILBOX). Empty (the default) is an ordinary
+    // tenant query, unchanged — tenant queries never see mailbox-private
+    // rows. The value is a bare user id, not a principal.
+    string target_user = 14;
 }
 
 message QueryNodesResponse {
@@ -1387,6 +1407,12 @@ message SearchNodesRequest {
     // result set.
     int32 offset = 6;
     int32 page_size = 7;
+
+    // Mailbox scope (#568). When set, the FTS search is restricted to the
+    // named user's USER_MAILBOX nodes. Empty (the default) is an ordinary
+    // tenant search, unchanged. The value is a bare user id, not a
+    // principal.
+    string target_user = 8;
 }
 
 message SearchNodesResponse {

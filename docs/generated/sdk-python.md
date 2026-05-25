@@ -76,9 +76,9 @@ Extracted from `sdk/python/entdb_sdk` — `__all__` plus the public methods of `
 | `async edges_out(node_id, tenant_id, actor, edge_type=..., *, after_offset=..., trace_id=..., timeout=...)` | Get outgoing edges from a node. |
 | `async export_user_data(user_id, *, actor=..., timeout=...)` | Right to access / portability (GDPR Articles 15, 20). |
 | `async freeze_user(user_id, *, enabled=..., actor=..., timeout=...)` | Right to restrict processing (GDPR Article 18). |
-| `async get(node_type, node_id, tenant_id, actor, *, after_offset=..., trace_id=..., timeout=...)` | Get a node by ID. |
+| `async get(node_type, node_id, tenant_id, actor, *, after_offset=..., target_user=..., trace_id=..., timeout=...)` | Get a node by ID. |
 | `async get_by_key(key, value, tenant_id, actor, *, after_offset=..., trace_id=..., timeout=...)` | Resolve a node via a typed unique-key token. |
-| `async get_many(node_type, node_ids, tenant_id, actor, *, after_offset=..., trace_id=..., timeout=...)` | Get multiple nodes by IDs. |
+| `async get_many(node_type, node_ids, tenant_id, actor, *, after_offset=..., target_user=..., trace_id=..., timeout=...)` | Get multiple nodes by IDs. |
 | `async get_receipt_status(tenant_id, idempotency_key, *, trace_id=..., timeout=...)` | Get receipt status. |
 | `async get_tenant(tenant_id, *, actor=..., timeout=...)` | Get a tenant by ID. |
 | `async get_tenant_members(tenant_id, *, actor=..., timeout=...)` | List all members of a tenant. |
@@ -88,13 +88,13 @@ Extracted from `sdk/python/entdb_sdk` — `__all__` plus the public methods of `
 | `async group_remove(group_id, member_actor_id, tenant_id, actor, *, trace_id=..., timeout=...)` | Remove a member from a group. |
 | `async health(*, timeout=...)` | Check server health. |
 | `async list_users(*, status=..., limit=..., offset=..., actor=..., timeout=...)` | List users filtered by status. |
-| `async query(node_type, tenant_id, actor, *, filter=..., where=..., limit=..., offset=..., order_by=..., descending=..., after_offset=..., trace_id=..., timeout=...)` | Query nodes by type. |
+| `async query(node_type, tenant_id, actor, *, filter=..., where=..., limit=..., offset=..., order_by=..., descending=..., after_offset=..., target_user=..., trace_id=..., timeout=...)` | Query nodes by type. |
 | `async remove_tenant_member(tenant_id, user_id, *, actor=..., timeout=...)` | Remove a member from a tenant. |
 | `async revoke(node_id, actor_id, tenant_id, actor, *, trace_id=..., timeout=...)` | Revoke access from an actor on a node. |
 | `async revoke_all_user_access(tenant_id, user_id, *, actor=..., timeout=...)` | Remove all access for a user in a tenant (instant termination). |
 | `async search(query, user_id, tenant_id, actor, types=..., limit=..., *, trace_id=..., timeout=...)` | Search user's mailbox. |
-| `async search_nodes(node_type, tenant_id, actor, query, *, limit=..., offset=..., page_size=..., trace_id=..., timeout=...)` | Full-text search across searchable fields of a node type. |
-| `async search_nodes_page(node_type, tenant_id, actor, query, *, limit=..., offset=..., page_size=..., trace_id=..., timeout=...)` | :meth:`search_nodes` that also reports ``has_more``. |
+| `async search_nodes(node_type, tenant_id, actor, query, *, limit=..., offset=..., page_size=..., target_user=..., trace_id=..., timeout=...)` | Full-text search across searchable fields of a node type. |
+| `async search_nodes_page(node_type, tenant_id, actor, query, *, limit=..., offset=..., page_size=..., target_user=..., trace_id=..., timeout=...)` | :meth:`search_nodes` that also reports ``has_more``. |
 | `async set_legal_hold(tenant_id, enabled=..., *, actor=..., timeout=...)` | Enable or disable legal hold on a tenant. |
 | `async share(node_id, actor_id, tenant_id, actor, permission=..., *, actor_type=..., expires_at=..., trace_id=..., timeout=...)` | Share a node with an actor. |
 | `async shared_with_me(tenant_id, actor, *, limit=..., offset=..., after_offset=..., trace_id=..., timeout=...)` | List nodes shared with the calling actor. |

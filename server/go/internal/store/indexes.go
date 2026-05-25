@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"sync"
@@ -152,9 +153,25 @@ func (s *CanonicalStore) EnsureQueryIndex(ctx context.Context, tenantID string, 
 	return nil
 }
 
+// ftsCreateStmt builds the CREATE VIRTUAL TABLE statement for typeID.
+func ftsCreateStmt(typeID int32, fieldIDs []uint32) string {
+	cols := make([]string, 0, len(fieldIDs))
+	for _, f := range fieldIDs {
+		cols = append(cols, fmt.Sprintf("f%d", f))
+	}
+	return fmt.Sprintf(
+		`CREATE VIRTUAL TABLE IF NOT EXISTS fts_t%d USING fts5(`+
+			`node_id UNINDEXED, %s, tokenize='porter unicode61')`,
+		typeID, strings.Join(cols, ", "),
+	)
+}
+
 // EnsureFTSIndex creates an FTS5 virtual table for typeID with one
 // column per searchable field_id. tokenize='porter unicode61' for
-// stemming + Unicode handling.
+// stemming + Unicode handling. Uses a pooled connection — callers that
+// already hold an open BatchTxn write transaction must use
+// EnsureFTSIndexConn instead, or the DDL deadlocks on the SQLite write
+// lock the open txn already holds.
 func (s *CanonicalStore) EnsureFTSIndex(ctx context.Context, tenantID string, typeID int32, fieldIDs []uint32) error {
 	if len(fieldIDs) == 0 {
 		return nil
@@ -171,16 +188,33 @@ func (s *CanonicalStore) EnsureFTSIndex(ctx context.Context, tenantID string, ty
 	}
 	s.indexCache.mu.Unlock()
 
-	cols := make([]string, 0, len(fieldIDs))
-	for _, f := range fieldIDs {
-		cols = append(cols, fmt.Sprintf("f%d", f))
+	if _, err := db.ExecContext(ctx, ftsCreateStmt(typeID, fieldIDs)); err != nil {
+		return fmt.Errorf("store: create FTS table t%d: %w", typeID, err)
 	}
-	stmt := fmt.Sprintf(
-		`CREATE VIRTUAL TABLE IF NOT EXISTS fts_t%d USING fts5(`+
-			`node_id UNINDEXED, %s, tokenize='porter unicode61')`,
-		typeID, strings.Join(cols, ", "),
-	)
-	if _, err := db.ExecContext(ctx, stmt); err != nil {
+	s.indexCache.mu.Lock()
+	s.indexCache.ftsDone[key] = struct{}{}
+	s.indexCache.mu.Unlock()
+	return nil
+}
+
+// EnsureFTSIndexConn creates the FTS5 virtual table for typeID on the
+// supplied connection — used by the applier so the DDL runs inside the
+// same BEGIN IMMEDIATE transaction that holds the per-tenant write lock,
+// avoiding the cross-connection deadlock EnsureFTSIndex would hit.
+// Idempotent: the in-memory ftsDone cache short-circuits repeats.
+func (s *CanonicalStore) EnsureFTSIndexConn(ctx context.Context, conn *sql.Conn, tenantID string, typeID int32, fieldIDs []uint32) error {
+	if len(fieldIDs) == 0 {
+		return nil
+	}
+	key := indexKey{dbPath: s.pool.dbPath(tenantID), typeID: typeID}
+	s.indexCache.mu.Lock()
+	if _, ok := s.indexCache.ftsDone[key]; ok {
+		s.indexCache.mu.Unlock()
+		return nil
+	}
+	s.indexCache.mu.Unlock()
+
+	if _, err := conn.ExecContext(ctx, ftsCreateStmt(typeID, fieldIDs)); err != nil {
 		return fmt.Errorf("store: create FTS table t%d: %w", typeID, err)
 	}
 	s.indexCache.mu.Lock()

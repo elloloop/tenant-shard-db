@@ -37,6 +37,12 @@ type mockTransport struct {
 	lastCommitOperations  []Operation
 	lastCommitIdempotency string
 
+	// Mailbox read tracking (#568).
+	lastMailboxTargetUser string
+	mailboxGetResp        *Node
+	mailboxQueryResp      []*Node
+	mailboxSearchResp     []*Node
+
 	// Responses for stubbing
 	getNodeResp      *Node
 	getNodeErr       error
@@ -115,6 +121,26 @@ func (m *mockTransport) GetTenantQuota(_ context.Context, _, _ string) (*TenantQ
 
 func (m *mockTransport) GetNodes(_ context.Context, _, _ string, _ int, _ []string) ([]*Node, []string, error) {
 	return nil, nil, nil
+}
+
+func (m *mockTransport) GetMailboxNode(_ context.Context, _, _, targetUser string, typeID int, nodeID string) (*Node, error) {
+	m.lastMailboxTargetUser = targetUser
+	m.lastGetTypeID = typeID
+	m.lastGetNodeID = nodeID
+	return m.mailboxGetResp, nil
+}
+
+func (m *mockTransport) QueryMailboxNodes(_ context.Context, _, _, targetUser string, typeID int, filter map[string]any, limit int) ([]*Node, error) {
+	m.lastMailboxTargetUser = targetUser
+	m.lastQueryTypeID = typeID
+	m.lastQueryFilter = filter
+	m.lastQueryLimit = limit
+	return m.mailboxQueryResp, nil
+}
+
+func (m *mockTransport) SearchMailboxNodes(_ context.Context, _, _, targetUser string, _ int, _ string) ([]*Node, error) {
+	m.lastMailboxTargetUser = targetUser
+	return m.mailboxSearchResp, nil
 }
 
 func (m *mockTransport) GetReceiptStatus(_ context.Context, _, _, _ string) (ReceiptStatus, string, error) {

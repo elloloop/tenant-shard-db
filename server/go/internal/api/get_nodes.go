@@ -172,6 +172,11 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	}
 
 	ids := req.GetNodeIds()
+	// Mailbox scope (#568): when target_user is set, each per-id read is
+	// confined to that user's USER_MAILBOX nodes — non-mailbox or
+	// other-user ids land in missing_ids, the same signal a genuinely
+	// absent id produces.
+	targetUser := req.GetTargetUser()
 	results := make([]*store.Node, len(ids))
 	denied := make([]bool, len(ids))
 	// firstErr captures the first genuine fault across the fan-out (#573):
@@ -203,7 +208,13 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 					recordErr(fmt.Errorf("panic resolving id %q: %v", id, r))
 				}
 			}()
-			n, gerr := s.store.GetNode(ctx, tenantID, id)
+			var n *store.Node
+			var gerr error
+			if targetUser != "" {
+				n, gerr = s.store.GetMailboxNode(ctx, tenantID, targetUser, id)
+			} else {
+				n, gerr = s.store.GetNode(ctx, tenantID, id)
+			}
 			if gerr != nil {
 				// NotFound is a genuine miss (the store signals an absent
 				// node via ErrNodeNotFound) → missing_ids. Any other error

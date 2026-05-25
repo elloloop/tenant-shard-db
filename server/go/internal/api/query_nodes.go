@@ -182,6 +182,10 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		Limit:      pageSize,
 		Offset:     int(req.GetOffset()),
 		Cursor:     cursor,
+		// Mailbox scope (#568): empty target_user is an ordinary tenant
+		// query; a non-empty value restricts to that user's USER_MAILBOX
+		// nodes.
+		MailboxUser: req.GetTargetUser(),
 	})
 	if err != nil {
 		resultStatus = "error"
