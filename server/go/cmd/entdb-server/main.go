@@ -116,6 +116,11 @@ func main() {
 	walServiceBusQueue := flag.String("wal-servicebus-queue", "", "Azure Service Bus session-enabled queue name (used when --wal-backend=servicebus; defaults to --wal-topic)")
 	walEventHubsName := flag.String("wal-eventhubs-name", "", "Azure Event Hub name (used when --wal-backend=eventhubs; defaults to --wal-topic)")
 	walEventHubsGroup := flag.String("wal-eventhubs-consumer-group", "", "Azure Event Hubs consumer group (used when --wal-backend=eventhubs; defaults to $Default)")
+	// Durable blob checkpoint store (#570). When the storage connection
+	// string is set, EH per-partition checkpoints persist to Azure Blob so
+	// a restart resumes after the last commit instead of replaying the hub.
+	walEventHubsCheckpointConn := flag.String("wal-eventhubs-checkpoint-storage-connection-string", "", "Azure Storage connection string for the durable Event Hubs checkpoint blob (optional; in-memory checkpoints when unset)")
+	walEventHubsCheckpointContainer := flag.String("wal-eventhubs-checkpoint-container", "entdb-wal-checkpoints", "Azure Blob container for the Event Hubs checkpoint blob")
 	archiveEnabled := flag.Bool("archive-enabled", false, "enable S3 Object Lock WAL archive sidecar (requires --wal-backend=kafka)")
 	archiveBucket := flag.String("archive-bucket", "", "S3 bucket for immutable WAL archives")
 	archiveRegion := flag.String("archive-region", "", "AWS region for --archive-bucket")
@@ -314,11 +319,22 @@ func main() {
 		if strings.TrimSpace(*walAzureConnStr) == "" {
 			log.Fatalf("entdb-server: --wal-backend=eventhubs requires --wal-azure-connection-string")
 		}
-		walImpl = wal.NewEventHubs(wal.DefaultEventHubsConfig(
+		ehCfg := wal.DefaultEventHubsConfig(
 			strings.TrimSpace(*walAzureConnStr),
 			firstNonEmpty(*walEventHubsName, *walTopic),
 			strings.TrimSpace(*walEventHubsGroup),
-		))
+		)
+		// Opt-in durable checkpoint store (#570): one blob per hub +
+		// consumer group keeps distinct WALs from colliding.
+		if cs := strings.TrimSpace(*walEventHubsCheckpointConn); cs != "" {
+			blobName := fmt.Sprintf("%s/%s/checkpoints.json", ehCfg.EventHubName, ehCfg.ConsumerGroup)
+			store, err := wal.NewBlobCheckpointStore(cs, strings.TrimSpace(*walEventHubsCheckpointContainer), blobName)
+			if err != nil {
+				log.Fatalf("entdb-server: eventhubs checkpoint store: %v", err)
+			}
+			ehCfg.CheckpointStore = store
+		}
+		walImpl = wal.NewEventHubs(ehCfg)
 	default:
 		log.Fatalf("entdb-server: unsupported wal backend %q (want memory|kafka|kinesis|pubsub|sqs|servicebus|eventhubs)", *walBackend)
 	}
