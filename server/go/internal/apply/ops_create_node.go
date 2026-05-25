@@ -65,6 +65,14 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		now = a.now()
 	}
 
+	// Ensure the unique / composite-unique / query expression indexes
+	// for this type exist on the txn's own connection BEFORE the INSERT,
+	// so a declared constraint fires synchronously inside this batch
+	// (ADR-023 + the composite-unique ADR / issue #566).
+	if err := a.store.EnsureFieldIndexesTx(ctx, tx, int32(typeID)); err != nil {
+		return fmt.Errorf("apply create_node: ensure indexes: %w", err)
+	}
+
 	conn := tx.Conn()
 	if _, err := conn.ExecContext(ctx, `
 		INSERT INTO nodes (tenant_id, node_id, type_id, payload_json,
@@ -73,6 +81,13 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		ev.TenantID, nodeID, typeID, string(payloadJSON),
 		now, now, ev.Actor, string(aclJSON),
 	); err != nil {
+		// A declared unique/composite constraint trip is an EXPECTED,
+		// deterministic outcome — translate it to the typed
+		// *UniqueViolation so the per-event loop memoizes + replays it
+		// (ALREADY_EXISTS) instead of halting the consumer.
+		if detail, ok := a.store.BuildUniqueViolationDetail(ev.TenantID, payload, err); ok {
+			return &UniqueViolation{Detail: detail}
+		}
 		return fmt.Errorf("apply create_node: insert: %w", err)
 	}
 	// Refresh visibility: owner + each ACL principal.

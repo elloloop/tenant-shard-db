@@ -21,6 +21,14 @@ const (
 	// key replays the cached failure without re-evaluating the
 	// predicate against possibly-changed state. See GitHub issue #500.
 	IdempotencyStatusFailedPrecondition = "FAILED_PRECONDITION"
+
+	// IdempotencyStatusUniqueViolation is the memoized unique-constraint
+	// trip (single-field or composite, issue #566). failure_json holds
+	// the structured ALREADY_EXISTS detail string the SDK parsers
+	// consume; a retry with the same idem key replays the same typed
+	// error without re-attempting the write. Same deterministic-outcome
+	// rationale as FAILED_PRECONDITION.
+	IdempotencyStatusUniqueViolation = "UNIQUE_VIOLATION"
 )
 
 // IdempotencyRecord is the result of CheckIdempotencyStatus. Present is
@@ -127,18 +135,28 @@ func (s *CanonicalStore) RecordIdempotencyTx(ctx context.Context, b *BatchTxn, r
 // failureJSON is opaque to the store — the caller (apply package)
 // owns the encoding.
 func (s *CanonicalStore) RecordIdempotencyFailure(ctx context.Context, tenantID, requestID, streamPos, failureJSON string) error {
+	return s.RecordIdempotencyOutcome(ctx, tenantID, requestID, streamPos, IdempotencyStatusFailedPrecondition, failureJSON)
+}
+
+// RecordIdempotencyOutcome inserts a memoized deterministic-failure row
+// (status + failure_json) keyed by (tenant_id, requestID), in its OWN
+// transaction. Generalises RecordIdempotencyFailure across the
+// deterministic-failure statuses: FAILED_PRECONDITION (CAS miss, issue
+// #500) and UNIQUE_VIOLATION (constraint trip, issue #566). The caller
+// owns the failure_json encoding; the store treats it as opaque.
+func (s *CanonicalStore) RecordIdempotencyOutcome(ctx context.Context, tenantID, requestID, streamPos, status, failureJSON string) error {
 	now := s.now()
 	return s.withWrite(ctx, tenantID, func(conn *sql.Conn) error {
 		_, err := conn.ExecContext(ctx, `
 			INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at, status, failure_json)
 			VALUES (?, ?, ?, ?, ?, ?)`,
-			tenantID, requestID, streamPos, now, IdempotencyStatusFailedPrecondition, failureJSON,
+			tenantID, requestID, streamPos, now, status, failureJSON,
 		)
 		if err != nil {
 			if isUniqueViolation(err) {
 				return fmt.Errorf("%w: %s/%s", ErrIdempotencyViolation, tenantID, requestID)
 			}
-			return fmt.Errorf("store: RecordIdempotencyFailure: %w", err)
+			return fmt.Errorf("store: RecordIdempotencyOutcome: %w", err)
 		}
 		return nil
 	})

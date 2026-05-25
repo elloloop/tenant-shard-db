@@ -97,14 +97,7 @@ func (s *CanonicalStore) EnsureCompositeUniqueIndex(ctx context.Context, tenantI
 	s.indexCache.mu.Unlock()
 
 	for _, c := range constraints {
-		safe := safeIdent(c.Name)
-		if safe == "" {
-			parts := make([]string, 0, len(c.FieldIDs))
-			for _, f := range c.FieldIDs {
-				parts = append(parts, fmt.Sprintf("%d", f))
-			}
-			safe = "f" + strings.Join(parts, "_")
-		}
+		safe := compositeIndexSuffix(c.Name, c.FieldIDs)
 		extracts := make([]string, 0, len(c.FieldIDs))
 		for _, f := range c.FieldIDs {
 			extracts = append(extracts, fmt.Sprintf(`json_extract(payload_json, '$."%d"')`, f))
@@ -225,6 +218,87 @@ func safeIdent(name string) string {
 		}
 	}
 	return strings.Trim(b.String(), "_")
+}
+
+// uniqueIndexDDL returns the CREATE UNIQUE INDEX statement for a
+// single-field unique constraint. Shared by the lazy (separate-conn)
+// and the in-txn ensure paths so the index name + expression stay
+// byte-identical.
+func uniqueIndexDDL(typeID int32, fid uint32) string {
+	return fmt.Sprintf(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_t%d_f%d `+
+			`ON nodes(tenant_id, json_extract(payload_json, '$."%d"')) `+
+			`WHERE type_id = %d`,
+		typeID, fid, fid, typeID,
+	)
+}
+
+// compositeUniqueIndexDDL returns the CREATE UNIQUE INDEX statement for
+// a composite constraint. Mirrors EnsureCompositeUniqueIndex exactly.
+func compositeUniqueIndexDDL(typeID int32, c CompositeUnique) string {
+	safe := compositeIndexSuffix(c.Name, c.FieldIDs)
+	extracts := make([]string, 0, len(c.FieldIDs))
+	for _, f := range c.FieldIDs {
+		extracts = append(extracts, fmt.Sprintf(`json_extract(payload_json, '$."%d"')`, f))
+	}
+	return fmt.Sprintf(
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_t%d_c%s `+
+			`ON nodes(tenant_id, %s) WHERE type_id = %d`,
+		typeID, safe, strings.Join(extracts, ", "), typeID,
+	)
+}
+
+// queryIndexDDL returns the non-unique query-index statement.
+func queryIndexDDL(typeID int32, fid uint32) string {
+	return fmt.Sprintf(
+		`CREATE INDEX IF NOT EXISTS idx_query_t%d_f%d `+
+			`ON nodes(tenant_id, json_extract(payload_json, '$."%d"')) `+
+			`WHERE type_id = %d`,
+		typeID, fid, fid, typeID,
+	)
+}
+
+// EnsureFieldIndexesTx creates the unique / composite-unique / query
+// expression indexes for typeID inside an already-open BatchTxn, using
+// the txn's own connection. This is the applier's hook (ADR-023 / the
+// composite-unique ADR): the unique indexes MUST exist on the write
+// connection BEFORE the INSERT so the constraint fires synchronously
+// within the same transaction. Running the DDL on a separate handle
+// (as the lazy Ensure*Index methods do) would deadlock against the
+// BatchTxn's held writer lock.
+//
+// Deliberately NOT cached in indexCache: a batch that creates an index
+// and then rolls back (e.g. because the INSERT it guards trips the very
+// constraint just created) drops the index along with the txn. A cache
+// hit on the next batch would then skip re-creation and silently leave
+// the constraint unenforced. CREATE ... IF NOT EXISTS against an
+// already-committed index is a cheap metadata-only check, so re-running
+// the DDL per first-touch is correct and inexpensive. FTS tables are
+// NOT created here — the applier maintains those via fts.go.
+//
+// No-ops when no schema.Registry is configured (raw-CRUD test paths).
+func (s *CanonicalStore) EnsureFieldIndexesTx(ctx context.Context, tx *BatchTxn, typeID int32) error {
+	if s.registry == nil {
+		return nil
+	}
+	conn := tx.Conn()
+	for _, fid := range s.registry.UniqueFieldIDs(typeID) {
+		if _, err := conn.ExecContext(ctx, uniqueIndexDDL(typeID, fid)); err != nil {
+			return fmt.Errorf("store: create unique index (tx) t%d_f%d: %w", typeID, fid, err)
+		}
+	}
+	for _, c := range s.registry.CompositeUnique(typeID) {
+		cu := CompositeUnique{Name: c.Name, FieldIDs: c.FieldIDs}
+		if _, err := conn.ExecContext(ctx, compositeUniqueIndexDDL(typeID, cu)); err != nil {
+			return fmt.Errorf("store: create composite unique index (tx) t%d_%s: %w", typeID, c.Name, err)
+		}
+	}
+	for _, fid := range s.registry.IndexedFieldIDs(typeID) {
+		if _, err := conn.ExecContext(ctx, queryIndexDDL(typeID, fid)); err != nil {
+			return fmt.Errorf("store: create query index (tx) t%d_f%d: %w", typeID, fid, err)
+		}
+	}
+	return nil
 }
 
 // ensureFieldIndexes is the convenience wrapper used by writers before

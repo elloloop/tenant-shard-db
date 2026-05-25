@@ -267,4 +267,13 @@ func TestRegisterContractSchema_DefinesExpectedTypes(t *testing.T) {
 	if et := reg.EdgeType("AssignedTo"); et == nil || et.EdgeID != AssignedToID {
 		t.Fatalf("AssignedTo edge missing or wrong id: %+v", et)
 	}
+	oauth := reg.NodeType("OAuthIdentity")
+	if oauth == nil || oauth.TypeID != OAuthIdentityTypeID {
+		t.Fatalf("OAuthIdentity type missing or wrong id: %+v", oauth)
+	}
+	cu := reg.CompositeUnique(OAuthIdentityTypeID)
+	if len(cu) != 1 || cu[0].Name != "provider_user_id" ||
+		len(cu[0].FieldIDs) != 2 || cu[0].FieldIDs[0] != 1 || cu[0].FieldIDs[1] != 2 {
+		t.Fatalf("OAuthIdentity composite unique = %+v, want provider_user_id [1 2]", cu)
+	}
 }

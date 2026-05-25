@@ -335,7 +335,7 @@ func (a *Applier) finalizeBatch(ctx context.Context, records []Record, results [
 		if err := a.consumer.Commit(ctx, a.groupID, rec); err != nil {
 			return fmt.Errorf("apply: commit offset: %w", err)
 		}
-		if res.Status == StatusApplied || res.Status == StatusSkipped || res.Status == StatusFailedPrecondition {
+		if res.Status == StatusApplied || res.Status == StatusSkipped || res.Status == StatusFailedPrecondition || res.Status == StatusUniqueViolation {
 			if err := a.store.UpdateAppliedOffset(ctx, res.TenantID, rec.Position.Topic, rec.Position.Partition, rec.Position.Offset); err != nil {
 				// Persisting the offset is best-effort; the in-memory
 				// tracker has already been updated by the in-txn
@@ -462,6 +462,17 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 			}
 			return nil
 		}
+		// Replay a cached unique-constraint trip identically (issue #566).
+		if cachedStatus == store.IdempotencyStatusUniqueViolation {
+			res.Status = StatusUniqueViolation
+			if cachedFailure.Valid && cachedFailure.String != "" {
+				var uv UniqueViolation
+				if jerr := json.Unmarshal([]byte(cachedFailure.String), &uv); jerr == nil {
+					res.UniqueViolation = &uv
+				}
+			}
+			return nil
+		}
 		res.Status = StatusSkipped
 		return nil
 	} else if !isNoRows(err) {
@@ -485,6 +496,17 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 				_ = tx.Rollback()
 				committed = true // suppress deferred rollback
 				return a.memoizePreconditionFailure(ctx, ev, res, pf)
+			}
+			// Unique-constraint trip: same deterministic-failure
+			// treatment as a CAS miss — roll the batch back, memoize the
+			// structured detail, advance the offset (no halt). The
+			// handler lifts the memoized detail into a gRPC
+			// ALREADY_EXISTS so the SDK sees a typed
+			// UniqueConstraintError (issue #566).
+			if uv := AsUniqueViolation(err); uv != nil {
+				_ = tx.Rollback()
+				committed = true // suppress deferred rollback
+				return a.memoizeUniqueViolation(ctx, ev, res, uv)
 			}
 			return err
 		}
@@ -543,6 +565,34 @@ func (a *Applier) memoizePreconditionFailure(ctx context.Context, ev *Event, res
 	// (store.WaitForOffset) wake on the failed batch.
 	if err := a.store.UpdateAppliedOffset(ctx, ev.TenantID, res.Position.Topic, res.Position.Partition, res.Position.Offset); err != nil {
 		return fmt.Errorf("apply: precondition-failure offset: %w", err)
+	}
+	return nil
+}
+
+// memoizeUniqueViolation persists the UNIQUE_VIOLATION row in a fresh
+// write-txn and returns nil so the consumer loop advances the offset —
+// a constraint trip is a deterministic outcome, exactly like a CAS
+// miss. The structured ALREADY_EXISTS detail is stored verbatim in
+// failure_json so the handler (and any same-idem-key retry) replays the
+// identical typed error. Mirrors memoizePreconditionFailure.
+func (a *Applier) memoizeUniqueViolation(ctx context.Context, ev *Event, res *Result, uv *UniqueViolation) error {
+	res.Status = StatusUniqueViolation
+	res.UniqueViolation = uv
+	res.TenantID = ev.TenantID
+
+	failureJSON, err := json.Marshal(uv)
+	if err != nil {
+		failureJSON = []byte("")
+	}
+	if err := a.store.RecordIdempotencyOutcome(ctx, ev.TenantID, ev.IdempotencyKey, res.Position.String(), store.IdempotencyStatusUniqueViolation, string(failureJSON)); err != nil {
+		// A parallel retry that won the race to memoize first is treated
+		// as a successful memoization (same as the precondition path).
+		if !errors.Is(err, store.ErrIdempotencyViolation) {
+			return fmt.Errorf("apply: memoize unique violation: %w", err)
+		}
+	}
+	if err := a.store.UpdateAppliedOffset(ctx, ev.TenantID, res.Position.Topic, res.Position.Partition, res.Position.Offset); err != nil {
+		return fmt.Errorf("apply: unique-violation offset: %w", err)
 	}
 	return nil
 }

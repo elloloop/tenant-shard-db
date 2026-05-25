@@ -91,6 +91,16 @@ func (s *Server) GetReceiptStatus(ctx context.Context, req *pb.GetReceiptStatusR
 			// decoded; an empty failure_json collapses to status-only.
 			resp.Status = pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION
 			resp.PreconditionFailure = decodePreconditionFailureJSON(rec.FailureJSON)
+		case store.IdempotencyStatusUniqueViolation:
+			// Issue #566 — a polling caller (one that lost the
+			// wait_applied race in ExecuteAtomic) sees the memoized
+			// unique-constraint trip as RECEIPT_STATUS_FAILED with the
+			// structured ALREADY_EXISTS detail in `error`. The
+			// authoritative typed surface is the ExecuteAtomic
+			// ALREADY_EXISTS status; this poll path mirrors it without a
+			// new enum value (additive, no proto break).
+			resp.Status = pb.ReceiptStatus_RECEIPT_STATUS_FAILED
+			resp.Error = decodeUniqueViolationDetailJSON(rec.FailureJSON)
 		default:
 			resp.Status = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
 		}

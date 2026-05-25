@@ -61,8 +61,9 @@ func TestCmdSnapshot_StdoutHappyPath(t *testing.T) {
 		t.Errorf("missing wrapper keys: %v", env)
 	}
 	schema := env["schema"].(map[string]any)
-	if len(schema["node_types"].([]any)) != 1 {
-		t.Error("expected Product node in output")
+	// testpb carries Product (201) + OAuthIdentity (202).
+	if len(schema["node_types"].([]any)) != 2 {
+		t.Error("expected Product + OAuthIdentity nodes in output")
 	}
 	if len(schema["edge_types"].([]any)) != 1 {
 		t.Error("expected PurchaseEdge in output")

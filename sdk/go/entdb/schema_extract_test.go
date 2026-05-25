@@ -65,10 +65,11 @@ func TestExtractSchemaJSON_ExtractsNodesAndEdgesFromTestPB(t *testing.T) {
 	schema := env["schema"].(map[string]any)
 
 	nodes := schema["node_types"].([]any)
-	if len(nodes) != 1 {
-		t.Fatalf("want 1 node, got %d", len(nodes))
+	// Product (201) + OAuthIdentity (202).
+	if len(nodes) != 2 {
+		t.Fatalf("want 2 nodes, got %d", len(nodes))
 	}
-	prod := nodes[0].(map[string]any)
+	prod := nodes[0].(map[string]any) // sorted by type_id, Product first
 	if prod["name"] != "Product" {
 		t.Errorf("name = %q, want Product", prod["name"])
 	}
@@ -140,6 +141,58 @@ func TestExtractSchemaJSON_FieldKindsMappedFromProtoTypes(t *testing.T) {
 	}
 }
 
+// ── Composite unique extraction (ADR-030 / issue #566) ──────────────
+
+func TestExtractSchemaJSON_ExtractsCompositeUnique(t *testing.T) {
+	out, err := ExtractSchemaJSON(fdsFromTestPB(t))
+	if err != nil {
+		t.Fatalf("ExtractSchemaJSON: %v", err)
+	}
+	var env map[string]any
+	if err := json.Unmarshal(out, &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	nodes := env["schema"].(map[string]any)["node_types"].([]any)
+
+	var oauth map[string]any
+	for _, n := range nodes {
+		nm := n.(map[string]any)
+		if nm["name"] == "OAuthIdentity" {
+			oauth = nm
+		}
+	}
+	if oauth == nil {
+		t.Fatalf("OAuthIdentity node not extracted; nodes=%v", nodes)
+	}
+
+	cuRaw, ok := oauth["composite_unique"]
+	if !ok {
+		t.Fatalf("composite_unique missing on OAuthIdentity: %v", oauth)
+	}
+	cu := cuRaw.([]any)
+	if len(cu) != 1 {
+		t.Fatalf("want 1 composite constraint, got %d: %v", len(cu), cu)
+	}
+	c := cu[0].(map[string]any)
+	if c["name"] != "provider_user_id" {
+		t.Errorf("constraint name = %q, want provider_user_id", c["name"])
+	}
+	ids := c["field_ids"].([]any)
+	if len(ids) != 2 || int(ids[0].(float64)) != 1 || int(ids[1].(float64)) != 2 {
+		t.Errorf("field_ids = %v, want [1 2] (resolved from proto field names)", ids)
+	}
+
+	// A node without composite_unique must NOT carry the key.
+	for _, n := range nodes {
+		nm := n.(map[string]any)
+		if nm["name"] == "Product" {
+			if _, ok := nm["composite_unique"]; ok {
+				t.Error("Product (no composite_unique) should omit the key")
+			}
+		}
+	}
+}
+
 // ── Output is deterministic (stable order across runs) ──────────────
 
 func TestExtractSchemaJSON_OutputIsDeterministic(t *testing.T) {
@@ -181,15 +234,16 @@ func TestExtractSchemaJSON_HandlesMultipleFilesInSet(t *testing.T) {
 	var env map[string]any
 	_ = json.Unmarshal(out, &env)
 
-	// Both files share the same type_id=201 and edge_id=301. They
-	// land twice in the output (the SDK doesn't deduplicate; that's
-	// the customer's problem if their proto packages collide). What
-	// we verify here is that walking ranges over BOTH files rather
-	// than stopping at the first.
+	// Both files share the same node/edge ids. They land twice in the
+	// output (the SDK doesn't deduplicate; that's the customer's
+	// problem if their proto packages collide). What we verify here is
+	// that walking ranges over BOTH files rather than stopping at the
+	// first. Each file carries two node types (Product + OAuthIdentity)
+	// and one edge type (PurchaseEdge).
 	nodes := env["schema"].(map[string]any)["node_types"].([]any)
 	edges := env["schema"].(map[string]any)["edge_types"].([]any)
-	if len(nodes) != 2 {
-		t.Errorf("want 2 nodes (one per file), got %d", len(nodes))
+	if len(nodes) != 4 {
+		t.Errorf("want 4 nodes (two per file), got %d", len(nodes))
 	}
 	if len(edges) != 2 {
 		t.Errorf("want 2 edges (one per file), got %d", len(edges))

@@ -28,6 +28,17 @@ const (
 	fieldOptsUniqueField       = 13
 )
 
+// NodeOpts extension field numbers consumed by the extractor (from
+// sdk/entdb_sdk/proto/entdb_options.proto). composite_unique is the
+// repeated UniqueConstraint message (ADR-030 / issue #566).
+const (
+	nodeOptsCompositeUniqueField = 24 // repeated UniqueConstraint composite_unique = 24
+
+	// UniqueConstraint submessage field numbers.
+	uniqueConstraintFieldsField = 1 // repeated string fields = 1
+	uniqueConstraintNameField   = 2 // string name = 2
+)
+
 // EdgeOpts has its (from_type, to_type) wired into the message
 // descriptor name, not the option — there is no canonical edge-type
 // proto on the wire today, so SchemaJSON reports edges with empty
@@ -133,7 +144,11 @@ func walkMessages(
 			if nodeID == 0 {
 				return fmt.Errorf("entdb: %s has (entdb.node) but type_id is 0", md.FullName())
 			}
-			*nodes = append(*nodes, buildNodeEntry(md, nodeID))
+			entry, err := buildNodeEntry(md, nodeID)
+			if err != nil {
+				return err
+			}
+			*nodes = append(*nodes, entry)
 		case hasEdge:
 			if edgeID == 0 {
 				return fmt.Errorf("entdb: %s has (entdb.edge) but edge_id is 0", md.FullName())
@@ -148,12 +163,98 @@ func walkMessages(
 	return nil
 }
 
-func buildNodeEntry(md protoreflect.MessageDescriptor, typeID int32) map[string]any {
-	return map[string]any{
+func buildNodeEntry(md protoreflect.MessageDescriptor, typeID int32) (map[string]any, error) {
+	out := map[string]any{
 		"type_id": int64(typeID),
 		"name":    string(md.Name()),
 		"fields":  extractFields(md),
 	}
+	cu, err := extractCompositeUnique(md)
+	if err != nil {
+		return nil, err
+	}
+	if len(cu) > 0 {
+		out["composite_unique"] = cu
+	}
+	return out, nil
+}
+
+// extractCompositeUnique reads NodeOpts.composite_unique (ADR-030).
+// Each UniqueConstraint carries proto field NAMES; this resolves them
+// to stable field_ids (ADR-018) against the message's field set. A
+// name that does not resolve, or a constraint with fewer than two
+// fields, is an error so a typo fails at extract time rather than
+// silently dropping the integrity rule (mirrors the Python SDK).
+func extractCompositeUnique(md protoreflect.MessageDescriptor) ([]map[string]any, error) {
+	opts := md.Options()
+	if opts == nil {
+		return nil, nil
+	}
+	raw, err := proto.Marshal(opts)
+	if err != nil {
+		return nil, nil
+	}
+	nodeOpts, ok := findLengthDelimited(raw, uint64(extNodeOpts))
+	if !ok {
+		return nil, nil
+	}
+	entries := findAllLengthDelimited(nodeOpts, uint64(nodeOptsCompositeUniqueField))
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	// Build a proto-field-name -> field_id map for resolution.
+	nameToID := map[string]uint32{}
+	fds := md.Fields()
+	for i := 0; i < fds.Len(); i++ {
+		fd := fds.Get(i)
+		nameToID[string(fd.Name())] = uint32(fd.Number())
+	}
+	out := make([]map[string]any, 0, len(entries))
+	for _, e := range entries {
+		names := findAllStrings(e, uint64(uniqueConstraintFieldsField))
+		if len(names) < 2 {
+			return nil, fmt.Errorf(
+				"entdb: %s composite_unique must reference at least 2 fields, got %v",
+				md.FullName(), names,
+			)
+		}
+		fieldIDs := make([]int64, 0, len(names))
+		for _, nm := range names {
+			fid, ok := nameToID[nm]
+			if !ok {
+				return nil, fmt.Errorf(
+					"entdb: %s composite_unique references unknown field %q",
+					md.FullName(), nm,
+				)
+			}
+			fieldIDs = append(fieldIDs, int64(fid))
+		}
+		name, _ := findString(e, uint64(uniqueConstraintNameField))
+		if name == "" {
+			parts := make([]string, 0, len(fieldIDs))
+			for _, f := range fieldIDs {
+				parts = append(parts, fmt.Sprintf("f%d", f))
+			}
+			name = strings.Join(parts, "_")
+		}
+		out = append(out, map[string]any{
+			"name":      name,
+			"field_ids": fieldIDs,
+		})
+	}
+	return out, nil
+}
+
+// findAllStrings returns every length-delimited (string) field matching
+// fieldNum, decoded as UTF-8, in wire order — the repeated-string
+// counterpart of findString.
+func findAllStrings(buf []byte, fieldNum uint64) []string {
+	payloads := findAllLengthDelimited(buf, fieldNum)
+	out := make([]string, 0, len(payloads))
+	for _, p := range payloads {
+		out = append(out, string(p))
+	}
+	return out
 }
 
 func buildEdgeEntry(md protoreflect.MessageDescriptor, edgeID int32) map[string]any {

@@ -256,6 +256,13 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	// Honour ctx cancellation.
 	appliedStatus := pb.ReceiptStatus_RECEIPT_STATUS_PENDING
 	var preFailure *pb.PreconditionFailure
+	// uniqueViolationDetail, when non-empty, is the structured
+	// ALREADY_EXISTS message the applier memoized for a tripped
+	// single-field/composite unique constraint (issue #566). Unlike a
+	// CAS miss (which is surfaced in-band), a unique violation surfaces
+	// as a real gRPC ALREADY_EXISTS status so the SDKs raise a typed
+	// UniqueConstraintError — see the SDK parsers.
+	var uniqueViolationDetail string
 	if req.GetWaitApplied() && posStr != "" && s.store != nil {
 		timeoutMs := int32(executeAtomicDefaultMs)
 		if v := req.GetWaitTimeoutMs(); v > 0 {
@@ -285,11 +292,23 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 			case rec.Present && rec.Status == store.IdempotencyStatusFailedPrecondition:
 				appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION
 				preFailure = decodePreconditionFailureJSON(rec.FailureJSON)
+			case rec.Present && rec.Status == store.IdempotencyStatusUniqueViolation:
+				uniqueViolationDetail = decodeUniqueViolationDetailJSON(rec.FailureJSON)
 			default:
 				appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
 			}
 		}
 		cancel()
+	}
+
+	// A tripped unique constraint surfaces as a gRPC ALREADY_EXISTS
+	// status (issue #566) carrying the structured detail verbatim, so
+	// the SDK error parsers produce a typed UniqueConstraintError. We
+	// only have the detail when wait_applied raced the applier to the
+	// memoized row; without it the client polls GetReceiptStatus.
+	if uniqueViolationDetail != "" {
+		outcome = "already_exists"
+		return nil, errs.Errorf(codes.AlreadyExists, "%s", uniqueViolationDetail)
 	}
 
 	resp := &pb.ExecuteAtomicResponse{
@@ -344,6 +363,25 @@ func waitForIdempotencyRecord(ctx context.Context, st *store.CanonicalStore, ten
 			delay *= 2
 		}
 	}
+}
+
+// decodeUniqueViolationDetailJSON parses the failure_json blob the
+// applier memoizes for a UNIQUE_VIOLATION row (issue #566) and returns
+// the structured ALREADY_EXISTS detail string. The blob is the
+// JSON-encoded apply.UniqueViolation ({"Detail": "..."}); an empty or
+// undecodable blob yields "" so the caller falls back to the generic
+// path.
+func decodeUniqueViolationDetailJSON(blob string) string {
+	if blob == "" {
+		return ""
+	}
+	var uv struct {
+		Detail string `json:"Detail"`
+	}
+	if err := json.Unmarshal([]byte(blob), &uv); err != nil {
+		return ""
+	}
+	return uv.Detail
 }
 
 // decodePreconditionFailureJSON parses the failure_json column blob

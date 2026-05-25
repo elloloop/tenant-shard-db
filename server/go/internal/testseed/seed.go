@@ -53,6 +53,12 @@ const (
 	UserTypeID   = 1
 	TaskTypeID   = 2
 	AssignedToID = 100
+
+	// OAuthIdentityTypeID is the contract-suite type carrying a
+	// (provider, provider_user_id) composite unique constraint plus a
+	// single-field unique email — exercises issue #566 end-to-end.
+	// Field IDs: 1=provider, 2=provider_user_id, 3=email.
+	OAuthIdentityTypeID = 201
 )
 
 // E2E-suite fixture constants — keep in lock-step with
@@ -110,6 +116,21 @@ func RegisterContractSchema(reg *schema.Registry) error {
 	}
 	if err := reg.RegisterEdge(edge); err != nil {
 		return fmt.Errorf("testseed: register AssignedTo: %w", err)
+	}
+	oauth := &schema.NodeTypeDef{
+		TypeID: OAuthIdentityTypeID,
+		Name:   "OAuthIdentity",
+		Fields: []schema.FieldDef{
+			{FieldID: 1, Name: "provider", Kind: schema.KindString},
+			{FieldID: 2, Name: "provider_user_id", Kind: schema.KindString},
+			{FieldID: 3, Name: "email", Kind: schema.KindString, Unique: true},
+		},
+		CompositeUnique: []schema.CompositeUniqueDef{
+			{Name: "provider_user_id", FieldIDs: []uint32{1, 2}},
+		},
+	}
+	if err := reg.RegisterNode(oauth); err != nil {
+		return fmt.Errorf("testseed: register OAuthIdentity: %w", err)
 	}
 	return nil
 }
