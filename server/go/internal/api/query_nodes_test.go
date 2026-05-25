@@ -69,10 +69,9 @@ func newQueryNodesFixture(t *testing.T) *queryNodesFixture {
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: 1,
-		Name:   "User",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "email", Kind: schema.KindString},
-			{FieldID: 2, Name: "age", Kind: schema.KindInteger},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindInteger},
 		},
 	}); err != nil {
 		t.Fatalf("registry register: %v", err)
@@ -133,9 +132,8 @@ func mustValue(t *testing.T, v any) *structpb.Value {
 	return out
 }
 
-// TestQueryNodes_EqualityFilter pins the filter-by-name path: a single
-// EQ filter on `email` (resolved to field_id 1 by FilterNamesToIDs)
-// returns only the matching subset.
+// TestQueryNodes_EqualityFilter pins the filter path: a single EQ filter
+// on field_id 1 (name-free, ADR-031) returns only the matching subset.
 func TestQueryNodes_EqualityFilter(t *testing.T) {
 	t.Parallel()
 	f := newQueryNodesFixture(t)
@@ -150,7 +148,7 @@ func TestQueryNodes_EqualityFilter(t *testing.T) {
 		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
 		TypeId:  1,
 		Filters: []*pb.FieldFilter{
-			{Field: "email", Op: pb.FilterOp_EQ, Value: mustValue(t, "alice@example.com")},
+			{Field: "1", Op: pb.FilterOp_EQ, Value: mustValue(t, "alice@example.com")},
 		},
 	})
 	if err != nil {
@@ -280,7 +278,7 @@ func TestQueryNodes_TypedFilterInt64(t *testing.T) {
 		Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
 		TypeId:  1,
 		Filters: []*pb.FieldFilter{{
-			Field:      "age",
+			Field:      "2",
 			Op:         pb.FilterOp_EQ,
 			TypedValue: &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: big}},
 		}},
@@ -332,7 +330,7 @@ func TestQueryNodes_RangeOperators(t *testing.T) {
 				TypeId:  1,
 				OrderBy: "node_id",
 				Filters: []*pb.FieldFilter{
-					{Field: "age", Op: tc.op, Value: mustValue(t, tc.value)},
+					{Field: "2", Op: tc.op, Value: mustValue(t, tc.value)},
 				},
 			})
 			if err != nil {
@@ -369,8 +367,8 @@ func TestQueryNodes_RangeOperatorsANDed(t *testing.T) {
 		TypeId:  1,
 		OrderBy: "node_id",
 		Filters: []*pb.FieldFilter{
-			{Field: "age", Op: pb.FilterOp_GTE, Value: mustValue(t, 25)},
-			{Field: "age", Op: pb.FilterOp_LT, Value: mustValue(t, 40)},
+			{Field: "2", Op: pb.FilterOp_GTE, Value: mustValue(t, 25)},
+			{Field: "2", Op: pb.FilterOp_LT, Value: mustValue(t, 40)},
 		},
 	})
 	if err != nil {
@@ -403,7 +401,7 @@ func TestQueryNodes_UnsupportedOperator(t *testing.T) {
 				Context: &pb.RequestContext{TenantId: f.tenantID, Actor: "user:alice"},
 				TypeId:  1,
 				Filters: []*pb.FieldFilter{
-					{Field: "age", Op: op, Value: mustValue(t, 25)},
+					{Field: "2", Op: op, Value: mustValue(t, 25)},
 				},
 			})
 			if err == nil {
@@ -559,7 +557,7 @@ func TestQueryNodes_InlinedOperator(t *testing.T) {
 		OrderBy: "node_id",
 		Filters: []*pb.FieldFilter{
 			{
-				Field: "age",
+				Field: "2",
 				Op:    pb.FilterOp_EQ,
 				Value: structpb.NewStructValue(inlined),
 			},
@@ -595,7 +593,7 @@ func TestQueryNodes_InlinedOperatorUnknownRejected(t *testing.T) {
 		TypeId:  1,
 		Filters: []*pb.FieldFilter{
 			{
-				Field: "age",
+				Field: "2",
 				Op:    pb.FilterOp_EQ,
 				Value: structpb.NewStructValue(inlined),
 			},

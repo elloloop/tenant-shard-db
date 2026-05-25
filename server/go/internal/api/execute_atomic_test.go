@@ -75,11 +75,10 @@ func newXAFixture(t *testing.T) *xaFixture {
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: 1,
-		Name:   "User",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "email", Kind: schema.KindString},
-			{FieldID: 2, Name: "name", Kind: schema.KindString},
-			{FieldID: 3, Name: "age", Kind: schema.KindInteger},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindString},
+			{FieldID: 3, Kind: schema.KindInteger},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode: %v", err)
@@ -232,7 +231,7 @@ func TestExecuteAtomic_CreateNodeMissingTypeID(t *testing.T) {
 		Context: &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}},
 		}},
 	})
@@ -264,7 +263,7 @@ func TestExecuteAtomic_CreateNodeRoundTrip(t *testing.T) {
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1,
-				Data:   newStruct(t, map[string]any{"email": "alice@example.com"}),
+				Data:   newStruct(t, map[string]any{"1": "alice@example.com"}),
 			}},
 		}},
 	})
@@ -352,11 +351,11 @@ func TestExecuteAtomic_MultipleOpsAtomic(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "fixed-id-A",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, // server-fill
-				Data:   newStruct(t, map[string]any{"email": "b@x"}),
+				Data:   newStruct(t, map[string]any{"1": "b@x"}),
 			}}},
 		},
 	})
@@ -393,7 +392,7 @@ func TestExecuteAtomic_IdempotentRetry(t *testing.T) {
 			Operations: []*pb.Operation{{
 				Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 					TypeId: 1, Id: "retry-node",
-					Data: newStruct(t, map[string]any{"email": "r@x"}),
+					Data: newStruct(t, map[string]any{"1": "r@x"}),
 				}},
 			}},
 		}
@@ -457,8 +456,8 @@ func TestExecuteAtomic_PayloadIsFieldIDKeyed(t *testing.T) {
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "fid-node",
-				// Wire is name-keyed; the handler MUST translate.
-				Data: newStruct(t, map[string]any{"email": "z@x", "name": "Z"}),
+				// Wire is field_id-keyed (ADR-031); the handler preserves it.
+				Data: newStruct(t, map[string]any{"1": "z@x", "2": "Z"}),
 			}},
 		}},
 	})
@@ -481,8 +480,7 @@ func TestExecuteAtomic_PayloadIsFieldIDKeyed(t *testing.T) {
 	if !ok {
 		t.Fatalf("ev.Ops[0].data: missing or wrong type %T", ev.Ops[0]["data"])
 	}
-	// Field-IDs in this schema: 1=email, 2=name. The map must NOT carry
-	// name-keys.
+	// The WAL map is field_id-keyed (ADR-031); it must NOT carry name keys.
 	if _, hasName := data["email"]; hasName {
 		t.Fatalf("payload contains name-key %q (should be id-keyed)", "email")
 	}
@@ -503,39 +501,35 @@ func TestExecuteAtomic_PayloadIsFieldIDKeyed(t *testing.T) {
 	}
 }
 
-// TestExecuteAtomic_UnknownFieldNameDropped: an unknown name on the
-// wire is silently dropped. The WAL event keeps the known field only.
-func TestExecuteAtomic_UnknownFieldNameDropped(t *testing.T) {
+// TestExecuteAtomic_NameKeyedPayloadRejected: NAME-FREE (ADR-031). A
+// payload key that is not a field_id (a name) is rejected with
+// INVALID_ARGUMENT — the server never translates names. (Previously such
+// keys were silently dropped; that masked SDK misconfiguration.)
+func TestExecuteAtomic_NameKeyedPayloadRejected(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
 
-	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
+	_, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
 		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
 		IdempotencyKey: "unknown-1",
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "u-1",
 				Data: newStruct(t, map[string]any{
-					"email":         "u@x",
+					"1":             "u@x",
 					"this_is_bogus": "ignore-me",
 				}),
 			}},
 		}},
 	})
-	if err != nil || !resp.GetSuccess() {
-		t.Fatalf("ExecuteAtomic: err=%v resp=%+v", err, resp)
+	if err == nil {
+		t.Fatalf("ExecuteAtomic: expected INVALID_ARGUMENT for a name key, got nil")
 	}
-	recs := f.wal.GetAllRecords(xaTopic)
-	var ev wal.Event
-	if err := json.Unmarshal(recs[0].Value, &ev); err != nil {
-		t.Fatalf("decode: %v", err)
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Fatalf("code: got %v, want InvalidArgument", got)
 	}
-	data, _ := ev.Ops[0]["data"].(map[string]any)
-	if len(data) != 1 {
-		t.Fatalf("data: got %v want only field_id 1 (email)", data)
-	}
-	if _, ok := data["1"]; !ok {
-		t.Fatalf("data missing id 1: %v", data)
+	if !strings.Contains(err.Error(), "this_is_bogus") {
+		t.Fatalf("error should name the offending key, got: %v", err.Error())
 	}
 }
 
@@ -640,8 +634,8 @@ func TestExecuteAtomic_PreconditionFieldIDFailureWithoutSchemaRegistry(t *testin
 	if pf == nil {
 		t.Fatalf("precondition_failure is nil")
 	}
-	if pf.GetField() != "email" {
-		t.Fatalf("field=%q want email", pf.GetField())
+	if pf.GetField() != "1" {
+		t.Fatalf("field=%q want \"1\" (name-free field_id label)", pf.GetField())
 	}
 	if pf.GetExpected().GetStringValue() != "wrong@x" {
 		t.Fatalf("expected=%q want wrong@x", pf.GetExpected().GetStringValue())
@@ -766,7 +760,7 @@ func TestExecuteAtomic_WaitApplied_FlipsToApplied(t *testing.T) {
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "prime-node",
-				Data: newStruct(t, map[string]any{"email": "p@x"}),
+				Data: newStruct(t, map[string]any{"1": "p@x"}),
 			}},
 		}},
 	})
@@ -783,7 +777,7 @@ func TestExecuteAtomic_WaitApplied_FlipsToApplied(t *testing.T) {
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "wait-node",
-				Data: newStruct(t, map[string]any{"email": "w@x"}),
+				Data: newStruct(t, map[string]any{"1": "w@x"}),
 			}},
 		}},
 	})
@@ -891,7 +885,7 @@ func TestExecuteAtomic_AliasResolution_SingleCreateNodeAlias(t *testing.T) {
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "charlie",
-				Data: newStruct(t, map[string]any{"email": "c@x"}),
+				Data: newStruct(t, map[string]any{"1": "c@x"}),
 			}},
 		}},
 	})
@@ -939,11 +933,11 @@ func TestExecuteAtomic_AliasResolution_EdgeReferencesAlias(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "alice",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "phone",
-				Data: newStruct(t, map[string]any{"email": "p@x"}),
+				Data: newStruct(t, map[string]any{"1": "p@x"}),
 			}}},
 			aliasRefEdge(99, "$alice", "$phone"),
 		},
@@ -1008,7 +1002,7 @@ func TestExecuteAtomic_AliasResolution_MixedRefShapes(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "alice", Id: "alice-fixed",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 			{Op: &pb.Operation_CreateEdge{CreateEdge: &pb.CreateEdgeOp{
 				EdgeId: 99,
@@ -1047,7 +1041,7 @@ func TestExecuteAtomic_AliasResolution_UnresolvedAliasRejected(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "alice-fixed",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 			aliasRefEdge(99, "alice-fixed", "$ghost"),
 		},
@@ -1078,7 +1072,7 @@ func TestExecuteAtomic_AliasResolution_ForwardReferenceRejected(t *testing.T) {
 			aliasRefEdge(99, "$alice", "$bob"),
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "alice",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 		},
 	})
@@ -1104,7 +1098,7 @@ func TestExecuteAtomic_AliasResolution_TransactionIsolation(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "alice",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 		},
 	})
@@ -1119,7 +1113,7 @@ func TestExecuteAtomic_AliasResolution_TransactionIsolation(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "bob-fixed",
-				Data: newStruct(t, map[string]any{"email": "b@x"}),
+				Data: newStruct(t, map[string]any{"1": "b@x"}),
 			}}},
 			aliasRefEdge(99, "bob-fixed", "$alice"),
 		},
@@ -1146,15 +1140,15 @@ func TestExecuteAtomic_AliasResolution_MultipleAliasesInOneTxn(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "charlie",
-				Data: newStruct(t, map[string]any{"email": "c@x"}),
+				Data: newStruct(t, map[string]any{"1": "c@x"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "phone",
-				Data: newStruct(t, map[string]any{"email": "p@x"}),
+				Data: newStruct(t, map[string]any{"1": "p@x"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "order1",
-				Data: newStruct(t, map[string]any{"email": "o@x"}),
+				Data: newStruct(t, map[string]any{"1": "o@x"}),
 			}}},
 			aliasRefEdge(101, "$charlie", "$phone"),
 			aliasRefEdge(102, "$charlie", "$order1"),
@@ -1202,7 +1196,7 @@ func TestExecuteAtomic_AliasResolution_DeleteEdgeAlias(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "u",
-				Data: newStruct(t, map[string]any{"email": "u@x"}),
+				Data: newStruct(t, map[string]any{"1": "u@x"}),
 			}}},
 			{Op: &pb.Operation_DeleteEdge{DeleteEdge: &pb.DeleteEdgeOp{
 				EdgeId: 99,
@@ -1243,7 +1237,7 @@ func TestExecuteAtomic_AliasResolution_DottedFormSupported(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, As: "alice",
-				Data: newStruct(t, map[string]any{"email": "a@x"}),
+				Data: newStruct(t, map[string]any{"1": "a@x"}),
 			}}},
 			aliasRefEdge(99, "$alice.id", "$alice.id"),
 		},
@@ -1300,7 +1294,7 @@ func TestExecuteAtomic_DeleteWhereMissingTypeIDRejected(t *testing.T) {
 		Operations: []*pb.Operation{{
 			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
 				Where: []*pb.FieldFilter{
-					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "x")},
+					{Field: "2", Op: pb.FilterOp_EQ, Value: newValue(t, "x")},
 				},
 			}},
 		}},
@@ -1314,12 +1308,12 @@ func TestExecuteAtomic_DeleteWhereMissingTypeIDRejected(t *testing.T) {
 }
 
 // TestExecuteAtomic_DeleteWhereRoundTrip is the full #504 contract end
-// to end: the handler resolves the developer-facing field NAME to a
-// stable field_id (reusing the QueryNodes #501 path), appends a single
-// predicate op, and the applier sweeps exactly the matching nodes —
-// one round trip, no QueryNodes+DeleteNode loop. The handler's
-// existing write-access gate is the ACL chokepoint (ADR-016: handlers
-// gate, applier just materialises).
+// to end: the handler validates the field_id predicate (name-free,
+// ADR-031; reusing the QueryNodes #501 path), appends a single predicate
+// op, and the applier sweeps exactly the matching nodes — one round trip,
+// no QueryNodes+DeleteNode loop. The handler's existing write-access gate
+// is the ACL chokepoint (ADR-016: handlers gate, applier just
+// materialises).
 func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 	t.Parallel()
 	f := newXAFixture(t)
@@ -1332,15 +1326,15 @@ func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "u-stale-1",
-				Data: newStruct(t, map[string]any{"email": "a@x", "name": "sweep-me"}),
+				Data: newStruct(t, map[string]any{"1": "a@x", "2": "sweep-me"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "u-stale-2",
-				Data: newStruct(t, map[string]any{"email": "b@x", "name": "sweep-me"}),
+				Data: newStruct(t, map[string]any{"1": "b@x", "2": "sweep-me"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "u-keep",
-				Data: newStruct(t, map[string]any{"email": "c@x", "name": "keep"}),
+				Data: newStruct(t, map[string]any{"1": "c@x", "2": "keep"}),
 			}}},
 		},
 	})
@@ -1349,7 +1343,7 @@ func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 	}
 	f.waitForIdempKey(t, "dw-seed")
 
-	// Single-RPC sweep by NAME predicate (handler resolves name->id).
+	// Single-RPC sweep by field_id predicate (field_id 2; name-free, ADR-031).
 	resp, err := f.srv.ExecuteAtomic(context.Background(), &pb.ExecuteAtomicRequest{
 		Context:        &pb.RequestContext{TenantId: xaTenant, Actor: xaActorStr},
 		IdempotencyKey: "dw-sweep",
@@ -1358,7 +1352,7 @@ func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
 				TypeId: 1,
 				Where: []*pb.FieldFilter{
-					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "sweep-me")},
+					{Field: "2", Op: pb.FilterOp_EQ, Value: newValue(t, "sweep-me")},
 				},
 			}},
 		}},
@@ -1381,8 +1375,7 @@ func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 		t.Fatalf("u-keep must survive the predicate sweep: %v", err)
 	}
 
-	// The WAL carries exactly one id-keyed predicate (schema-less on
-	// the log) — field NAME "name" resolved to field_id 2.
+	// The WAL carries exactly one id-keyed predicate (field_id 2).
 	recs := f.wal.GetAllRecords(xaTopic)
 	var ev wal.Event
 	if err := json.Unmarshal(recs[len(recs)-1].Value, &ev); err != nil {
@@ -1397,7 +1390,7 @@ func TestExecuteAtomic_DeleteWhereRoundTrip(t *testing.T) {
 	}
 	pm, _ := where[0].(map[string]any)
 	if fid, _ := pm["field_id"].(float64); int(fid) != 2 {
-		t.Fatalf("predicate field_id: got %v want 2 (name->id resolved)", pm["field_id"])
+		t.Fatalf("predicate field_id: got %v want 2", pm["field_id"])
 	}
 }
 
@@ -1486,12 +1479,11 @@ func TestExecuteAtomic_DeleteWhereSchemalessNumericFieldID(t *testing.T) {
 }
 
 // TestExecuteAtomic_DeleteWhereSchemalessNameKeyRejected pins the
-// other half of the #545 contract: on a schema-less server a non-digit
-// field NAME is genuinely unresolvable, so DeleteWhere must return a
-// clear INVALID_ARGUMENT with the SAME wording family the QueryNodes /
-// payload.FilterNamesToIDs schema-less path uses. The numeric escape
-// hatch is the only schema-less route; a name key is not silently
-// accepted.
+// other half of the #545 contract under ADR-031 (name-free): a non-digit
+// field key is not a field_id, so DeleteWhere returns a clear
+// INVALID_ARGUMENT with the SAME wording family the QueryNodes /
+// payload.FilterToIDs path uses. A field_id is the only filter coordinate;
+// a name key is never accepted.
 func TestExecuteAtomic_DeleteWhereSchemalessNameKeyRejected(t *testing.T) {
 	t.Parallel()
 	f := newSchemalessXAFixture(t)
@@ -1515,22 +1507,20 @@ func TestExecuteAtomic_DeleteWhereSchemalessNameKeyRejected(t *testing.T) {
 	if st.Code() != codes.InvalidArgument {
 		t.Fatalf("code=%v want InvalidArgument", st.Code())
 	}
-	// Exact wording family shared with QueryNodes /
-	// payload.FilterNamesToIDs (translate.go:222-223).
-	if !strings.Contains(st.Message(), "cannot translate filter key") ||
-		!strings.Contains(st.Message(), "without a schema") {
+	// NAME-FREE (ADR-031): a non-digit filter key is not a field_id and
+	// is rejected with the shared payload.FilterToIDs wording.
+	if !strings.Contains(st.Message(), "is not a field_id") {
 		t.Fatalf("message %q: want the shared "+
-			`"cannot translate filter key %%q without a schema" wording`, st.Message())
+			`"filter key %%q is not a field_id" wording`, st.Message())
 	}
 }
 
-// TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves pins that
-// the #545 schema-optional change did NOT regress schema mode: with a
-// registry configured, a field NAME still resolves to its field_id and
-// an unknown type_id is still INVALID_ARGUMENT.
-func TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves(t *testing.T) {
+// TestExecuteAtomic_DeleteWhereSchemaMode pins that with a registry
+// configured a field_id predicate sweeps the matching nodes and an
+// unknown type_id is still INVALID_ARGUMENT (name-free, ADR-031).
+func TestExecuteAtomic_DeleteWhereSchemaMode(t *testing.T) {
 	t.Parallel()
-	f := newXAFixture(t) // registry has User(type 1): email=1, name=2
+	f := newXAFixture(t) // registry has type 1: field_ids 1,2,3
 	f.runApplier(t)
 	ctx := context.Background()
 
@@ -1540,11 +1530,11 @@ func TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves(t *testing.T) {
 		Operations: []*pb.Operation{
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "s-1",
-				Data: newStruct(t, map[string]any{"email": "x@x", "name": "drop"}),
+				Data: newStruct(t, map[string]any{"1": "x@x", "2": "drop"}),
 			}}},
 			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
 				TypeId: 1, Id: "s-2",
-				Data: newStruct(t, map[string]any{"email": "y@y", "name": "stay"}),
+				Data: newStruct(t, map[string]any{"1": "y@y", "2": "stay"}),
 			}}},
 		},
 	})
@@ -1562,7 +1552,7 @@ func TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves(t *testing.T) {
 			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
 				TypeId: 1,
 				Where: []*pb.FieldFilter{
-					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "drop")},
+					{Field: "2", Op: pb.FilterOp_EQ, Value: newValue(t, "drop")},
 				},
 			}},
 		}},
@@ -1586,7 +1576,7 @@ func TestExecuteAtomic_DeleteWhereSchemaModeNameStillResolves(t *testing.T) {
 			Op: &pb.Operation_DeleteWhere{DeleteWhere: &pb.DeleteWhereOp{
 				TypeId: 9999,
 				Where: []*pb.FieldFilter{
-					{Field: "name", Op: pb.FilterOp_EQ, Value: newValue(t, "drop")},
+					{Field: "2", Op: pb.FilterOp_EQ, Value: newValue(t, "drop")},
 				},
 			}},
 		}},

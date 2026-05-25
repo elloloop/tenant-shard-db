@@ -80,7 +80,8 @@ func (s *CanonicalStore) EnsureUniqueIndex(ctx context.Context, tenantID string,
 }
 
 // EnsureCompositeUniqueIndex creates partial composite-unique expression
-// indexes. Each constraint is (constraint_name, field_ids...).
+// indexes. Each constraint is identified by its field_ids tuple
+// (name-free, ADR-031); the index suffix is derived from that tuple.
 func (s *CanonicalStore) EnsureCompositeUniqueIndex(ctx context.Context, tenantID string, typeID int32, constraints []CompositeUnique) error {
 	if len(constraints) == 0 {
 		return nil
@@ -98,7 +99,7 @@ func (s *CanonicalStore) EnsureCompositeUniqueIndex(ctx context.Context, tenantI
 	s.indexCache.mu.Unlock()
 
 	for _, c := range constraints {
-		safe := compositeIndexSuffix(c.Name, c.FieldIDs)
+		safe := compositeIndexSuffix(c.FieldIDs)
 		extracts := make([]string, 0, len(c.FieldIDs))
 		for _, f := range c.FieldIDs {
 			extracts = append(extracts, fmt.Sprintf(`json_extract(payload_json, '$."%d"')`, f))
@@ -225,33 +226,12 @@ func (s *CanonicalStore) EnsureFTSIndexConn(ctx context.Context, conn *sql.Conn,
 
 // CompositeUnique is the input shape for EnsureCompositeUniqueIndex.
 // Mirrors schema.CompositeUniqueDef but is decoupled so this package
-// can be exercised in tests without a full schema.Registry.
+// can be exercised in tests without a full schema.Registry. Name-free
+// (ADR-031): a composite constraint is identified by its FieldIDs tuple.
 type CompositeUnique struct {
-	// Name is the constraint name (becomes the index suffix). Must be
-	// a valid SQL identifier or it is sanitized.
-	Name string
 	// FieldIDs are the field_ids forming the composite key, in
 	// declaration order.
 	FieldIDs []uint32
-}
-
-// safeIdent strips characters that are not valid in a SQL identifier.
-func safeIdent(name string) string {
-	var b strings.Builder
-	b.Grow(len(name))
-	for i := 0; i < len(name); i++ {
-		c := name[i]
-		switch {
-		case c >= 'a' && c <= 'z',
-			c >= 'A' && c <= 'Z',
-			c >= '0' && c <= '9',
-			c == '_':
-			b.WriteByte(c)
-		default:
-			b.WriteByte('_')
-		}
-	}
-	return strings.Trim(b.String(), "_")
 }
 
 // uniqueIndexDDL returns the CREATE UNIQUE INDEX statement for a
@@ -270,7 +250,7 @@ func uniqueIndexDDL(typeID int32, fid uint32) string {
 // compositeUniqueIndexDDL returns the CREATE UNIQUE INDEX statement for
 // a composite constraint. Mirrors EnsureCompositeUniqueIndex exactly.
 func compositeUniqueIndexDDL(typeID int32, c CompositeUnique) string {
-	safe := compositeIndexSuffix(c.Name, c.FieldIDs)
+	safe := compositeIndexSuffix(c.FieldIDs)
 	extracts := make([]string, 0, len(c.FieldIDs))
 	for _, f := range c.FieldIDs {
 		extracts = append(extracts, fmt.Sprintf(`json_extract(payload_json, '$."%d"')`, f))
@@ -322,9 +302,10 @@ func (s *CanonicalStore) EnsureFieldIndexesTx(ctx context.Context, tx *BatchTxn,
 		}
 	}
 	for _, c := range s.registry.CompositeUnique(typeID) {
-		cu := CompositeUnique{Name: c.Name, FieldIDs: c.FieldIDs}
+		cu := CompositeUnique{FieldIDs: c.FieldIDs}
 		if _, err := conn.ExecContext(ctx, compositeUniqueIndexDDL(typeID, cu)); err != nil {
-			return fmt.Errorf("store: create composite unique index (tx) t%d_%s: %w", typeID, c.Name, err)
+			return fmt.Errorf("store: create composite unique index (tx) t%d_c%s: %w",
+				typeID, compositeIndexSuffix(c.FieldIDs), err)
 		}
 	}
 	for _, fid := range s.registry.IndexedFieldIDs(typeID) {
@@ -350,7 +331,7 @@ func (s *CanonicalStore) ensureFieldIndexes(ctx context.Context, tenantID string
 	if comps := s.registry.CompositeUnique(typeID); len(comps) > 0 {
 		cu := make([]CompositeUnique, 0, len(comps))
 		for _, c := range comps {
-			cu = append(cu, CompositeUnique{Name: c.Name, FieldIDs: c.FieldIDs})
+			cu = append(cu, CompositeUnique{FieldIDs: c.FieldIDs})
 		}
 		if err := s.EnsureCompositeUniqueIndex(ctx, tenantID, typeID, cu); err != nil {
 			return err

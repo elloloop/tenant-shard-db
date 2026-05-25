@@ -279,15 +279,18 @@ func TestPlan_DeleteWhere(t *testing.T) {
 	if ops[0].TypeID != 201 {
 		t.Errorf("TypeID = %d, want 201", ops[0].TypeID)
 	}
-	if len(ops[0].Where) != 1 || ops[0].Where[0].Field != "price_cents" {
-		t.Errorf("Where = %#v, want one price_cents filter", ops[0].Where)
+	// NAME-FREE (ADR-031): the SDK resolves the filter field name to its
+	// decimal field_id at op-build time (price_cents is field 3 on Product);
+	// the server now rejects a non-digit FieldFilter.field.
+	if len(ops[0].Where) != 1 || ops[0].Where[0].Field != "3" {
+		t.Errorf("Where = %#v, want one field_id=3 filter", ops[0].Where)
 	}
 	if ops[0].Limit != 500 {
 		t.Errorf("Limit = %d, want 500", ops[0].Limit)
 	}
 
-	// Wire conversion: typed Filter -> *pb.DeleteWhereOp with the
-	// field NAME preserved (server resolves name->id, issue #501).
+	// Wire conversion: typed Filter -> *pb.DeleteWhereOp with the field
+	// resolved to its id-keyed form (ADR-031 name-free).
 	protoOps, err := operationsToProto(ops)
 	if err != nil {
 		t.Fatalf("operationsToProto: %v", err)
@@ -305,8 +308,8 @@ func TestPlan_DeleteWhere(t *testing.T) {
 	if len(dw.GetWhere()) != 1 {
 		t.Fatalf("proto Where len = %d, want 1", len(dw.GetWhere()))
 	}
-	if dw.GetWhere()[0].GetField() != "price_cents" {
-		t.Errorf("proto filter field = %q, want price_cents", dw.GetWhere()[0].GetField())
+	if dw.GetWhere()[0].GetField() != "3" {
+		t.Errorf("proto filter field = %q, want 3 (resolved field_id)", dw.GetWhere()[0].GetField())
 	}
 	if dw.GetWhere()[0].GetOp() != pb.FilterOp_LT {
 		t.Errorf("proto filter op = %v, want LT", dw.GetWhere()[0].GetOp())

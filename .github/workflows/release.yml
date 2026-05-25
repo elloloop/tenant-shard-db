@@ -144,6 +144,13 @@ jobs:
               echo "::error::entdb-schema --help did not print expected banner"
               exit 1
             }
+          # The buf-breaking-style gate (ADR-032) must be wired — the
+          # downstream CI step depends on this verb existing.
+          docker run --rm entdb-smoke:schema-${{ matrix.arch }} --help \
+            | grep -q "breaking" || {
+              echo "::error::entdb-schema --help is missing the 'breaking' subcommand"
+              exit 1
+            }
           docker run --rm entdb-smoke:schema-${{ matrix.arch }} version
 
       # Stage 2: smoke passed — push the same image to the registry by

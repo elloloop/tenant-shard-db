@@ -43,7 +43,8 @@ async def _seed(stub: EntDBServiceStub, prefix: str, emails: list[str]) -> None:
     ops = []
     for email in emails:
         data = struct_pb2.Struct()
-        json_format.ParseDict({"email": email, "name": email.split("@")[0]}, data)
+        # Id-keyed payload (ADR-031): field 1 = email, field 2 = name.
+        json_format.ParseDict({"1": email, "2": email.split("@")[0]}, data)
         ops.append(
             pb.Operation(create_node=pb.CreateNodeOp(type_id=1, id=f"{prefix}-{email}", data=data))
         )
@@ -86,7 +87,7 @@ async def test_delete_where_sweeps_only_matching(stub) -> None:
                         type_id=1,
                         where=[
                             pb.FieldFilter(
-                                field="email",
+                                field="1",
                                 op=pb.FilterOp.LT,
                                 value=_value("m@x"),
                             )
@@ -131,12 +132,12 @@ async def _sweep_cd(stub: EntDBServiceStub, idem: str, limit: int) -> None:
                         limit=limit,
                         where=[
                             pb.FieldFilter(
-                                field="email",
+                                field="1",
                                 op=pb.FilterOp.GTE,
                                 value=_value("cd0@x"),
                             ),
                             pb.FieldFilter(
-                                field="email",
+                                field="1",
                                 op=pb.FilterOp.LT,
                                 value=_value("cd9@x"),
                             ),
@@ -177,12 +178,11 @@ async def test_delete_where_limit_is_best_effort(stub) -> None:
 # Issue #545 — DeleteWhere against a schema-less server
 # ---------------------------------------------------------------------------
 #
-# A server started without a schema (``--seed-profile none``) cannot
-# resolve a FieldFilter.field NAME to a payload field id. The
-# documented contract (mirroring QueryNodes' schema-optional path) is:
-# a digit-only numeric field id works without a schema; a field NAME
-# returns a clear INVALID_ARGUMENT. These exercise that end-to-end
-# against a live schema-less Go subprocess.
+# A server with no schema for this type cannot resolve a FieldFilter.field
+# NAME to a payload field id. NAME-FREE (ADR-031): the documented contract
+# is that filters are id-keyed — a digit-only numeric field id works, and a
+# field NAME returns a clear INVALID_ARGUMENT. These exercise that
+# end-to-end against a live empty (un-bootstrapped) Go subprocess.
 
 SL_TENANT = "sl-545"
 SL_TYPE_ID = 525  # caller's own (server-unknown) node type
@@ -306,9 +306,9 @@ async def test_delete_where_schemaless_by_numeric_field_id(schemaless_stub) -> N
 async def test_delete_where_schemaless_field_name_rejected(schemaless_stub) -> None:
     """Schema-less server: a field NAME is a clear INVALID_ARGUMENT.
 
-    The numeric id is the only schema-less route; a non-digit name is
-    genuinely unresolvable and must surface the shared
-    "cannot translate filter key … without a schema" wording.
+    NAME-FREE (ADR-031): filters are id-keyed; a non-digit (name) filter key
+    is rejected with the canonical "filter key … is not a field_id" wording
+    (the server never resolves a name).
     """
     with pytest.raises(grpc_aio.AioRpcError) as exc:
         await schemaless_stub.ExecuteAtomic(
@@ -333,5 +333,5 @@ async def test_delete_where_schemaless_field_name_rejected(schemaless_stub) -> N
         )
     assert exc.value.code() == grpc.StatusCode.INVALID_ARGUMENT
     msg = exc.value.details() or ""
-    assert "cannot translate filter key" in msg
-    assert "without a schema" in msg
+    assert "is not a field_id" in msg
+    assert "id-keyed" in msg

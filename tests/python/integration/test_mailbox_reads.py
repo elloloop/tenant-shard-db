@@ -44,7 +44,8 @@ async def _create_mailbox_user(
     stub: EntDBServiceStub, node_id: str, target_user: str, name: str
 ) -> None:
     data = struct_pb2.Struct()
-    json_format.ParseDict({"email": f"{target_user}@x", "name": name}, data)
+    # Id-keyed payload (ADR-031): field 1 = email, field 2 = name.
+    json_format.ParseDict({"1": f"{target_user}@x", "2": name}, data)
     req = pb.ExecuteAtomicRequest(
         context=_ctx(),
         idempotency_key=f"mbox-{uuid.uuid4().hex[:8]}",

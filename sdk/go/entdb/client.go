@@ -263,6 +263,12 @@ type grpcTransport struct {
 	// ``DbClient._last_offsets``). Lives on the transport — the
 	// single boundary both Plan commits and Scope reads cross.
 	offsets *offsetTracker
+	// serverFingerprint is the last schema fingerprint the server
+	// confirmed for this connection (SELF-DESCRIBING WRITES, ADR-031).
+	// While it differs from config.schema.fingerprint, ExecuteAtomic
+	// attaches the SchemaDescriptor; once it matches, the descriptor is
+	// omitted. Reset on a SCHEMA_MISMATCH response.
+	serverFingerprint string
 }
 
 func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
@@ -496,19 +502,62 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 			break
 		}
 	}
+	// SELF-DESCRIBING WRITES (ADR-031). Attach a name-free SchemaDescriptor
+	// + fingerprint whenever the server has not yet confirmed this schema
+	// for the connection; omit it once confirmed (lean steady state). The
+	// server materializes the carried types via a leading register_schema
+	// WAL op (establish-or-reject), so sending the whole registry is safe
+	// and idempotent.
+	var clientFP string
+	var descriptor *pb.SchemaDescriptor
+	if t.config.schema != nil {
+		clientFP = t.config.schema.fingerprint
+		descriptor = t.config.schema.descriptor
+	}
+	attachSchema := descriptor != nil && clientFP != "" && t.serverFingerprint != clientFP
+
+	buildReq := func(withSchema bool) *pb.ExecuteAtomicRequest {
+		r := &pb.ExecuteAtomicRequest{
+			Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
+			IdempotencyKey: idempotencyKey,
+			Operations:     protoOps,
+			WaitApplied:    waitApplied,
+		}
+		if waitApplied {
+			r.WaitTimeoutMs = 30000
+		}
+		if withSchema {
+			r.SchemaFingerprint = clientFP
+			r.Schema = descriptor
+		}
+		return r
+	}
+
 	var trailer metadata.MD
-	req := &pb.ExecuteAtomicRequest{
-		Context:        &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		IdempotencyKey: idempotencyKey,
-		Operations:     protoOps,
-		WaitApplied:    waitApplied,
-	}
-	if waitApplied {
-		req.WaitTimeoutMs = 30000
-	}
-	resp, err := client.ExecuteAtomic(t.callContext(ctx, tenantID), req, grpc.Trailer(&trailer))
+	resp, err := client.ExecuteAtomic(
+		t.callContext(ctx, tenantID), buildReq(attachSchema), grpc.Trailer(&trailer),
+	)
 	if err != nil {
 		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+	}
+	// SCHEMA_MISMATCH (ADR-031): the client advertised a fingerprint the
+	// server does not have and sent no descriptor to reconcile with —
+	// re-send once WITH the descriptor.
+	if resp.GetErrorCode() == "SCHEMA_MISMATCH" && descriptor != nil {
+		t.serverFingerprint = ""
+		var t2 metadata.MD
+		resp, err = client.ExecuteAtomic(
+			t.callContext(ctx, tenantID), buildReq(true), grpc.Trailer(&t2),
+		)
+		if err != nil {
+			return nil, translateGRPCStatusWithTrailer(err, t2, tenantID, t.address)
+		}
+	}
+	// A write that carried the schema and did not bounce confirms the
+	// server now holds exactly this fingerprint; cache it so subsequent
+	// writes omit the descriptor.
+	if attachSchema && resp.GetErrorCode() != "SCHEMA_MISMATCH" {
+		t.serverFingerprint = clientFP
 	}
 	// Precondition failure surfaces in-band: applied_status =
 	// RECEIPT_STATUS_FAILED_PRECONDITION + structured detail in

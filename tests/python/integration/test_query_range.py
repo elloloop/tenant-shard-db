@@ -36,7 +36,8 @@ async def _seed_users(stub: EntDBServiceStub, emails: list[str]) -> None:
     ops = []
     for email in emails:
         data = struct_pb2.Struct()
-        json_format.ParseDict({"email": email, "name": email.split("@")[0]}, data)
+        # Id-keyed payload (ADR-031): field 1 = email, field 2 = name.
+        json_format.ParseDict({"1": email, "2": email.split("@")[0]}, data)
         ops.append(
             pb.Operation(
                 create_node=pb.CreateNodeOp(
@@ -78,7 +79,7 @@ async def _query_emails(stub: EntDBServiceStub, op: pb.FilterOp, value: str) -> 
             order_by="node_id",
             descending=False,
             limit=100,
-            filters=[pb.FieldFilter(field="email", op=op, value=_value(value))],
+            filters=[pb.FieldFilter(field="1", op=op, value=_value(value))],
         )
     )
     return sorted(_email(n) for n in resp.nodes if _email(n).startswith("rng-"))
@@ -139,7 +140,7 @@ async def test_server_prefers_typed_value_over_legacy(stub) -> None:
             limit=100,
             filters=[
                 pb.FieldFilter(
-                    field="email",
+                    field="1",
                     op=pb.FilterOp.EQ,
                     value=_value("rng-DOES-NOT-EXIST@x"),
                     typed_value=EntValue(string_value="rng-b@x"),
@@ -161,8 +162,8 @@ async def test_and_of_two_filters(stub) -> None:
             descending=False,
             limit=100,
             filters=[
-                pb.FieldFilter(field="email", op=pb.FilterOp.GTE, value=_value("rng-a@x")),
-                pb.FieldFilter(field="email", op=pb.FilterOp.LT, value=_value("rng-c@x")),
+                pb.FieldFilter(field="1", op=pb.FilterOp.GTE, value=_value("rng-a@x")),
+                pb.FieldFilter(field="1", op=pb.FilterOp.LT, value=_value("rng-c@x")),
             ],
         )
     )
@@ -180,7 +181,7 @@ async def test_limit_bounded(stub) -> None:
             descending=False,
             limit=2,
             filters=[
-                pb.FieldFilter(field="email", op=pb.FilterOp.GTE, value=_value("rng-")),
+                pb.FieldFilter(field="1", op=pb.FilterOp.GTE, value=_value("rng-")),
             ],
         )
     )
@@ -196,7 +197,7 @@ async def test_contains_rejected(stub) -> None:
                 type_id=1,
                 filters=[
                     pb.FieldFilter(
-                        field="email",
+                        field="1",
                         op=pb.FilterOp.CONTAINS,
                         value=_value("alice"),
                     ),
@@ -236,8 +237,8 @@ async def test_query_does_not_silently_truncate(grpc_endpoint) -> None:
                 # so the server applies the 100-row default.
                 page_token=token,
                 filters=[
-                    pb.FieldFilter(field="email", op=pb.FilterOp.GTE, value=_value(prefix)),
-                    pb.FieldFilter(field="email", op=pb.FilterOp.LT, value=_value(upper)),
+                    pb.FieldFilter(field="1", op=pb.FilterOp.GTE, value=_value(prefix)),
+                    pb.FieldFilter(field="1", op=pb.FilterOp.LT, value=_value(upper)),
                 ],
             )
 

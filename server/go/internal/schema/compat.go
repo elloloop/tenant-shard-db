@@ -34,19 +34,20 @@ const (
 
 	// Node-level
 	ChangeKindNodeAdded
-	ChangeKindNodeRemoved         // BREAKING — WAL events referencing the type become unreplayable
-	ChangeKindNodeRenamed         // non-breaking — type_id is the on-disk key
-	ChangeKindTypeIDChanged       // BREAKING — same name, different type_id == new type
+	ChangeKindNodeRemoved         // non-breaking (ADR-032: removal is loosening; reuse is the break — see TYPE_ID_REUSED)
+	ChangeKindNodeRenamed         // RETIRED (ADR-031: registry is name-free) — never emitted
+	ChangeKindTypeIDChanged       // RETIRED (ADR-031: name-based detection gone) — never emitted
 	ChangeKindSubjectFieldChanged // BREAKING — GDPR routing changes
 	ChangeKindDataPolicyTightened // non-breaking — encryption tier strengthens
 	ChangeKindDataPolicyLoosened  // BREAKING — historical data leaks downward
+	ChangeKindTypeIDReused        // BREAKING (ADR-032) — a reserved/removed type_id reappears as a live type
 
 	// Field-level
 	ChangeKindFieldAdded
-	ChangeKindFieldRemoved           // BREAKING — historic rows still carry the field
-	ChangeKindFieldIDChanged         // BREAKING — field_id reassignment corrupts existing data
+	ChangeKindFieldRemoved           // non-breaking (ADR-032: removal is loosening; reuse is the break — see FIELD_ID_REUSED)
+	ChangeKindFieldIDChanged         // RETIRED (ADR-031: name-based detection gone) — never emitted
 	ChangeKindFieldKindChanged       // BREAKING — type-coercion of stored bytes is unsafe
-	ChangeKindFieldRenamed           // non-breaking — field_id is the on-disk key (CLAUDE.md invariant #6)
+	ChangeKindFieldRenamed           // RETIRED (ADR-031: registry is name-free) — never emitted
 	ChangeKindFieldRequiredTightened // BREAKING — existing rows that omit the field now fail
 	ChangeKindFieldRequiredLoosened  // non-breaking — looser is always safe
 	ChangeKindFieldUniqueAdded       // BREAKING — historical data may already violate
@@ -55,6 +56,11 @@ const (
 	ChangeKindFieldUndeprecated      // non-breaking
 	ChangeKindFieldRefTypeChanged    // BREAKING — dangling references
 	ChangeKindFieldPIIToggled        // non-breaking — informational, but flagged
+	ChangeKindFieldIDReused          // BREAKING (ADR-032) — a reserved/removed field_id reappears as a live field
+	ChangeKindFieldIndexedAdded      // non-breaking (ADR-032) — query index is additive
+	ChangeKindFieldIndexedRemoved    // non-breaking (ADR-032) — dropping a query index loosens
+	ChangeKindFieldSearchableAdded   // non-breaking (ADR-032) — FTS index is additive
+	ChangeKindFieldSearchableRemoved // non-breaking (ADR-032) — dropping FTS loosens
 
 	// Enum-level (per field)
 	ChangeKindEnumValueAdded     // non-breaking — append-only
@@ -68,12 +74,13 @@ const (
 
 	// Edge-level
 	ChangeKindEdgeAdded
-	ChangeKindEdgeRemoved              // BREAKING — historical edges orphaned
+	ChangeKindEdgeRemoved              // non-breaking (ADR-032: removal is loosening; reuse is the break — see EDGE_ID_REUSED)
 	ChangeKindEdgeFromTypeChanged      // BREAKING — edge semantics shift
 	ChangeKindEdgeToTypeChanged        // BREAKING — edge semantics shift
 	ChangeKindEdgeUniquePerFromAdded   // BREAKING — historical edges may already violate
 	ChangeKindEdgeUniquePerFromRemoved // non-breaking
 	ChangeKindOnSubjectExitChanged     // BREAKING — GDPR delete semantics shift
+	ChangeKindEdgeIDReused             // BREAKING (ADR-032) — a reserved/removed edge_id reappears as a live edge
 )
 
 // changeKindName is the textual constant used in JSON output and text
@@ -101,6 +108,13 @@ var changeKindName = map[ChangeKind]string{
 	ChangeKindFieldUndeprecated:        "FIELD_UNDEPRECATED",
 	ChangeKindFieldRefTypeChanged:      "FIELD_REF_TYPE_CHANGED",
 	ChangeKindFieldPIIToggled:          "FIELD_PII_TOGGLED",
+	ChangeKindTypeIDReused:             "TYPE_ID_REUSED",
+	ChangeKindFieldIDReused:            "FIELD_ID_REUSED",
+	ChangeKindEdgeIDReused:             "EDGE_ID_REUSED",
+	ChangeKindFieldIndexedAdded:        "FIELD_INDEXED_ADDED",
+	ChangeKindFieldIndexedRemoved:      "FIELD_INDEXED_REMOVED",
+	ChangeKindFieldSearchableAdded:     "FIELD_SEARCHABLE_ADDED",
+	ChangeKindFieldSearchableRemoved:   "FIELD_SEARCHABLE_REMOVED",
 	ChangeKindEnumValueAdded:           "ENUM_VALUE_ADDED",
 	ChangeKindEnumValueRemoved:         "ENUM_VALUE_REMOVED",
 	ChangeKindEnumValueReordered:       "ENUM_VALUE_REORDERED",
@@ -133,13 +147,19 @@ func (k ChangeKind) MarshalJSON() ([]byte, error) {
 // breakingKinds maps each ChangeKind to its breaking-or-not classification.
 // A nil entry means non-breaking. Reviewers: flipping a classification
 // here is the audit trail.
+// Per ADR-032 the governing principle is LOOSENING is safe, TIGHTENING
+// is breaking. Type/field/edge *removal* is loosening (safe) — the
+// breaking move is reusing the freed id, captured by the *_REUSED kinds.
+// FIELD_ID_CHANGED / TYPE_ID_CHANGED are retired under ADR-031 (name-free,
+// so a "change" is a remove+add); they are listed here for the historical
+// audit trail but are never emitted.
 var breakingKinds = map[ChangeKind]bool{
-	ChangeKindNodeRemoved:            true,
-	ChangeKindTypeIDChanged:          true,
+	ChangeKindTypeIDChanged:          true, // retired (ADR-031); never emitted
+	ChangeKindTypeIDReused:           true,
 	ChangeKindSubjectFieldChanged:    true,
 	ChangeKindDataPolicyLoosened:     true,
-	ChangeKindFieldRemoved:           true,
-	ChangeKindFieldIDChanged:         true,
+	ChangeKindFieldIDChanged:         true, // retired (ADR-031); never emitted
+	ChangeKindFieldIDReused:          true,
 	ChangeKindFieldKindChanged:       true,
 	ChangeKindFieldRequiredTightened: true,
 	ChangeKindFieldUniqueAdded:       true,
@@ -148,11 +168,11 @@ var breakingKinds = map[ChangeKind]bool{
 	ChangeKindEnumValueReordered:     true,
 	ChangeKindCompositeUniqueAdded:   true,
 	ChangeKindCompositeUniqueChanged: true,
-	ChangeKindEdgeRemoved:            true,
 	ChangeKindEdgeFromTypeChanged:    true,
 	ChangeKindEdgeToTypeChanged:      true,
 	ChangeKindEdgeUniquePerFromAdded: true,
 	ChangeKindOnSubjectExitChanged:   true,
+	ChangeKindEdgeIDReused:           true,
 }
 
 // IsBreaking reports whether the kind is classified as a breaking
@@ -233,8 +253,9 @@ func nodesByID(r *Registry) map[int32]*NodeTypeDef {
 	if r == nil {
 		return map[int32]*NodeTypeDef{}
 	}
-	out := make(map[int32]*NodeTypeDef, len(r.nodes))
-	for id, n := range r.nodes {
+	s := r.load()
+	out := make(map[int32]*NodeTypeDef, len(s.nodes))
+	for id, n := range s.nodes {
 		out[id] = n
 	}
 	return out
@@ -245,36 +266,10 @@ func diffNodes(oldR, newR *Registry) []Change {
 	oldByID := nodesByID(oldR)
 	newByID := nodesByID(newR)
 
-	// First, identify name pairs that exist on both sides with different
-	// type_ids. These get a single canonical TYPE_ID_CHANGED entry and
-	// must be suppressed from the id-keyed remove/add passes below
-	// (otherwise we triple-count: NODE_REMOVED + NODE_ADDED +
-	// TYPE_ID_CHANGED for the same logical operation).
-	oldByName := map[string]*NodeTypeDef{}
-	for _, n := range oldByID {
-		oldByName[n.Name] = n
-	}
-	newByName := map[string]*NodeTypeDef{}
-	for _, n := range newByID {
-		newByName[n.Name] = n
-	}
-	// suppressedOldIDs / suppressedNewIDs hold the type_ids that should
-	// NOT produce a NODE_REMOVED / NODE_ADDED event because they're
-	// already accounted for by a TYPE_ID_CHANGED match on the name.
-	suppressedOldIDs := map[int32]struct{}{}
-	suppressedNewIDs := map[int32]struct{}{}
-	for name, oldNode := range oldByName {
-		newNode, ok := newByName[name]
-		if !ok {
-			continue
-		}
-		if oldNode.TypeID != newNode.TypeID {
-			suppressedOldIDs[oldNode.TypeID] = struct{}{}
-			suppressedNewIDs[newNode.TypeID] = struct{}{}
-		}
-	}
-
-	// Sort old IDs for deterministic traversal.
+	// Name-free per ADR-031: nodes are keyed solely by type_id. A node
+	// present only in old is removed; present only in new is added; the
+	// historical name-based NODE_RENAMED / TYPE_ID_CHANGED detection is
+	// gone because the registry no longer carries names.
 	oldIDs := make([]int32, 0, len(oldByID))
 	for id := range oldByID {
 		oldIDs = append(oldIDs, id)
@@ -284,22 +279,18 @@ func diffNodes(oldR, newR *Registry) []Change {
 		oldNode := oldByID[id]
 		newNode, ok := newByID[id]
 		if !ok {
-			if _, suppress := suppressedOldIDs[id]; suppress {
-				// Name still present in new under a different type_id —
-				// reported as TYPE_ID_CHANGED below.
-				continue
-			}
 			out = append(out, Change{
 				Kind:     ChangeKindNodeRemoved,
-				Path:     fmt.Sprintf("node:%s", oldNode.Name),
-				OldValue: oldNode.Name,
-				Message:  fmt.Sprintf("node type %q (type_id=%d) removed", oldNode.Name, oldNode.TypeID),
+				Path:     fmt.Sprintf("node:%d", oldNode.TypeID),
+				OldValue: oldNode.TypeID,
+				Message:  fmt.Sprintf("node type_id=%d removed", oldNode.TypeID),
 			})
 			continue
 		}
 		out = append(out, diffNodeBody(oldNode, newNode)...)
 	}
 
+	oldReservedTypes := int32Set(reservedTypeIDs(oldR))
 	newIDs := make([]int32, 0, len(newByID))
 	for id := range newByID {
 		newIDs = append(newIDs, id)
@@ -309,73 +300,81 @@ func diffNodes(oldR, newR *Registry) []Change {
 		if _, ok := oldByID[id]; ok {
 			continue
 		}
-		if _, suppress := suppressedNewIDs[id]; suppress {
-			// Name existed before under a different type_id — reported
-			// as TYPE_ID_CHANGED below.
-			continue
-		}
 		newNode := newByID[id]
-		out = append(out, Change{
-			Kind:     ChangeKindNodeAdded,
-			Path:     fmt.Sprintf("node:%s", newNode.Name),
-			NewValue: newNode.Name,
-			Message:  fmt.Sprintf("node type %q (type_id=%d) added", newNode.Name, newNode.TypeID),
-		})
-	}
-
-	// Emit TYPE_ID_CHANGED — a node with the same name on both sides
-	// but a different type_id. This is materially different from
-	// "remove-then-add" because users typically don't intend type-id
-	// drift; we surface it as its own breaking rule and suppress the
-	// id-keyed remove/add for the same name (above).
-	for name, oldNode := range oldByName {
-		newNode, ok := newByName[name]
-		if !ok {
-			continue
-		}
-		if oldNode.TypeID != newNode.TypeID {
+		// ADR-032: a baseline-reserved type_id reappearing as a live type
+		// is a BREAKING reuse, not a benign add.
+		if _, reserved := oldReservedTypes[id]; reserved {
 			out = append(out, Change{
-				Kind:     ChangeKindTypeIDChanged,
-				Path:     fmt.Sprintf("node:%s", name),
-				OldValue: oldNode.TypeID,
+				Kind:     ChangeKindTypeIDReused,
+				Path:     fmt.Sprintf("node:%d", newNode.TypeID),
 				NewValue: newNode.TypeID,
 				Message: fmt.Sprintf(
-					"node type %q changed type_id from %d to %d", name, oldNode.TypeID, newNode.TypeID,
+					"type_id=%d was reserved in the baseline but is re-introduced as a live type (id reuse)",
+					newNode.TypeID,
 				),
 			})
+			continue
 		}
+		out = append(out, Change{
+			Kind:     ChangeKindNodeAdded,
+			Path:     fmt.Sprintf("node:%d", newNode.TypeID),
+			NewValue: newNode.TypeID,
+			Message:  fmt.Sprintf("node type_id=%d added", newNode.TypeID),
+		})
 	}
 	return out
 }
 
+// reservedTypeIDs / reservedEdgeIDs read the schema-level tombstone lists
+// off a registry, tolerating a nil registry.
+func reservedTypeIDs(r *Registry) []int32 {
+	if r == nil {
+		return nil
+	}
+	return r.ReservedTypeIDs()
+}
+
+func reservedEdgeIDs(r *Registry) []int32 {
+	if r == nil {
+		return nil
+	}
+	return r.ReservedEdgeIDs()
+}
+
+func int32Set(ids []int32) map[int32]struct{} {
+	m := make(map[int32]struct{}, len(ids))
+	for _, id := range ids {
+		m[id] = struct{}{}
+	}
+	return m
+}
+
+func uint32Set(ids []uint32) map[uint32]struct{} {
+	m := make(map[uint32]struct{}, len(ids))
+	for _, id := range ids {
+		m[id] = struct{}{}
+	}
+	return m
+}
+
 func diffNodeBody(oldNode, newNode *NodeTypeDef) []Change {
 	var out []Change
-	base := fmt.Sprintf("node:%s", newNode.Name)
-
-	if oldNode.Name != newNode.Name {
-		out = append(out, Change{
-			Kind:     ChangeKindNodeRenamed,
-			Path:     base,
-			OldValue: oldNode.Name,
-			NewValue: newNode.Name,
-			Message:  fmt.Sprintf("node type renamed from %q to %q (type_id=%d)", oldNode.Name, newNode.Name, newNode.TypeID),
-		})
-	}
+	base := fmt.Sprintf("node:%d", newNode.TypeID)
 
 	if !subjectFieldEqual(oldNode.SubjectField, newNode.SubjectField) {
 		out = append(out, Change{
 			Kind:     ChangeKindSubjectFieldChanged,
 			Path:     base,
-			OldValue: derefStr(oldNode.SubjectField),
-			NewValue: derefStr(newNode.SubjectField),
+			OldValue: derefUint32(oldNode.SubjectField),
+			NewValue: derefUint32(newNode.SubjectField),
 			Message: fmt.Sprintf(
-				"node type %q changed subject_field from %q to %q",
-				newNode.Name, derefStr(oldNode.SubjectField), derefStr(newNode.SubjectField),
+				"node type_id=%d changed subject_field from %v to %v",
+				newNode.TypeID, derefUint32(oldNode.SubjectField), derefUint32(newNode.SubjectField),
 			),
 		})
 	}
 
-	out = append(out, diffDataPolicy(oldNode.DataPolicy, newNode.DataPolicy, base, newNode.Name)...)
+	out = append(out, diffDataPolicy(oldNode.DataPolicy, newNode.DataPolicy, base, newNode.TypeID)...)
 
 	// Fields
 	out = append(out, diffFields(oldNode, newNode)...)
@@ -389,22 +388,21 @@ func diffNodeBody(oldNode, newNode *NodeTypeDef) []Change {
 func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 	var out []Change
 	oldFields := map[uint32]*FieldDef{}
-	oldFieldsByName := map[string]*FieldDef{}
 	for i := range oldNode.Fields {
 		f := &oldNode.Fields[i]
 		oldFields[f.FieldID] = f
-		oldFieldsByName[f.Name] = f
 	}
 	newFields := map[uint32]*FieldDef{}
-	newFieldsByName := map[string]*FieldDef{}
 	for i := range newNode.Fields {
 		f := &newNode.Fields[i]
 		newFields[f.FieldID] = f
-		newFieldsByName[f.Name] = f
 	}
 
-	// Removed fields (field_id present in old, absent in new) AND the
-	// same name not present under a different id.
+	// Name-free per ADR-031: fields are keyed solely by field_id. A
+	// field present only in old is removed; only in new is added; present
+	// on both → body diff. A field_id reassignment is a remove+add — the
+	// historical name-keyed FIELD_ID_CHANGED / FIELD_RENAMED detection is
+	// gone because the registry no longer carries field names.
 	oldIDs := make([]uint32, 0, len(oldFields))
 	for id := range oldFields {
 		oldIDs = append(oldIDs, id)
@@ -413,57 +411,21 @@ func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 	for _, id := range oldIDs {
 		of := oldFields[id]
 		nf, sameID := newFields[id]
-		nfByName, sameName := newFieldsByName[of.Name]
-		switch {
-		case sameID && nf.Name == of.Name:
-			// Same id, same name → check body diff.
-			out = append(out, diffFieldBody(newNode.Name, of, nf)...)
-		case sameID && nf.Name != of.Name:
-			// Same id, different name → field rename. Field IDs are the
-			// on-disk key (CLAUDE.md invariant #6), so the rename is a
-			// safe, non-breaking metadata change. Emit FIELD_RENAMED and
-			// still run the body diff so genuine kind/required/etc.
-			// transitions on top of the rename still surface.
-			out = append(out, Change{
-				Kind:     ChangeKindFieldRenamed,
-				Path:     fmt.Sprintf("node:%s.field:%s", newNode.Name, nf.Name),
-				OldValue: of.Name,
-				NewValue: nf.Name,
-				Message: fmt.Sprintf(
-					"field_id %d on %q renamed from %q to %q (field_id is the on-disk key — non-breaking)",
-					id, newNode.Name, of.Name, nf.Name,
-				),
-			})
-			out = append(out, diffFieldBody(newNode.Name, of, nf)...)
-		case !sameID && sameName:
-			// Field with same name exists under different id → that's
-			// the canonical "FIELD_ID_CHANGED" break.
-			out = append(out, Change{
-				Kind:     ChangeKindFieldIDChanged,
-				Path:     fmt.Sprintf("node:%s.field:%s", newNode.Name, of.Name),
-				OldValue: of.FieldID,
-				NewValue: nfByName.FieldID,
-				Message: fmt.Sprintf(
-					"field %q on %q changed field_id from %d to %d",
-					of.Name, newNode.Name, of.FieldID, nfByName.FieldID,
-				),
-			})
-			out = append(out, diffFieldBody(newNode.Name, of, nfByName)...)
-		default:
-			// Field removed.
-			out = append(out, Change{
-				Kind:     ChangeKindFieldRemoved,
-				Path:     fmt.Sprintf("node:%s.field:%s", newNode.Name, of.Name),
-				OldValue: of.Name,
-				Message: fmt.Sprintf(
-					"field %q (field_id=%d) removed from %q", of.Name, of.FieldID, newNode.Name,
-				),
-			})
+		if sameID {
+			out = append(out, diffFieldBody(newNode.TypeID, of, nf)...)
+			continue
 		}
+		out = append(out, Change{
+			Kind:     ChangeKindFieldRemoved,
+			Path:     fmt.Sprintf("node:%d.field:%d", newNode.TypeID, of.FieldID),
+			OldValue: of.FieldID,
+			Message: fmt.Sprintf(
+				"field_id=%d removed from node type_id=%d", of.FieldID, newNode.TypeID,
+			),
+		})
 	}
 
-	// Added fields (in new, not previously present by id and not the
-	// new home of a renamed-id field).
+	oldReserved := uint32Set(oldNode.ReservedFieldIDs)
 	newIDs := make([]uint32, 0, len(newFields))
 	for id := range newFields {
 		newIDs = append(newIDs, id)
@@ -471,35 +433,40 @@ func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 	sortUint32(newIDs)
 	for _, id := range newIDs {
 		nf := newFields[id]
-		if of, ok := oldFields[id]; ok && of.Name == nf.Name {
+		if _, ok := oldFields[id]; ok {
 			continue
 		}
-		// Suppress spurious FIELD_ADDED when the field_id already
-		// existed under a different name (handled above as
-		// FIELD_RENAMED) — otherwise the renamed-to name would
-		// double-count as both a rename and a new add.
-		if _, idExisted := oldFields[id]; idExisted {
-			continue
-		}
-		if _, oldHasName := oldFieldsByName[nf.Name]; oldHasName {
+		// ADR-032: a baseline-reserved field_id reappearing as a live
+		// field is a BREAKING reuse — historic rows keyed by that id mean
+		// something else.
+		if _, reserved := oldReserved[id]; reserved {
+			out = append(out, Change{
+				Kind:     ChangeKindFieldIDReused,
+				Path:     fmt.Sprintf("node:%d.field:%d", newNode.TypeID, nf.FieldID),
+				NewValue: nf.FieldID,
+				Message: fmt.Sprintf(
+					"field_id=%d on node type_id=%d was reserved in the baseline but is re-introduced as a live field (id reuse)",
+					nf.FieldID, newNode.TypeID,
+				),
+			})
 			continue
 		}
 		out = append(out, Change{
 			Kind:     ChangeKindFieldAdded,
-			Path:     fmt.Sprintf("node:%s.field:%s", newNode.Name, nf.Name),
-			NewValue: nf.Name,
+			Path:     fmt.Sprintf("node:%d.field:%d", newNode.TypeID, nf.FieldID),
+			NewValue: nf.FieldID,
 			Message: fmt.Sprintf(
-				"field %q (field_id=%d, kind=%s) added to %q",
-				nf.Name, nf.FieldID, nf.Kind, newNode.Name,
+				"field_id=%d (kind=%s) added to node type_id=%d",
+				nf.FieldID, nf.Kind, newNode.TypeID,
 			),
 		})
 	}
 	return out
 }
 
-func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
+func diffFieldBody(typeID int32, of, nf *FieldDef) []Change {
 	var out []Change
-	base := fmt.Sprintf("node:%s.field:%s", nodeName, nf.Name)
+	base := fmt.Sprintf("node:%d.field:%d", typeID, nf.FieldID)
 	if of.Kind != nf.Kind {
 		out = append(out, Change{
 			Kind:     ChangeKindFieldKindChanged,
@@ -507,7 +474,7 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 			OldValue: string(of.Kind),
 			NewValue: string(nf.Kind),
 			Message: fmt.Sprintf(
-				"field %q on %q changed kind from %s to %s", nf.Name, nodeName, of.Kind, nf.Kind,
+				"field_id=%d on node type_id=%d changed kind from %s to %s", nf.FieldID, typeID, of.Kind, nf.Kind,
 			),
 		})
 	}
@@ -519,8 +486,8 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 				OldValue: of.Required,
 				NewValue: nf.Required,
 				Message: fmt.Sprintf(
-					"field %q on %q became required (existing rows that omit it will fail validation)",
-					nf.Name, nodeName,
+					"field_id=%d on node type_id=%d became required (existing rows that omit it will fail validation)",
+					nf.FieldID, typeID,
 				),
 			})
 		} else {
@@ -529,7 +496,7 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 				Path:     base,
 				OldValue: of.Required,
 				NewValue: nf.Required,
-				Message:  fmt.Sprintf("field %q on %q no longer required", nf.Name, nodeName),
+				Message:  fmt.Sprintf("field_id=%d on node type_id=%d no longer required", nf.FieldID, typeID),
 			})
 		}
 	}
@@ -541,8 +508,8 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 				OldValue: of.Unique,
 				NewValue: nf.Unique,
 				Message: fmt.Sprintf(
-					"field %q on %q became unique (historical data may already violate)",
-					nf.Name, nodeName,
+					"field_id=%d on node type_id=%d became unique (historical data may already violate)",
+					nf.FieldID, typeID,
 				),
 			})
 		} else {
@@ -551,16 +518,46 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 				Path:     base,
 				OldValue: of.Unique,
 				NewValue: nf.Unique,
-				Message:  fmt.Sprintf("field %q on %q no longer unique", nf.Name, nodeName),
+				Message:  fmt.Sprintf("field_id=%d on node type_id=%d no longer unique", nf.FieldID, typeID),
 			})
 		}
 	}
+	if of.Indexed != nf.Indexed {
+		kind := ChangeKindFieldIndexedRemoved
+		msg := fmt.Sprintf("field_id=%d on node type_id=%d no longer indexed", nf.FieldID, typeID)
+		if nf.Indexed {
+			kind = ChangeKindFieldIndexedAdded
+			msg = fmt.Sprintf("field_id=%d on node type_id=%d now indexed (additive query index)", nf.FieldID, typeID)
+		}
+		out = append(out, Change{
+			Kind:     kind,
+			Path:     base,
+			OldValue: of.Indexed,
+			NewValue: nf.Indexed,
+			Message:  msg,
+		})
+	}
+	if of.Searchable != nf.Searchable {
+		kind := ChangeKindFieldSearchableRemoved
+		msg := fmt.Sprintf("field_id=%d on node type_id=%d no longer searchable", nf.FieldID, typeID)
+		if nf.Searchable {
+			kind = ChangeKindFieldSearchableAdded
+			msg = fmt.Sprintf("field_id=%d on node type_id=%d now searchable (additive FTS index)", nf.FieldID, typeID)
+		}
+		out = append(out, Change{
+			Kind:     kind,
+			Path:     base,
+			OldValue: of.Searchable,
+			NewValue: nf.Searchable,
+			Message:  msg,
+		})
+	}
 	if of.Deprecated != nf.Deprecated {
 		kind := ChangeKindFieldUndeprecated
-		msg := fmt.Sprintf("field %q on %q un-deprecated", nf.Name, nodeName)
+		msg := fmt.Sprintf("field_id=%d on node type_id=%d un-deprecated", nf.FieldID, typeID)
 		if nf.Deprecated {
 			kind = ChangeKindFieldDeprecated
-			msg = fmt.Sprintf("field %q on %q marked deprecated", nf.Name, nodeName)
+			msg = fmt.Sprintf("field_id=%d on node type_id=%d marked deprecated", nf.FieldID, typeID)
 		}
 		out = append(out, Change{
 			Kind:     kind,
@@ -577,7 +574,7 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 			OldValue: of.PII,
 			NewValue: nf.PII,
 			Message: fmt.Sprintf(
-				"field %q on %q pii flag toggled (%v → %v)", nf.Name, nodeName, of.PII, nf.PII,
+				"field_id=%d on node type_id=%d pii flag toggled (%v → %v)", nf.FieldID, typeID, of.PII, nf.PII,
 			),
 		})
 	}
@@ -588,21 +585,21 @@ func diffFieldBody(nodeName string, of, nf *FieldDef) []Change {
 			OldValue: derefInt32(of.RefTypeID),
 			NewValue: derefInt32(nf.RefTypeID),
 			Message: fmt.Sprintf(
-				"field %q on %q changed ref_type_id from %v to %v",
-				nf.Name, nodeName, derefInt32(of.RefTypeID), derefInt32(nf.RefTypeID),
+				"field_id=%d on node type_id=%d changed ref_type_id from %v to %v",
+				nf.FieldID, typeID, derefInt32(of.RefTypeID), derefInt32(nf.RefTypeID),
 			),
 		})
 	}
 	// Enum value comparisons (only meaningful when kind == enum).
 	if nf.Kind == KindEnum || of.Kind == KindEnum {
-		out = append(out, diffEnumValues(nodeName, nf.Name, of.EnumValues, nf.EnumValues)...)
+		out = append(out, diffEnumValues(typeID, nf.FieldID, of.EnumValues, nf.EnumValues)...)
 	}
 	return out
 }
 
-func diffEnumValues(nodeName, fieldName string, oldVals, newVals []string) []Change {
+func diffEnumValues(typeID int32, fieldID uint32, oldVals, newVals []string) []Change {
 	var out []Change
-	base := fmt.Sprintf("node:%s.field:%s.enum", nodeName, fieldName)
+	base := fmt.Sprintf("node:%d.field:%d.enum", typeID, fieldID)
 	// Reordering: any value present in both lists at different
 	// positions is a reorder (integer reuse).
 	oldPos := map[string]int{}
@@ -628,8 +625,8 @@ func diffEnumValues(nodeName, fieldName string, oldVals, newVals []string) []Cha
 			OldValue: oldVals,
 			NewValue: newVals,
 			Message: fmt.Sprintf(
-				"enum values for %q on %q reordered (integer reuse — old WAL events now resolve to a different value)",
-				fieldName, nodeName,
+				"enum values for field_id=%d on node type_id=%d reordered (integer reuse — old WAL events now resolve to a different value)",
+				fieldID, typeID,
 			),
 		})
 	}
@@ -640,7 +637,7 @@ func diffEnumValues(nodeName, fieldName string, oldVals, newVals []string) []Cha
 				Path:     fmt.Sprintf("%s:%s", base, v),
 				OldValue: v,
 				Message: fmt.Sprintf(
-					"enum value %q removed from %s.%s", v, nodeName, fieldName,
+					"enum value %q removed from node type_id=%d field_id=%d", v, typeID, fieldID,
 				),
 			})
 		}
@@ -652,7 +649,7 @@ func diffEnumValues(nodeName, fieldName string, oldVals, newVals []string) []Cha
 				Path:     fmt.Sprintf("%s:%s", base, v),
 				NewValue: v,
 				Message: fmt.Sprintf(
-					"enum value %q added to %s.%s", v, nodeName, fieldName,
+					"enum value %q added to node type_id=%d field_id=%d", v, typeID, fieldID,
 				),
 			})
 		}
@@ -660,65 +657,57 @@ func diffEnumValues(nodeName, fieldName string, oldVals, newVals []string) []Cha
 	return out
 }
 
+// diffCompositeUnique compares composite-unique constraints keyed by
+// their field_id-tuple signature (name-free, ADR-031). A constraint
+// present on one side only is added/removed; because the tuple IS the
+// identity, there is no "changed" case anymore — a different tuple is a
+// distinct constraint (one removed, one added). The ChangeKind enum
+// retains COMPOSITE_UNIQUE_CHANGED for output stability but it is no
+// longer emitted.
 func diffCompositeUnique(oldNode, newNode *NodeTypeDef, base string) []Change {
 	var out []Change
-	oldByName := map[string]CompositeUniqueDef{}
+	oldBySig := map[string][]uint32{}
 	for _, cu := range oldNode.CompositeUnique {
-		oldByName[cu.Name] = cu
+		oldBySig[signature(cu.FieldIDs)] = cu.FieldIDs
 	}
-	newByName := map[string]CompositeUniqueDef{}
+	newBySig := map[string][]uint32{}
 	for _, cu := range newNode.CompositeUnique {
-		newByName[cu.Name] = cu
+		newBySig[signature(cu.FieldIDs)] = cu.FieldIDs
 	}
-	oldNames := make([]string, 0, len(oldByName))
-	for k := range oldByName {
-		oldNames = append(oldNames, k)
+	oldSigs := make([]string, 0, len(oldBySig))
+	for k := range oldBySig {
+		oldSigs = append(oldSigs, k)
 	}
-	sort.Strings(oldNames)
-	for _, name := range oldNames {
-		ocu := oldByName[name]
-		ncu, ok := newByName[name]
-		if !ok {
-			out = append(out, Change{
-				Kind:     ChangeKindCompositeUniqueRemoved,
-				Path:     fmt.Sprintf("%s.composite_unique:%s", base, name),
-				OldValue: ocu.FieldIDs,
-				Message: fmt.Sprintf(
-					"composite_unique %q on %q removed", name, oldNode.Name,
-				),
-			})
+	sort.Strings(oldSigs)
+	for _, sig := range oldSigs {
+		if _, ok := newBySig[sig]; ok {
 			continue
 		}
-		if signature(ocu.FieldIDs) != signature(ncu.FieldIDs) {
-			out = append(out, Change{
-				Kind:     ChangeKindCompositeUniqueChanged,
-				Path:     fmt.Sprintf("%s.composite_unique:%s", base, name),
-				OldValue: ocu.FieldIDs,
-				NewValue: ncu.FieldIDs,
-				Message: fmt.Sprintf(
-					"composite_unique %q on %q changed fields from %v to %v",
-					name, oldNode.Name, ocu.FieldIDs, ncu.FieldIDs,
-				),
-			})
-		}
+		out = append(out, Change{
+			Kind:     ChangeKindCompositeUniqueRemoved,
+			Path:     fmt.Sprintf("%s.composite_unique:%s", base, sig),
+			OldValue: oldBySig[sig],
+			Message: fmt.Sprintf(
+				"composite_unique %s on node type_id=%d removed", sig, oldNode.TypeID,
+			),
+		})
 	}
-	newNames := make([]string, 0, len(newByName))
-	for k := range newByName {
-		newNames = append(newNames, k)
+	newSigs := make([]string, 0, len(newBySig))
+	for k := range newBySig {
+		newSigs = append(newSigs, k)
 	}
-	sort.Strings(newNames)
-	for _, name := range newNames {
-		if _, ok := oldByName[name]; ok {
+	sort.Strings(newSigs)
+	for _, sig := range newSigs {
+		if _, ok := oldBySig[sig]; ok {
 			continue
 		}
-		ncu := newByName[name]
 		out = append(out, Change{
 			Kind:     ChangeKindCompositeUniqueAdded,
-			Path:     fmt.Sprintf("%s.composite_unique:%s", base, name),
-			NewValue: ncu.FieldIDs,
+			Path:     fmt.Sprintf("%s.composite_unique:%s", base, sig),
+			NewValue: newBySig[sig],
 			Message: fmt.Sprintf(
-				"composite_unique %q on %q added (fields=%v) — existing rows may violate",
-				name, newNode.Name, ncu.FieldIDs,
+				"composite_unique %s on node type_id=%d added — existing rows may violate",
+				sig, newNode.TypeID,
 			),
 		})
 	}
@@ -733,8 +722,9 @@ func edgesByID(r *Registry) map[int32]*EdgeTypeDef {
 	if r == nil {
 		return map[int32]*EdgeTypeDef{}
 	}
-	out := make(map[int32]*EdgeTypeDef, len(r.edges))
-	for id, e := range r.edges {
+	s := r.load()
+	out := make(map[int32]*EdgeTypeDef, len(s.edges))
+	for id, e := range s.edges {
 		out[id] = e
 	}
 	return out
@@ -756,16 +746,17 @@ func diffEdges(oldR, newR *Registry) []Change {
 		if !ok {
 			out = append(out, Change{
 				Kind:     ChangeKindEdgeRemoved,
-				Path:     fmt.Sprintf("edge:%s", oe.Name),
-				OldValue: oe.Name,
+				Path:     fmt.Sprintf("edge:%d", oe.EdgeID),
+				OldValue: oe.EdgeID,
 				Message: fmt.Sprintf(
-					"edge type %q (edge_id=%d) removed", oe.Name, oe.EdgeID,
+					"edge type edge_id=%d removed", oe.EdgeID,
 				),
 			})
 			continue
 		}
 		out = append(out, diffEdgeBody(oe, ne)...)
 	}
+	oldReservedEdges := int32Set(reservedEdgeIDs(oldR))
 	newIDs := make([]int32, 0, len(newByID))
 	for id := range newByID {
 		newIDs = append(newIDs, id)
@@ -776,12 +767,26 @@ func diffEdges(oldR, newR *Registry) []Change {
 			continue
 		}
 		ne := newByID[id]
+		// ADR-032: a baseline-reserved edge_id reappearing as a live edge
+		// is a BREAKING reuse.
+		if _, reserved := oldReservedEdges[id]; reserved {
+			out = append(out, Change{
+				Kind:     ChangeKindEdgeIDReused,
+				Path:     fmt.Sprintf("edge:%d", ne.EdgeID),
+				NewValue: ne.EdgeID,
+				Message: fmt.Sprintf(
+					"edge_id=%d was reserved in the baseline but is re-introduced as a live edge (id reuse)",
+					ne.EdgeID,
+				),
+			})
+			continue
+		}
 		out = append(out, Change{
 			Kind:     ChangeKindEdgeAdded,
-			Path:     fmt.Sprintf("edge:%s", ne.Name),
-			NewValue: ne.Name,
+			Path:     fmt.Sprintf("edge:%d", ne.EdgeID),
+			NewValue: ne.EdgeID,
 			Message: fmt.Sprintf(
-				"edge type %q (edge_id=%d) added", ne.Name, ne.EdgeID,
+				"edge type edge_id=%d added", ne.EdgeID,
 			),
 		})
 	}
@@ -790,7 +795,7 @@ func diffEdges(oldR, newR *Registry) []Change {
 
 func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 	var out []Change
-	base := fmt.Sprintf("edge:%s", ne.Name)
+	base := fmt.Sprintf("edge:%d", ne.EdgeID)
 	if oe.FromTypeID != ne.FromTypeID {
 		out = append(out, Change{
 			Kind:     ChangeKindEdgeFromTypeChanged,
@@ -798,7 +803,7 @@ func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 			OldValue: oe.FromTypeID,
 			NewValue: ne.FromTypeID,
 			Message: fmt.Sprintf(
-				"edge %q from_type_id changed from %d to %d", ne.Name, oe.FromTypeID, ne.FromTypeID,
+				"edge edge_id=%d from_type_id changed from %d to %d", ne.EdgeID, oe.FromTypeID, ne.FromTypeID,
 			),
 		})
 	}
@@ -809,7 +814,7 @@ func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 			OldValue: oe.ToTypeID,
 			NewValue: ne.ToTypeID,
 			Message: fmt.Sprintf(
-				"edge %q to_type_id changed from %d to %d", ne.Name, oe.ToTypeID, ne.ToTypeID,
+				"edge edge_id=%d to_type_id changed from %d to %d", ne.EdgeID, oe.ToTypeID, ne.ToTypeID,
 			),
 		})
 	}
@@ -821,7 +826,7 @@ func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 				OldValue: oe.UniquePerFrom,
 				NewValue: ne.UniquePerFrom,
 				Message: fmt.Sprintf(
-					"edge %q unique_per_from added (historical edges may violate)", ne.Name,
+					"edge edge_id=%d unique_per_from added (historical edges may violate)", ne.EdgeID,
 				),
 			})
 		} else {
@@ -830,7 +835,7 @@ func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 				Path:     base,
 				OldValue: oe.UniquePerFrom,
 				NewValue: ne.UniquePerFrom,
-				Message:  fmt.Sprintf("edge %q unique_per_from removed", ne.Name),
+				Message:  fmt.Sprintf("edge edge_id=%d unique_per_from removed", ne.EdgeID),
 			})
 		}
 	}
@@ -841,8 +846,8 @@ func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 			OldValue: string(normaliseOnExit(oe.OnSubjectExit)),
 			NewValue: string(normaliseOnExit(ne.OnSubjectExit)),
 			Message: fmt.Sprintf(
-				"edge %q on_subject_exit changed from %s to %s (GDPR delete semantics shift)",
-				ne.Name, normaliseOnExit(oe.OnSubjectExit), normaliseOnExit(ne.OnSubjectExit),
+				"edge edge_id=%d on_subject_exit changed from %s to %s (GDPR delete semantics shift)",
+				ne.EdgeID, normaliseOnExit(oe.OnSubjectExit), normaliseOnExit(ne.OnSubjectExit),
 			),
 		})
 	}
@@ -853,7 +858,7 @@ func diffEdgeBody(oe, ne *EdgeTypeDef) []Change {
 // Helpers
 // -----------------------------------------------------------------------------
 
-func subjectFieldEqual(a, b *string) bool {
+func subjectFieldEqual(a, b *uint32) bool {
 	if a == nil && b == nil {
 		return true
 	}
@@ -863,9 +868,9 @@ func subjectFieldEqual(a, b *string) bool {
 	return *a == *b
 }
 
-func derefStr(p *string) string {
+func derefUint32(p *uint32) any {
 	if p == nil {
-		return ""
+		return nil
 	}
 	return *p
 }
@@ -923,7 +928,7 @@ func dataPolicyRank(p DataPolicy) int {
 	return 2
 }
 
-func diffDataPolicy(oldP, newP *DataPolicy, base, nodeName string) []Change {
+func diffDataPolicy(oldP, newP *DataPolicy, base string, typeID int32) []Change {
 	if oldP == nil && newP == nil {
 		return nil
 	}
@@ -945,7 +950,7 @@ func diffDataPolicy(oldP, newP *DataPolicy, base, nodeName string) []Change {
 			OldValue: string(a),
 			NewValue: string(b),
 			Message: fmt.Sprintf(
-				"node type %q data_policy tightened from %s to %s", nodeName, a, b,
+				"node type_id=%d data_policy tightened from %s to %s", typeID, a, b,
 			),
 		}}
 	}
@@ -955,8 +960,8 @@ func diffDataPolicy(oldP, newP *DataPolicy, base, nodeName string) []Change {
 		OldValue: string(a),
 		NewValue: string(b),
 		Message: fmt.Sprintf(
-			"node type %q data_policy loosened from %s to %s — historical rows lose protection",
-			nodeName, a, b,
+			"node type_id=%d data_policy loosened from %s to %s — historical rows lose protection",
+			typeID, a, b,
 		),
 	}}
 }

@@ -108,26 +108,23 @@ func TestGetSchema_PopulatedRegistry(t *testing.T) {
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: 1,
-		Name:   "User",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "email", Kind: schema.KindString, Required: true},
-			{FieldID: 2, Name: "display_name", Kind: schema.KindString},
+			{FieldID: 1, Kind: schema.KindString, Required: true},
+			{FieldID: 2, Kind: schema.KindString},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode User: %v", err)
 	}
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: 2,
-		Name:   "Task",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "title", Kind: schema.KindString, Required: true},
+			{FieldID: 1, Kind: schema.KindString, Required: true},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode Task: %v", err)
 	}
 	if err := reg.RegisterEdge(&schema.EdgeTypeDef{
 		EdgeID:        10,
-		Name:          "AssignedTo",
 		FromTypeID:    2,
 		ToTypeID:      1,
 		OnSubjectExit: schema.OnSubjectExitBoth,
@@ -215,8 +212,8 @@ func TestGetSchema_ContractPin(t *testing.T) {
 			build: func() *Server {
 				reg := schema.NewRegistry()
 				_ = reg.RegisterNode(&schema.NodeTypeDef{
-					TypeID: 1, Name: "X",
-					Fields: []schema.FieldDef{{FieldID: 1, Name: "a", Kind: schema.KindString}},
+					TypeID: 1,
+					Fields: []schema.FieldDef{{FieldID: 1, Kind: schema.KindString}},
 				})
 				if _, err := reg.Freeze(); err != nil {
 					t.Fatalf("Freeze: %v", err)

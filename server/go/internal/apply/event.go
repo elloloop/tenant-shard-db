@@ -42,6 +42,18 @@ type Event = wal.Event
 type OpType string
 
 const (
+	// OpRegisterSchema is the SELF-DESCRIBING WRITES leading op
+	// (establish-or-reject). When an ExecuteAtomic request carries a
+	// SchemaDescriptor whose client fingerprint differs from the server's,
+	// the handler prepends this op to the WAL event. The applier
+	// materializes it BEFORE the data ops, in the SAME transaction:
+	// register-if-absent into the process-wide registry, no-op if
+	// identical, ALREADY_EXISTS/FAILED_PRECONDITION if conflicting, and
+	// ensure the per-tenant indexes for the touched node types. Because
+	// the schema lives in the WAL, replaying the log deterministically
+	// rebuilds the registry + indexes.
+	OpRegisterSchema OpType = "register_schema"
+
 	// Steady-state ops.
 	OpCreateNode OpType = "create_node"
 	OpUpdateNode OpType = "update_node"

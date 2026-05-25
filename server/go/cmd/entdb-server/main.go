@@ -34,7 +34,6 @@ import (
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/testseed"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -132,55 +131,26 @@ func main() {
 	archiveBatchBytes := flag.Int("archive-batch-bytes", 10<<20, "approximate maximum uncompressed bytes per archive object")
 	archivePollTimeout := flag.Duration("archive-poll-timeout", time.Second, "how long the archive sidecar polls for WAL records")
 	archiveRetryBackoff := flag.Duration("archive-retry-backoff", 5*time.Second, "retry backoff after archive poll/write failures")
-	// --seed-tenant is a test-only flag honoured by the cross-impl
-	// contract harness (docs/go-port/shared/test-harness.md). When set,
-	// the binary pre-creates a tenant + the actors / nodes the chosen
-	// --seed-profile expects to find. Empty disables seeding.
-	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant before serving (paired with --seed-profile)")
-	// --seed-profile selects the fixture shape applied to --seed-tenant.
-	//   - "none" (default): no seeding (legacy --seed-tenant without
-	//     --seed-profile defaults to "contract" for backwards
-	//     compatibility with the harness).
-	//   - "contract": User/Task/AssignedTo schema + alice/bob users +
-	//     seed node + seed-1 receipt. Matches the cross-impl contract
-	//     suite (tests/python/integration/test_grpc_contract.py).
-	//   - "e2e": User/Product/Order schema (typeIDs 8001/8002/8003) +
-	//     Purchased/PlacedOrder/OrderContains edges + e2e-runner user
-	//     as tenant owner. Matches tests/python/e2e/.
-	seedProfile := flag.String("seed-profile", "", "test-only: seed profile {none, contract, e2e}; default 'contract' when --seed-tenant is set")
 	flag.Parse()
 
 	if strings.TrimSpace(*dataDir) == "" {
 		log.Fatalf("entdb-server: --data-dir is required")
 	}
 
-	// Resolve --seed-profile. Empty profile + non-empty --seed-tenant
-	// defaults to "contract" so the pre- harness invocation
-	// (--seed-tenant=acme without --seed-profile) keeps working.
-	profile := *seedProfile
-	if profile == "" {
-		if *seedTenant != "" {
-			profile = "contract"
-		} else {
-			profile = "none"
-		}
-	}
-	switch profile {
-	case "none", "contract", "e2e":
-		// ok
-	default:
-		log.Fatalf("entdb-server: invalid --seed-profile %q (want none|contract|e2e)", profile)
-	}
-
 	srvOpts := []api.Option{}
 
-	registry, err := schemaRegistryForProfile(profile)
-	if err != nil {
-		log.Fatalf("entdb-server: schema registry: %v", err)
-	}
-	if registry != nil {
-		srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
-	}
+	// Empty-boot, runtime-mutable schema registry (self-describing writes).
+	// Nothing is imported at boot — no schema, no data. Types are registered
+	// as writes arrive: the ExecuteAtomic handler rides each touched type in
+	// the WAL register_schema op and the applier registers it
+	// establish-or-reject, creating the per-tenant indexes. The registry is
+	// rebuilt deterministically from the WAL on every boot via the applier's
+	// replay. It is present (non-nil) so the server advertises a fingerprint
+	// and enforces uniqueness/indexes once a type is known, and it is NOT
+	// frozen so it can grow at runtime.
+	registry := schema.NewRegistry()
+	srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
+	var err error
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -482,31 +452,6 @@ func main() {
 		log.Printf("entdb-server: legal-hold-lift worker idle (archive sidecar disabled; nothing to sweep)")
 	}
 
-	// Test-only seed: the cross-impl harnesses boot the binary with
-	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
-	// fixture state to be queryable before the first RPC arrives.
-	// Skipped silently when profile=none.
-	if profile != "none" {
-		if *seedTenant == "" {
-			log.Fatalf("entdb-server: --seed-profile=%s requires --seed-tenant", profile)
-		}
-		switch profile {
-		case "contract":
-			// Seed through the shared producer; the applier goroutine
-			// started above consumes the event and writes the receipt +
-			// offset rows (GitHub issue #505).
-			if err := testseed.SeedTenantContract(ctx, global, canonical, walImpl, *walTopic, *seedTenant); err != nil {
-				log.Fatalf("entdb-server: seed tenant %q (contract): %v", *seedTenant, err)
-			}
-			log.Printf("entdb-server: seeded tenant %q with contract profile (alice=owner, bob=member, seed node + receipt)", *seedTenant)
-		case "e2e":
-			if err := testseed.SeedTenantE2E(ctx, global, canonical, *seedTenant); err != nil {
-				log.Fatalf("entdb-server: seed tenant %q (e2e): %v", *seedTenant, err)
-			}
-			log.Printf("entdb-server: seeded tenant %q with e2e profile (e2e-runner=owner, User/Product/Order schema)", *seedTenant)
-		}
-	}
-
 	grpcServerOpts, tlsEnabled, tlsReloader, err := grpcServerTLSOptions(serverTLSConfig{
 		certFile:          *tlsCert,
 		keyFile:           *tlsKey,
@@ -666,37 +611,6 @@ func main() {
 			log.Printf("entdb-server: legal-hold-lift worker exited: %v", err)
 		}
 	}
-}
-
-// schemaRegistryForProfile returns nil for profile=none because a nil
-// registry is the API server's schema-less mode. An empty frozen
-// registry is materially different: QueryNodes rejects every type_id
-// as unknown.
-func schemaRegistryForProfile(profile string) (*schema.Registry, error) {
-	switch profile {
-	case "none":
-		return nil, nil
-	case "contract", "e2e":
-		// handled below
-	default:
-		return nil, fmt.Errorf("invalid profile %q", profile)
-	}
-
-	registry := schema.NewRegistry()
-	switch profile {
-	case "contract":
-		if err := testseed.RegisterContractSchema(registry); err != nil {
-			return nil, fmt.Errorf("register contract schema: %w", err)
-		}
-	case "e2e":
-		if err := testseed.RegisterE2ESchema(registry); err != nil {
-			return nil, fmt.Errorf("register e2e schema: %w", err)
-		}
-	}
-	if _, err := registry.Freeze(); err != nil {
-		return nil, fmt.Errorf("freeze registry: %w", err)
-	}
-	return registry, nil
 }
 
 // splitBrokers parses a comma-separated broker list and returns

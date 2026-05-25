@@ -37,6 +37,20 @@ var (
 	// wrapper below. See GitHub issue #500.
 	ErrPreconditionFailed = fmt.Errorf("%w: precondition failed", errs.ErrFailedPrecondition)
 
+	// ErrSchemaConflict is the sentinel returned when a register_schema
+	// op (SELF-DESCRIBING WRITES) supplies a type whose identity
+	// (type_id or name) is already registered with a DIFFERENT
+	// definition. Establish-or-reject: a type absent is registered, a
+	// type identical is a no-op, a type that conflicts is rejected. Like
+	// ErrPreconditionFailed this is an EXPECTED, DETERMINISTIC outcome
+	// (re-applying the same event against the same registry always
+	// reproduces it), NOT a poison: the applier aborts the batch,
+	// memoizes the conflict in the idempotency cache with status
+	// FAILED_PRECONDITION, and advances the WAL offset without halting.
+	// Online evolution / ALTER is out of scope, so a conflicting
+	// redefinition never silently overwrites the registered type.
+	ErrSchemaConflict = fmt.Errorf("%w: schema conflict", errs.ErrFailedPrecondition)
+
 	// ErrUniqueViolation is the sentinel returned when a create/update
 	// op trips a declared single-field or composite unique constraint.
 	// Like ErrPreconditionFailed this is an EXPECTED, deterministic
@@ -119,6 +133,31 @@ func AsPreconditionFailure(err error) *PreconditionFailure {
 	var pf *PreconditionFailure
 	if errors.As(err, &pf) {
 		return pf
+	}
+	return nil
+}
+
+// SchemaConflict is the typed wrapper carried alongside
+// ErrSchemaConflict. Detail is a human-readable description of the
+// conflicting type identity (which type_id / name disagreed). It is
+// memoized verbatim so a same-idempotency-key retry replays the
+// identical failure.
+type SchemaConflict struct {
+	Detail string
+}
+
+// Error implements error.
+func (e *SchemaConflict) Error() string { return "entdb: " + e.Detail }
+
+// Unwrap allows errors.Is(err, ErrSchemaConflict) on the typed wrapper.
+func (e *SchemaConflict) Unwrap() error { return ErrSchemaConflict }
+
+// AsSchemaConflict extracts a *SchemaConflict from err via errors.As,
+// returning nil when the chain has no such value.
+func AsSchemaConflict(err error) *SchemaConflict {
+	var sc *SchemaConflict
+	if errors.As(err, &sc) {
+		return sc
 	}
 	return nil
 }

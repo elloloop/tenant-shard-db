@@ -13,7 +13,6 @@
 package schema
 
 import (
-	"errors"
 	"fmt"
 )
 
@@ -91,14 +90,16 @@ type AclEntry struct {
 // FieldDef describes a single field on a node or edge type. JSON field
 // names use snake_case as defined by the schema JSON contract.
 //
+// Per ADR-031 the type system is NAME-FREE: a field is identified solely
+// by its FieldID (the proto field number per ADR-018). The human-facing
+// name lives only in the client's proto and is resolved by the SDK.
+//
 // Invariants enforced by Validate:
 //   - FieldID in [1, 65535]
-//   - Name non-empty
 //   - EnumValues non-empty when Kind == KindEnum
 //   - RefTypeID set when Kind == KindReference
 type FieldDef struct {
 	FieldID     uint32    `json:"field_id"`
-	Name        string    `json:"name"`
 	Kind        FieldKind `json:"kind"`
 	Required    bool      `json:"required,omitempty"`
 	Default     any       `json:"default,omitempty"`
@@ -114,7 +115,7 @@ type FieldDef struct {
 
 // Validate checks the field invariants. Returns an error rather than
 // panicking so loader callers can collect every violation in a single
-// pass.
+// pass. Fields are identified by field_id (name-free, ADR-031).
 func (f *FieldDef) Validate() error {
 	if f.FieldID == 0 {
 		return fmt.Errorf("field_id must be positive, got %d", f.FieldID)
@@ -122,45 +123,40 @@ func (f *FieldDef) Validate() error {
 	if f.FieldID > 65535 {
 		return fmt.Errorf("field_id must be <= 65535, got %d", f.FieldID)
 	}
-	if f.Name == "" {
-		return errors.New("field name cannot be empty")
-	}
 	if !f.Kind.Valid() {
-		return fmt.Errorf("invalid field kind %q for field %q", f.Kind, f.Name)
+		return fmt.Errorf("invalid field kind %q for field_id %d", f.Kind, f.FieldID)
 	}
 	if f.Kind == KindEnum && len(f.EnumValues) == 0 {
-		return fmt.Errorf("enum_values required for ENUM field %q", f.Name)
+		return fmt.Errorf("enum_values required for ENUM field_id %d", f.FieldID)
 	}
 	if f.Kind == KindReference && f.RefTypeID == nil {
-		return fmt.Errorf("ref_type_id required for REFERENCE field %q", f.Name)
+		return fmt.Errorf("ref_type_id required for REFERENCE field_id %d", f.FieldID)
 	}
 	return nil
 }
 
-// CompositeUniqueDef declares a named multi-field unique constraint.
-// Wire field names are stable and round-trip through the JSON contract.
+// CompositeUniqueDef declares a multi-field unique constraint. Per
+// ADR-031 a composite constraint is identified solely by its FieldIDs
+// tuple — there is no constraint name. The index suffix is derived from
+// the tuple (see store.compositeIndexSuffix).
 type CompositeUniqueDef struct {
-	Name     string   `json:"name"`
 	FieldIDs []uint32 `json:"field_ids"`
 }
 
 // Validate enforces the CompositeUniqueDef invariants.
 func (c *CompositeUniqueDef) Validate() error {
-	if c.Name == "" {
-		return errors.New("CompositeUniqueDef name cannot be empty")
-	}
 	if len(c.FieldIDs) < 2 {
 		return fmt.Errorf(
-			"CompositeUniqueDef %q must reference at least 2 fields, got %d",
-			c.Name, len(c.FieldIDs),
+			"CompositeUniqueDef must reference at least 2 fields, got %d",
+			len(c.FieldIDs),
 		)
 	}
 	seen := make(map[uint32]struct{}, len(c.FieldIDs))
 	for _, fid := range c.FieldIDs {
 		if _, dup := seen[fid]; dup {
 			return fmt.Errorf(
-				"CompositeUniqueDef %q has duplicate field_id %d",
-				c.Name, fid,
+				"CompositeUniqueDef %s has duplicate field_id %d",
+				signature(c.FieldIDs), fid,
 			)
 		}
 		seen[fid] = struct{}{}
@@ -168,10 +164,10 @@ func (c *CompositeUniqueDef) Validate() error {
 	return nil
 }
 
-// NodeTypeDef describes a node type in the schema registry.
+// NodeTypeDef describes a node type in the schema registry. Per ADR-031
+// the type is identified solely by its TypeID — there is no type name.
 type NodeTypeDef struct {
-	TypeID int32  `json:"type_id"`
-	Name   string `json:"name"`
+	TypeID int32 `json:"type_id"`
 	// Fields is always emitted (even when empty) — the JSON contract
 	// always includes the "fields" key.
 	Fields          []FieldDef           `json:"fields"`
@@ -179,68 +175,70 @@ type NodeTypeDef struct {
 	Description     string               `json:"description,omitempty"`
 	DefaultACL      []AclEntry           `json:"default_acl,omitempty"`
 	DataPolicy      *DataPolicy          `json:"data_policy,omitempty"`
-	SubjectField    *string              `json:"subject_field,omitempty"`
+	SubjectField    *uint32              `json:"subject_field,omitempty"`
 	LegalBasis      *string              `json:"legal_basis,omitempty"`
 	CompositeUnique []CompositeUniqueDef `json:"composite_unique,omitempty"`
+	// ReservedFieldIDs is the tombstone list for removed field_ids. Per
+	// ADR-032 removing a field is SAFE only when its id is then reserved
+	// here so it can never be reused for a different field — the same
+	// guarantee proto's native `reserved` gives. The compat checker treats
+	// a live field_id that appears in this list (i.e. a removed/reserved
+	// id brought back to life) as a BREAKING reuse. Emitted only when
+	// non-empty so it does not perturb the fingerprint of schemas that
+	// don't reserve.
+	ReservedFieldIDs []uint32 `json:"reserved_field_ids,omitempty"`
 }
 
-// Validate checks NodeTypeDef invariants: positive type_id, non-empty
-// name, no duplicate field_ids/names, and composite_unique constraints
-// reference known fields with unique names and unique field-id
-// signatures.
+// Validate checks NodeTypeDef invariants: positive type_id, no duplicate
+// field_ids, and composite_unique constraints reference known fields
+// with unique field-id signatures (the tuple IS the constraint identity,
+// ADR-031).
 func (n *NodeTypeDef) Validate() error {
 	if n.TypeID <= 0 {
 		return fmt.Errorf("type_id must be positive, got %d", n.TypeID)
 	}
-	if n.Name == "" {
-		return errors.New("node type name cannot be empty")
-	}
 
 	fieldIDs := make(map[uint32]struct{}, len(n.Fields))
-	fieldNames := make(map[string]struct{}, len(n.Fields))
 	for i := range n.Fields {
 		f := &n.Fields[i]
 		if err := f.Validate(); err != nil {
-			return fmt.Errorf("node type %q: %w", n.Name, err)
+			return fmt.Errorf("node type_id %d: %w", n.TypeID, err)
 		}
 		if _, dup := fieldIDs[f.FieldID]; dup {
-			return fmt.Errorf("duplicate field_id %d in node type %q", f.FieldID, n.Name)
+			return fmt.Errorf("duplicate field_id %d in node type_id %d", f.FieldID, n.TypeID)
 		}
 		fieldIDs[f.FieldID] = struct{}{}
-		if _, dup := fieldNames[f.Name]; dup {
-			return fmt.Errorf("duplicate field name %q in node type %q", f.Name, n.Name)
+	}
+
+	for _, rid := range n.ReservedFieldIDs {
+		if _, live := fieldIDs[rid]; live {
+			return fmt.Errorf(
+				"node type_id %d declares field_id %d both live and reserved",
+				n.TypeID, rid,
+			)
 		}
-		fieldNames[f.Name] = struct{}{}
 	}
 
 	if len(n.CompositeUnique) > 0 {
-		seenNames := make(map[string]struct{}, len(n.CompositeUnique))
 		seenSig := make(map[string]struct{}, len(n.CompositeUnique))
 		for i := range n.CompositeUnique {
 			cu := &n.CompositeUnique[i]
 			if err := cu.Validate(); err != nil {
-				return fmt.Errorf("node type %q: %w", n.Name, err)
+				return fmt.Errorf("node type_id %d: %w", n.TypeID, err)
 			}
 			for _, fid := range cu.FieldIDs {
 				if _, ok := fieldIDs[fid]; !ok {
 					return fmt.Errorf(
-						"composite_unique %q on node type %q references unknown field_id %d",
-						cu.Name, n.Name, fid,
+						"composite_unique %s on node type_id %d references unknown field_id %d",
+						signature(cu.FieldIDs), n.TypeID, fid,
 					)
 				}
 			}
-			if _, dup := seenNames[cu.Name]; dup {
-				return fmt.Errorf(
-					"duplicate composite_unique name %q on node type %q",
-					cu.Name, n.Name,
-				)
-			}
-			seenNames[cu.Name] = struct{}{}
 			sig := signature(cu.FieldIDs)
 			if _, dup := seenSig[sig]; dup {
 				return fmt.Errorf(
-					"duplicate composite_unique constraint on node type %q: fields %s already declared",
-					n.Name, sig,
+					"duplicate composite_unique constraint on node type_id %d: fields %s already declared",
+					n.TypeID, sig,
 				)
 			}
 			seenSig[sig] = struct{}{}
@@ -249,18 +247,8 @@ func (n *NodeTypeDef) Validate() error {
 	return nil
 }
 
-// GetField returns the named field (or nil if absent). Linear scan;
-// the registry caches per-type name->field maps for hot-path lookups.
-func (n *NodeTypeDef) GetField(name string) *FieldDef {
-	for i := range n.Fields {
-		if n.Fields[i].Name == name {
-			return &n.Fields[i]
-		}
-	}
-	return nil
-}
-
-// GetFieldByID is the field-id counterpart of GetField.
+// GetFieldByID returns the field with the given field_id (or nil if
+// absent). Fields are identified by id only (ADR-031).
 func (n *NodeTypeDef) GetFieldByID(id uint32) *FieldDef {
 	for i := range n.Fields {
 		if n.Fields[i].FieldID == id {
@@ -270,11 +258,12 @@ func (n *NodeTypeDef) GetFieldByID(id uint32) *FieldDef {
 	return nil
 }
 
-// EdgeTypeDef describes an edge type in the schema registry. JSON keys
-// use from_type_id / to_type_id (integer IDs, not NodeTypeDef pointers).
+// EdgeTypeDef describes an edge type in the schema registry. Per ADR-031
+// the type is identified solely by its EdgeID — there is no edge name.
+// JSON keys use from_type_id / to_type_id (integer IDs, not NodeTypeDef
+// pointers).
 type EdgeTypeDef struct {
 	EdgeID        int32       `json:"edge_id"`
-	Name          string      `json:"name"`
 	FromTypeID    int32       `json:"from_type_id"`
 	ToTypeID      int32       `json:"to_type_id"`
 	Props         []FieldDef  `json:"props"`
@@ -285,31 +274,35 @@ type EdgeTypeDef struct {
 	// OnSubjectExit is always emitted (defaults to "both"); the JSON
 	// contract writes this key unconditionally.
 	OnSubjectExit OnSubjectExit `json:"on_subject_exit"`
+	// ReservedFieldIDs is the tombstone list for removed prop field_ids
+	// (same semantics as NodeTypeDef.ReservedFieldIDs, per ADR-032).
+	ReservedFieldIDs []uint32 `json:"reserved_field_ids,omitempty"`
 }
 
-// Validate checks EdgeTypeDef invariants: positive edge_id, non-empty
-// name, no duplicate prop field_ids.
+// Validate checks EdgeTypeDef invariants: positive edge_id, no duplicate
+// prop field_ids (name-free, ADR-031).
 func (e *EdgeTypeDef) Validate() error {
 	if e.EdgeID <= 0 {
 		return fmt.Errorf("edge_id must be positive, got %d", e.EdgeID)
-	}
-	if e.Name == "" {
-		return errors.New("edge type name cannot be empty")
 	}
 	propIDs := make(map[uint32]struct{}, len(e.Props))
 	for i := range e.Props {
 		p := &e.Props[i]
 		if err := p.Validate(); err != nil {
-			return fmt.Errorf("edge type %q: %w", e.Name, err)
+			return fmt.Errorf("edge type_id %d: %w", e.EdgeID, err)
 		}
 		if _, dup := propIDs[p.FieldID]; dup {
-			return fmt.Errorf("duplicate field_id %d in edge type %q", p.FieldID, e.Name)
+			return fmt.Errorf("duplicate field_id %d in edge type_id %d", p.FieldID, e.EdgeID)
 		}
 		propIDs[p.FieldID] = struct{}{}
 	}
-	if e.OnSubjectExit == "" {
-		// Defaults to BOTH; do not rewrite the source field —
-		// the loader normalises.
+	for _, rid := range e.ReservedFieldIDs {
+		if _, live := propIDs[rid]; live {
+			return fmt.Errorf(
+				"edge type_id %d declares field_id %d both live and reserved",
+				e.EdgeID, rid,
+			)
+		}
 	}
 	return nil
 }

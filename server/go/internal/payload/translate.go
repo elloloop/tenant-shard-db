@@ -1,14 +1,15 @@
-// Package payload is the gRPC-boundary translator between name-keyed
+// Package payload is the gRPC-boundary translator between id-keyed
 // google.protobuf.Struct payloads (the wire) and id-keyed map[uint32]any
 // payloads (storage / WAL events).
 //
-// Per CLAUDE.md invariant #6 ("field IDs, not field names, on disk")
-// translation happens at exactly two points: ingress in the gRPC handler
-// layer (StructToPayload, FilterNamesToIDs) and egress that converts a
-// stored id-keyed JSON blob back to names for SDKs that need it
-// (PayloadJSONToNames). The egress to *structpb.Struct (PayloadToStruct)
-// is a zero-translation wrap — the wire stays id-keyed and the SDK does
-// the id→name lookup on the client side.
+// NAME-FREE per ADR-031 (and CLAUDE.md invariant #6, "field IDs not
+// names on disk"): the server never stores, transmits, or translates a
+// field name. Wire payloads, filters, and CAS preconditions are keyed by
+// field_id (decimal-string keys, e.g. {"1": value}); the SDK resolves
+// names client-side from the proto descriptor. The translation that
+// remains here is purely field-KIND coercion (BYTES <-> base64,
+// TIMESTAMP/INTEGER number narrowing) driven by the registry looked up
+// by type_id.
 //
 // Spec: docs/go-port/shared/payload-translation.md.
 package payload
@@ -27,31 +28,24 @@ import (
 // id-keyed internal payload representation map[uint32]any. Used on the
 // ingress side of CreateNode / UpdateNode.
 //
-// Wire shape (per CLAUDE.md invariant #6):
-// The wire payload is keyed by stringified field_ids ("1", "2", ...).
-// The SDKs do the name→id translation client-side from the proto
-// descriptor (where fd.Number() IS the field_id per ADR-006). Storage
-// and WAL events deal exclusively with id-keyed maps; renames are
-// metadata-only, so storage cannot key on names.
+// NAME-FREE per ADR-031: the wire payload MUST be keyed by stringified
+// field_ids ("1", "2", ...). The SDK resolves names to field_ids
+// client-side from the proto descriptor (fd.Number() IS the field_id per
+// ADR-006). Non-digit (name) keys are rejected with INVALID_ARGUMENT —
+// the server never translates a name.
 //
 // Behavior:
 //
 //   - nil / empty s -> empty map (never nil) so downstream JSON
 //     marshalling stays deterministic.
-//   - reg == nil OR nodeTypeName == "" OR registry has no entry for
-//     nodeTypeName -> schema-less ingress: only digit-string keys are
-//     accepted. Name-keyed payloads on an unregistered type are
-//     rejected with INVALID_ARGUMENT (rather than silently dropped)
-//     so the client learns immediately that its SDK is misconfigured
-//     or out of date.
-//   - Schema-aware path:
-//   - Digit-only key matching a known field_id is kept as-is.
-//   - String key matching a field name is translated to its id
-//     (back-compat for pre-fix SDKs; new SDKs send id-keyed and
-//     skip this path).
-//   - Unknown name keys are dropped silently (ingress is permissive
-//     so legacy clients sending deprecated fields don't break writes).
-//   - Field-kind coercion (only when schema is known):
+//   - A non-digit key is INVALID_ARGUMENT (the SDK is misconfigured or
+//     out of date).
+//   - A digit key matching a known field_id (when reg+typeID resolve a
+//     type) is kind-coerced; a digit key not known on the type is kept
+//     as-is (ingress is permissive — a future-schema field round-trips).
+//   - Schema-less (reg == nil OR typeID unknown): digit keys pass
+//     through with no kind coercion.
+//   - Field-kind coercion (only when the type is known):
 //   - BYTES: structpb has no bytes type; the wire carries base64
 //     strings. Decode to []byte for storage.
 //   - TIMESTAMP / INTEGER: structpb represents numbers as float64.
@@ -62,60 +56,28 @@ import (
 //
 // Order independence is a property of map iteration; do not rely on
 // Struct.Fields insertion order anywhere downstream.
-func StructToPayload(reg *schema.Registry, nodeTypeName string, s *structpb.Struct) (map[uint32]any, error) {
+func StructToPayload(reg *schema.Registry, typeID int32, s *structpb.Struct) (map[uint32]any, error) {
 	if s == nil || len(s.GetFields()) == 0 {
 		return map[uint32]any{}, nil
 	}
 
-	// Schema-less ingress: the wire is required to be id-keyed because
-	// without a registered schema the server has no name→id mapping.
-	// Silently dropping name keys (the prior behavior) caused silent
-	// data loss for SDKs that emitted name-keyed payloads.
-	nt := lookupNodeType(reg, nodeTypeName)
-	if nt == nil {
-		out := make(map[uint32]any, len(s.GetFields()))
-		var firstName string
-		for k, v := range s.GetFields() {
-			if id, ok := parseFieldID(k); ok {
-				out[id] = v.AsInterface()
-				continue
-			}
-			if firstName == "" {
-				firstName = k
-			}
-		}
-		if firstName != "" {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload for type_id with name %q (not in schema registry) "+
-					"contains name-keyed field %q; wire payload must be "+
-					"id-keyed (e.g. {\"1\": value}). Either register the "+
-					"schema for this type or upgrade the SDK to one that "+
-					"pre-translates names to field_ids client-side "+
-					"(CLAUDE.md invariant #6).",
-				nodeTypeName, firstName)
-		}
-		return out, nil
-	}
-
-	// Build name->FieldDef and id->FieldDef indices once per call. The
-	// registry caches these post-Freeze for the hot path; we keep our
-	// own copy here so the kind-coercion lookup is O(1).
-	nameToField := make(map[string]*schema.FieldDef, len(nt.Fields))
-	idToField := make(map[uint32]*schema.FieldDef, len(nt.Fields))
-	for i := range nt.Fields {
-		f := &nt.Fields[i]
-		nameToField[f.Name] = f
-		idToField[f.FieldID] = f
-	}
+	nt := lookupNodeType(reg, typeID)
 
 	out := make(map[uint32]any, len(s.GetFields()))
 	for key, value := range s.GetFields() {
-		// Pre-translated digit keys: a caller (e.g. typed Go SDK) may
-		// already have done id translation. If the digit matches a
-		// known field id, keep it; otherwise the key is unknown on
-		// this schema and is dropped.
-		if id, ok := parseFieldID(key); ok {
-			if f := idToField[id]; f != nil {
+		id, ok := parseFieldID(key)
+		if !ok {
+			// Name-free invariant: a non-digit key means the SDK did not
+			// translate names to field_ids. Reject rather than silently
+			// drop so the misconfiguration surfaces immediately.
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"payload contains non-field_id key %q; wire payload must be "+
+					"id-keyed (e.g. {\"1\": value}) — the SDK pre-translates "+
+					"names to field_ids client-side (ADR-031 / CLAUDE.md "+
+					"invariant #6).", key)
+		}
+		if nt != nil {
+			if f := nt.GetFieldByID(id); f != nil {
 				coerced, err := coerceForKind(f, value)
 				if err != nil {
 					return nil, err
@@ -123,47 +85,38 @@ func StructToPayload(reg *schema.Registry, nodeTypeName string, s *structpb.Stru
 				out[id] = coerced
 				continue
 			}
-			// Digit but not a known id: drop silently (forward-compat
-			// scenarios are handled on egress, not ingress).
+			// Digit but not a known id: keep as-is (forward-compat — a
+			// field from a newer schema revision is preserved verbatim).
+			out[id] = value.AsInterface()
 			continue
 		}
-
-		f := nameToField[key]
-		if f == nil {
-			// Unknown name: drop silently (ingress is permissive).
-			continue
-		}
-		coerced, err := coerceForKind(f, value)
-		if err != nil {
-			return nil, err
-		}
-		out[f.FieldID] = coerced
+		// Schema-less: id-keyed passthrough, no kind coercion.
+		out[id] = value.AsInterface()
 	}
 	return out, nil
 }
 
 // PayloadToStruct wraps an id-keyed payload for the wire.
 //
-// The wire stays id-keyed (per the spec's "zero-translation egress"
-// rule). nodeTypeName is consumed only for kind-aware coercion in the
-// reverse direction:
+// The wire stays id-keyed (zero-translation egress). typeID is consumed
+// only for kind-aware coercion in the reverse direction:
 //
 //   - BYTES: storage holds []byte (or pre-base64 string); structpb has
 //     no bytes type, so we encode to base64 string on the wire.
 //   - TIMESTAMP / INTEGER: storage holds int64; structpb represents
 //     numbers as float64.
 //
-// When nodeTypeName == "" or the registry has no entry, the egress is a
-// pure passthrough — values go through structpb.NewValue as-is.
+// When typeID == 0 or the registry has no entry, the egress is a pure
+// passthrough — values go through structpb.NewValue as-is.
 //
 // The returned Struct has stringified field_id keys ("1", "2", ...).
-func PayloadToStruct(reg *schema.Registry, nodeTypeName string, p map[uint32]any) (*structpb.Struct, error) {
+func PayloadToStruct(reg *schema.Registry, typeID int32, p map[uint32]any) (*structpb.Struct, error) {
 	out := &structpb.Struct{Fields: make(map[string]*structpb.Value, len(p))}
 	if len(p) == 0 {
 		return out, nil
 	}
 
-	nt := lookupNodeType(reg, nodeTypeName)
+	nt := lookupNodeType(reg, typeID)
 
 	for id, raw := range p {
 		key := strconv.FormatUint(uint64(id), 10)
@@ -189,102 +142,50 @@ func PayloadToStruct(reg *schema.Registry, nodeTypeName string, p map[uint32]any
 	return out, nil
 }
 
-// FilterNamesToIDs translates a name-keyed filter dict (used by
-// QueryNodes) into the id-keyed form the canonical store expects.
+// FilterToIDs normalises a filter dict (used by QueryNodes /
+// delete_where) into the id-keyed form the canonical store expects.
 //
-// Differs from StructToPayload in two ways:
+// NAME-FREE per ADR-031: filter keys are field_ids (decimal strings).
+// A non-digit (name) key is INVALID_ARGUMENT — the server never resolves
+// a name. A digit key that the schema does not recognise (when a type is
+// resolved) is INVALID_ARGUMENT, because filtering on a field that does
+// not exist would silently change the result set.
 //
-//   - The input is map[string]any, not *structpb.Struct (the gRPC layer
-//     unwraps a Struct before calling).
-//   - Unknown names are an error, not a silent drop. A QueryNodes
-//     filter mentioning a field that does not exist on the schema is a
-//     client bug and should surface as INVALID_ARGUMENT — silently
-//     dropping it would change the result set.
-//
-// Unknown filter keys are an error, not a silent drop (see
-// docs/go-port/shared/payload-translation.md "QueryNodes filter").
-func FilterNamesToIDs(reg *schema.Registry, nodeTypeName string, filter map[string]any) (map[uint32]any, error) {
+// The input is map[string]any, not *structpb.Struct (the gRPC layer
+// unwraps a Struct before calling).
+func FilterToIDs(reg *schema.Registry, typeID int32, filter map[string]any) (map[uint32]any, error) {
 	if len(filter) == 0 {
 		return map[uint32]any{}, nil
 	}
 
-	nt := lookupNodeType(reg, nodeTypeName)
-	if nt == nil {
-		// Schema-less: digit-only keys parse to uint32; non-digit keys
-		// are an error because we cannot resolve them without a schema.
-		out := make(map[uint32]any, len(filter))
-		for k, v := range filter {
-			id, ok := parseFieldID(k)
-			if !ok {
-				return nil, errs.Errorf(codes.InvalidArgument,
-					"payload: cannot translate filter key %q without a schema", k)
-			}
-			out[id] = v
-		}
-		return out, nil
-	}
-
+	nt := lookupNodeType(reg, typeID)
 	out := make(map[uint32]any, len(filter))
 	for key, value := range filter {
-		if id, ok := parseFieldID(key); ok {
-			if nt.GetFieldByID(id) == nil {
-				return nil, errs.Errorf(codes.InvalidArgument,
-					"payload: filter references unknown field_id %d on type %q", id, nodeTypeName)
-			}
-			out[id] = value
-			continue
-		}
-		f := nt.GetField(key)
-		if f == nil {
+		id, ok := parseFieldID(key)
+		if !ok {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: filter references unknown field %q on type %q", key, nodeTypeName)
+				"payload: filter key %q is not a field_id; filters are "+
+					"id-keyed (ADR-031 — the SDK pre-translates names)", key)
 		}
-		out[f.FieldID] = value
-	}
-	return out, nil
-}
-
-// PayloadJSONToNames converts an id-keyed payload (e.g. as fetched from
-// the canonical store) to a name-keyed map[string]any suitable for
-// JSON-friendly egress paths (audit exports, the console JSON view).
-//
-// Unknown ids are preserved verbatim (as their decimal string) so a
-// row written by a future schema revision is not lossy on read.
-//
-// When reg / nodeTypeName resolves to no schema, every id is rendered
-// as its decimal string.
-func PayloadJSONToNames(reg *schema.Registry, nodeTypeName string, p map[uint32]any) (map[string]any, error) {
-	out := make(map[string]any, len(p))
-	if len(p) == 0 {
-		return out, nil
-	}
-
-	nt := lookupNodeType(reg, nodeTypeName)
-	for id, value := range p {
-		var key string
-		if nt != nil {
-			if f := nt.GetFieldByID(id); f != nil {
-				key = f.Name
-			} else {
-				key = strconv.FormatUint(uint64(id), 10)
-			}
-		} else {
-			key = strconv.FormatUint(uint64(id), 10)
+		if nt != nil && nt.GetFieldByID(id) == nil {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"payload: filter references unknown field_id %d on type_id %d", id, typeID)
 		}
-		out[key] = value
+		out[id] = value
 	}
 	return out, nil
 }
 
 // --- internal helpers ---------------------------------------------------
 
-// lookupNodeType is the single resolver this package uses. Empty
-// nodeTypeName or nil registry returns nil (schema-less).
-func lookupNodeType(reg *schema.Registry, nodeTypeName string) *schema.NodeTypeDef {
-	if reg == nil || nodeTypeName == "" {
+// lookupNodeType is the single resolver this package uses. typeID == 0 or
+// a nil registry returns nil (schema-less). Name-free per ADR-031:
+// resolution is by type_id only.
+func lookupNodeType(reg *schema.Registry, typeID int32) *schema.NodeTypeDef {
+	if reg == nil || typeID == 0 {
 		return nil
 	}
-	return reg.NodeTypeByName(nodeTypeName)
+	return reg.NodeTypeByID(typeID)
 }
 
 // parseFieldID parses a digit-only string into a uint32 within the
@@ -326,28 +227,28 @@ func coerceForKind(f *schema.FieldDef, v *structpb.Value) (any, error) {
 		s, ok := v.Kind.(*structpb.Value_StringValue)
 		if !ok {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (bytes) requires base64 string, got %T",
-				f.Name, v.Kind)
+				"payload: field_id %d (bytes) requires base64 string, got %T",
+				f.FieldID, v.Kind)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(s.StringValue)
 		if err != nil {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (bytes) is not valid base64: %v", f.Name, err)
+				"payload: field_id %d (bytes) is not valid base64: %v", f.FieldID, err)
 		}
 		return decoded, nil
 	case schema.KindTimestamp, schema.KindInteger:
 		n, ok := v.Kind.(*structpb.Value_NumberValue)
 		if !ok {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (%s) requires a number, got %T",
-				f.Name, f.Kind, v.Kind)
+				"payload: field_id %d (%s) requires a number, got %T",
+				f.FieldID, f.Kind, v.Kind)
 		}
 		// structpb numbers are float64. Reject values outside the
 		// safe-integer range (2^53) to keep replay deterministic.
 		if n.NumberValue > 1<<53 || n.NumberValue < -(1<<53) {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (%s) value %v exceeds safe integer range",
-				f.Name, f.Kind, n.NumberValue)
+				"payload: field_id %d (%s) value %v exceeds safe integer range",
+				f.FieldID, f.Kind, n.NumberValue)
 		}
 		return int64(n.NumberValue), nil
 	case schema.KindJSON:
@@ -359,8 +260,8 @@ func coerceForKind(f *schema.FieldDef, v *structpb.Value) (any, error) {
 		s, ok := v.Kind.(*structpb.Value_StringValue)
 		if !ok {
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (enum) requires a string, got %T",
-				f.Name, v.Kind)
+				"payload: field_id %d (enum) requires a string, got %T",
+				f.FieldID, v.Kind)
 		}
 		return s.StringValue, nil
 	default:
@@ -388,8 +289,8 @@ func encodeForKind(f *schema.FieldDef, raw any) (*structpb.Value, error) {
 			return structpb.NewStringValue(b), nil
 		default:
 			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field %q (bytes) stored as %T, expected []byte or string",
-				f.Name, raw)
+				"payload: field_id %d (bytes) stored as %T, expected []byte or string",
+				f.FieldID, raw)
 		}
 	default:
 		return newValue(raw)

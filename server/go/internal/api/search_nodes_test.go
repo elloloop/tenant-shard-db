@@ -60,10 +60,9 @@ func newSearchTestServer(t *testing.T) (*api.Server, *store.CanonicalStore, stri
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: searchTypeID,
-		Name:   "Product",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "title", Kind: schema.KindString, Searchable: true},
-			{FieldID: 2, Name: "body", Kind: schema.KindString, Searchable: true},
+			{FieldID: 1, Kind: schema.KindString, Searchable: true},
+			{FieldID: 2, Kind: schema.KindString, Searchable: true},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode: %v", err)

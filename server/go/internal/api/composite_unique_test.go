@@ -31,13 +31,12 @@ func newCompositeFixture(t *testing.T) *xaFixture {
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: 201,
-		Name:   "OAuthIdentity",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "provider", Kind: schema.KindString},
-			{FieldID: 2, Name: "provider_user_id", Kind: schema.KindString},
+			{FieldID: 1, Kind: schema.KindString},
+			{FieldID: 2, Kind: schema.KindString},
 		},
 		CompositeUnique: []schema.CompositeUniqueDef{
-			{Name: "provider_user_id", FieldIDs: []uint32{1, 2}},
+			{FieldIDs: []uint32{1, 2}},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode: %v", err)
@@ -123,7 +122,7 @@ func TestExecuteAtomic_CompositeUniqueViolation(t *testing.T) {
 		t.Fatalf("code: got %v, want AlreadyExists; msg=%q", st.Code(), st.Message())
 	}
 	want := "Composite unique constraint violation: tenant=" + xaTenant + " type_id=201 " +
-		"constraint='provider_user_id' fields=[1, 2] values=['google', 'uid-1'] already exists"
+		"constraint='(1,2)' fields=[1, 2] values=['google', 'uid-1'] already exists"
 	if st.Message() != want {
 		t.Fatalf("detail mismatch:\n got=%q\nwant=%q", st.Message(), want)
 	}

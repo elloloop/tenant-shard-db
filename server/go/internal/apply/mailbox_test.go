@@ -34,9 +34,8 @@ func newMailboxFixture(t *testing.T) *fixture {
 	reg := schema.NewRegistry()
 	if err := reg.RegisterNode(&schema.NodeTypeDef{
 		TypeID: mailboxTypeID,
-		Name:   "Message",
 		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "subject", Kind: schema.KindString, Searchable: true},
+			{FieldID: 1, Kind: schema.KindString, Searchable: true},
 		},
 	}); err != nil {
 		t.Fatalf("RegisterNode: %v", err)

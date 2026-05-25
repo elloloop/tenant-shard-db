@@ -117,10 +117,10 @@ def actor() -> str:
 
 @pytest.fixture(scope="module")
 def tenant_id() -> str:
-    """The pre-seeded e2e tenant. Stable for the module — most tests
-    don't need a private tenant and seeding-on-boot already covers
-    the Go target. The Python server auto-creates tenants on first
-    write."""
+    """The e2e tenant, provisioned once via the API by the ``db_client``
+    fixture's session bootstrap (EMPTY BOOT, ADR-031 — there is no boot
+    seed). Stable for the module; most tests don't need a private tenant
+    (isolation tests use :func:`fresh_tenant`)."""
     return TENANT
 
 
@@ -147,6 +147,71 @@ def _wait_for_grpc(host: str, port: int, timeout: int = 60) -> None:
 
 _SCHEMA_REGISTERED = False
 _BOOT_WAITED = False
+_TENANT_BOOTSTRAPPED = False
+
+
+def _client_kwargs() -> dict:
+    if not TLS_CA:
+        return {}
+    import grpc
+
+    with open(TLS_CA, "rb") as f:
+        return {
+            "secure": True,
+            "credentials": grpc.ssl_channel_credentials(root_certificates=f.read()),
+        }
+
+
+async def _bootstrap_e2e_tenant(grpc_target: str) -> None:
+    """Provision the e2e tenant + owner through the API (no boot seed).
+
+    EMPTY BOOT (ADR-031): the server starts with no tenant/user/schema.
+    This creates tenant ``e2e-test`` + the ``e2e-runner`` owner via the
+    gRPC admin RPCs, then polls GetTenant until the tenant materializes
+    (CreateTenant flows through the global WAL/applier). The SCHEMA is
+    NOT registered here — it rides each write self-describingly (ADR-031)
+    from the SDK's registry (register_proto_schema(pb), above). Idempotent:
+    an already-existing tenant/user/member is treated as success so a
+    re-run against a volumised stack does not fail.
+    """
+    client = DbClient(grpc_target, **_client_kwargs())
+    last_exc: Exception | None = None
+    for _ in range(30):
+        try:
+            await client.connect()
+            break
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            await asyncio.sleep(2)
+    else:
+        raise RuntimeError(f"bootstrap: could not connect to {grpc_target}: {last_exc!r}")
+    try:
+        ct = await client.create_tenant(tenant_id=TENANT, name="E2E Test Tenant", actor=ADMIN_ACTOR)
+        if not ct.get("success") and "exist" not in str(ct.get("error", "")).lower():
+            raise RuntimeError(f"CreateTenant({TENANT}) failed: {ct.get('error')}")
+        cu = await client.create_user(
+            user_id="e2e-runner",
+            email="e2e-runner@example.com",
+            name="E2E Runner",
+            actor=ADMIN_ACTOR,
+        )
+        if not cu.get("success") and "exist" not in str(cu.get("error", "")).lower():
+            raise RuntimeError(f"CreateUser(e2e-runner) failed: {cu.get('error')}")
+        am = await client.add_tenant_member(
+            tenant_id=TENANT, user_id="e2e-runner", role="owner", actor=ADMIN_ACTOR
+        )
+        if not am.get("success") and "exist" not in str(am.get("error", "")).lower():
+            raise RuntimeError(f"AddTenantMember(e2e-runner) failed: {am.get('error')}")
+        # CreateTenant materializes asynchronously through the global WAL;
+        # poll until visible before the first per-tenant write.
+        for _ in range(200):
+            t = await client.get_tenant(tenant_id=TENANT, actor=ADMIN_ACTOR)
+            if t:
+                return
+            await asyncio.sleep(0.1)
+        raise RuntimeError(f"tenant {TENANT!r} never materialized after CreateTenant")
+    finally:
+        await client.close()
 
 
 @pytest_asyncio.fixture
@@ -155,29 +220,24 @@ async def db_client(grpc_target: str) -> AsyncGenerator[DbClient, None]:
 
     Mirrors the connect-with-retry loop in ``test_e2e.py`` so a slow
     server boot (Go target, fresh image build) doesn't flake the run.
-    The schema registration + TCP-ready wait happen at most once per
-    pytest session (cached via module-level flags) so the per-test
-    cost is just a fresh ``grpc.aio.insecure_channel``.
+    The schema registration, TCP-ready wait, and tenant bootstrap happen
+    at most once per pytest session (cached via module-level flags) so the
+    per-test cost is just a fresh ``grpc.aio.insecure_channel``.
     """
-    global _SCHEMA_REGISTERED, _BOOT_WAITED
+    global _SCHEMA_REGISTERED, _BOOT_WAITED, _TENANT_BOOTSTRAPPED
     if not _SCHEMA_REGISTERED:
         register_proto_schema(pb)
         _SCHEMA_REGISTERED = True
     if not _BOOT_WAITED:
         _wait_for_grpc(HOST, PORT, timeout=60)
         _BOOT_WAITED = True
+    if not _TENANT_BOOTSTRAPPED:
+        # EMPTY BOOT (ADR-031): provision tenant + owner via the API; the
+        # schema rides each write self-describingly.
+        await _bootstrap_e2e_tenant(grpc_target)
+        _TENANT_BOOTSTRAPPED = True
 
-    client_kwargs = {}
-    if TLS_CA:
-        import grpc
-
-        with open(TLS_CA, "rb") as f:
-            client_kwargs = {
-                "secure": True,
-                "credentials": grpc.ssl_channel_credentials(root_certificates=f.read()),
-            }
-
-    client = DbClient(grpc_target, **client_kwargs)
+    client = DbClient(grpc_target, **_client_kwargs())
     last_exc: Exception | None = None
     for _ in range(30):
         try:

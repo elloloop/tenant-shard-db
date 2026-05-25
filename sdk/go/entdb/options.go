@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // clientConfig holds all client configuration values.
@@ -14,6 +15,12 @@ type clientConfig struct {
 	maxRetries   int
 	timeout      time.Duration
 	nodeResolver NodeResolver
+	// schema is the client-side, NAME-FREE schema registry built from the
+	// proto message types passed to [WithSchema]. When set, the SDK rides a
+	// SchemaDescriptor on ExecuteAtomic until the server confirms the
+	// matching fingerprint (SELF-DESCRIBING WRITES, ADR-031). nil leaves
+	// the server schema-less for this client (the issue #545 path).
+	schema *schemaRegistry
 	// retryBudget bounds the total wall-clock time spent retrying a
 	// single call (backoff sleeps included). Zero means use
 	// defaultRetryWallClockBudget.
@@ -92,6 +99,32 @@ func WithRetryBudget(d time.Duration) ClientOption {
 		if d > 0 {
 			c.retryBudget = d
 		}
+	}
+}
+
+// WithSchema registers the client's schema from its proto message types so
+// writes are self-describing (SELF-DESCRIBING WRITES, ADR-031).
+//
+// Pass a zero value of every node/edge message type your app writes (the
+// SDK reads only their descriptors — (entdb.node)/(entdb.edge)/(entdb.field)
+// options — never the instances):
+//
+//	client, _ := entdb.NewClient(addr,
+//	    entdb.WithSchema(&shop.Product{}, &shop.User{}, &shop.PurchaseEdge{}))
+//
+// On the first ExecuteAtomic the SDK attaches a NAME-FREE SchemaDescriptor
+// and the schema fingerprint; the server materializes the types via a
+// leading register_schema WAL op (establish-or-reject) before the data ops.
+// Once the server confirms the matching fingerprint the descriptor is
+// omitted (lean steady state) and re-attached on a SCHEMA_MISMATCH.
+//
+// Messages without an (entdb.node)/(entdb.edge) option are ignored. Omitting
+// WithSchema leaves the client schema-less: writes carry no descriptor and
+// the server enforces nothing (the issue #545 numeric-field-id path still
+// works).
+func WithSchema(msgs ...proto.Message) ClientOption {
+	return func(c *clientConfig) {
+		c.schema = newSchemaRegistry(msgs)
 	}
 }
 

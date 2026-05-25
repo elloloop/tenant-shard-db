@@ -23,7 +23,6 @@ server/go/
     schema/                — node/edge type registry
     wal/                   — WAL producer/consumer (in-memory + Kafka backends)
     errs/                  — gRPC status mapping
-    testseed/              — test fixture seeding
   buf.gen.yaml             — proto codegen template (used by `buf generate`)
   go.mod                   — module: github.com/elloloop/tenant-shard-db/server/go
 ```

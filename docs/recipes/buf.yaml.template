@@ -1,0 +1,30 @@
+# buf.yaml — wire-contract breaking-change template for an EntDB app team.
+#
+# This guards the PROTO WIRE CONTRACT (`buf breaking`). It is the
+# companion to the RUNTIME-SCHEMA gate run by `entdb-schema breaking`
+# (ADR-032): `buf breaking` defends the wire, `entdb-schema breaking`
+# defends the runtime registry (field_id/type_id identity, unique/required
+# tightening, composite-unique, edge endpoints, …). Run BOTH in CI.
+#
+# Copy this next to your .proto sources, adjust `modules.path`, and wire
+# the two checks side by side (see docs/guides/schema-lockdown.md).
+
+version: v2
+
+modules:
+  - path: proto # <-- point this at your own proto tree
+
+lint:
+  use:
+    - STANDARD
+
+breaking:
+  use:
+    # FILE catches the wire-contract breaks buf knows about: changed field
+    # numbers, changed field types, removed fields without `reserved`,
+    # changed message/enum identity. Removing a field is only safe under
+    # buf if you add proto `reserved` for its number — the SAME discipline
+    # entdb-schema enforces with reserved_field_ids (ADR-032). Keep the
+    # two in lockstep: a field you `reserved` in proto should also appear
+    # in the EntDB snapshot's reserved list.
+    - FILE

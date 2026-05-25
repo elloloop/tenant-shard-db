@@ -51,6 +51,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
@@ -62,12 +63,13 @@ const (
 	// Internal op-string constants. Kept local rather than imported from
 	// apply to avoid pulling that package's heavyweight deps into the api
 	// binary just for two strings.
-	opCreateNode  = "create_node"
-	opUpdateNode  = "update_node"
-	opDeleteNode  = "delete_node"
-	opDeleteWhere = "delete_where"
-	opCreateEdge  = "create_edge"
-	opDeleteEdge  = "delete_edge"
+	opRegisterSchema = "register_schema"
+	opCreateNode     = "create_node"
+	opUpdateNode     = "update_node"
+	opDeleteNode     = "delete_node"
+	opDeleteWhere    = "delete_where"
+	opCreateEdge     = "create_edge"
+	opDeleteEdge     = "delete_edge"
 )
 
 // ExecuteAtomic implements entdb.v1.EntDBService/ExecuteAtomic.
@@ -119,13 +121,41 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		idem = uuid.NewString()
 	}
 
-	// Schema fingerprint check. In-band failure when the request claims a
-	// fingerprint that disagrees with the server's. NOT an abort.
+	// Schema fingerprint check + SELF-DESCRIBING WRITES negotiation.
+	//
+	// srvFP is the server's current registry fingerprint (empty in the
+	// schema-less profile). When the request carries a SchemaDescriptor
+	// (req.schema) and its fingerprint differs from the server's, the
+	// write is self-describing: we materialize the carried types into a
+	// leading register_schema WAL op (built below) instead of rejecting.
+	// The applier registers establish-or-reject, so an identical schema is
+	// a cheap idempotent no-op and a conflicting one fails the event
+	// deterministically (FAILED_PRECONDITION) without halting.
+	//
+	// Only when the request claims a fingerprint that disagrees with the
+	// server AND carries NO schema do we keep the legacy in-band
+	// SCHEMA_MISMATCH (the client believes it matches a schema the server
+	// no longer has, and gave us nothing to reconcile with).
 	srvFP := ""
 	if s.registry != nil {
 		srvFP = s.registry.Fingerprint()
 	}
-	if reqFP := req.GetSchemaFingerprint(); reqFP != "" && srvFP != "" && reqFP != srvFP {
+	reqFP := req.GetSchemaFingerprint()
+	carriesSchema := req.GetSchema() != nil &&
+		(len(req.GetSchema().GetNodeTypes()) > 0 || len(req.GetSchema().GetEdgeTypes()) > 0)
+	// includeSchemaOp: prepend a register_schema op whenever the client
+	// rides types, EXCEPT the steady state where both fingerprints are
+	// known and equal (the server already has exactly this schema). The
+	// applier registers establish-or-reject and no-ops an identical type,
+	// so appending the op is always safe — but skipping it in steady
+	// state keeps the common write cheap. Note: an empty server
+	// fingerprint (fresh selfdescribing registry) is NOT equal to a
+	// non-empty client fingerprint, and two empty fingerprints still
+	// trigger the op when a schema is carried (the client's very first
+	// write before it has negotiated a fingerprint).
+	fingerprintsKnownAndEqual := reqFP != "" && srvFP != "" && reqFP == srvFP
+	includeSchemaOp := carriesSchema && !fingerprintsKnownAndEqual
+	if !includeSchemaOp && reqFP != "" && srvFP != "" && reqFP != srvFP {
 		outcome = "error"
 		return &pb.ExecuteAtomicResponse{
 			Success:   false,
@@ -134,13 +164,45 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		}, nil
 	}
 
+	// Validation-ordering refinement (ADR-031 "Known interactions"): the
+	// handler validates the batch's data ops against the current registry
+	// UNIONED WITH the schema attached to THIS request. Otherwise a
+	// brand-new type's non-create op (e.g. delete_where) would be rejected
+	// before the prepended register_schema op registers it in the applier.
+	// validationReg is the union view; it falls back to s.registry when
+	// nothing is attached.
+	validationReg := s.registry
+	if carriesSchema {
+		view, verr := s.schemaValidationView(req.GetSchema())
+		if verr != nil {
+			outcome = "error"
+			return nil, verr
+		}
+		validationReg = view
+	}
+
 	// Translate proto operations to internal id-keyed shape. This is the
-	// CLAUDE.md invariant #6 chokepoint: name-keyed Structs become
-	// id-keyed payload maps before they reach the WAL.
-	ops, err := s.convertOperations(req.GetOperations())
+	// CLAUDE.md invariant #6 / ADR-031 chokepoint: field_id-keyed Structs
+	// become id-keyed payload maps before they reach the WAL, validated
+	// against the union view.
+	ops, err := s.convertOperations(validationReg, req.GetOperations())
 	if err != nil {
 		outcome = "error"
 		return nil, err
+	}
+
+	// SELF-DESCRIBING WRITES: prepend the register_schema op so the
+	// applier materializes the carried types (and their per-tenant
+	// indexes) BEFORE the data ops, in the SAME WAL event / transaction.
+	// Because the schema rides in the WAL, replaying the log
+	// deterministically rebuilds the registry + indexes.
+	if includeSchemaOp {
+		schemaOp, serr := convertSchemaDescriptor(req.GetSchema())
+		if serr != nil {
+			outcome = "error"
+			return nil, serr
+		}
+		ops = append([]map[string]any{schemaOp}, ops...)
 	}
 
 	// Tenant-membership + role + status check. Best-effort: skipped when
@@ -432,8 +494,10 @@ func streamPosString(pos wal.StreamPos) string {
 // convertOperations translates wire Operations to internal id-keyed
 // op dicts. The schema-aware translation lives in
 // payload.StructToPayload; everything else is mechanical proto-to-map
-// boilerplate.
-func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any, error) {
+// boilerplate. reg is the validation view (current registry unioned with
+// the request's attached schema, per ADR-031) used for type-existence
+// and field-kind resolution.
+func (s *Server) convertOperations(reg *schema.Registry, operations []*pb.Operation) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(operations))
 
 	for _, op := range operations {
@@ -444,7 +508,7 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				return nil, errs.Errorf(codes.InvalidArgument,
 					"create_node: type_id is required")
 			}
-			data, err := s.ingressPayload(create.GetTypeId(), create.GetTypedData(), create.GetData())
+			data, err := s.ingressPayload(reg, create.GetTypeId(), create.GetTypedData(), create.GetData())
 			if err != nil {
 				return nil, err
 			}
@@ -483,7 +547,7 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				return nil, errs.Errorf(codes.InvalidArgument,
 					"update_node: id is required")
 			}
-			patch, err := s.ingressPayload(upd.GetTypeId(), upd.GetTypedPatch(), upd.GetPatch())
+			patch, err := s.ingressPayload(reg, upd.GetTypeId(), upd.GetTypedPatch(), upd.GetPatch())
 			if err != nil {
 				return nil, err
 			}
@@ -535,34 +599,29 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 				return nil, errs.Errorf(codes.InvalidArgument,
 					"delete_where: at least one `where` predicate is required")
 			}
-			// Resolve the developer-facing FieldFilter names to stable
-			// field_ids using the EXACT same path QueryNodes uses
-			// (issue #501) so the predicate is schema-less on the WAL.
+			// Resolve the FieldFilter field_ids using the EXACT same path
+			// QueryNodes uses (issue #501) so the predicate is name-free
+			// on the WAL (ADR-031).
 			//
-			// Schema-OPTIONAL, exactly like QueryNodes (issue #545): a
-			// nil registry is the server's schema-less mode and is
-			// tolerated here just as it is in query_nodes.go. When the
-			// registry is nil, typeName stays "" and
-			// fieldFiltersToStoreFilters -> payload.FilterNamesToIDs
-			// takes its schema-less branch: digit-only FieldFilter.field
-			// keys parse to raw payload field ids, and a non-digit field
-			// NAME surfaces as INVALID_ARGUMENT with the same wording as
-			// the QueryNodes path ("payload: cannot translate filter key
-			// %q without a schema"). Do NOT add a hard reject for a
-			// missing schema here — that is the exact bug #545 fixes and
-			// would diverge from the QueryNodes contract. Schema-mode
-			// behaviour (registry configured) is unchanged: an unknown
-			// type_id is still INVALID_ARGUMENT.
-			typeName := ""
-			if s.registry != nil {
-				nt := s.registry.NodeTypeByID(dw.GetTypeId())
-				if nt == nil {
+			// Schema-OPTIONAL, exactly like QueryNodes (issue #545): an
+			// EMPTY registry is the server's schema-less mode (empty-boot,
+			// ADR-031) and is tolerated here just as it is in
+			// query_nodes.go. When the registry is empty,
+			// fieldFiltersToStoreFilters -> payload.FilterToIDs takes its
+			// schema-less branch: digit-only FieldFilter.field keys parse to
+			// raw payload field_ids, and a non-digit key surfaces as
+			// INVALID_ARGUMENT with the same wording as the QueryNodes path.
+			// Do NOT add a hard reject for a missing schema here — that is
+			// the exact bug #545 fixes and would diverge from the QueryNodes
+			// contract. Schema-mode behaviour (registry has types) is
+			// unchanged: an unknown type_id is still INVALID_ARGUMENT.
+			if !reg.Empty() {
+				if nt := reg.NodeTypeByID(dw.GetTypeId()); nt == nil {
 					return nil, errs.Errorf(codes.InvalidArgument,
 						"delete_where: unknown type_id %d", dw.GetTypeId())
 				}
-				typeName = nt.Name
 			}
-			storeFilters, err := s.fieldFiltersToStoreFilters(typeName, dw.GetWhere())
+			storeFilters, err := s.fieldFiltersToStoreFilters(reg, dw.GetTypeId(), dw.GetWhere())
 			if err != nil {
 				return nil, err
 			}
@@ -614,21 +673,22 @@ func (s *Server) convertOperations(operations []*pb.Operation) ([]map[string]any
 
 // translatePrecondition resolves the wire-side UpdateNodePrecondition
 // to the stable field_id used on disk and returns the internal op-dict
-// payload consumed by the applier. Modern SDKs send field_id directly;
-// the legacy name-only path is retained only for registry-backed direct
-// wire clients. The "equals" value is unboxed from the *structpb.Value
-// envelope at the boundary so the applier compares raw Go scalars
-// rather than wrapped proto values; the wire-side nullability is
-// preserved (nil → field-absence match).
+// payload consumed by the applier.
+//
+// NAME-FREE per ADR-031: the CAS precondition is keyed by field_id only
+// (the proto field already calls field_id "the preferred and
+// schema-less-safe coordinate"). A request without field_id is
+// INVALID_ARGUMENT — the server never resolves a name. The "equals"
+// value is unboxed from the *structpb.Value envelope at the boundary so
+// the applier compares raw Go scalars rather than wrapped proto values;
+// the wire-side nullability is preserved (nil → field-absence match).
 //
 // Error semantics:
 //
-//   - invalid field_id          → INVALID_ARGUMENT
-//   - name-only without registry → INVALID_ARGUMENT
-//   - unknown type_id/name       → INVALID_ARGUMENT (registry-backed fallback)
+//   - missing/invalid field_id → INVALID_ARGUMENT
 //
 // See GitHub issues #500 and #525.
-func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondition) (map[string]any, error) {
+func (s *Server) translatePrecondition(_ int32, pre *pb.UpdateNodePrecondition) (map[string]any, error) {
 	// structpb.Value.AsInterface() unboxes scalars to Go-native types
 	// (float64 for numbers, string, bool, nil for NullValue, []any /
 	// map[string]any for compounds) — exactly the shape the applier's
@@ -646,58 +706,36 @@ func (s *Server) translatePrecondition(typeID int32, pre *pb.UpdateNodePrecondit
 	} else if eq := pre.GetEquals(); eq != nil {
 		equals = eq.AsInterface()
 	}
-	if fid := pre.GetFieldId(); fid != 0 {
-		if fid < 0 || fid > 65535 {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"update_node: precondition.field_id must be 1-65535, got %d", fid)
-		}
-		name := pre.GetField()
-		if name == "" {
-			name = fmt.Sprintf("%d", fid)
-		}
-		return map[string]any{
-			"field":    name, // human-readable, surfaced on failure detail
-			"field_id": fmt.Sprintf("%d", fid),
-			"equals":   equals,
-		}, nil
-	}
-	name := pre.GetField()
-	if name == "" {
+	fid := pre.GetFieldId()
+	if fid == 0 {
 		return nil, errs.Errorf(codes.InvalidArgument,
 			"update_node: precondition.field_id is required")
 	}
-	if s.registry == nil {
+	if fid < 0 || fid > 65535 {
 		return nil, errs.Errorf(codes.InvalidArgument,
-			"update_node: precondition.field_id is required when schema registry is not configured")
-	}
-	fid, ok := s.registry.FieldIDByNameForType(typeID, name)
-	if !ok {
-		return nil, errs.Errorf(codes.InvalidArgument,
-			"update_node: precondition references unknown field %q on type_id=%d",
-			name, typeID)
+			"update_node: precondition.field_id must be 1-65535, got %d", fid)
 	}
 	return map[string]any{
-		"field":    name, // human-readable, surfaced on failure detail
+		// "field" carries the decimal field_id as a stable, name-free
+		// label surfaced on the failure detail (no field name exists).
+		"field":    fmt.Sprintf("%d", fid),
 		"field_id": fmt.Sprintf("%d", fid),
 		"equals":   equals,
 	}, nil
 }
 
-// translatePayload runs name->id translation for a create_node.data /
-// update_node.patch struct. The schema-less / unknown-type-id path is a
-// digit-key passthrough.
+// translatePayload normalises a create_node.data / update_node.patch
+// Struct into the id-keyed shape the WAL/applier consume. NAME-FREE per
+// ADR-031: the Struct must already be field_id-keyed (the SDK
+// pre-translates); payload.StructToPayload rejects a non-digit key and
+// uses the registry only for field-kind coercion (resolved by type_id).
+// The schema-less / unknown-type-id path is a digit-key passthrough.
 //
 // The result is stored under the op's "data"/"patch" key as
 // map[string]any with stringified field-id keys — that's the shape the
 // applier (which JSON-decodes events from the WAL) consumes.
-func (s *Server) translatePayload(typeID int32, st *structpb.Struct) (map[string]any, error) {
-	typeName := ""
-	if s.registry != nil {
-		if nt := s.registry.NodeTypeByID(typeID); nt != nil {
-			typeName = nt.Name
-		}
-	}
-	idKeyed, err := payload.StructToPayload(s.registry, typeName, st)
+func (s *Server) translatePayload(reg *schema.Registry, typeID int32, st *structpb.Struct) (map[string]any, error) {
+	idKeyed, err := payload.StructToPayload(reg, typeID, st)
 	if err != nil {
 		return nil, err
 	}
@@ -714,7 +752,7 @@ func (s *Server) translatePayload(typeID int32, st *structpb.Struct) (map[string
 // google.protobuf.Struct. The typed map already carries concrete types,
 // so no schema-driven coercion or safe-integer guard is needed; int64
 // flows through the WAL (canonical jsonnum decode) to payload_json intact.
-func (s *Server) ingressPayload(typeID int32, typed map[uint32]*pb.EntValue, st *structpb.Struct) (map[string]any, error) {
+func (s *Server) ingressPayload(reg *schema.Registry, typeID int32, typed map[uint32]*pb.EntValue, st *structpb.Struct) (map[string]any, error) {
 	if len(typed) > 0 {
 		idKeyed, err := payload.TypedToPayload(typed)
 		if err != nil {
@@ -726,7 +764,287 @@ func (s *Server) ingressPayload(typeID int32, typed map[uint32]*pb.EntValue, st 
 		}
 		return out, nil
 	}
-	return s.translatePayload(typeID, st)
+	return s.translatePayload(reg, typeID, st)
+}
+
+// convertSchemaDescriptor lowers a wire pb.SchemaDescriptor into the
+// internal register_schema op map. The node_types / edge_types entries
+// use the EXACT snake_case keys of the schema JSON contract
+// (schema.NodeTypeDef / schema.FieldDef / schema.EdgeTypeDef struct
+// tags) so the applier's decodeSchemaOp round-trips them straight into
+// the typed schema structs via encoding/json — keeping this lowering in
+// lockstep with schema.LoadFromJSON.
+//
+// Validation (type_id/edge_id positivity, field invariants,
+// composite-unique sanity) is deferred to the applier's
+// RegisterOrVerify* path, which runs the schema package's own Validate
+// — the single source of truth. A structurally empty descriptor returns
+// an error so we never emit a no-op schema op.
+func convertSchemaDescriptor(desc *pb.SchemaDescriptor) (map[string]any, error) {
+	if desc == nil {
+		return nil, errs.Errorf(codes.InvalidArgument, "schema: nil descriptor")
+	}
+	nodeTypes := make([]any, 0, len(desc.GetNodeTypes()))
+	for _, nt := range desc.GetNodeTypes() {
+		nodeTypes = append(nodeTypes, schemaNodeToMap(nt))
+	}
+	edgeTypes := make([]any, 0, len(desc.GetEdgeTypes()))
+	for _, et := range desc.GetEdgeTypes() {
+		edgeTypes = append(edgeTypes, schemaEdgeToMap(et))
+	}
+	if len(nodeTypes) == 0 && len(edgeTypes) == 0 {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"schema: descriptor has no node_types or edge_types")
+	}
+	op := map[string]any{"op": opRegisterSchema}
+	if len(nodeTypes) > 0 {
+		op["node_types"] = nodeTypes
+	}
+	if len(edgeTypes) > 0 {
+		op["edge_types"] = edgeTypes
+	}
+	return op, nil
+}
+
+// schemaValidationView builds the registry view the handler validates a
+// batch's data ops against: the current registry's types UNIONED with the
+// types carried on THIS request's SchemaDescriptor (ADR-031 "Known
+// interactions"). Without this union, a brand-new type's non-create op
+// (e.g. delete_where) would be rejected as an unknown type_id before the
+// prepended register_schema op registers it in the applier.
+//
+// The view is a throwaway registry (never the process-wide one — the
+// applier owns that, ADR-016): it seeds from the current registry's
+// types, then layers ONLY the descriptor types whose id is not already
+// present. It deliberately does NOT enforce establish-or-reject: a
+// descriptor that conflicts with an already-registered type is left to
+// the applier's deterministic, in-band conflict path (FAILED_PRECONDITION,
+// surfaced via the register_schema op). The view exists solely to make
+// data ops' type/field references resolvable at ingress, never to gate
+// schema evolution.
+//
+// On a nil descriptor or empty registry the view degrades gracefully to
+// whatever is available.
+func (s *Server) schemaValidationView(desc *pb.SchemaDescriptor) (*schema.Registry, error) {
+	view := schema.NewRegistry()
+	seenNode := map[int32]struct{}{}
+	seenEdge := map[int32]struct{}{}
+	// Seed from the current process-wide registry (copy the type defs).
+	if s.registry != nil {
+		for _, nt := range s.registry.NodeTypes() {
+			cp := *nt
+			if err := view.RegisterNode(&cp); err != nil {
+				return nil, errs.Internal(context.Background(), "schema view: seed node", err)
+			}
+			seenNode[nt.TypeID] = struct{}{}
+		}
+		for _, et := range s.registry.EdgeTypes() {
+			cp := *et
+			if err := view.RegisterEdge(&cp); err != nil {
+				return nil, errs.Internal(context.Background(), "schema view: seed edge", err)
+			}
+			seenEdge[et.EdgeID] = struct{}{}
+		}
+	}
+	if desc == nil {
+		return view, nil
+	}
+	// Layer only descriptor types absent from the seed. A conflicting
+	// redefinition of a present id is NOT merged here (the applier rejects
+	// it deterministically in-band). Reuse the JSON contract lowering so
+	// this view's type shape matches the WAL op the applier consumes.
+	for _, ntMsg := range desc.GetNodeTypes() {
+		if _, ok := seenNode[ntMsg.GetTypeId()]; ok {
+			continue
+		}
+		nt, err := schemaNodeFromMsg(ntMsg)
+		if err != nil {
+			return nil, err
+		}
+		if err := view.RegisterNode(nt); err != nil {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"schema: attached node type_id %d: %v", nt.TypeID, err)
+		}
+		seenNode[nt.TypeID] = struct{}{}
+	}
+	for _, etMsg := range desc.GetEdgeTypes() {
+		if _, ok := seenEdge[etMsg.GetEdgeId()]; ok {
+			continue
+		}
+		et, err := schemaEdgeFromMsg(etMsg)
+		if err != nil {
+			return nil, err
+		}
+		if err := view.RegisterEdge(et); err != nil {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"schema: attached edge edge_id %d: %v", et.EdgeID, err)
+		}
+		seenEdge[et.EdgeID] = struct{}{}
+	}
+	return view, nil
+}
+
+// schemaNodeFromMsg lowers a wire SchemaNodeTypeDef into the typed
+// schema.NodeTypeDef via the JSON contract (schemaNodeToMap) so the view
+// and the WAL op share one decode path.
+func schemaNodeFromMsg(msg *pb.SchemaNodeTypeDef) (*schema.NodeTypeDef, error) {
+	b, err := json.Marshal(schemaNodeToMap(msg))
+	if err != nil {
+		return nil, errs.Errorf(codes.InvalidArgument, "schema: encode node: %v", err)
+	}
+	var nt schema.NodeTypeDef
+	if err := json.Unmarshal(b, &nt); err != nil {
+		return nil, errs.Errorf(codes.InvalidArgument, "schema: decode node: %v", err)
+	}
+	return &nt, nil
+}
+
+// schemaEdgeFromMsg is the edge counterpart of schemaNodeFromMsg.
+func schemaEdgeFromMsg(msg *pb.SchemaEdgeTypeDef) (*schema.EdgeTypeDef, error) {
+	b, err := json.Marshal(schemaEdgeToMap(msg))
+	if err != nil {
+		return nil, errs.Errorf(codes.InvalidArgument, "schema: encode edge: %v", err)
+	}
+	var et schema.EdgeTypeDef
+	if err := json.Unmarshal(b, &et); err != nil {
+		return nil, errs.Errorf(codes.InvalidArgument, "schema: decode edge: %v", err)
+	}
+	return &et, nil
+}
+
+// schemaFieldToMap lowers a wire SchemaFieldDef to the schema.FieldDef
+// JSON shape. Only set keys are emitted so the JSON round-trip into
+// schema.FieldDef leaves zero-value fields at their Go zero values
+// (matching the omitempty-tagged struct). Name-free per ADR-031: no
+// "name" key.
+func schemaFieldToMap(f *pb.SchemaFieldDef) map[string]any {
+	m := map[string]any{
+		"field_id": f.GetFieldId(),
+		"kind":     f.GetKind(),
+	}
+	if f.GetRequired() {
+		m["required"] = true
+	}
+	if ev := f.GetEnumValues(); len(ev) > 0 {
+		m["enum_values"] = toAnySlice(ev)
+	}
+	// ref_type_id is proto3-optional: only emit when explicitly present.
+	if f.RefTypeId != nil {
+		m["ref_type_id"] = f.GetRefTypeId()
+	}
+	if f.GetIndexed() {
+		m["indexed"] = true
+	}
+	if f.GetSearchable() {
+		m["searchable"] = true
+	}
+	if f.GetDeprecated() {
+		m["deprecated"] = true
+	}
+	if d := f.GetDescription(); d != "" {
+		m["description"] = d
+	}
+	if f.GetPii() {
+		m["pii"] = true
+	}
+	if f.GetUnique() {
+		m["unique"] = true
+	}
+	return m
+}
+
+// schemaNodeToMap lowers a wire SchemaNodeTypeDef to the
+// schema.NodeTypeDef JSON shape.
+func schemaNodeToMap(nt *pb.SchemaNodeTypeDef) map[string]any {
+	fields := make([]any, 0, len(nt.GetFields()))
+	for _, f := range nt.GetFields() {
+		fields = append(fields, schemaFieldToMap(f))
+	}
+	m := map[string]any{
+		"type_id": nt.GetTypeId(),
+		"fields":  fields,
+	}
+	if nt.GetDeprecated() {
+		m["deprecated"] = true
+	}
+	if d := nt.GetDescription(); d != "" {
+		m["description"] = d
+	}
+	if dp := nt.GetDataPolicy(); dp != "" {
+		m["data_policy"] = dp
+	}
+	// subject_field is a field_id (name-free, ADR-031).
+	if nt.SubjectField != nil {
+		m["subject_field"] = nt.GetSubjectField()
+	}
+	if nt.LegalBasis != nil {
+		m["legal_basis"] = nt.GetLegalBasis()
+	}
+	if cu := nt.GetCompositeUnique(); len(cu) > 0 {
+		out := make([]any, 0, len(cu))
+		for _, c := range cu {
+			// Composite constraint is identified by its field_ids tuple
+			// (name-free, ADR-031).
+			out = append(out, map[string]any{
+				"field_ids": toAnyUint32Slice(c.GetFieldIds()),
+			})
+		}
+		m["composite_unique"] = out
+	}
+	return m
+}
+
+// schemaEdgeToMap lowers a wire SchemaEdgeTypeDef to the
+// schema.EdgeTypeDef JSON shape.
+func schemaEdgeToMap(et *pb.SchemaEdgeTypeDef) map[string]any {
+	props := make([]any, 0, len(et.GetProps()))
+	for _, p := range et.GetProps() {
+		props = append(props, schemaFieldToMap(p))
+	}
+	m := map[string]any{
+		"edge_id":      et.GetEdgeId(),
+		"from_type_id": et.GetFromTypeId(),
+		"to_type_id":   et.GetToTypeId(),
+		"props":        props,
+	}
+	if et.GetUniquePerFrom() {
+		m["unique_per_from"] = true
+	}
+	if et.GetDeprecated() {
+		m["deprecated"] = true
+	}
+	if d := et.GetDescription(); d != "" {
+		m["description"] = d
+	}
+	if dp := et.GetDataPolicy(); dp != "" {
+		m["data_policy"] = dp
+	}
+	// on_subject_exit is always emitted by the schema JSON contract
+	// (defaults to "both"); the applier's RegisterOrVerifyEdge also
+	// normalises an empty value, so emit only when the client set it.
+	if ose := et.GetOnSubjectExit(); ose != "" {
+		m["on_subject_exit"] = ose
+	}
+	return m
+}
+
+// toAnySlice widens a []string to []any so it survives the WAL JSON
+// round-trip as the schema struct's []string field.
+func toAnySlice(in []string) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
+}
+
+// toAnyUint32Slice widens a []uint32 to []any for the same reason.
+func toAnyUint32Slice(in []uint32) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
 }
 
 // convertACL maps the wire AclEntry slice to the internal list-of-dicts

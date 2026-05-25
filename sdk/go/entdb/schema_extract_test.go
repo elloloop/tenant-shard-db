@@ -69,19 +69,22 @@ func TestExtractSchemaJSON_ExtractsNodesAndEdgesFromTestPB(t *testing.T) {
 	if len(nodes) != 2 {
 		t.Fatalf("want 2 nodes, got %d", len(nodes))
 	}
-	prod := nodes[0].(map[string]any) // sorted by type_id, Product first
-	if prod["name"] != "Product" {
-		t.Errorf("name = %q, want Product", prod["name"])
+	prod := nodes[0].(map[string]any) // sorted by type_id, Product (201) first
+	// NAME-FREE (ADR-031): no type name is emitted — identity is type_id.
+	if _, ok := prod["name"]; ok {
+		t.Errorf("node carried a name key %v; ADR-031 schema JSON is name-free", prod["name"])
 	}
 	if int(prod["type_id"].(float64)) != 201 {
 		t.Errorf("type_id = %v, want 201", prod["type_id"])
 	}
-
-	// NotAnEntity has no (entdb.node) — must NOT appear in node_types.
+	// All emitted type_ids are the annotated ones; NotAnEntity (no
+	// (entdb.node)) must be absent. Name-free, so assert by id set.
+	ids := map[int]bool{}
 	for _, n := range nodes {
-		if n.(map[string]any)["name"] == "NotAnEntity" {
-			t.Error("NotAnEntity (no entdb annotation) should be skipped, but appeared in node_types")
-		}
+		ids[int(n.(map[string]any)["type_id"].(float64))] = true
+	}
+	if !ids[201] || !ids[202] {
+		t.Errorf("want type_ids {201,202}, got %v", ids)
 	}
 
 	edges := schema["edge_types"].([]any)
@@ -89,6 +92,9 @@ func TestExtractSchemaJSON_ExtractsNodesAndEdgesFromTestPB(t *testing.T) {
 		t.Fatalf("want 1 edge, got %d", len(edges))
 	}
 	edge := edges[0].(map[string]any)
+	if _, ok := edge["name"]; ok {
+		t.Errorf("edge carried a name key; ADR-031 schema JSON is name-free")
+	}
 	if int(edge["edge_id"].(float64)) != 301 {
 		t.Errorf("edge_id = %v, want 301", edge["edge_id"])
 	}
@@ -107,37 +113,38 @@ func TestExtractSchemaJSON_FieldKindsMappedFromProtoTypes(t *testing.T) {
 		t.Fatalf("want 3 fields on Product, got %d", len(fields))
 	}
 
-	byName := map[string]map[string]any{}
+	// NAME-FREE (ADR-031): fields are keyed by field_id, never by name.
+	byID := map[int]map[string]any{}
 	for _, f := range fields {
 		fm := f.(map[string]any)
-		byName[fm["name"].(string)] = fm
+		if _, ok := fm["name"]; ok {
+			t.Errorf("field carried a name key; ADR-031 schema JSON is name-free")
+		}
+		byID[int(fm["field_id"].(float64))] = fm
 	}
 
-	// sku: TYPE_STRING → kind "str"; (entdb.field).unique=true → unique:true
-	sku := byName["sku"]
+	// field 1 (sku): TYPE_STRING → kind "str"; (entdb.field).unique=true
+	sku := byID[1]
 	if sku["kind"] != "str" {
-		t.Errorf("sku.kind = %q, want str", sku["kind"])
+		t.Errorf("field 1.kind = %q, want str", sku["kind"])
 	}
 	if sku["unique"] != true {
-		t.Errorf("sku.unique = %v, want true", sku["unique"])
-	}
-	if int(sku["field_id"].(float64)) != 1 {
-		t.Errorf("sku.field_id = %v, want 1", sku["field_id"])
+		t.Errorf("field 1.unique = %v, want true", sku["unique"])
 	}
 
-	// name: TYPE_STRING, no annotations → kind str, no unique key emitted
-	name := byName["name"]
+	// field 2 (name): TYPE_STRING, no annotations → kind str, no unique
+	name := byID[2]
 	if name["kind"] != "str" {
-		t.Errorf("name.kind = %q, want str", name["kind"])
+		t.Errorf("field 2.kind = %q, want str", name["kind"])
 	}
 	if _, ok := name["unique"]; ok {
-		t.Error("name.unique should be omitted when not set")
+		t.Error("field 2.unique should be omitted when not set")
 	}
 
-	// price_cents: TYPE_INT64 → kind "int"
-	price := byName["price_cents"]
+	// field 3 (price_cents): TYPE_INT64 → kind "int"
+	price := byID[3]
 	if price["kind"] != "int" {
-		t.Errorf("price_cents.kind = %q, want int", price["kind"])
+		t.Errorf("field 3.kind = %q, want int", price["kind"])
 	}
 }
 
@@ -154,15 +161,16 @@ func TestExtractSchemaJSON_ExtractsCompositeUnique(t *testing.T) {
 	}
 	nodes := env["schema"].(map[string]any)["node_types"].([]any)
 
+	// NAME-FREE (ADR-031): find OAuthIdentity (type_id 202) by id.
 	var oauth map[string]any
 	for _, n := range nodes {
 		nm := n.(map[string]any)
-		if nm["name"] == "OAuthIdentity" {
+		if int(nm["type_id"].(float64)) == 202 {
 			oauth = nm
 		}
 	}
 	if oauth == nil {
-		t.Fatalf("OAuthIdentity node not extracted; nodes=%v", nodes)
+		t.Fatalf("OAuthIdentity (type_id 202) not extracted; nodes=%v", nodes)
 	}
 
 	cuRaw, ok := oauth["composite_unique"]
@@ -174,18 +182,20 @@ func TestExtractSchemaJSON_ExtractsCompositeUnique(t *testing.T) {
 		t.Fatalf("want 1 composite constraint, got %d: %v", len(cu), cu)
 	}
 	c := cu[0].(map[string]any)
-	if c["name"] != "provider_user_id" {
-		t.Errorf("constraint name = %q, want provider_user_id", c["name"])
+	// NAME-FREE (ADR-031): a composite constraint is identified solely by
+	// its field_ids tuple — no constraint name is emitted.
+	if _, ok := c["name"]; ok {
+		t.Errorf("composite_unique carried a name key %v; ADR-031 is name-free", c["name"])
 	}
 	ids := c["field_ids"].([]any)
 	if len(ids) != 2 || int(ids[0].(float64)) != 1 || int(ids[1].(float64)) != 2 {
 		t.Errorf("field_ids = %v, want [1 2] (resolved from proto field names)", ids)
 	}
 
-	// A node without composite_unique must NOT carry the key.
+	// Product (type_id 201, no composite_unique) must NOT carry the key.
 	for _, n := range nodes {
 		nm := n.(map[string]any)
-		if nm["name"] == "Product" {
+		if int(nm["type_id"].(float64)) == 201 {
 			if _, ok := nm["composite_unique"]; ok {
 				t.Error("Product (no composite_unique) should omit the key")
 			}

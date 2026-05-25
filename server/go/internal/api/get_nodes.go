@@ -268,7 +268,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 			missing = append(missing, id)
 			continue
 		}
-		pn, perr := s.storeNodeToProto("", results[i])
+		pn, perr := s.storeNodeToProto(0, results[i])
 		if perr != nil {
 			// A row that will not marshal is corrupt stored state, not an
 			// absent node — surface it rather than folding into missing_ids.

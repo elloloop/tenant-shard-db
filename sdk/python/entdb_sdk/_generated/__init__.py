@@ -54,6 +54,12 @@ from .entdb_pb2 import (
     ReceiptStatus,
     # Common
     RequestContext,
+    # Self-describing schema (ADR-031)
+    SchemaCompositeUniqueDef,
+    SchemaDescriptor,
+    SchemaEdgeTypeDef,
+    SchemaFieldDef,
+    SchemaNodeTypeDef,
     # Mailbox
     SearchMailboxRequest,
     SearchMailboxResponse,
@@ -152,6 +158,12 @@ __all__ = [
     "AclEntry",
     "FieldFilter",
     "FilterOp",
+    # Self-describing schema (ADR-031)
+    "SchemaDescriptor",
+    "SchemaNodeTypeDef",
+    "SchemaFieldDef",
+    "SchemaEdgeTypeDef",
+    "SchemaCompositeUniqueDef",
     "GetReceiptStatusRequest",
     "GetReceiptStatusResponse",
     "ReceiptStatus",

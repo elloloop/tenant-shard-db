@@ -28,7 +28,8 @@ Usage:
 
 Commands:
   snapshot   Emit the current schema as a deterministic JSON document.
-  check      Verify the current schema is compatible with a baseline.
+  breaking   Gate a schema change against a baseline (buf-breaking style).
+  check      Alias of breaking — verify compatibility with a baseline.
   diff       Show differences between two snapshot files.
   validate   Run cross-reference validation over a snapshot.
   version    Print version and exit.
@@ -52,6 +53,8 @@ func main() {
 	switch cmd {
 	case "snapshot":
 		os.Exit(cmdSnapshot(args, os.Stdout, os.Stderr))
+	case "breaking":
+		os.Exit(cmdBreaking(args, os.Stdout, os.Stderr))
 	case "check":
 		os.Exit(cmdCheck(args, os.Stdout, os.Stderr))
 	case "diff":

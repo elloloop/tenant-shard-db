@@ -244,10 +244,22 @@ class FieldDef:
         return True, None
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to the name-free cross-language schema JSON contract (ADR-031).
+
+        Per ADR-031 the schema JSON contract is NAME-FREE: a field is
+        identified solely by its ``field_id`` (the proto field number per
+        ADR-018); the human-facing ``name`` lives only in the client's proto
+        and is never emitted on the wire, at rest, or in the fingerprint.
+
+        Only the attributes the server models (``schema.FieldDef`` in
+        ``server/go/internal/schema/types.go``) are emitted, with the same
+        omitempty rules so the canonical form — and therefore the
+        fingerprint — matches the Go server byte-for-byte. The Python-only
+        ``phi`` / ``pii_false`` ergonomic flags are deliberately NOT emitted
+        (the server has no such fields).
+        """
         result: dict[str, Any] = {
             "field_id": self.field_id,
-            "name": self.name,
             "kind": self.kind.value,
         }
         if self.required:
@@ -262,16 +274,12 @@ class FieldDef:
             result["indexed"] = True
         if self.searchable:
             result["searchable"] = True
-        if self.pii:
-            result["pii"] = True
-        if self.phi:
-            result["phi"] = True
-        if self.pii_false:
-            result["pii_false"] = True
         if self.deprecated:
             result["deprecated"] = True
         if self.description:
             result["description"] = self.description
+        if self.pii:
+            result["pii"] = True
         if self.unique:
             result["unique"] = True
         return result
@@ -445,7 +453,11 @@ class CompositeUniqueDef:
             )
 
     def to_dict(self) -> dict[str, Any]:
-        return {"name": self.name, "field_ids": list(self.field_ids)}
+        """Name-free (ADR-031): a composite constraint is identified solely
+        by its ``field_ids`` tuple — no constraint name is emitted on the
+        wire or in the fingerprint. The SDK keeps ``name`` only for local
+        diagnostics."""
+        return {"field_ids": list(self.field_ids)}
 
 
 @dataclass(frozen=True)
@@ -559,20 +571,40 @@ class NodeTypeDef:
         return len(errors) == 0, errors
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to the name-free cross-language schema JSON contract (ADR-031).
+
+        NAME-FREE: the type is identified solely by ``type_id``; no type,
+        field, or constraint name is emitted. The output mirrors
+        ``server/go/internal/schema/types.go`` (NodeTypeDef) field-for-field
+        with the same omitempty rules so the canonical form and the
+        fingerprint match the Go server byte-for-byte:
+
+          - ``type_id`` and ``fields`` are always emitted (``fields`` even
+            when empty).
+          - ``data_policy`` is emitted only when it is NOT the PERSONAL
+            default (the server treats it as an unset pointer otherwise).
+          - ``subject_field`` is emitted as the resolved ``field_id`` only
+            when set (name-free); ``legal_basis`` / ``deprecated`` /
+            ``description`` / ``composite_unique`` follow omitempty.
+          - ACL / retention metadata the server does not model on the wire
+            is deliberately omitted.
+        """
         result: dict[str, Any] = {
             "type_id": self.type_id,
-            "name": self.name,
             "fields": [f.to_dict() for f in self.fields],
-            "acl_defaults": self.acl_defaults.to_dict(),
-            "data_policy": self.data_policy.name,
-            "deprecated": self.deprecated,
-            "description": self.description,
         }
+        if self.deprecated:
+            result["deprecated"] = True
+        if self.description:
+            result["description"] = self.description
+        if self.data_policy != DataPolicy.PERSONAL:
+            result["data_policy"] = self.data_policy.name.lower()
+        # subject_field is a field_id on the wire (name-free, ADR-031);
+        # resolve the developer-facing name against this type's fields.
         if self.subject_field:
-            result["subject_field"] = self.subject_field
-        if self.retention_days:
-            result["retention_days"] = self.retention_days
+            sf = self.get_field(self.subject_field)
+            if sf is not None:
+                result["subject_field"] = sf.field_id
         if self.legal_basis:
             result["legal_basis"] = self.legal_basis
         if self.composite_unique:
@@ -792,24 +824,35 @@ class EdgeTypeDef:
         return len(errors) == 0, errors
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to the name-free cross-language schema JSON contract (ADR-031).
+
+        NAME-FREE: the edge type is identified solely by ``edge_id``; no
+        edge or field name is emitted. Mirrors
+        ``server/go/internal/schema/types.go`` (EdgeTypeDef):
+
+          - ``edge_id`` / ``from_type_id`` / ``to_type_id`` / ``props`` are
+            always emitted (``props`` even when empty).
+          - ``on_subject_exit`` is ALWAYS emitted (defaults ``"both"``).
+          - ``unique_per_from`` / ``deprecated`` / ``description`` /
+            ``data_policy`` follow omitempty.
+          - ``propagate_share`` / retention metadata the server does not
+            model on the wire is omitted.
+        """
         result: dict[str, Any] = {
             "edge_id": self.edge_id,
-            "name": self.name,
             "from_type_id": self.from_type_id,
             "to_type_id": self.to_type_id,
             "props": [p.to_dict() for p in self.props],
-            "propagate_share": self.propagate_share,
-            "unique_per_from": self.unique_per_from,
-            "data_policy": self.data_policy.name,
-            "on_subject_exit": self.on_subject_exit.name,
-            "deprecated": self.deprecated,
-            "description": self.description,
+            "on_subject_exit": self.on_subject_exit.name.lower(),
         }
-        if self.retention_days:
-            result["retention_days"] = self.retention_days
-        if self.legal_basis:
-            result["legal_basis"] = self.legal_basis
+        if self.unique_per_from:
+            result["unique_per_from"] = True
+        if self.deprecated:
+            result["deprecated"] = True
+        if self.description:
+            result["description"] = self.description
+        if self.data_policy != DataPolicy.PERSONAL:
+            result["data_policy"] = self.data_policy.name.lower()
         return result
 
     @classmethod

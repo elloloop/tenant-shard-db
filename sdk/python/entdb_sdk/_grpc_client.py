@@ -74,6 +74,12 @@ from ._generated import (
     RequestContext,
     RevokeAccessRequest,
     RevokeAllUserAccessRequest,
+    # Self-describing schema (ADR-031)
+    SchemaCompositeUniqueDef,
+    SchemaDescriptor,
+    SchemaEdgeTypeDef,
+    SchemaFieldDef,
+    SchemaNodeTypeDef,
     SearchMailboxRequest,
     SearchNodesRequest,
     ShareNodeRequest,
@@ -273,6 +279,15 @@ def _parse_composite_unique_constraint_detail(
         constraint=<repr> fields=[<int>, ...] values=[<repr>, ...]
         already exists
 
+    NAME-FREE (ADR-031): the ``constraint`` value is no longer a
+    constraint NAME — it is the field-id TUPLE SIGNATURE, repr'd as a
+    string, e.g. ``constraint='(1,2)'``. The lexical shape is unchanged
+    (``constraint=<repr>``) so this parser still recovers it via
+    ``ast.literal_eval``; ``constraint_name`` then holds the tuple
+    signature string (``"(1,2)"``) and ``field_ids`` holds the parsed
+    ``fields=[1, 2]`` tuple. ``is_composite`` stays True because the
+    signature is non-empty.
+
     Returns ``(type_id, constraint_name, field_ids, values)`` or
     ``(None, None, None, None)`` if the detail doesn't match — single-
     field violations parse via ``_parse_unique_constraint_detail``
@@ -306,6 +321,160 @@ def _parse_composite_unique_constraint_detail(
     field_ids = tuple(int(f) for f in (fields_parsed or []))
     values_t = tuple(values_parsed or [])
     return type_id, constraint_name, field_ids, values_t
+
+
+# --- SELF-DESCRIBING WRITES (ADR-031) -------------------------------------
+#
+# Build a NAME-FREE SchemaDescriptor from the SDK's local registry so a
+# write can carry the definitions of the types it touches. The proto
+# message shape mirrors the cross-language schema JSON contract
+# (schema.NodeTypeDef.to_dict — also name-free now), and the kinds /
+# attributes are exactly what the server's fingerprint canonicaliser
+# consumes, so the descriptor the client sends produces the same
+# fingerprint the client computed locally.
+
+
+def _field_def_to_proto(fdef: Any) -> SchemaFieldDef:
+    """Lower an SDK FieldDef to a name-free wire SchemaFieldDef."""
+    out = SchemaFieldDef(field_id=int(fdef.field_id), kind=fdef.kind.value)
+    if fdef.required:
+        out.required = True
+    if fdef.enum_values:
+        out.enum_values.extend(fdef.enum_values)
+    if fdef.ref_type_id is not None:
+        out.ref_type_id = int(fdef.ref_type_id)
+    if fdef.indexed:
+        out.indexed = True
+    if fdef.searchable:
+        out.searchable = True
+    if fdef.deprecated:
+        out.deprecated = True
+    if fdef.description:
+        out.description = fdef.description
+    if fdef.pii:
+        out.pii = True
+    if fdef.unique:
+        out.unique = True
+    return out
+
+
+def _node_type_to_proto(node: Any) -> SchemaNodeTypeDef:
+    """Lower an SDK NodeTypeDef to a name-free wire SchemaNodeTypeDef.
+
+    Only the attributes the server's fingerprint canonicaliser models are
+    emitted, with the SAME omitempty rules as ``NodeTypeDef.to_dict`` so the
+    descriptor and the locally-computed fingerprint agree (ADR-031).
+    """
+    from .schema import DataPolicy
+
+    out = SchemaNodeTypeDef(type_id=int(node.type_id))
+    out.fields.extend(_field_def_to_proto(f) for f in node.fields)
+    if node.deprecated:
+        out.deprecated = True
+    if node.description:
+        out.description = node.description
+    if node.data_policy != DataPolicy.PERSONAL:
+        out.data_policy = node.data_policy.name.lower()
+    if node.subject_field:
+        sf = node.get_field(node.subject_field)
+        if sf is not None:
+            out.subject_field = int(sf.field_id)
+    if node.legal_basis:
+        out.legal_basis = node.legal_basis
+    for cu in node.composite_unique:
+        out.composite_unique.append(
+            SchemaCompositeUniqueDef(field_ids=[int(f) for f in cu.field_ids])
+        )
+    return out
+
+
+def _edge_type_to_proto(edge: Any) -> SchemaEdgeTypeDef:
+    """Lower an SDK EdgeTypeDef to a name-free wire SchemaEdgeTypeDef."""
+    from .schema import DataPolicy
+
+    out = SchemaEdgeTypeDef(
+        edge_id=int(edge.edge_id),
+        from_type_id=int(edge.from_type_id),
+        to_type_id=int(edge.to_type_id),
+        on_subject_exit=edge.on_subject_exit.name.lower(),
+    )
+    out.props.extend(_field_def_to_proto(p) for p in edge.props)
+    if edge.unique_per_from:
+        out.unique_per_from = True
+    if edge.deprecated:
+        out.deprecated = True
+    if edge.description:
+        out.description = edge.description
+    if edge.data_policy != DataPolicy.PERSONAL:
+        out.data_policy = edge.data_policy.name.lower()
+    return out
+
+
+def _resolve_filter_field(registry: Any, type_id: int, field: str) -> str:
+    """Resolve a developer-facing filter field name to its decimal field_id.
+
+    NAME-FREE (ADR-031): the server rejects a non-digit FieldFilter.field —
+    filters are id-keyed, the SDK pre-translates from the client registry.
+    A digit-only ``field`` (the schema-less escape hatch, issue #545) is
+    forwarded unchanged. An unresolved name is forwarded unchanged too so
+    the server returns the canonical INVALID_ARGUMENT rather than the SDK
+    masking it.
+    """
+    if field.isdigit():
+        return field
+    if registry is not None and type_id:
+        nt = registry.get_node_type(int(type_id))
+        if nt is not None:
+            fdef = nt.get_field(field)
+            if fdef is not None:
+                return str(fdef.field_id)
+    return field
+
+
+def _build_schema_descriptor(registry: Any) -> SchemaDescriptor | None:
+    """Build a name-free SchemaDescriptor for every type in the registry.
+
+    Returns ``None`` when the registry is empty / unavailable — the caller
+    then sends no descriptor (and no fingerprint), leaving the server
+    schema-less for that write. Carrying the WHOLE registry (not just the
+    types this batch touches) keeps the descriptor in lock-step with the
+    fingerprint the client computed over the same registry; the server
+    no-ops already-registered byte-identical types (establish-or-reject),
+    so the only cost is bytes on the first write of a connection.
+    """
+    if registry is None:
+        return None
+    nodes = list(registry.node_types())
+    edges = list(registry.edge_types())
+    if not nodes and not edges:
+        return None
+    desc = SchemaDescriptor()
+    for n in sorted(nodes, key=lambda n: n.type_id):
+        desc.node_types.append(_node_type_to_proto(n))
+    for e in sorted(edges, key=lambda e: e.edge_id):
+        desc.edge_types.append(_edge_type_to_proto(e))
+    return desc
+
+
+def _registry_fingerprint(registry: Any) -> str:
+    """Return the registry's name-free fingerprint, computing it on demand.
+
+    The runtime registry is not frozen in the self-describing model, so
+    ``registry.fingerprint`` may be None until first computed. This computes
+    it directly from the (name-free) ``to_dict`` so it matches the server.
+    """
+    if registry is None:
+        return ""
+    fp = getattr(registry, "fingerprint", None)
+    if fp:
+        return fp
+    compute = getattr(registry, "_compute_fingerprint", None)
+    if compute is None:
+        return ""
+    try:
+        return compute()
+    except Exception:
+        return ""
 
 
 logger = logging.getLogger(__name__)
@@ -718,6 +887,15 @@ class GrpcClient:
         # Lazily initialised on first connect — see
         # ``_redirect_cache.py`` for the design.
         self._redirect_cache: Any = None
+        # SELF-DESCRIBING WRITES (ADR-031): the last schema fingerprint the
+        # server reported for this connection. While it is None or differs
+        # from the client's registry fingerprint, ExecuteAtomic attaches a
+        # name-free SchemaDescriptor for the types the batch touches so the
+        # server materializes them via a leading register_schema WAL op.
+        # Once the server confirms the matching fingerprint the descriptor
+        # is omitted (lean steady state). Reset / re-attached on a
+        # SCHEMA_MISMATCH response.
+        self._server_fingerprint: str | None = None
 
     def _open_channel(self, address: str) -> grpc_aio.Channel:
         """Open a gRPC channel mirroring the client's TLS settings.
@@ -963,14 +1141,35 @@ class GrpcClient:
         # Convert operations to protobuf format
         proto_ops = self._convert_operations(operations)
 
-        request = ExecuteAtomicRequest(
-            context=self._make_context(tenant_id, actor, trace_id),
-            idempotency_key=idempotency_key or "",
-            schema_fingerprint=schema_fingerprint or "",
-            operations=proto_ops,
-            wait_applied=wait_applied,
-            wait_timeout_ms=wait_timeout_ms,
-        )
+        # SELF-DESCRIBING WRITES (ADR-031). The client fingerprint is the
+        # explicit one passed in, else the (name-free) registry fingerprint.
+        # Attach a name-free SchemaDescriptor whenever the server has not yet
+        # confirmed this fingerprint for the connection; omit it once it has
+        # (lean steady state). The server materializes the carried types via
+        # a leading register_schema WAL op (establish-or-reject), so sending
+        # the whole registry is safe and idempotent.
+        client_fp = schema_fingerprint or _registry_fingerprint(self._registry)
+        attach_schema = bool(client_fp) and self._server_fingerprint != client_fp
+        descriptor = _build_schema_descriptor(self._registry) if attach_schema else None
+        if descriptor is None:
+            # No registry types to describe — do not advertise a fingerprint
+            # the server cannot satisfy (keeps schema-less writes working).
+            attach_schema = False
+
+        def _build_request(*, with_schema: bool) -> ExecuteAtomicRequest:
+            req = ExecuteAtomicRequest(
+                context=self._make_context(tenant_id, actor, trace_id),
+                idempotency_key=idempotency_key or "",
+                schema_fingerprint=client_fp if with_schema else (schema_fingerprint or ""),
+                operations=proto_ops,
+                wait_applied=wait_applied,
+                wait_timeout_ms=wait_timeout_ms,
+            )
+            if with_schema and descriptor is not None:
+                req.schema.CopyFrom(descriptor)
+            return req
+
+        request = _build_request(with_schema=attach_schema)
 
         try:
             response = await self._retry(
@@ -980,6 +1179,26 @@ class GrpcClient:
                 metadata=metadata,
                 tenant_id=tenant_id,
             )
+
+            # SCHEMA_MISMATCH (ADR-031): the client advertised a fingerprint
+            # the server does not have and we sent no descriptor to reconcile
+            # with — re-send once WITH the descriptor so the server can
+            # establish the schema in a leading register_schema op.
+            if response.error_code == "SCHEMA_MISMATCH" and descriptor is not None:
+                self._server_fingerprint = None
+                response = await self._retry(
+                    stub.ExecuteAtomic,
+                    _build_request(with_schema=True),
+                    timeout=timeout or _DEFAULT_TIMEOUT,
+                    metadata=metadata,
+                    tenant_id=tenant_id,
+                )
+
+            # Once a write that carried the schema succeeds, the server has
+            # materialized exactly this (name-free) fingerprint; cache it so
+            # subsequent writes omit the descriptor.
+            if attach_schema and response.error_code != "SCHEMA_MISMATCH":
+                self._server_fingerprint = client_fp
 
             # GitHub issue #500 — CAS miss surfaces in-band:
             # applied_status == FAILED_PRECONDITION + structured
@@ -1159,17 +1378,21 @@ class GrpcClient:
                 # FieldFilter lowering (a {"$op": v} sub-dict rides
                 # through as a Value, which the server's inlined-
                 # operator decoder fans into one FieldFilter per op,
-                # issue #501). Field NAMES travel on the wire; the
-                # server resolves them to stable field ids.
+                # issue #501). NAME-FREE (ADR-031): the server rejects a
+                # non-digit FieldFilter.field, so the SDK resolves field
+                # names to decimal field_ids client-side from the registry
+                # before sending (a digit-only key passes through for the
+                # schema-less escape hatch, issue #545).
                 dw = op["delete_where"]
                 where_filters = []
                 where_dict = dw.get("where") or {}
+                dw_type_id = dw.get("type_id", 0)
                 for field_name, field_value in where_dict.items():
                     v = Value()
                     json_format.Parse(json.dumps(field_value), v)
                     where_filters.append(
                         FieldFilter(
-                            field=field_name,
+                            field=_resolve_filter_field(self._registry, dw_type_id, field_name),
                             value=v,
                             typed_value=_value_to_entvalue(field_value),
                         )
@@ -1534,7 +1757,10 @@ class GrpcClient:
                 json_format.Parse(json.dumps(field_value), v)
                 filters.append(
                     FieldFilter(
-                        field=field_name,
+                        # NAME-FREE (ADR-031): resolve the field name to its
+                        # decimal field_id client-side; the server rejects a
+                        # non-digit FieldFilter.field.
+                        field=_resolve_filter_field(self._registry, type_id, field_name),
                         value=v,
                         typed_value=_value_to_entvalue(field_value),
                     )
