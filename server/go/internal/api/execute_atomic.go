@@ -62,12 +62,13 @@ const (
 	// Internal op-string constants. Kept local rather than imported from
 	// apply to avoid pulling that package's heavyweight deps into the api
 	// binary just for two strings.
-	opCreateNode  = "create_node"
-	opUpdateNode  = "update_node"
-	opDeleteNode  = "delete_node"
-	opDeleteWhere = "delete_where"
-	opCreateEdge  = "create_edge"
-	opDeleteEdge  = "delete_edge"
+	opRegisterSchema = "register_schema"
+	opCreateNode     = "create_node"
+	opUpdateNode     = "update_node"
+	opDeleteNode     = "delete_node"
+	opDeleteWhere    = "delete_where"
+	opCreateEdge     = "create_edge"
+	opDeleteEdge     = "delete_edge"
 )
 
 // ExecuteAtomic implements entdb.v1.EntDBService/ExecuteAtomic.
@@ -119,13 +120,41 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		idem = uuid.NewString()
 	}
 
-	// Schema fingerprint check. In-band failure when the request claims a
-	// fingerprint that disagrees with the server's. NOT an abort.
+	// Schema fingerprint check + SELF-DESCRIBING WRITES negotiation.
+	//
+	// srvFP is the server's current registry fingerprint (empty in the
+	// schema-less profile). When the request carries a SchemaDescriptor
+	// (req.schema) and its fingerprint differs from the server's, the
+	// write is self-describing: we materialize the carried types into a
+	// leading register_schema WAL op (built below) instead of rejecting.
+	// The applier registers establish-or-reject, so an identical schema is
+	// a cheap idempotent no-op and a conflicting one fails the event
+	// deterministically (FAILED_PRECONDITION) without halting.
+	//
+	// Only when the request claims a fingerprint that disagrees with the
+	// server AND carries NO schema do we keep the legacy in-band
+	// SCHEMA_MISMATCH (the client believes it matches a schema the server
+	// no longer has, and gave us nothing to reconcile with).
 	srvFP := ""
 	if s.registry != nil {
 		srvFP = s.registry.Fingerprint()
 	}
-	if reqFP := req.GetSchemaFingerprint(); reqFP != "" && srvFP != "" && reqFP != srvFP {
+	reqFP := req.GetSchemaFingerprint()
+	carriesSchema := req.GetSchema() != nil &&
+		(len(req.GetSchema().GetNodeTypes()) > 0 || len(req.GetSchema().GetEdgeTypes()) > 0)
+	// includeSchemaOp: prepend a register_schema op whenever the client
+	// rides types, EXCEPT the steady state where both fingerprints are
+	// known and equal (the server already has exactly this schema). The
+	// applier registers establish-or-reject and no-ops an identical type,
+	// so appending the op is always safe — but skipping it in steady
+	// state keeps the common write cheap. Note: an empty server
+	// fingerprint (fresh selfdescribing registry) is NOT equal to a
+	// non-empty client fingerprint, and two empty fingerprints still
+	// trigger the op when a schema is carried (the client's very first
+	// write before it has negotiated a fingerprint).
+	fingerprintsKnownAndEqual := reqFP != "" && srvFP != "" && reqFP == srvFP
+	includeSchemaOp := carriesSchema && !fingerprintsKnownAndEqual
+	if !includeSchemaOp && reqFP != "" && srvFP != "" && reqFP != srvFP {
 		outcome = "error"
 		return &pb.ExecuteAtomicResponse{
 			Success:   false,
@@ -141,6 +170,20 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	if err != nil {
 		outcome = "error"
 		return nil, err
+	}
+
+	// SELF-DESCRIBING WRITES: prepend the register_schema op so the
+	// applier materializes the carried types (and their per-tenant
+	// indexes) BEFORE the data ops, in the SAME WAL event / transaction.
+	// Because the schema rides in the WAL, replaying the log
+	// deterministically rebuilds the registry + indexes.
+	if includeSchemaOp {
+		schemaOp, serr := convertSchemaDescriptor(req.GetSchema())
+		if serr != nil {
+			outcome = "error"
+			return nil, serr
+		}
+		ops = append([]map[string]any{schemaOp}, ops...)
 	}
 
 	// Tenant-membership + role + status check. Best-effort: skipped when
@@ -727,6 +770,180 @@ func (s *Server) ingressPayload(typeID int32, typed map[uint32]*pb.EntValue, st 
 		return out, nil
 	}
 	return s.translatePayload(typeID, st)
+}
+
+// convertSchemaDescriptor lowers a wire pb.SchemaDescriptor into the
+// internal register_schema op map. The node_types / edge_types entries
+// use the EXACT snake_case keys of the schema JSON contract
+// (schema.NodeTypeDef / schema.FieldDef / schema.EdgeTypeDef struct
+// tags) so the applier's decodeSchemaOp round-trips them straight into
+// the typed schema structs via encoding/json — keeping this lowering in
+// lockstep with schema.LoadFromJSON.
+//
+// Validation (type_id/edge_id positivity, field invariants,
+// composite-unique sanity) is deferred to the applier's
+// RegisterOrVerify* path, which runs the schema package's own Validate
+// — the single source of truth. A structurally empty descriptor returns
+// an error so we never emit a no-op schema op.
+func convertSchemaDescriptor(desc *pb.SchemaDescriptor) (map[string]any, error) {
+	if desc == nil {
+		return nil, errs.Errorf(codes.InvalidArgument, "schema: nil descriptor")
+	}
+	nodeTypes := make([]any, 0, len(desc.GetNodeTypes()))
+	for _, nt := range desc.GetNodeTypes() {
+		nodeTypes = append(nodeTypes, schemaNodeToMap(nt))
+	}
+	edgeTypes := make([]any, 0, len(desc.GetEdgeTypes()))
+	for _, et := range desc.GetEdgeTypes() {
+		edgeTypes = append(edgeTypes, schemaEdgeToMap(et))
+	}
+	if len(nodeTypes) == 0 && len(edgeTypes) == 0 {
+		return nil, errs.Errorf(codes.InvalidArgument,
+			"schema: descriptor has no node_types or edge_types")
+	}
+	op := map[string]any{"op": opRegisterSchema}
+	if len(nodeTypes) > 0 {
+		op["node_types"] = nodeTypes
+	}
+	if len(edgeTypes) > 0 {
+		op["edge_types"] = edgeTypes
+	}
+	return op, nil
+}
+
+// schemaFieldToMap lowers a wire SchemaFieldDef to the schema.FieldDef
+// JSON shape. Only set keys are emitted so the JSON round-trip into
+// schema.FieldDef leaves zero-value fields at their Go zero values
+// (matching the omitempty-tagged struct).
+func schemaFieldToMap(f *pb.SchemaFieldDef) map[string]any {
+	m := map[string]any{
+		"field_id": f.GetFieldId(),
+		"name":     f.GetName(),
+		"kind":     f.GetKind(),
+	}
+	if f.GetRequired() {
+		m["required"] = true
+	}
+	if ev := f.GetEnumValues(); len(ev) > 0 {
+		m["enum_values"] = toAnySlice(ev)
+	}
+	// ref_type_id is proto3-optional: only emit when explicitly present.
+	if f.RefTypeId != nil {
+		m["ref_type_id"] = f.GetRefTypeId()
+	}
+	if f.GetIndexed() {
+		m["indexed"] = true
+	}
+	if f.GetSearchable() {
+		m["searchable"] = true
+	}
+	if f.GetDeprecated() {
+		m["deprecated"] = true
+	}
+	if d := f.GetDescription(); d != "" {
+		m["description"] = d
+	}
+	if f.GetPii() {
+		m["pii"] = true
+	}
+	if f.GetUnique() {
+		m["unique"] = true
+	}
+	return m
+}
+
+// schemaNodeToMap lowers a wire SchemaNodeTypeDef to the
+// schema.NodeTypeDef JSON shape.
+func schemaNodeToMap(nt *pb.SchemaNodeTypeDef) map[string]any {
+	fields := make([]any, 0, len(nt.GetFields()))
+	for _, f := range nt.GetFields() {
+		fields = append(fields, schemaFieldToMap(f))
+	}
+	m := map[string]any{
+		"type_id": nt.GetTypeId(),
+		"name":    nt.GetName(),
+		"fields":  fields,
+	}
+	if nt.GetDeprecated() {
+		m["deprecated"] = true
+	}
+	if d := nt.GetDescription(); d != "" {
+		m["description"] = d
+	}
+	if dp := nt.GetDataPolicy(); dp != "" {
+		m["data_policy"] = dp
+	}
+	if nt.SubjectField != nil {
+		m["subject_field"] = nt.GetSubjectField()
+	}
+	if nt.LegalBasis != nil {
+		m["legal_basis"] = nt.GetLegalBasis()
+	}
+	if cu := nt.GetCompositeUnique(); len(cu) > 0 {
+		out := make([]any, 0, len(cu))
+		for _, c := range cu {
+			out = append(out, map[string]any{
+				"name":      c.GetName(),
+				"field_ids": toAnyUint32Slice(c.GetFieldIds()),
+			})
+		}
+		m["composite_unique"] = out
+	}
+	return m
+}
+
+// schemaEdgeToMap lowers a wire SchemaEdgeTypeDef to the
+// schema.EdgeTypeDef JSON shape.
+func schemaEdgeToMap(et *pb.SchemaEdgeTypeDef) map[string]any {
+	props := make([]any, 0, len(et.GetProps()))
+	for _, p := range et.GetProps() {
+		props = append(props, schemaFieldToMap(p))
+	}
+	m := map[string]any{
+		"edge_id":      et.GetEdgeId(),
+		"name":         et.GetName(),
+		"from_type_id": et.GetFromTypeId(),
+		"to_type_id":   et.GetToTypeId(),
+		"props":        props,
+	}
+	if et.GetUniquePerFrom() {
+		m["unique_per_from"] = true
+	}
+	if et.GetDeprecated() {
+		m["deprecated"] = true
+	}
+	if d := et.GetDescription(); d != "" {
+		m["description"] = d
+	}
+	if dp := et.GetDataPolicy(); dp != "" {
+		m["data_policy"] = dp
+	}
+	// on_subject_exit is always emitted by the schema JSON contract
+	// (defaults to "both"); the applier's RegisterOrVerifyEdge also
+	// normalises an empty value, so emit only when the client set it.
+	if ose := et.GetOnSubjectExit(); ose != "" {
+		m["on_subject_exit"] = ose
+	}
+	return m
+}
+
+// toAnySlice widens a []string to []any so it survives the WAL JSON
+// round-trip as the schema struct's []string field.
+func toAnySlice(in []string) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
+}
+
+// toAnyUint32Slice widens a []uint32 to []any for the same reason.
+func toAnyUint32Slice(in []uint32) []any {
+	out := make([]any, len(in))
+	for i, v := range in {
+		out[i] = v
+	}
+	return out
 }
 
 // convertACL maps the wire AclEntry slice to the internal list-of-dicts

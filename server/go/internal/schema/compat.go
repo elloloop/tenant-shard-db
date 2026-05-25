@@ -233,8 +233,9 @@ func nodesByID(r *Registry) map[int32]*NodeTypeDef {
 	if r == nil {
 		return map[int32]*NodeTypeDef{}
 	}
-	out := make(map[int32]*NodeTypeDef, len(r.nodes))
-	for id, n := range r.nodes {
+	s := r.load()
+	out := make(map[int32]*NodeTypeDef, len(s.nodes))
+	for id, n := range s.nodes {
 		out[id] = n
 	}
 	return out
@@ -733,8 +734,9 @@ func edgesByID(r *Registry) map[int32]*EdgeTypeDef {
 	if r == nil {
 		return map[int32]*EdgeTypeDef{}
 	}
-	out := make(map[int32]*EdgeTypeDef, len(r.edges))
-	for id, e := range r.edges {
+	s := r.load()
+	out := make(map[int32]*EdgeTypeDef, len(s.edges))
+	for id, e := range s.edges {
 		out[id] = e
 	}
 	return out

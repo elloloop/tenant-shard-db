@@ -34,7 +34,6 @@ import (
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/testseed"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -132,63 +131,25 @@ func main() {
 	archiveBatchBytes := flag.Int("archive-batch-bytes", 10<<20, "approximate maximum uncompressed bytes per archive object")
 	archivePollTimeout := flag.Duration("archive-poll-timeout", time.Second, "how long the archive sidecar polls for WAL records")
 	archiveRetryBackoff := flag.Duration("archive-retry-backoff", 5*time.Second, "retry backoff after archive poll/write failures")
-	// --seed-tenant / --seed-profile are TEST-ONLY data-bootstrap flags
-	// honoured by the cross-impl harnesses (docs/go-port/shared/
-	// test-harness.md). When set, the binary pre-creates a tenant +
-	// the actors / nodes the chosen --seed-profile expects so tests can
-	// authenticate and reach assertions. Empty disables seeding.
-	//
-	// IMPORTANT: these flags NO LONGER load a server-side schema
-	// registry. The boot-time schema-registry crutch (the only
-	// production-less path that ever populated the in-memory registry)
-	// has been removed — the server now boots schema-less in every mode.
-	// Uniqueness / type-validation / fingerprint enforcement therefore
-	// stay OFF until the real self-describing-writes path lands the
-	// schema through ExecuteAtomic. These flags now drive ONLY the
-	// globalstore/data bootstrap (tenant + users + the contract seed
-	// node), which is independent of the schema registry.
-	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant (data bootstrap only; no schema is loaded)")
-	// --seed-profile selects the DATA-bootstrap shape applied to
-	// --seed-tenant. It no longer selects any schema.
-	//   - "none" (default): no data seeding.
-	//   - "contract": alice/bob users + seed node + seed-1 receipt.
-	//     Matches the cross-impl contract suite
-	//     (tests/python/integration/test_grpc_contract.py).
-	//   - "e2e": e2e-runner user as tenant owner. Matches
-	//     tests/python/e2e/.
-	seedProfile := flag.String("seed-profile", "", "test-only: data-bootstrap profile {none, contract, e2e}; default 'contract' when --seed-tenant is set (no schema loaded)")
 	flag.Parse()
 
 	if strings.TrimSpace(*dataDir) == "" {
 		log.Fatalf("entdb-server: --data-dir is required")
 	}
 
-	// Resolve --seed-profile. Empty profile + non-empty --seed-tenant
-	// defaults to "contract" so the pre- harness invocation
-	// (--seed-tenant=acme without --seed-profile) keeps working.
-	profile := *seedProfile
-	if profile == "" {
-		if *seedTenant != "" {
-			profile = "contract"
-		} else {
-			profile = "none"
-		}
-	}
-	switch profile {
-	case "none", "contract", "e2e":
-		// ok
-	default:
-		log.Fatalf("entdb-server: invalid --seed-profile %q (want none|contract|e2e)", profile)
-	}
-
 	srvOpts := []api.Option{}
 
-	// Schema-less boot. There is no production path that populates the
-	// in-memory schema registry yet (the boot-seed crutch was removed),
-	// so the server always boots with a nil registry. The WithSchemaRegistry
-	// wiring point is intentionally kept (left nil) for when the real
-	// self-describing-writes path lands.
-	var registry *schema.Registry
+	// Empty-boot, runtime-mutable schema registry (self-describing writes).
+	// Nothing is imported at boot — no schema, no data. Types are registered
+	// as writes arrive: the ExecuteAtomic handler rides each touched type in
+	// the WAL register_schema op and the applier registers it
+	// establish-or-reject, creating the per-tenant indexes. The registry is
+	// rebuilt deterministically from the WAL on every boot via the applier's
+	// replay. It is present (non-nil) so the server advertises a fingerprint
+	// and enforces uniqueness/indexes once a type is known, and it is NOT
+	// frozen so it can grow at runtime.
+	registry := schema.NewRegistry()
+	srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
 	var err error
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -489,35 +450,6 @@ func main() {
 		log.Printf("entdb-server: legal-hold-lift worker enabled (interval=%s)", *legalHoldLiftWorkerInterval)
 	} else if *legalHoldLiftWorkerEnabled {
 		log.Printf("entdb-server: legal-hold-lift worker idle (archive sidecar disabled; nothing to sweep)")
-	}
-
-	// Test-only DATA seed: the cross-impl harnesses boot the binary with
-	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
-	// fixture DATA (tenant row, users, memberships, the contract seed
-	// node) to be queryable before the first RPC arrives so tests can
-	// authenticate and reach their assertions. This bootstrap is
-	// independent of the schema registry — it only writes globalstore
-	// rows + a WAL event — so it survives the schema-less boot. Skipped
-	// silently when profile=none.
-	if profile != "none" {
-		if *seedTenant == "" {
-			log.Fatalf("entdb-server: --seed-profile=%s requires --seed-tenant", profile)
-		}
-		switch profile {
-		case "contract":
-			// Seed through the shared producer; the applier goroutine
-			// started above consumes the event and writes the receipt +
-			// offset rows (GitHub issue #505).
-			if err := testseed.SeedTenantContract(ctx, global, canonical, walImpl, *walTopic, *seedTenant); err != nil {
-				log.Fatalf("entdb-server: seed tenant %q (contract): %v", *seedTenant, err)
-			}
-			log.Printf("entdb-server: seeded tenant %q with contract profile (alice=owner, bob=member, seed node + receipt)", *seedTenant)
-		case "e2e":
-			if err := testseed.SeedTenantE2E(ctx, global, canonical, *seedTenant); err != nil {
-				log.Fatalf("entdb-server: seed tenant %q (e2e): %v", *seedTenant, err)
-			}
-			log.Printf("entdb-server: seeded tenant %q with e2e profile (e2e-runner=owner, User/Product/Order schema)", *seedTenant)
-		}
 	}
 
 	grpcServerOpts, tlsEnabled, tlsReloader, err := grpcServerTLSOptions(serverTLSConfig{

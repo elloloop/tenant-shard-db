@@ -508,6 +508,17 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 				committed = true // suppress deferred rollback
 				return a.memoizeUniqueViolation(ctx, ev, res, uv)
 			}
+			// Schema conflict (SELF-DESCRIBING WRITES establish-or-reject):
+			// a leading register_schema op supplied a type whose identity
+			// is already registered with a different definition. Same
+			// deterministic-failure treatment as a CAS miss — roll the
+			// batch back, memoize as FAILED_PRECONDITION, advance the
+			// offset (no halt). No data op committed.
+			if sc := AsSchemaConflict(err); sc != nil {
+				_ = tx.Rollback()
+				committed = true // suppress deferred rollback
+				return a.memoizeSchemaConflict(ctx, ev, res, sc)
+			}
 			return err
 		}
 	}
@@ -597,6 +608,38 @@ func (a *Applier) memoizeUniqueViolation(ctx context.Context, ev *Event, res *Re
 	return nil
 }
 
+// memoizeSchemaConflict persists a FAILED_PRECONDITION row in a fresh
+// write-txn for a register_schema establish-or-reject rejection and
+// returns nil so the consumer loop advances the offset — a schema
+// conflict is a deterministic outcome (re-applying the same schema op
+// against the same registry always reproduces it), exactly like a CAS
+// miss. The conflict detail is stored verbatim in failure_json so a
+// same-idempotency-key retry replays the identical outcome. Mirrors
+// memoizePreconditionFailure.
+func (a *Applier) memoizeSchemaConflict(ctx context.Context, ev *Event, res *Result, sc *SchemaConflict) error {
+	res.Status = StatusFailedPrecondition
+	res.TenantID = ev.TenantID
+	// Surface the conflict as a precondition failure with the detail on
+	// the Field coordinate so GetReceiptStatus / wait_applied callers see
+	// FAILED_PRECONDITION; the structured detail is human-readable.
+	pf := &PreconditionFailure{Field: sc.Detail}
+	res.Precondition = pf
+
+	failureJSON, err := json.Marshal(pf)
+	if err != nil {
+		failureJSON = []byte("")
+	}
+	if err := a.store.RecordIdempotencyFailure(ctx, ev.TenantID, ev.IdempotencyKey, res.Position.String(), string(failureJSON)); err != nil {
+		if !errors.Is(err, store.ErrIdempotencyViolation) {
+			return fmt.Errorf("apply: memoize schema conflict: %w", err)
+		}
+	}
+	if err := a.store.UpdateAppliedOffset(ctx, ev.TenantID, res.Position.Topic, res.Position.Partition, res.Position.Offset); err != nil {
+		return fmt.Errorf("apply: schema-conflict offset: %w", err)
+	}
+	return nil
+}
+
 // dispatch routes one op to its handler. Unknown op types fail closed
 // (halt-on-poison) so a typo in a handler that raced ahead of the
 // applier surfaces immediately rather than silently dropping data —
@@ -608,6 +651,8 @@ func (a *Applier) memoizeUniqueViolation(ctx context.Context, ev *Event, res *Re
 // op for forward-compat — future structured errors will benefit.
 func (a *Applier) dispatch(ctx context.Context, tx *BatchTxn, ev *Event, op map[string]any, aliases nodeAliasMap, res *Result, opIndex int) error {
 	switch opTypeOf(op) {
+	case OpRegisterSchema:
+		return a.applyRegisterSchema(ctx, tx, ev, op)
 	case OpCreateNode:
 		return a.applyCreateNode(ctx, tx, ev, op, aliases, res)
 	case OpUpdateNode:
