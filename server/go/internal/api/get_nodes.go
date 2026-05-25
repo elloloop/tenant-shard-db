@@ -228,6 +228,12 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 			if n == nil {
 				return // genuine miss -> missing_ids
 			}
+			// Privacy boundary (#568): a plain tenant batch read must not
+			// surface a USER_MAILBOX node by id — report it as missing,
+			// matching GetNode and the scan-path exclusion.
+			if targetUser == "" && n.StorageMode == int32(store.StorageModeUserMailbox) {
+				return // mailbox-private -> missing_ids on a tenant read
+			}
 			if actorIDs != nil {
 				ok, aerr := s.store.CanAccess(ctx, tenantID, id, actorIDs)
 				if aerr != nil {
