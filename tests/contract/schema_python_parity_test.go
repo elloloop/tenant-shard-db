@@ -1,7 +1,6 @@
 // Cross-implementation contract test for the schema-snapshot envelope.
 //
-// The Python era (server/python/entdb_server/tools/schema_cli.py @
-// 8d07f5f^) emitted snapshot files of the form:
+// The snapshot envelope on disk has the shape:
 //
 //	{
 //	  "version": 1,
@@ -9,18 +8,26 @@
 //	  "schema": { "node_types": [...], "edge_types": [...] }
 //	}
 //
-// Issue #488 §Backward compatibility (rules 11/12) requires that any
-// such Python-emitted snapshot validate as a baseline against the Go
-// `entdb-schema` tool with **zero edits**, and that the `fingerprint`
-// field byte-equal the value Go computes for the same `schema` body.
+// ADR-031 made the schema JSON contract NAME-FREE (ids at rest and on the
+// wire — no field/type/constraint names; `subject_field` is a field_id;
+// composite uniqueness is a field_id tuple). That was a deliberate
+// breaking change, so it SUPERSEDES the issue #488 §Backward-compat
+// "load a Python-era name-ful snapshot with zero edits" guarantee — a
+// name-ful snapshot no longer parses, by design.
 //
-// This test pins that contract end-to-end against the built CLI
-// binary. The fixture `fixtures/python-snapshot-v1.json` is the
-// canonical Python-era envelope shape captured against the
-// representative two-node + one-edge schema used by `pythonSampleJSON`
-// in server/go/internal/schema/schema_test.go; its fingerprint is the
-// same value the Python tool computed for the same logical content
-// (`sha256:5822499c748bb30ab3…`).
+// What this test still pins, end-to-end against the built CLI binary:
+//  1. round-trip parity — re-emitting the fixture's `schema` body via
+//     `snapshot --from-file` recomputes the SAME `fingerprint` the
+//     envelope carries (the Go canonical encoder is stable); and
+//  2. self-consistency — `check`/`diff` of the fixture against itself
+//     report compatible / exit 0.
+//
+// The fixture `fixtures/python-snapshot-v1.json` is the canonical
+// NAME-FREE envelope for the representative two-node + one-edge schema
+// used by `pythonSampleJSON` in server/go/internal/schema/schema_test.go;
+// its fingerprint matches that file's `pythonReferenceFingerprint`
+// (`sha256:6179549ada4a9357…`). Regenerate both together if the
+// canonical encoder changes.
 //
 // Lives in `tests/contract/` (a sibling Go module) so cross-
 // implementation contract tests are physically separated from the
