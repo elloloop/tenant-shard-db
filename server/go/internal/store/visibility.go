@@ -253,7 +253,7 @@ func (s *CanonicalStore) ListSharedWithMe(ctx context.Context, tenantID string, 
 		  AND na.actor_id IN (%s)
 		  AND na.permission != 'deny'
 		  AND (na.expires_at IS NULL OR na.expires_at > ?)
-		ORDER BY na.granted_at DESC
+		ORDER BY na.granted_at DESC, n.node_id DESC
 		LIMIT ? OFFSET ?`, ph,
 	)
 	args := make([]any, 0, 4+len(actorIDs))
