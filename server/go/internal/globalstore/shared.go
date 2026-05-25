@@ -54,7 +54,7 @@ func (g *GlobalStore) ListSharedToUser(ctx context.Context, userID string, limit
 	rows, err := g.db.QueryContext(ctx,
 		`SELECT user_id, source_tenant, node_id, permission, shared_at
 		 FROM shared_index WHERE user_id = ?
-		 ORDER BY shared_at DESC LIMIT ? OFFSET ?`,
+		 ORDER BY shared_at DESC, source_tenant DESC, node_id DESC LIMIT ? OFFSET ?`,
 		userID, limit, offset,
 	)
 	if err != nil {
