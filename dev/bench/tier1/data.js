@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779708278476,
+  "lastUpdate": 1779708280896,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -7236,6 +7236,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00012370329333122158",
             "extra": "mean: 6.722136447154796 msec\nrounds: 123"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d16b67d814b6a79aab461c337a6318dec7e16b15",
+          "message": "feat(uniqueness): composite (multi-field) unique constraints (#566) (#590)\n\nDeclare multi-field uniqueness via (entdb.node).composite_unique and\nenforce it atomically server-side, closing the racy query-then-create\nclients had to use for keys like (provider, provider_user_id).\n\nServer:\n- schema registry already carried CompositeUniqueDef; wire the applier\n  to ensure unique/composite/query expression indexes on the BatchTxn\n  connection before each CreateNode/UpdateNode (implements the\n  ensure-before-write hook ADR-023 described but the WAL path never did,\n  so single-field unique is now enforced through the applier too).\n- translate a SQLite UNIQUE-index violation into the structured\n  ALREADY_EXISTS detail by parsing the index name back to its\n  constraint coordinates; values rendered from the jsonnum-decoded\n  payload so int64 > 2^53 round-trips losslessly (ADR-028).\n- a constraint trip is a deterministic outcome: memoize it in the\n  idempotency cache (status UNIQUE_VIOLATION) and advance the WAL\n  offset without halting, mirroring the issue-#500 CAS-miss path;\n  ExecuteAtomic lifts it into a gRPC ALREADY_EXISTS, GetReceiptStatus\n  surfaces it on the poll path.\n- contract seed gains OAuthIdentity(201) with a composite + single\n  unique constraint for the integration suite.\n\nSDKs (ship together):\n- Go SDK schema extractor resolves composite_unique proto field names\n  to field_ids and emits them in the schema snapshot; error parsing\n  for the composite ALREADY_EXISTS detail already existed.\n- Python SDK declaration + parsing already existed; add the typed\n  composite-error unit test.\n\nDetail formats (wire contract, pinned by the SDK parsers):\n  Unique constraint violation: tenant=<t> type_id=<T> field_id=<F> value=<repr> already exists\n  Composite unique constraint violation: tenant=<t> type_id=<T> constraint='<name>' fields=[<F>, ...] values=[<repr>, ...] already exists\n\nDesign recorded in ADR-030 (no contradictions with ADR-022/023/025/028).",
+          "timestamp": "2026-05-25T12:22:50+01:00",
+          "tree_id": "39fcb3a9c38762a962047459c0294a88f8ed52f8",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/d16b67d814b6a79aab461c337a6318dec7e16b15"
+        },
+        "date": 1779708280463,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3184.5603533865597,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026821979935322943",
+            "extra": "mean: 314.01508812246846 usec\nrounds: 1566"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2113.961690097017,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004291372964405852",
+            "extra": "mean: 473.0454694068305 usec\nrounds: 1095"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 974.5965682201261,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009874955954815348",
+            "extra": "mean: 1.0260655871447069 msec\nrounds: 809"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 409.69775429096586,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00041048988933123896",
+            "extra": "mean: 2.440823728044659 msec\nrounds: 353"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1810.7527189006644,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013390918523487717",
+            "extra": "mean: 552.2565226946699 usec\nrounds: 1410"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1816.476009771723,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012214801937527144",
+            "extra": "mean: 550.51649161371 usec\nrounds: 1729"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1924.247611599739,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015540604484292304",
+            "extra": "mean: 519.6836384110889 usec\nrounds: 1510"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1847.900688302098,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000041389250857727575",
+            "extra": "mean: 541.1546228270673 usec\nrounds: 1323"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1849.5911779743856,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006037277270338101",
+            "extra": "mean: 540.6600182290925 usec\nrounds: 384"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1561.5568698344268,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007169571003882214",
+            "extra": "mean: 640.3865394322979 usec\nrounds: 1268"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2631.6216447331785,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002709514918213661",
+            "extra": "mean: 379.9938346005626 usec\nrounds: 2237"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 145.09043989478553,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00016193747285755256",
+            "extra": "mean: 6.892252864662652 msec\nrounds: 133"
           }
         ]
       }
