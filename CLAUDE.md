@@ -92,7 +92,6 @@ server/
       acl/                    — typed-capability ACL
       payload/                — id-keyed payload translation
       errs/                   — gRPC status mapping
-      testseed/               — test fixture seeding
     go.mod                    — module: github.com/elloloop/tenant-shard-db/server/go
 
 sdk/

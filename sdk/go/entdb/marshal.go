@@ -347,6 +347,45 @@ func fieldIDFromMessage(msg proto.Message, field string) (int32, error) {
 	return 0, fmt.Errorf("entdb: message %q has no field %q", desc.FullName(), field)
 }
 
+// resolveFilterFields rewrites each Filter.Field from a developer-facing
+// proto field NAME to its stable decimal field_id, using msg's descriptor.
+//
+// NAME-FREE (ADR-031): the server rejects a non-digit FieldFilter.field —
+// filters are id-keyed; the SDK resolves names client-side from the proto.
+// A digit-only Field (the schema-less escape hatch, issue #545) passes
+// through unchanged, and a name the descriptor does not know is left as-is
+// so the server returns the canonical INVALID_ARGUMENT rather than the SDK
+// masking it. Returns a fresh slice; the input is not mutated.
+func resolveFilterFields(msg proto.Message, filters []Filter) []Filter {
+	if len(filters) == 0 {
+		return filters
+	}
+	out := make([]Filter, len(filters))
+	for i, f := range filters {
+		out[i] = f
+		if isAllDigits(f.Field) {
+			continue
+		}
+		if fid, err := fieldIDFromMessage(msg, f.Field); err == nil {
+			out[i].Field = strconv.Itoa(int(fid))
+		}
+	}
+	return out
+}
+
+// isAllDigits reports whether s is non-empty and every rune is a digit.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 // payloadFromMessage walks a proto message's set fields and returns
 // a map keyed by string field id. The values are converted to Go
 // types the JSON wire codec handles natively (string, int64, float64,

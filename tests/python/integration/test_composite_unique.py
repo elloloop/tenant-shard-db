@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Integration tests for composite (multi-field) unique constraints.
 
-Issue #566. The seeded contract schema carries an
-``OAuthIdentity`` (type_id=201) node type with a
-``(provider, provider_user_id)`` composite unique constraint plus a
-single-field unique ``email``. These tests drive the full
+Issue #566. The contract schema (registered by the harness through a
+self-describing write, ADR-031) carries an ``OAuthIdentity`` (type_id=201)
+node type with a ``(provider, provider_user_id)`` composite unique
+constraint (field-id tuple (1,2)) plus a single-field unique ``email``
+(field 3). These tests drive the full
 WAL -> applier -> SQLite composite-index path against the live Go
 server and assert the violation surfaces as a gRPC ``ALREADY_EXISTS``
 carrying the structured detail the SDK parsers consume.
@@ -88,7 +89,9 @@ async def test_composite_unique_violation_already_exists(stub) -> None:
     assert err.code() == grpc.StatusCode.ALREADY_EXISTS
     detail = err.details()
     assert "Composite unique constraint violation" in detail
-    assert "constraint='provider_user_id'" in detail
+    # NAME-FREE (ADR-031): the constraint identity is the field-id TUPLE
+    # SIGNATURE, not a constraint name.
+    assert "constraint='(1,2)'" in detail
     assert "fields=[1, 2]" in detail
     assert "type_id=201" in detail
     assert f"tenant={TENANT}" in detail

@@ -328,6 +328,21 @@ func (r *Registry) NodeType(id any) *NodeTypeDef {
 // NodeTypeByID is the explicit-id helper.
 func (r *Registry) NodeTypeByID(id int32) *NodeTypeDef { return r.load().nodes[id] }
 
+// Empty reports whether the registry holds no node or edge types. With the
+// empty-boot model (ADR-031) the registry is always non-nil but may be
+// genuinely empty before any self-describing write has registered a type.
+// An empty registry is the SCHEMA-LESS mode: handlers tolerate unknown
+// type_ids and id-keyed (digit) coordinates exactly as they did for the
+// pre-ADR-031 nil registry (the issue #545 escape hatch). A nil receiver
+// reports empty.
+func (r *Registry) Empty() bool {
+	if r == nil {
+		return true
+	}
+	s := r.load()
+	return len(s.nodes) == 0 && len(s.edges) == 0
+}
+
 // EdgeType is the edge counterpart of NodeType.
 func (r *Registry) EdgeType(id any) *EdgeTypeDef {
 	s := r.load()

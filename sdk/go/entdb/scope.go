@@ -194,6 +194,9 @@ func GetByKey[T any](ctx context.Context, s *Scope, key UniqueKey[T], value T) (
 // B-tree expression index cannot serve a not-equal predicate. Prefer
 // a positive predicate for sweeper-style hot paths.
 func QueryWhere[T proto.Message](ctx context.Context, s *Scope, filters []Filter, opts ...QueryOption) ([]T, error) {
+	// NAME-FREE (ADR-031): resolve filter field names to decimal field_ids
+	// from T's descriptor before building the wire predicate.
+	filters = resolveFilterFields(newZeroMessage[T](), filters)
 	return Query[T](ctx, s, filtersToMap(filters), opts...)
 }
 
@@ -391,6 +394,8 @@ func QueryInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser s
 
 // QueryWhereInMailbox is [QueryWhere] scoped to targetUser's mailbox.
 func QueryWhereInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser string, filters []Filter, opts ...QueryOption) ([]T, error) {
+	// NAME-FREE (ADR-031): resolve filter field names to field_ids.
+	filters = resolveFilterFields(newZeroMessage[T](), filters)
 	return QueryInMailbox[T](ctx, s, targetUser, filtersToMap(filters), opts...)
 }
 

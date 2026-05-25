@@ -103,11 +103,12 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 		return nil, errs.Errorf(codes.InvalidArgument, "type_id is required")
 	}
 
-	// Validate the type exists (name-free, ADR-031). A nil registry is
-	// tolerated for the schema-less unit-test path: in that case
-	// digit-only filter keys parse to ids, and non-digit keys surface
-	// INVALID_ARGUMENT (per payload.FilterToIDs).
-	if s.registry != nil {
+	// Validate the type exists (name-free, ADR-031). An EMPTY registry is
+	// the schema-less mode (empty-boot, ADR-031 / issue #545): tolerate an
+	// unknown type_id so digit-only filter keys parse to raw ids, and
+	// non-digit keys surface INVALID_ARGUMENT (per payload.FilterToIDs). A
+	// non-empty registry that does not know the type IS a real unknown type.
+	if !s.registry.Empty() {
 		if nt := s.registry.NodeTypeByID(typeID); nt == nil {
 			resultStatus = "error"
 			return nil, errs.Errorf(codes.InvalidArgument, "unknown type_id %d", typeID)

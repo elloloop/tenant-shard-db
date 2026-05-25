@@ -335,74 +335,74 @@ def _extract_field(fd) -> FieldInfo:
 
 
 def _field_to_canonical(f: FieldInfo) -> dict[str, Any]:
-    """Canonical dict representation of a FieldInfo for fingerprinting."""
-    return {
-        "field_id": f.field_id,
-        "name": f.name,
-        "kind": f.kind,
-        "required": f.required,
-        "searchable": f.searchable,
-        "indexed": f.indexed,
-        "pii": f.pii,
-        "phi": f.phi,
-        "pii_false": f.pii_false,
-        "enum_values": list(f.enum_values) if f.enum_values else None,
-        "ref_type_id": f.ref_type_id,
-        "deprecated": f.deprecated,
-        "description": f.description,
-        "default_value": f.default_value,
-    }
+    """Name-free canonical dict for a FieldInfo (ADR-031).
+
+    Mirrors ``schema.FieldDef.to_dict`` / ``server/go/internal/schema``:
+    only the server-modelled attributes are emitted, omitempty, and NO
+    field name (names live only in the proto). The Python-only ``phi`` /
+    ``pii_false`` ergonomic flags are not part of the wire / fingerprint.
+    """
+    out: dict[str, Any] = {"field_id": f.field_id, "kind": f.kind}
+    if f.required:
+        out["required"] = True
+    if f.enum_values:
+        out["enum_values"] = list(f.enum_values)
+    if f.ref_type_id is not None:
+        out["ref_type_id"] = f.ref_type_id
+    if f.indexed:
+        out["indexed"] = True
+    if f.searchable:
+        out["searchable"] = True
+    if f.deprecated:
+        out["deprecated"] = True
+    if f.description:
+        out["description"] = f.description
+    if f.pii:
+        out["pii"] = True
+    return out
 
 
 def compute_schema_fingerprint(nodes: list[NodeInfo], edges: list[EdgeInfo]) -> str:
     """Compute a deterministic sha256 fingerprint of a parsed schema.
 
-    The fingerprint is a sha256 over a canonical JSON representation of
-    all NodeTypeDef + EdgeTypeDef + FieldDef tuples, sorted by type_id
-    and field_id. The returned value is prefixed with ``sha256:`` and
-    matches the format used by the server-side schema registry.
+    NAME-FREE (ADR-031): the fingerprint is a sha256 over the name-free
+    canonical JSON (``type_id`` / ``edge_id`` / ``field_id`` + attributes,
+    no names), with the same omitempty rules and sort-keys/compact encoding
+    the Go server's ``schema.computeFingerprint`` uses — so client and
+    server derive the same hash without ever sharing names. Sorted by
+    type_id / edge_id / field_id; prefixed ``sha256:``.
     """
+
+    def _node(n: NodeInfo) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "type_id": n.type_id,
+            "fields": [_field_to_canonical(f) for f in sorted(n.fields, key=lambda f: f.field_id)],
+        }
+        if n.deprecated:
+            out["deprecated"] = True
+        if n.description:
+            out["description"] = n.description
+        return out
+
+    def _edge(e: EdgeInfo) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "edge_id": e.edge_id,
+            "from_type_id": e.from_type,
+            "to_type_id": e.to_type,
+            "props": [_field_to_canonical(f) for f in sorted(e.props, key=lambda f: f.field_id)],
+            "on_subject_exit": (e.on_subject_exit or "both").lower(),
+        }
+        if e.unique_per_from:
+            out["unique_per_from"] = True
+        if e.deprecated:
+            out["deprecated"] = True
+        if e.description:
+            out["description"] = e.description
+        return out
+
     canonical = {
-        "node_types": [
-            {
-                "type_id": n.type_id,
-                "name": n.name,
-                "acl_public": n.acl_public,
-                "acl_tenant_visible": n.acl_tenant_visible,
-                "acl_inherit": n.acl_inherit,
-                "is_private": n.is_private,
-                "data_policy": n.data_policy,
-                "subject_field": n.subject_field,
-                "retention_days": n.retention_days,
-                "legal_basis": n.legal_basis,
-                "deprecated": n.deprecated,
-                "description": n.description,
-                "fields": [
-                    _field_to_canonical(f) for f in sorted(n.fields, key=lambda f: f.field_id)
-                ],
-            }
-            for n in sorted(nodes, key=lambda n: n.type_id)
-        ],
-        "edge_types": [
-            {
-                "edge_id": e.edge_id,
-                "name": e.name,
-                "from_type": e.from_type,
-                "to_type": e.to_type,
-                "propagate_share": e.propagate_share,
-                "unique_per_from": e.unique_per_from,
-                "data_policy": e.data_policy,
-                "on_subject_exit": e.on_subject_exit,
-                "retention_days": e.retention_days,
-                "legal_basis": e.legal_basis,
-                "deprecated": e.deprecated,
-                "description": e.description,
-                "props": [
-                    _field_to_canonical(f) for f in sorted(e.props, key=lambda f: f.field_id)
-                ],
-            }
-            for e in sorted(edges, key=lambda e: e.edge_id)
-        ],
+        "node_types": [_node(n) for n in sorted(nodes, key=lambda n: n.type_id)],
+        "edge_types": [_edge(e) for e in sorted(edges, key=lambda e: e.edge_id)],
     }
     blob = json.dumps(canonical, sort_keys=True, separators=(",", ":"))
     digest = hashlib.sha256(blob.encode("utf-8")).hexdigest()

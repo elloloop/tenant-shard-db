@@ -36,7 +36,10 @@ def _string(v: str) -> struct_pb2.Value:
 
 async def _seed_user(stub: EntDBServiceStub, node_id: str, email: str) -> None:
     data = struct_pb2.Struct()
-    data.update({"email": email, "name": email.split("@")[0]})
+    # Id-keyed payload (ADR-031 / CLAUDE.md invariant #6): the server
+    # rejects name-keyed data. field 1 = email, field 2 = name on the
+    # contract User type.
+    data.update({"1": email, "2": email.split("@")[0]})
     req = pb.ExecuteAtomicRequest(
         context=_ctx(),
         idempotency_key=f"seed-{node_id}-{uuid.uuid4().hex[:8]}",
@@ -59,7 +62,8 @@ async def _update_with_precondition(
     pre_field_id: int | None = 1,
 ) -> pb.ExecuteAtomicResponse:
     patch = struct_pb2.Struct()
-    patch.update({"email": new_email})
+    # Id-keyed patch (ADR-031): field 1 = email.
+    patch.update({"1": new_email})
     req = pb.ExecuteAtomicRequest(
         context=_ctx(),
         idempotency_key=idem_key,
@@ -69,6 +73,9 @@ async def _update_with_precondition(
                     type_id=1,
                     id=node_id,
                     patch=patch,
+                    # NAME-FREE (ADR-031): the CAS precondition is keyed by
+                    # field_id; `field` is a diagnostic-only label. A request
+                    # with field_id=0 (unknown field) is INVALID_ARGUMENT.
                     precondition=pb.UpdateNodePrecondition(
                         field=pre_field,
                         field_id=pre_field_id or 0,
@@ -127,7 +134,9 @@ async def test_precondition_miss_aborts_batch(stub) -> None:
     assert not resp.success
     assert resp.applied_status == pb.ReceiptStatus.RECEIPT_STATUS_FAILED_PRECONDITION
     assert resp.error_code == "FAILED_PRECONDITION"
-    assert resp.precondition_failure.field == "email"
+    # NAME-FREE (ADR-031): the precondition failure's `field` is the decimal
+    # field_id (there is no field name server-side); email is field 1.
+    assert resp.precondition_failure.field == "1"
     assert resp.precondition_failure.expected.string_value == "wrong@x"
     assert resp.precondition_failure.observed.string_value == "old@x"
     # Patch did NOT commit — original value still there.
@@ -147,7 +156,8 @@ async def test_precondition_failure_is_idempotent(stub) -> None:
 
     # Now mutate the node so that "wrong@x" would actually match.
     patch = struct_pb2.Struct()
-    patch.update({"email": "wrong@x"})
+    # Id-keyed patch (ADR-031): field 1 = email.
+    patch.update({"1": "wrong@x"})
     await stub.ExecuteAtomic(
         pb.ExecuteAtomicRequest(
             context=_ctx(),
@@ -224,7 +234,8 @@ async def test_sdk_plan_update_with_precondition_raises_typed_error(
                 idempotency_key=idem,
             )
         err = excinfo.value
-        assert err.field == "email"
+        # NAME-FREE (ADR-031): the failure's field is the decimal field_id.
+        assert err.field == "1"
         assert err.expected == "wrong@x"
         assert err.observed == "old@x"
         assert err.op_index == 0

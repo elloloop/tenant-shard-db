@@ -266,8 +266,11 @@ func DeleteWhere[T proto.Message](p *Plan, where []Filter, limit int) {
 	p.operations = append(p.operations, Operation{
 		Type:   OpDeleteWhere,
 		TypeID: int(typeID),
-		Where:  where,
-		Limit:  limit,
+		// NAME-FREE (ADR-031): resolve filter field names to decimal
+		// field_ids from T's descriptor before the WAL ever sees the
+		// predicate (the server rejects a non-digit FieldFilter.field).
+		Where: resolveFilterFields(msg, where),
+		Limit: limit,
 	})
 }
 

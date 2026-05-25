@@ -42,6 +42,8 @@ SPDX-License-Identifier: MIT
 
 SPDX-License-Identifier: MIT
 
+SPDX-License-Identifier: MIT
+
 VARIABLES
 
 var ErrPreconditionFailed = errors.New("entdb: precondition failed")
@@ -457,6 +459,27 @@ func WithRetryBudget(d time.Duration) ClientOption
     This bounds tail latency under an outage: without it, a high maxRetries
     combined with exponential backoff can block a caller for minutes.
     A non-positive duration restores the 30s default.
+
+func WithSchema(msgs ...proto.Message) ClientOption
+    WithSchema registers the client's schema from its proto message types so
+    writes are self-describing (SELF-DESCRIBING WRITES, ADR-031).
+
+    Pass a zero value of every node/edge message type your app writes (the SDK
+    reads only their descriptors — (entdb.node)/(entdb.edge)/(entdb.field)
+    options — never the instances):
+
+        client, _ := entdb.NewClient(addr,
+            entdb.WithSchema(&shop.Product{}, &shop.User{}, &shop.PurchaseEdge{}))
+
+    On the first ExecuteAtomic the SDK attaches a NAME-FREE SchemaDescriptor
+    and the schema fingerprint; the server materializes the types via a leading
+    register_schema WAL op (establish-or-reject) before the data ops. Once the
+    server confirms the matching fingerprint the descriptor is omitted (lean
+    steady state) and re-attached on a SCHEMA_MISMATCH.
+
+    Messages without an (entdb.node)/(entdb.edge) option are ignored. Omitting
+    WithSchema leaves the client schema-less: writes carry no descriptor and the
+    server enforces nothing (the issue #545 numeric-field-id path still works).
 
 func WithSecure() ClientOption
     WithSecure enables TLS for the gRPC connection.

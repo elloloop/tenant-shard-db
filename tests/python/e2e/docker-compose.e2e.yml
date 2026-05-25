@@ -74,18 +74,12 @@ services:
   # ==========================================================================
   # EntDB Server (Go binary)
   #
-  # SCHEMA-LESS BOOT. `--seed-profile=e2e --seed-tenant=e2e-test` now
-  # pre-creates ONLY the DATA bootstrap: the tenant + the
-  # `user:e2e-runner` actor (tenant owner) so the e2e suite can
-  # authenticate. It NO LONGER loads any schema — the boot-time
-  # schema-registry crutch (the only path that ever populated a running
-  # server's in-memory registry) has been removed. The server boots with
-  # an empty schema registry, so server-side uniqueness / type validation
-  # / payload fingerprinting stay OFF until the real self-describing-
-  # writes path lands the schema through ExecuteAtomic. Schema-dependent
-  # e2e cases are EXPECTED to fail against this stack — the deliberate RED
-  # baseline. The data bootstrap is kept so those failures stay pinned on
-  # the schema gap rather than "tenant/user not found" auth noise.
+  # EMPTY BOOT (ADR-031). The server imports nothing at startup: no schema,
+  # no tenant/user data, no seed node. The `--seed-profile` / `--seed-tenant`
+  # flags have been REMOVED — there is no production path that loaded either.
+  # The e2e suite provisions its own tenant + `user:e2e-runner` owner via the
+  # gRPC API and registers its schema through self-describing writes (see
+  # tests/python/e2e/conftest.py), exactly like a real client.
   #
   # --wal-backend=kafka points the WAL at Redpanda. The applier consumer
   # group rejoins on restart and replays from the committed offset (or
@@ -112,8 +106,6 @@ services:
       - "-wal-brokers=redpanda:9092"
       - "-wal-topic=entdb-wal-e2e"
       - "-wal-group=entdb-applier-e2e"
-      - "-seed-profile=e2e"
-      - "-seed-tenant=e2e-test"
       - "-tls-cert=/etc/entdb/tls/server.pem"
       - "-tls-key=/etc/entdb/tls/server-key.pem"
       - "-tls-ca=/etc/entdb/tls/ca.pem"

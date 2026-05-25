@@ -603,19 +603,19 @@ func (s *Server) convertOperations(reg *schema.Registry, operations []*pb.Operat
 			// QueryNodes uses (issue #501) so the predicate is name-free
 			// on the WAL (ADR-031).
 			//
-			// Schema-OPTIONAL, exactly like QueryNodes (issue #545): a
-			// nil registry is the server's schema-less mode and is
-			// tolerated here just as it is in query_nodes.go. When the
-			// registry is nil, fieldFiltersToStoreFilters ->
-			// payload.FilterToIDs takes its schema-less branch: digit-only
-			// FieldFilter.field keys parse to raw payload field_ids, and a
-			// non-digit key surfaces as INVALID_ARGUMENT with the same
-			// wording as the QueryNodes path. Do NOT add a hard reject for
-			// a missing schema here — that is the exact bug #545 fixes and
-			// would diverge from the QueryNodes contract. Schema-mode
-			// behaviour (registry configured) is unchanged: an unknown
-			// type_id is still INVALID_ARGUMENT.
-			if reg != nil {
+			// Schema-OPTIONAL, exactly like QueryNodes (issue #545): an
+			// EMPTY registry is the server's schema-less mode (empty-boot,
+			// ADR-031) and is tolerated here just as it is in
+			// query_nodes.go. When the registry is empty,
+			// fieldFiltersToStoreFilters -> payload.FilterToIDs takes its
+			// schema-less branch: digit-only FieldFilter.field keys parse to
+			// raw payload field_ids, and a non-digit key surfaces as
+			// INVALID_ARGUMENT with the same wording as the QueryNodes path.
+			// Do NOT add a hard reject for a missing schema here — that is
+			// the exact bug #545 fixes and would diverge from the QueryNodes
+			// contract. Schema-mode behaviour (registry has types) is
+			// unchanged: an unknown type_id is still INVALID_ARGUMENT.
+			if !reg.Empty() {
 				if nt := reg.NodeTypeByID(dw.GetTypeId()); nt == nil {
 					return nil, errs.Errorf(codes.InvalidArgument,
 						"delete_where: unknown type_id %d", dw.GetTypeId())

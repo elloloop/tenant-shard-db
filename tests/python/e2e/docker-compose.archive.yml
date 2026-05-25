@@ -100,8 +100,6 @@ services:
       - "-wal-brokers=redpanda:9092"
       - "-wal-topic=entdb-wal-archive-e2e"
       - "-wal-group=entdb-applier-archive-e2e"
-      - "-seed-profile=e2e"
-      - "-seed-tenant=e2e-test"
       - "-archive-enabled=true"
       - "-archive-bucket=entdb-wal-archive"
       - "-archive-region=us-east-1"

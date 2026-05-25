@@ -34,19 +34,10 @@ const (
 const (
 	nodeOptsCompositeUniqueField = 24 // repeated UniqueConstraint composite_unique = 24
 
-	// UniqueConstraint submessage field numbers.
+	// UniqueConstraint.fields submessage field number. NAME-FREE (ADR-031):
+	// the constraint name (field 2) is no longer read — a composite
+	// constraint is identified solely by its field_ids tuple.
 	uniqueConstraintFieldsField = 1 // repeated string fields = 1
-	uniqueConstraintNameField   = 2 // string name = 2
-)
-
-// EdgeOpts has its (from_type, to_type) wired into the message
-// descriptor name, not the option — there is no canonical edge-type
-// proto on the wire today, so SchemaJSON reports edges with empty
-// from_type_id/to_type_id and lets the server fill them from
-// elsewhere if needed. Edge property fields work the same way as
-// node fields.
-const (
-	edgeOptsNameField = 2 // string name = 2 in EdgeOpts
 )
 
 // ExtractSchemaJSON reads an EntDB schema out of a compiled
@@ -164,9 +155,10 @@ func walkMessages(
 }
 
 func buildNodeEntry(md protoreflect.MessageDescriptor, typeID int32) (map[string]any, error) {
+	// NAME-FREE (ADR-031): the cross-language schema JSON contract emits
+	// ids + attributes only — no type name. The name lives in the proto.
 	out := map[string]any{
 		"type_id": int64(typeID),
-		"name":    string(md.Name()),
 		"fields":  extractFields(md),
 	}
 	cu, err := extractCompositeUnique(md)
@@ -229,16 +221,10 @@ func extractCompositeUnique(md protoreflect.MessageDescriptor) ([]map[string]any
 			}
 			fieldIDs = append(fieldIDs, int64(fid))
 		}
-		name, _ := findString(e, uint64(uniqueConstraintNameField))
-		if name == "" {
-			parts := make([]string, 0, len(fieldIDs))
-			for _, f := range fieldIDs {
-				parts = append(parts, fmt.Sprintf("f%d", f))
-			}
-			name = strings.Join(parts, "_")
-		}
+		// NAME-FREE (ADR-031): a composite constraint is identified solely
+		// by its field_ids tuple; no constraint name is emitted on the wire
+		// or in the fingerprint.
 		out = append(out, map[string]any{
-			"name":      name,
 			"field_ids": fieldIDs,
 		})
 	}
@@ -258,15 +244,15 @@ func findAllStrings(buf []byte, fieldNum uint64) []string {
 }
 
 func buildEdgeEntry(md protoreflect.MessageDescriptor, edgeID int32) map[string]any {
+	// NAME-FREE (ADR-031): edge identified by edge_id only. props and
+	// on_subject_exit always emitted (the server's name-free edge shape;
+	// on_subject_exit defaults "both").
 	out := map[string]any{
-		"edge_id":      int64(edgeID),
-		"name":         readEdgeName(md, string(md.Name())),
-		"from_type_id": int64(0),
-		"to_type_id":   int64(0),
-	}
-	props := extractFields(md)
-	if len(props) > 0 {
-		out["props"] = props
+		"edge_id":         int64(edgeID),
+		"from_type_id":    int64(0),
+		"to_type_id":      int64(0),
+		"props":           extractFields(md),
+		"on_subject_exit": "both",
 	}
 	return out
 }
@@ -277,9 +263,9 @@ func extractFields(md protoreflect.MessageDescriptor) []map[string]any {
 	for i := 0; i < fds.Len(); i++ {
 		fd := fds.Get(i)
 		fopts := readFieldOpts(fd)
+		// NAME-FREE (ADR-031): field identified by field_id only.
 		entry := map[string]any{
 			"field_id": int64(fd.Number()),
-			"name":     string(fd.Name()),
 			"kind":     fieldKindFor(fd, fopts.kindOverride),
 		}
 		if fopts.required {
@@ -326,28 +312,6 @@ func readMessageOptInt(md protoreflect.MessageDescriptor, extNum, innerField int
 		return 0, true
 	}
 	return int32(v), true
-}
-
-// readEdgeName reads “EdgeOpts.name“ (proto field 2, string) when
-// present; otherwise returns “fallback“ (the message's short
-// name).
-func readEdgeName(md protoreflect.MessageDescriptor, fallback string) string {
-	opts := md.Options()
-	if opts == nil {
-		return fallback
-	}
-	raw, err := proto.Marshal(opts)
-	if err != nil {
-		return fallback
-	}
-	inner, ok := findLengthDelimited(raw, uint64(extEdgeOpts))
-	if !ok {
-		return fallback
-	}
-	if name, ok := findString(inner, uint64(edgeOptsNameField)); ok && name != "" {
-		return name
-	}
-	return fallback
 }
 
 type fieldOptsRaw struct {
