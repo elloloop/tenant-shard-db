@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779710020040,
+  "lastUpdate": 1779710302929,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -7776,6 +7776,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0011229723578866876",
             "extra": "mean: 6.510595298014222 msec\nrounds: 151"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5a9c40680f8cdd821ebdcd566b239aa9adf7a715",
+          "message": "feat(mailbox): expose USER_MAILBOX reads server-side + Go/Python SDK (#568) (#592)\n\nReimplement the mailbox read surface as a tenant-backed feature\n(ADR-014's sanctioned path): USER_MAILBOX nodes are stored in the\nper-tenant SQLite file, attributed by target_user_id, and reachable only\nthrough an explicit mailbox scope — never via tenant reads.\n\nStorage / write path (was the blocker):\n- nodes table gains storage_mode + target_user_id columns (additive\n  migration, partial index idx_nodes_mailbox); the applier now persists\n  both on create_node instead of dropping them.\n- The applier now maintains the FTS5 index transactionally on\n  create/update/delete (it never did before — FTSInsert was dead code),\n  so search works end-to-end through the WAL apply path. Fixes a latent\n  cross-connection deadlock by running the CREATE VIRTUAL TABLE DDL on\n  the open BatchTxn connection (EnsureFTSIndexConn).\n\nRead path:\n- Additive target_user field on GetNode/GetNodes/QueryNodes/SearchNodes.\n  Set => scope to that user's USER_MAILBOX nodes; empty => tenant read\n  that EXCLUDES every mailbox-private row (ADR-020 privacy boundary).\n- store: GetMailboxNode, QueryNodes MailboxUser, SearchMailboxNodes.\n\nSDKs (shipped together):\n- Go: GetInMailbox / QueryInMailbox / QueryWhereInMailbox /\n  SearchInMailbox plus the matching transport methods.\n- Python: ActorScope.get_in_mailbox / get_many_in_mailbox /\n  query_in_mailbox / search_in_mailbox plus target_user kwargs on the\n  client + grpc layers.\n\nTests: store + applier (FTS end-to-end) + api scoping (Go), SDK wire\nforwarding (Go + Python unit), live-server scoping + privacy (Python\nintegration). Regenerated proto stubs and docs/generated with go 1.25.",
+          "timestamp": "2026-05-25T12:56:00+01:00",
+          "tree_id": "c7d4d5002d25876f05fbfdb72995fc7bd19599f2",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/5a9c40680f8cdd821ebdcd566b239aa9adf7a715"
+        },
+        "date": 1779710302477,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2488.4534938544953,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003355790169599965",
+            "extra": "mean: 401.8560131702714 usec\nrounds: 1063"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1710.5302681961748,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005559365181618914",
+            "extra": "mean: 584.6140337841209 usec\nrounds: 1036"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 892.5053787875212,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005051154711147287",
+            "extra": "mean: 1.120441426760376 msec\nrounds: 710"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 420.31505167660697,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00048277034549886594",
+            "extra": "mean: 2.379167712436352 msec\nrounds: 386"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1174.9447509945737,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002113266003378546",
+            "extra": "mean: 851.1038490563191 usec\nrounds: 1484"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1112.2729556342276,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002543629582992833",
+            "extra": "mean: 899.059888972839 usec\nrounds: 1324"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1240.89591361329,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018582501845141517",
+            "extra": "mean: 805.8693634409354 usec\nrounds: 1395"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1552.1333980382653,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000019884976523982636",
+            "extra": "mean: 644.2745200018862 usec\nrounds: 50"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1542.6516043322235,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003293999262054844",
+            "extra": "mean: 648.2345055693089 usec\nrounds: 449"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1301.2168203042015,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007358054990724971",
+            "extra": "mean: 768.511430528709 usec\nrounds: 1022"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2066.1002199389836,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026383294234267496",
+            "extra": "mean: 484.00362690515186 usec\nrounds: 1509"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 145.1997090778576,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00027240851881861196",
+            "extra": "mean: 6.887066140496119 msec\nrounds: 121"
           }
         ]
       }
