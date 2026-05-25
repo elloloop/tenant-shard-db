@@ -157,6 +157,15 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 		return nil, errs.Errorf(errs.Code(err), "GetNode: %v", err)
 	}
 
+	// Privacy boundary (#568): a plain tenant read (no target_user) must
+	// not surface a USER_MAILBOX node even by id — otherwise a leaked or
+	// guessed id exposes a user's private mailbox content, while the scan
+	// path (QueryNodes/SearchNodes) already excludes it. Mailbox nodes are
+	// reachable only through the mailbox scope (target_user set).
+	if req.GetTargetUser() == "" && n.StorageMode == int32(store.StorageModeUserMailbox) {
+		return &pb.GetNodeResponse{Found: false}, nil
+	}
+
 	// 7. Cross-tenant per-node ACL re-check. The role test above only
 	//    confirmed the actor has SOME access in the tenant; now we
 	//    confirm the specific node grants them read. This fires AFTER

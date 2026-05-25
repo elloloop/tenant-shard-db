@@ -68,6 +68,40 @@ func TestGetNode_MailboxScope(t *testing.T) {
 	}
 }
 
+// TestGetNode_MailboxExcludedFromTenantRead pins the privacy boundary:
+// a plain tenant read (no target_user) must NOT surface a USER_MAILBOX
+// node even by its exact id — otherwise a leaked/guessed id leaks private
+// mailbox content, while the scan path already excludes it.
+func TestGetNode_MailboxExcludedFromTenantRead(t *testing.T) {
+	srv, cs, tenantID := newSearchTestServer(t)
+	ctx := context.Background()
+	seedMailboxNode(t, cs, tenantID, "alice", "ma", "alpha", "alice body")
+
+	// No target_user → mailbox-private node is invisible (Found=false).
+	resp, err := srv.GetNode(ctx, &pb.GetNodeRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: "system:test"},
+		NodeId:  "ma",
+	})
+	if err != nil {
+		t.Fatalf("GetNode(ma, no scope): %v", err)
+	}
+	if resp.GetFound() {
+		t.Fatal("GetNode(ma) with no target_user returned a mailbox-private node (privacy leak)")
+	}
+
+	// GetNodes (batch) by id must also report it as missing, not return it.
+	batch, err := srv.GetNodes(ctx, &pb.GetNodesRequest{
+		Context: &pb.RequestContext{TenantId: tenantID, Actor: "system:test"},
+		NodeIds: []string{"ma"},
+	})
+	if err != nil {
+		t.Fatalf("GetNodes([ma], no scope): %v", err)
+	}
+	if len(batch.GetNodes()) != 0 {
+		t.Fatalf("GetNodes returned %d mailbox-private nodes on a tenant read; want 0", len(batch.GetNodes()))
+	}
+}
+
 func TestGetNodes_MailboxScope(t *testing.T) {
 	srv, cs, tenantID := newSearchTestServer(t)
 	ctx := context.Background()

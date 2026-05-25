@@ -260,6 +260,45 @@ func TestIntegration_GetEdgesFromAutoFollowsRealCursor(t *testing.T) {
 	// no truncation; a stuck prefix (e.g. 100) would have failed the poll.
 }
 
+// TestIntegration_MailboxReadAndPrivacy proves USER_MAILBOX writes are
+// readable via the mailbox scope and excluded from an ordinary tenant
+// read (#568), end-to-end through the real server via the Go SDK.
+func TestIntegration_MailboxReadAndPrivacy(t *testing.T) {
+	ctx := context.Background()
+	const mailUser = "mailbox-user-1"
+
+	res, err := itClient.transport.ExecuteAtomic(ctx, itTenant, itActor, "it-mailbox",
+		[]Operation{{
+			Type: OpCreateNode, TypeID: itUserType, NodeID: "mbox-1",
+			StorageMode: StorageModeUserMailbox, TargetUserID: mailUser,
+			Data: map[string]any{"1": "inbox@x", "2": "Mailbox Node"},
+		}})
+	if err != nil {
+		t.Fatalf("ExecuteAtomic: %v", err)
+	}
+	if !res.Success {
+		t.Fatalf("commit not successful: %+v", res)
+	}
+
+	// Visible via the mailbox scope.
+	eventually(t, "mailbox node visible via GetMailboxNode", func() bool {
+		n, gerr := itClient.transport.GetMailboxNode(ctx, itTenant, itActor, mailUser, itUserType, "mbox-1")
+		if gerr != nil {
+			t.Fatalf("GetMailboxNode: %v", gerr)
+		}
+		return n != nil && n.NodeID == "mbox-1"
+	})
+
+	// Excluded from an ordinary tenant read (privacy boundary, ADR-020).
+	n, err := itClient.transport.GetNode(ctx, itTenant, itActor, itUserType, "mbox-1")
+	if err != nil {
+		t.Fatalf("GetNode: %v", err)
+	}
+	if n != nil {
+		t.Fatalf("mailbox-private node leaked into a tenant read: %+v", n)
+	}
+}
+
 // TestIntegration_GetNodeByKeyRealServer proves the unique-key lookup
 // wire path (#572 typed value) works against the real server.
 func TestIntegration_GetNodeByKeyRealServer(t *testing.T) {
