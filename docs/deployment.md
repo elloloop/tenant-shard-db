@@ -357,6 +357,26 @@ apply to both the producer and consumer connections:
   `SCRAM-SHA-512` (self-managed, MSK SCRAM). Leaving it empty disables
   SASL. For `SASL_SSL` set both `-wal-kafka-tls=true` and a mechanism.
 
+### Event Hubs durable checkpoints
+
+By default the Event Hubs backend keeps per-partition checkpoints in
+memory, so a process restart replays the hub from the configured start.
+Point it at Azure Blob Storage to persist them and resume after the last
+commit:
+
+```bash
+/entdb-server \
+  -wal-backend=eventhubs \
+  -wal-azure-connection-string="$EVENTHUBS_CONN" \
+  -wal-eventhubs-name=entdb-wal \
+  -wal-eventhubs-checkpoint-storage-connection-string="$STORAGE_CONN" \
+  -wal-eventhubs-checkpoint-container=entdb-wal-checkpoints
+```
+
+The container must already exist; one blob per `<hub>/<consumer-group>`
+holds the checkpoint map, so distinct WALs do not collide. Unset the
+storage connection string to keep the in-memory behavior.
+
 ### Secrets
 
 Store sensitive values in AWS Secrets Manager:

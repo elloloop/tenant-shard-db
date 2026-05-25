@@ -83,6 +83,11 @@ type EventHubsConfig struct {
 	MaxBatchSize int
 	// MaxWaitTime bounds a single receive call (default 5s).
 	MaxWaitTime time.Duration
+	// CheckpointStore, when set, persists the per-partition checkpoints
+	// (#570) so a process restart resumes after the last commit instead of
+	// replaying the hub from the configured start. nil ⇒ in-memory only
+	// (the pre-#570 behavior, unchanged).
+	CheckpointStore CheckpointStore
 }
 
 // DefaultEventHubsConfig returns a config with sensible defaults.
@@ -170,6 +175,17 @@ func (e *EventHubs) Connect(ctx context.Context) error {
 		return fmt.Errorf("%w: eventhubs client: %v", ErrConnection, err)
 	}
 	e.api = api
+	// Restore durable checkpoints (#570) so a restart resumes after the
+	// last commit instead of replaying from the configured start.
+	if e.config.CheckpointStore != nil {
+		loaded, lerr := e.config.CheckpointStore.Load(ctx)
+		if lerr != nil {
+			return fmt.Errorf("%w: eventhubs load checkpoints: %v", ErrConnection, lerr)
+		}
+		if loaded != nil {
+			e.checkpoints = loaded
+		}
+	}
 	e.connected = true
 	return nil
 }
@@ -355,6 +371,13 @@ func (e *EventHubs) Commit(ctx context.Context, groupID string, record Record) e
 	pid := int32ToPartitionID(record.Position.Partition)
 	if cur, ok := e.checkpoints[pid]; !ok || record.Position.Offset > cur {
 		e.checkpoints[pid] = record.Position.Offset
+	}
+	// Persist durably (#570) so the advance survives a restart. Saving the
+	// full map under the lock keeps it consistent with the in-memory copy.
+	if e.config.CheckpointStore != nil {
+		if err := e.config.CheckpointStore.Save(ctx, e.checkpoints); err != nil {
+			return fmt.Errorf("eventhubs commit: persist checkpoint: %w", err)
+		}
 	}
 	return nil
 }
