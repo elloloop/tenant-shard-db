@@ -1,6 +1,6 @@
 # ADR-031: Self-describing, name-free schema
 
-**Status:** Proposed
+**Status:** Accepted
 **Decided:** 2026-05-25
 **Tags:** schema, proto, wire-contract, event-sourcing, sdk, integrity
 
@@ -169,6 +169,24 @@ exercised identically by tests.
 - Schema **snapshot** save/load as a replay optimization (the WAL stays
   the source of truth).
 - Online schema **evolution** (compatible `ALTER`).
+
+**Known interactions (the implementation must honor):**
+- The handler validates a batch's data ops against the current registry
+  **unioned with the schema attached to this request**, so a brand-new
+  type's non-`create_node` ops (e.g. `delete_where`) are not spuriously
+  rejected before the prepended `register_schema` op registers the type in
+  the applier.
+- Fingerprint-omit assumes a **single shared schema**: every client embeds
+  the same proto and computes the same name-free fingerprint, so steady
+  state omits the descriptor. A client with only a partial view has a
+  fingerprint that never equals the server's accumulated one and re-attaches
+  every write — correct, just not free. The shared-schema model (all
+  tenants, one schema) makes this a non-issue in practice.
+- Registry rebuild depends on WAL **retention**. If the WAL is truncated
+  (Kafka retention) the early `register_schema` ops are gone, so a fresh
+  boot starts with an empty registry — but the per-tenant SQLite indexes
+  persist and keep enforcing, and the next write self-heals the registry
+  via fingerprint re-attach. The deferred snapshot removes this dependency.
 
 ## References
 
