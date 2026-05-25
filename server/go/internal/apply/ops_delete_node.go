@@ -4,6 +4,8 @@ package apply
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 )
 
@@ -15,6 +17,21 @@ func (a *Applier) applyDeleteNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		return fmt.Errorf("%w: delete_node missing id", ErrPoisonEvent)
 	}
 	conn := tx.Conn()
+	// Read the type before deleting so the FTS5 row (keyed per-type) can be
+	// cleared in the same transaction. A missing row leaves typeID 0 and
+	// the FTS deindex below no-ops.
+	var typeID int32
+	if err := conn.QueryRowContext(ctx,
+		`SELECT type_id FROM nodes WHERE tenant_id = ? AND node_id = ?`,
+		ev.TenantID, nodeID,
+	).Scan(&typeID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("apply delete_node: lookup type: %w", err)
+	}
+	if typeID != 0 {
+		if err := a.deindexNodeFTS(ctx, conn, ev.TenantID, typeID, nodeID); err != nil {
+			return fmt.Errorf("apply delete_node: fts deindex: %w", err)
+		}
+	}
 	if _, err := conn.ExecContext(ctx,
 		`DELETE FROM edges WHERE tenant_id = ? AND (from_node_id = ? OR to_node_id = ?)`,
 		ev.TenantID, nodeID, nodeID,

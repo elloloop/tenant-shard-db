@@ -1315,6 +1315,7 @@ class GrpcClient:
         *,
         after_offset: str | None = None,
         wait_timeout_ms: int = 0,
+        target_user: str = "",
         trace_id: str = "",
         timeout: float | None = None,
     ) -> Node | None:
@@ -1327,6 +1328,9 @@ class GrpcClient:
             node_id: Node identifier
             after_offset: Wait for this offset before reading
             wait_timeout_ms: Timeout for offset wait
+            target_user: When set, scope the read to this user's
+                USER_MAILBOX nodes (#568); a node that is not a mailbox
+                node owned by this user reads as not-found.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1342,6 +1346,7 @@ class GrpcClient:
             node_id=node_id,
             after_offset=after_offset or "",
             wait_timeout_ms=wait_timeout_ms,
+            target_user=target_user,
         )
 
         response = await self._retry(
@@ -1425,6 +1430,7 @@ class GrpcClient:
         *,
         after_offset: str | None = None,
         wait_timeout_ms: int = 0,
+        target_user: str = "",
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[Node], list[str]]:
@@ -1437,6 +1443,8 @@ class GrpcClient:
             node_ids: Node identifiers
             after_offset: Wait for this offset before reading
             wait_timeout_ms: Timeout for offset wait
+            target_user: When set, scope the reads to this user's
+                USER_MAILBOX nodes (#568); other ids land in missing.
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1452,6 +1460,7 @@ class GrpcClient:
             node_ids=node_ids,
             after_offset=after_offset or "",
             wait_timeout_ms=wait_timeout_ms,
+            target_user=target_user,
         )
 
         response = await self._retry(
@@ -1479,6 +1488,7 @@ class GrpcClient:
         descending: bool = False,
         after_offset: str | None = None,
         wait_timeout_ms: int = 0,
+        target_user: str = "",
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[Node], bool]:
@@ -1546,6 +1556,7 @@ class GrpcClient:
                     descending=descending,
                     after_offset=after_offset or "",
                     wait_timeout_ms=wait_timeout_ms,
+                    target_user=target_user,
                 ),
                 timeout=timeout or _DEFAULT_TIMEOUT,
                 metadata=metadata,
@@ -1580,6 +1591,7 @@ class GrpcClient:
                     descending=descending,
                     after_offset=(after_offset or "") if first else "",
                     wait_timeout_ms=wait_timeout_ms if first else 0,
+                    target_user=target_user,
                 ),
                 timeout=timeout or _DEFAULT_TIMEOUT,
                 metadata=metadata,
@@ -1789,6 +1801,7 @@ class GrpcClient:
         limit: int = 50,
         offset: int = 0,
         page_size: int = 0,
+        target_user: str = "",
         trace_id: str = "",
         timeout: float | None = None,
     ) -> tuple[list[Node], bool]:
@@ -1809,6 +1822,8 @@ class GrpcClient:
             limit: Maximum results (legacy; ``page_size`` takes precedence)
             offset: Pagination offset within the ranked result set
             page_size: AIP-158 alias for ``limit``; wins when both are set
+            target_user: When set, scope the search to this user's
+                USER_MAILBOX nodes (#568).
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1826,6 +1841,7 @@ class GrpcClient:
             limit=limit,
             offset=offset,
             page_size=page_size,
+            target_user=target_user,
         )
 
         response = await self._retry(

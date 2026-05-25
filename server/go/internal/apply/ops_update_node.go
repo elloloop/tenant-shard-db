@@ -48,8 +48,10 @@ func (a *Applier) applyUpdateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		`SELECT type_id, payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?`,
 		ev.TenantID, nodeID,
 	)
-	var existingJSON string
-	var typeID int32
+	var (
+		typeID       int32
+		existingJSON string
+	)
 	if err := row.Scan(&typeID, &existingJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Missing target is a no-op.
@@ -106,6 +108,18 @@ func (a *Applier) applyUpdateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 			return &UniqueViolation{Detail: detail}
 		}
 		return fmt.Errorf("apply update_node: update: %w", err)
+	}
+	// Refresh the FTS5 row to reflect the merged payload (delete-then-
+	// insert; FTS5 has no UPDATE for content rows). No-op when the type
+	// declares no searchable fields. Done in the same transaction so
+	// search never observes a stale snippet of an updated node.
+	if fids := a.searchableFieldIDs(typeID); len(fids) > 0 {
+		if err := a.deindexNodeFTS(ctx, conn, ev.TenantID, typeID, nodeID); err != nil {
+			return fmt.Errorf("apply update_node: fts deindex: %w", err)
+		}
+		if err := a.indexNodeFTS(ctx, conn, ev.TenantID, typeID, nodeID, merged); err != nil {
+			return fmt.Errorf("apply update_node: fts reindex: %w", err)
+		}
 	}
 	return nil
 }

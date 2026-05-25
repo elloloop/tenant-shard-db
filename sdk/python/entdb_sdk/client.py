@@ -1093,6 +1093,7 @@ class DbClient:
         actor: str,
         *,
         after_offset: str | None | _Unset = _UNSET,
+        target_user: str = "",
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> Node | None:
@@ -1106,6 +1107,8 @@ class DbClient:
             after_offset: Wait for this stream position before reading.
                 Omit to use automatic offset tracking.
                 Pass None to opt out of offset tracking.
+            target_user: When set, scope the read to this user's
+                USER_MAILBOX nodes (#568).
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1123,6 +1126,7 @@ class DbClient:
             node_id=node_id,
             after_offset=resolved_offset,
             wait_timeout_ms=30000 if resolved_offset else 0,
+            target_user=target_user,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -1186,6 +1190,7 @@ class DbClient:
         actor: str,
         *,
         after_offset: str | None | _Unset = _UNSET,
+        target_user: str = "",
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> tuple[list[Node], list[str]]:
@@ -1199,6 +1204,8 @@ class DbClient:
             after_offset: Wait for this stream position before reading.
                 Omit to use automatic offset tracking.
                 Pass None to opt out of offset tracking.
+            target_user: When set, scope the reads to this user's
+                USER_MAILBOX nodes (#568).
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1216,6 +1223,7 @@ class DbClient:
             node_ids=node_ids,
             after_offset=resolved_offset,
             wait_timeout_ms=30000 if resolved_offset else 0,
+            target_user=target_user,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -1233,6 +1241,7 @@ class DbClient:
         order_by: str = "created_at",
         descending: bool = True,
         after_offset: str | None | _Unset = _UNSET,
+        target_user: str = "",
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -1242,6 +1251,8 @@ class DbClient:
             node_type: Node type to query
             tenant_id: Tenant identifier
             actor: Actor making request
+            target_user: When set, scope the query to this user's
+                USER_MAILBOX nodes (#568).
             filter: Optional payload field filter (equality-only map
                 shape; kept for backwards compatibility).
             where: Optional typed comparison filters
@@ -1292,6 +1303,7 @@ class DbClient:
             descending=descending,
             after_offset=resolved_offset,
             wait_timeout_ms=30000 if resolved_offset else 0,
+            target_user=target_user,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -1439,6 +1451,7 @@ class DbClient:
         limit: int = 50,
         offset: int = 0,
         page_size: int = 0,
+        target_user: str = "",
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -1457,6 +1470,8 @@ class DbClient:
             limit: Maximum results (legacy; ``page_size`` takes precedence)
             offset: Pagination offset within the ranked result set
             page_size: AIP-158 alias for ``limit``; wins when both are set
+            target_user: When set, scope the search to this user's
+                USER_MAILBOX nodes (#568).
             trace_id: Optional trace ID for distributed tracing
             timeout: Per-call timeout in seconds
 
@@ -1471,6 +1486,7 @@ class DbClient:
             limit=limit,
             offset=offset,
             page_size=page_size,
+            target_user=target_user,
             trace_id=trace_id,
             timeout=timeout,
         )
@@ -1486,6 +1502,7 @@ class DbClient:
         limit: int = 50,
         offset: int = 0,
         page_size: int = 0,
+        target_user: str = "",
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> tuple[list[Node], bool]:
@@ -1507,6 +1524,7 @@ class DbClient:
             limit=limit,
             offset=offset,
             page_size=page_size,
+            target_user=target_user,
             trace_id=trace_id,
             timeout=timeout,
         )

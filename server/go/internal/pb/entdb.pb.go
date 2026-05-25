@@ -1882,6 +1882,13 @@ type GetNodeRequest struct {
 	// Wait for this stream position to be applied before reading
 	AfterOffset   string `protobuf:"bytes,10,opt,name=after_offset,json=afterOffset,proto3" json:"after_offset,omitempty"`
 	WaitTimeoutMs int32  `protobuf:"varint,11,opt,name=wait_timeout_ms,json=waitTimeoutMs,proto3" json:"wait_timeout_ms,omitempty"`
+	// Mailbox scope (#568). When set, the read is restricted to the named
+	// user's USER_MAILBOX nodes: a node that is not a mailbox node owned
+	// by this user reads as not-found (the privacy boundary). Empty (the
+	// default) is an ordinary tenant read, unchanged. The value is a bare
+	// user id (e.g. "alice"), not a "user:alice" principal — the SDK does
+	// the wire translation.
+	TargetUser    string `protobuf:"bytes,12,opt,name=target_user,json=targetUser,proto3" json:"target_user,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1951,6 +1958,13 @@ func (x *GetNodeRequest) GetWaitTimeoutMs() int32 {
 	return 0
 }
 
+func (x *GetNodeRequest) GetTargetUser() string {
+	if x != nil {
+		return x.TargetUser
+	}
+	return ""
+}
+
 type GetNodeResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Node          *Node                  `protobuf:"bytes,1,opt,name=node,proto3" json:"node,omitempty"`
@@ -2011,6 +2025,10 @@ type GetNodesRequest struct {
 	// Wait for this stream position to be applied before reading
 	AfterOffset   string `protobuf:"bytes,10,opt,name=after_offset,json=afterOffset,proto3" json:"after_offset,omitempty"`
 	WaitTimeoutMs int32  `protobuf:"varint,11,opt,name=wait_timeout_ms,json=waitTimeoutMs,proto3" json:"wait_timeout_ms,omitempty"`
+	// Mailbox scope (#568). Same semantics as GetNodeRequest.target_user:
+	// when set, only the named user's USER_MAILBOX nodes are returned;
+	// every other requested id lands in missing_ids.
+	TargetUser    string `protobuf:"bytes,12,opt,name=target_user,json=targetUser,proto3" json:"target_user,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2078,6 +2096,13 @@ func (x *GetNodesRequest) GetWaitTimeoutMs() int32 {
 		return x.WaitTimeoutMs
 	}
 	return 0
+}
+
+func (x *GetNodesRequest) GetTargetUser() string {
+	if x != nil {
+		return x.TargetUser
+	}
+	return ""
 }
 
 type GetNodesResponse struct {
@@ -2164,8 +2189,14 @@ type QueryNodesRequest struct {
 	// presented against a different query (type_id / filters / order_by)
 	// is rejected with INVALID_ARGUMENT, as is mixing `page_token` with
 	// the deprecated `offset`.
-	PageSize      int32  `protobuf:"varint,12,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
-	PageToken     string `protobuf:"bytes,13,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	PageSize  int32  `protobuf:"varint,12,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken string `protobuf:"bytes,13,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
+	// Mailbox scope (#568). When set, the query is restricted to the named
+	// user's USER_MAILBOX nodes (target_user_id == target_user AND
+	// storage_mode == USER_MAILBOX). Empty (the default) is an ordinary
+	// tenant query, unchanged — tenant queries never see mailbox-private
+	// rows. The value is a bare user id, not a principal.
+	TargetUser    string `protobuf:"bytes,14,opt,name=target_user,json=targetUser,proto3" json:"target_user,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2274,6 +2305,13 @@ func (x *QueryNodesRequest) GetPageSize() int32 {
 func (x *QueryNodesRequest) GetPageToken() string {
 	if x != nil {
 		return x.PageToken
+	}
+	return ""
+}
+
+func (x *QueryNodesRequest) GetTargetUser() string {
+	if x != nil {
+		return x.TargetUser
 	}
 	return ""
 }
@@ -7563,8 +7601,13 @@ type SearchNodesRequest struct {
 	// anti-pattern. `page_size` is an alias for `limit` and takes
 	// precedence when both are set; `offset` advances within the ranked
 	// result set.
-	Offset        int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
-	PageSize      int32 `protobuf:"varint,7,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	Offset   int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
+	PageSize int32 `protobuf:"varint,7,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	// Mailbox scope (#568). When set, the FTS search is restricted to the
+	// named user's USER_MAILBOX nodes. Empty (the default) is an ordinary
+	// tenant search, unchanged. The value is a bare user id, not a
+	// principal.
+	TargetUser    string `protobuf:"bytes,8,opt,name=target_user,json=targetUser,proto3" json:"target_user,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7646,6 +7689,13 @@ func (x *SearchNodesRequest) GetPageSize() int32 {
 		return x.PageSize
 	}
 	return 0
+}
+
+func (x *SearchNodesRequest) GetTargetUser() string {
+	if x != nil {
+		return x.TargetUser
+	}
+	return ""
 }
 
 type SearchNodesResponse struct {
@@ -7833,28 +7883,32 @@ const file_entdb_proto_rawDesc = "" +
 	"\x18GetReceiptStatusResponse\x12/\n" +
 	"\x06status\x18\x01 \x01(\x0e2\x17.entdb.v1.ReceiptStatusR\x06status\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12P\n" +
-	"\x14precondition_failure\x18\x03 \x01(\v2\x1d.entdb.v1.PreconditionFailureR\x13preconditionFailure\"\xc1\x01\n" +
+	"\x14precondition_failure\x18\x03 \x01(\v2\x1d.entdb.v1.PreconditionFailureR\x13preconditionFailure\"\xe2\x01\n" +
 	"\x0eGetNodeRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
 	"\atype_id\x18\x02 \x01(\x05R\x06typeId\x12\x17\n" +
 	"\anode_id\x18\x03 \x01(\tR\x06nodeId\x12!\n" +
 	"\fafter_offset\x18\n" +
 	" \x01(\tR\vafterOffset\x12&\n" +
-	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMs\"K\n" +
+	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMs\x12\x1f\n" +
+	"\vtarget_user\x18\f \x01(\tR\n" +
+	"targetUser\"K\n" +
 	"\x0fGetNodeResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.entdb.v1.NodeR\x04node\x12\x14\n" +
-	"\x05found\x18\x02 \x01(\bR\x05found\"\xc4\x01\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\"\xe5\x01\n" +
 	"\x0fGetNodesRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
 	"\atype_id\x18\x02 \x01(\x05R\x06typeId\x12\x19\n" +
 	"\bnode_ids\x18\x03 \x03(\tR\anodeIds\x12!\n" +
 	"\fafter_offset\x18\n" +
 	" \x01(\tR\vafterOffset\x12&\n" +
-	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMs\"Y\n" +
+	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMs\x12\x1f\n" +
+	"\vtarget_user\x18\f \x01(\tR\n" +
+	"targetUser\"Y\n" +
 	"\x10GetNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x1f\n" +
 	"\vmissing_ids\x18\x02 \x03(\tR\n" +
-	"missingIds\"\x98\x03\n" +
+	"missingIds\"\xb9\x03\n" +
 	"\x11QueryNodesRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x17\n" +
 	"\atype_id\x18\x02 \x01(\x05R\x06typeId\x12\x14\n" +
@@ -7870,7 +7924,9 @@ const file_entdb_proto_rawDesc = "" +
 	"\x0fwait_timeout_ms\x18\v \x01(\x05R\rwaitTimeoutMs\x12\x1b\n" +
 	"\tpage_size\x18\f \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\r \x01(\tR\tpageTokenJ\x04\b\x03\x10\x04R\vfilter_json\"\x9e\x01\n" +
+	"page_token\x18\r \x01(\tR\tpageToken\x12\x1f\n" +
+	"\vtarget_user\x18\x0e \x01(\tR\n" +
+	"targetUserJ\x04\b\x03\x10\x04R\vfilter_json\"\x9e\x01\n" +
 	"\x12QueryNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x1f\n" +
 	"\vtotal_count\x18\x02 \x01(\x05R\n" +
@@ -8285,7 +8341,7 @@ const file_entdb_proto_rawDesc = "" +
 	"typedValueJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\bkey_nameR\tkey_value\"P\n" +
 	"\x14GetNodeByKeyResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.entdb.v1.NodeR\x04node\x12\x14\n" +
-	"\x05found\x18\x02 \x01(\bR\x05found\"\xc1\x01\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\"\xe2\x01\n" +
 	"\x12SearchNodesRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
 	"\x05actor\x18\x02 \x01(\tR\x05actor\x12\x17\n" +
@@ -8293,7 +8349,9 @@ const file_entdb_proto_rawDesc = "" +
 	"\x05query\x18\x04 \x01(\tR\x05query\x12\x14\n" +
 	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x16\n" +
 	"\x06offset\x18\x06 \x01(\x05R\x06offset\x12\x1b\n" +
-	"\tpage_size\x18\a \x01(\x05R\bpageSize\"V\n" +
+	"\tpage_size\x18\a \x01(\x05R\bpageSize\x12\x1f\n" +
+	"\vtarget_user\x18\b \x01(\tR\n" +
+	"targetUser\"V\n" +
 	"\x13SearchNodesResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x19\n" +
 	"\bhas_more\x18\x02 \x01(\bR\ahasMore*^\n" +

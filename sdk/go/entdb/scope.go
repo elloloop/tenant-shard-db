@@ -329,3 +329,96 @@ func SearchPage[T proto.Message](ctx context.Context, s *Scope, query string, op
 	}
 	return out, hasMore, nil
 }
+
+// ── Mailbox-scoped reads (#568) ─────────────────────────────────────
+//
+// USER_MAILBOX nodes are written with [InMailbox]; these helpers are the
+// matching read surface. targetUser is a bare user id (e.g. "alice", not
+// "user:alice"). A node that is not a mailbox node owned by targetUser is
+// invisible to these reads — never leaked as found.
+//
+// storage_mode is immutable (ADR-020): a node created InMailbox is only
+// ever reachable through the mailbox reads, never the tenant reads.
+
+// GetInMailbox is [Get] scoped to targetUser's mailbox.
+//
+//	msg, err := entdb.GetInMailbox[*mail.Message](ctx, scope, "alice", "node-42")
+func GetInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser, nodeID string) (T, error) {
+	var zero T
+	witness := newZeroMessage[T]()
+	typeID, err := typeIDFromMessage(witness)
+	if err != nil {
+		return zero, fmt.Errorf("entdb: GetInMailbox: %w", err)
+	}
+	node, err := s.client.transport.GetMailboxNode(ctx, s.tenantID, s.actor.String(), targetUser, int(typeID), nodeID)
+	if err != nil {
+		return zero, err
+	}
+	if node == nil {
+		return zero, nil
+	}
+	return unmarshalFromWire[T](node.Payload)
+}
+
+// QueryInMailbox is [Query] scoped to targetUser's mailbox.
+func QueryInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser string, filter map[string]any, opts ...QueryOption) ([]T, error) {
+	witness := newZeroMessage[T]()
+	typeID, err := typeIDFromMessage(witness)
+	if err != nil {
+		return nil, fmt.Errorf("entdb: QueryInMailbox: %w", err)
+	}
+	var cfg queryConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	nodes, err := s.client.transport.QueryMailboxNodes(ctx, s.tenantID, s.actor.String(), targetUser, int(typeID), filter, int(cfg.limit))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]T, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		conv, err := unmarshalFromWire[T](n.Payload)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, nil
+}
+
+// QueryWhereInMailbox is [QueryWhere] scoped to targetUser's mailbox.
+func QueryWhereInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser string, filters []Filter, opts ...QueryOption) ([]T, error) {
+	return QueryInMailbox[T](ctx, s, targetUser, filtersToMap(filters), opts...)
+}
+
+// SearchInMailbox is [Search] scoped to targetUser's mailbox.
+func SearchInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser, query string, opts ...QueryOption) ([]T, error) {
+	witness := newZeroMessage[T]()
+	typeID, err := typeIDFromMessage(witness)
+	if err != nil {
+		return nil, fmt.Errorf("entdb: SearchInMailbox: %w", err)
+	}
+	var cfg queryConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
+	nodes, err := s.client.transport.SearchMailboxNodes(ctx, s.tenantID, s.actor.String(), targetUser, int(typeID), query)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]T, 0, len(nodes))
+	for _, n := range nodes {
+		if n == nil {
+			continue
+		}
+		conv, err := unmarshalFromWire[T](n.Payload)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, conv)
+	}
+	return out, nil
+}

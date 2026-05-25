@@ -153,6 +153,11 @@ func Get[T proto.Message](ctx context.Context, s *Scope, nodeID string) (T, erro
 
         product, err := entdb.Get[*shop.Product](ctx, scope, "node-42")
 
+func GetInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser, nodeID string) (T, error)
+    GetInMailbox is Get scoped to targetUser's mailbox.
+
+        msg, err := entdb.GetInMailbox[*mail.Message](ctx, scope, "alice", "node-42")
+
 func GetMany[T proto.Message](ctx context.Context, s *Scope, nodeIDs []string) ([]T, []string, error)
     GetMany batch-fetches nodes by id. Returns the list of unmarshaled messages
     plus the list of ids the server reported as missing.
@@ -178,6 +183,9 @@ func Query[T proto.Message](ctx context.Context, s *Scope, filter map[string]any
 
     For the typed-Filter form preferred by issue #501 see QueryWhere.
 
+func QueryInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser string, filter map[string]any, opts ...QueryOption) ([]T, error)
+    QueryInMailbox is Query scoped to targetUser's mailbox.
+
 func QueryWhere[T proto.Message](ctx context.Context, s *Scope, filters []Filter, opts ...QueryOption) ([]T, error)
     QueryWhere is the typed counterpart of Query: callers pass a slice of Filter
     values rather than a MongoDB-style map. The two helpers share the same
@@ -199,6 +207,9 @@ func QueryWhere[T proto.Message](ctx context.Context, s *Scope, filters []Filter
     expression index cannot serve a not-equal predicate. Prefer a positive
     predicate for sweeper-style hot paths.
 
+func QueryWhereInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser string, filters []Filter, opts ...QueryOption) ([]T, error)
+    QueryWhereInMailbox is QueryWhere scoped to targetUser's mailbox.
+
 func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts ...QueryOption) ([]T, error)
     Search performs full-text search across searchable fields of a node type.
 
@@ -216,6 +227,9 @@ func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts .
 
         results, err := entdb.Search[*shop.Product](ctx, scope, "widget",
             entdb.WithLimit(20), entdb.WithOffset(20))
+
+func SearchInMailbox[T proto.Message](ctx context.Context, s *Scope, targetUser, query string, opts ...QueryOption) ([]T, error)
+    SearchInMailbox is Search scoped to targetUser's mailbox.
 
 func SearchPage[T proto.Message](ctx context.Context, s *Scope, query string, opts ...QueryOption) ([]T, bool, error)
     SearchPage is Search that also reports has_more — true when the ranked
@@ -1340,6 +1354,20 @@ type Transport interface {
 	// found nodes plus the slice of ids that were missing — both in
 	// input order is NOT guaranteed.
 	GetNodes(ctx context.Context, tenantID, actor string, typeID int, nodeIDs []string) ([]*Node, []string, error)
+
+	// ── Mailbox-scoped reads (#568) ──────────────────────────────────
+	// Each method mirrors its tenant-scoped counterpart but restricts the
+	// read to one user's USER_MAILBOX nodes (target_user is a bare user id
+	// such as "alice", not a "user:alice" principal). A node that is not a
+	// mailbox node owned by target_user reads as not-found, never leaked.
+	//
+	// GetMailboxNode retrieves a single mailbox node by id.
+	GetMailboxNode(ctx context.Context, tenantID, actor, targetUser string, typeID int, nodeID string) (*Node, error)
+	// QueryMailboxNodes returns mailbox nodes matching a filter. Follows
+	// the keyset cursor across pages, same as QueryNodes.
+	QueryMailboxNodes(ctx context.Context, tenantID, actor, targetUser string, typeID int, filter map[string]any, limit int) ([]*Node, error)
+	// SearchMailboxNodes runs FTS over one user's mailbox nodes.
+	SearchMailboxNodes(ctx context.Context, tenantID, actor, targetUser string, typeID int, query string) ([]*Node, error)
 	// GetReceiptStatus polls a transaction by its idempotency key.
 	GetReceiptStatus(ctx context.Context, tenantID, actor, idempotencyKey string) (ReceiptStatus, string, error)
 	// WaitForOffset blocks (server-side) until the applier has

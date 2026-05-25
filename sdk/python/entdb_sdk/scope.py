@@ -298,6 +298,117 @@ class ActorScope:
             **kwargs,
         )
 
+    # ── Mailbox-scoped reads (#568) ──────────────────────────────────
+    #
+    # USER_MAILBOX nodes are written with ``InMailbox(...)``; these are
+    # the matching read surface. ``target_user`` is a bare user id (e.g.
+    # ``"alice"``, not ``"user:alice"``). A node that is not a mailbox
+    # node owned by ``target_user`` is invisible — never leaked as found.
+    # storage_mode is immutable (ADR-020): a node created InMailbox is
+    # only ever reachable through these mailbox reads.
+
+    async def get_in_mailbox(
+        self,
+        node_type: Any,
+        target_user: str,
+        node_id: str,
+        *,
+        after_offset: str | None = None,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> Node | None:
+        """Get a node from ``target_user``'s mailbox by id."""
+        kwargs = _optional(after_offset=after_offset, trace_id=trace_id, timeout=timeout)
+        return await self._client.get(
+            _resolve_node_type(node_type),
+            node_id,
+            self._tenant_id,
+            self._actor,
+            target_user=target_user,
+            **kwargs,
+        )
+
+    async def get_many_in_mailbox(
+        self,
+        node_type: Any,
+        target_user: str,
+        node_ids: list[str],
+        *,
+        after_offset: str | None = None,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> tuple[list[Node], list[str]]:
+        """Batch-get nodes from ``target_user``'s mailbox by id."""
+        kwargs = _optional(after_offset=after_offset, trace_id=trace_id, timeout=timeout)
+        return await self._client.get_many(
+            _resolve_node_type(node_type),
+            node_ids,
+            self._tenant_id,
+            self._actor,
+            target_user=target_user,
+            **kwargs,
+        )
+
+    async def query_in_mailbox(
+        self,
+        node_type: Any,
+        target_user: str,
+        *,
+        filter: dict[str, Any] | None = None,
+        where: list[Filter] | None = None,
+        limit: int = 0,
+        offset: int = 0,
+        order_by: str = "created_at",
+        descending: bool = True,
+        after_offset: str | None = None,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """Query ``target_user``'s mailbox nodes (mailbox-scoped ``query``)."""
+        kwargs: dict[str, Any] = {
+            "limit": limit,
+            "offset": offset,
+            "order_by": order_by,
+            "descending": descending,
+            "target_user": target_user,
+        }
+        kwargs.update(
+            _optional(
+                filter=filter,
+                where=where,
+                after_offset=after_offset,
+                trace_id=trace_id,
+                timeout=timeout,
+            )
+        )
+        return await self._client.query(
+            _resolve_node_type(node_type), self._tenant_id, self._actor, **kwargs
+        )
+
+    async def search_in_mailbox(
+        self,
+        node_type: Any,
+        target_user: str,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        trace_id: str | None = None,
+        timeout: float | None = None,
+    ) -> list[Node]:
+        """Full-text search over ``target_user``'s mailbox nodes."""
+        kwargs = _optional(trace_id=trace_id, timeout=timeout)
+        return await self._client.search_nodes(
+            _resolve_node_type(node_type),
+            self._tenant_id,
+            self._actor,
+            query,
+            limit=limit,
+            offset=offset,
+            target_user=target_user,
+            **kwargs,
+        )
+
     async def edges_out(
         self,
         node_id: str,
