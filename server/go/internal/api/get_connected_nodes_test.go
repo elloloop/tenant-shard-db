@@ -293,3 +293,66 @@ func keys(m map[string]*pb.Node) []string {
 	}
 	return out
 }
+
+// TestGetConnectedNodes_BoundedRead: GetConnectedNodes is a deliberately
+// BOUNDED traversal (ADR-029), not cursor-paginated. With more direct
+// children than `limit`, the response returns EXACTLY `limit` nodes and
+// has_more=true; the probe row beyond the page is trimmed off. This pins
+// the "bounded read with exact has_more" contract.
+func TestGetConnectedNodes_BoundedRead(t *testing.T) {
+	t.Parallel()
+	srv, cs, ctx := connectedTestServer(t)
+
+	mustCreateNode(t, cs, "acme", "src", 1, "user:alice")
+	// Five direct children, all visible to alice.
+	for _, id := range []string{"c1", "c2", "c3", "c4", "c5"} {
+		mustCreateNode(t, cs, "acme", id, 1, "user:alice")
+		mustCreateEdge(t, cs, "acme", 7, "src", id)
+	}
+
+	resp, err := srv.GetConnectedNodes(ctx, &pb.GetConnectedNodesRequest{
+		Context:    &pb.RequestContext{TenantId: "acme", Actor: "user:alice"},
+		NodeId:     "src",
+		EdgeTypeId: 7,
+		Limit:      3,
+	})
+	if err != nil {
+		t.Fatalf("GetConnectedNodes: %v", err)
+	}
+	if got := len(resp.GetNodes()); got != 3 {
+		t.Fatalf("bounded read: got %d nodes, want exactly limit=3 (ids=%v)", got, keys(nodesByID(resp)))
+	}
+	if !resp.GetHasMore() {
+		t.Fatalf("bounded read: has_more got false, want true (5 children > limit 3)")
+	}
+}
+
+// TestGetConnectedNodes_HasMoreExactOnFullPage: when the number of direct
+// children EQUALS limit, has_more must be false — the old (len==limit)
+// heuristic over-reported true here. Pins the exact-has_more fix.
+func TestGetConnectedNodes_HasMoreExactOnFullPage(t *testing.T) {
+	t.Parallel()
+	srv, cs, ctx := connectedTestServer(t)
+
+	mustCreateNode(t, cs, "acme", "src", 1, "user:alice")
+	for _, id := range []string{"c1", "c2", "c3"} {
+		mustCreateNode(t, cs, "acme", id, 1, "user:alice")
+		mustCreateEdge(t, cs, "acme", 7, "src", id)
+	}
+
+	resp, err := srv.GetConnectedNodes(ctx, &pb.GetConnectedNodesRequest{
+		Context:    &pb.RequestContext{TenantId: "acme", Actor: "user:alice"},
+		NodeId:     "src",
+		EdgeTypeId: 7,
+		Limit:      3, // exactly the number of children
+	})
+	if err != nil {
+		t.Fatalf("GetConnectedNodes: %v", err)
+	}
+	if got := len(resp.GetNodes()); got != 3 {
+		t.Fatalf("full page: got %d nodes, want 3", got)
+	}
+	if resp.GetHasMore() {
+		t.Fatalf("full page: has_more got true, want false (exactly limit children, none beyond)")
+	}
+}

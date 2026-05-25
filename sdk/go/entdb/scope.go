@@ -106,9 +106,14 @@ func (s *Scope) RemoveGroupMember(ctx context.Context, groupID string, member Ac
 // scope's actor — including cross-tenant shares routed through the
 // global shared_index.
 //
-// “limit“/“offset“ of zero use the server defaults.
-func (s *Scope) SharedWithMe(ctx context.Context, limit, offset int32) ([]*Node, error) {
-	return s.client.transport.ListSharedWithMe(ctx, s.tenantID, s.actor.String(), limit, offset)
+// The transport auto-follows the ADR-029 unified keyset cursor across
+// both merged sources, so this returns the COMPLETE set by default —
+// never a silent 100-row prefix. A positive “limit“ caps the total;
+// “limit <= 0“ (the default) returns every shared node. (The deprecated
+// per-source “offset“ is superseded by the cursor and no longer exposed
+// here.)
+func (s *Scope) SharedWithMe(ctx context.Context, limit int32) ([]*Node, error) {
+	return s.client.transport.ListSharedWithMe(ctx, s.tenantID, s.actor.String(), limit)
 }
 
 // Connected returns nodes reachable from “nodeID“ via edges of
@@ -278,20 +283,38 @@ func GetMany[T proto.Message](ctx context.Context, s *Scope, nodeIDs []string) (
 // and prefix (word*) syntax. Only fields declared with
 // (entdb.field).searchable = true are searched.
 //
-//	results, err := entdb.Search[*shop.Product](ctx, scope, "widget")
+// ADR-029 FTS carve-out: search is relevance-ranked top-N and is
+// OFFSET-paged, NOT cursor-paged — it does NOT auto-follow to completion
+// the way [Query] / [Scope.EdgesFrom] / [Scope.SharedWithMe] do. Use
+// WithLimit to set the page size (alias for page_size) and WithOffset to
+// advance within the ranked result set. To learn whether more ranked rows
+// exist beyond the page, use [SearchPage].
+//
+//	results, err := entdb.Search[*shop.Product](ctx, scope, "widget",
+//	    entdb.WithLimit(20), entdb.WithOffset(20))
 func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts ...QueryOption) ([]T, error) {
+	out, _, err := SearchPage[T](ctx, s, query, opts...)
+	return out, err
+}
+
+// SearchPage is [Search] that also reports has_more — true when the ranked
+// result set has rows beyond this page. Page with WithOffset to fetch the
+// next slice. There is no cursor for search (ADR-029 FTS carve-out).
+func SearchPage[T proto.Message](ctx context.Context, s *Scope, query string, opts ...QueryOption) ([]T, bool, error) {
 	witness := newZeroMessage[T]()
 	typeID, err := typeIDFromMessage(witness)
 	if err != nil {
-		return nil, fmt.Errorf("entdb: Search: %w", err)
+		return nil, false, fmt.Errorf("entdb: Search: %w", err)
 	}
 	var cfg queryConfig
 	for _, o := range opts {
 		o(&cfg)
 	}
-	nodes, err := s.client.transport.SearchNodes(ctx, s.tenantID, s.actor.String(), int(typeID), query)
+	// WithLimit -> page_size (alias), WithOffset -> offset. Zero values let
+	// the server apply its default page size.
+	nodes, hasMore, err := s.client.transport.SearchNodes(ctx, s.tenantID, s.actor.String(), int(typeID), query, cfg.limit, cfg.offset)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := make([]T, 0, len(nodes))
 	for _, n := range nodes {
@@ -300,9 +323,9 @@ func Search[T proto.Message](ctx context.Context, s *Scope, query string, opts .
 		}
 		conv, err := unmarshalFromWire[T](n.Payload)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		out = append(out, conv)
 	}
-	return out, nil
+	return out, hasMore, nil
 }

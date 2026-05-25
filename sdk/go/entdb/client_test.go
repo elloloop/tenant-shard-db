@@ -105,8 +105,8 @@ func (m *mockTransport) GetEdgesTo(_ context.Context, _, _, _ string, _ int) ([]
 	return m.edgesToResp, nil
 }
 
-func (m *mockTransport) SearchNodes(_ context.Context, _, _ string, _ int, _ string) ([]*Node, error) {
-	return nil, nil
+func (m *mockTransport) SearchNodes(_ context.Context, _, _ string, _ int, _ string, _, _ int32) ([]*Node, bool, error) {
+	return nil, false, nil
 }
 
 func (m *mockTransport) GetTenantQuota(_ context.Context, _, _ string) (*TenantQuota, error) {
@@ -129,7 +129,7 @@ func (m *mockTransport) GetConnectedNodes(_ context.Context, _, _, _ string, _ i
 	return nil, nil
 }
 
-func (m *mockTransport) ListSharedWithMe(_ context.Context, _, _ string, _, _ int32) ([]*Node, error) {
+func (m *mockTransport) ListSharedWithMe(_ context.Context, _, _ string, _ int32) ([]*Node, error) {
 	return nil, nil
 }
 

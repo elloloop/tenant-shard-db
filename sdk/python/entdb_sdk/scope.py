@@ -266,6 +266,7 @@ class ActorScope:
         *,
         limit: int = 50,
         offset: int = 0,
+        page_size: int = 0,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
@@ -278,6 +279,12 @@ class ActorScope:
         Only fields declared with ``(entdb.field).searchable = true``
         are searched. Results are ordered by relevance and ACL-filtered
         server-side.
+
+        ADR-029 FTS carve-out: search is relevance-ranked top-N and is
+        OFFSET-paged, NOT cursor-paged — it does NOT auto-follow to
+        completion (unlike :meth:`query` / :meth:`edges_out` /
+        :meth:`shared_with_me`). Page deliberately with ``page_size`` +
+        ``offset``.
         """
         kwargs = _optional(trace_id=trace_id, timeout=timeout)
         return await self._client.search_nodes(
@@ -287,6 +294,7 @@ class ActorScope:
             query,
             limit=limit,
             offset=offset,
+            page_size=page_size,
             **kwargs,
         )
 
@@ -370,12 +378,19 @@ class ActorScope:
     async def shared_with_me(
         self,
         *,
-        limit: int = 100,
+        limit: int = 0,
         offset: int = 0,
         after_offset: str | None = None,
         trace_id: str | None = None,
         timeout: float | None = None,
     ) -> list[Node]:
+        """List nodes shared with this scope's actor (cross-tenant included).
+
+        Auto-follows the ADR-029 unified keyset cursor across both merged
+        sources, returning the COMPLETE set by default (``limit <= 0``). A
+        positive ``limit`` caps the total; the deprecated ``offset`` falls
+        back to a single non-cursor request.
+        """
         kwargs: dict[str, Any] = {"limit": limit, "offset": offset}
         kwargs.update(_optional(after_offset=after_offset, trace_id=trace_id, timeout=timeout))
         return await self._client.shared_with_me(self._tenant_id, self._actor, **kwargs)

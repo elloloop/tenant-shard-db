@@ -5,6 +5,19 @@
 //
 // Wire contract: proto/entdb/v1/entdb.proto:91 (rpc), :707-718 (messages).
 //
+// PAGINATION (ADR-029 — intentionally NOT cursor-paginated): connected-
+// nodes is a BFS graph traversal bounded by `limit` + MaxConnectedDepth,
+// not an ordered scan over a single index. A keyset cursor over a graph
+// frontier is ill-defined — the "last row" of one page is not a stable
+// seek anchor for the next, because the frontier is recomputed from the
+// edge set, ACL-pruned per step, and deduplicated across fan-in. This RPC
+// is therefore a deliberately BOUNDED READ: it returns at most `limit`
+// reachable, ACL-visible nodes within MaxConnectedDepth, with an EXACT
+// `has_more` (the traversal collects one probe node beyond `limit` to
+// distinguish "page is full" from "more exist"). Callers that need the
+// full neighbourhood raise `limit`; there is no `next_page_token`. See
+// ADR-029 "GetConnectedNodes (bounded traversal, not cursor-paginated)".
+//
 // Behaviour: BFS with bounded depth, cycle protection, per-step ACL
 // filter via acl.Filter. Notable behaviours:
 //
@@ -25,8 +38,11 @@
 //     be raised in a follow-up without rewriting the handler.
 //   - Cycle protection via a visited set keyed on node_id (so a graph
 //     containing back-edges or rings cannot cause unbounded work).
-//   - Result-size limit honoured: BFS stops as soon as len(out) ==
-//     limit. has_more = (len(out) == limit).
+//   - Result-size limit honoured: BFS collects up to limit+1 nodes (one
+//     probe beyond the page) then stops. The probe row is trimmed before
+//     egress and has_more = (a probe row was collected) — so has_more is
+//     EXACT, not the old (len==limit) heuristic that over-reported true on
+//     an exactly-full last page.
 //   - Catch-all internal errors collapse to (nodes=[], OK) with
 //     status="error" on the metric.
 //
@@ -139,7 +155,9 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 	}
 
 	edgeTypeID := req.GetEdgeTypeId()
-	collected, err := s.bfsConnected(ctx, tenantID, req.GetNodeId(), edgeTypeID, aclActor, filter, limit, offset)
+	// Collect one probe node beyond the page so has_more is exact. The
+	// probe is trimmed below before egress.
+	collected, err := s.bfsConnected(ctx, tenantID, req.GetNodeId(), edgeTypeID, aclActor, filter, limit+1, offset)
 	if err != nil {
 		// Surface genuine post-open faults (#573) instead of masking the
 		// traversal failure as an empty graph. Preserve typed sentinels.
@@ -148,6 +166,13 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 			return nil, errs.Errorf(c, "GetConnectedNodes: %v", err)
 		}
 		return nil, errs.Internal(ctx, "GetConnectedNodes: traverse", err)
+	}
+
+	// has_more is exact: the traversal was asked for limit+1; a probe row
+	// beyond the page means more reachable nodes exist. Trim it off.
+	hasMore := int32(len(collected)) > limit
+	if hasMore {
+		collected = collected[:limit]
 	}
 
 	out := make([]*pb.Node, 0, len(collected))
@@ -164,7 +189,7 @@ func (s *Server) GetConnectedNodes(ctx context.Context, req *pb.GetConnectedNode
 
 	return &pb.GetConnectedNodesResponse{
 		Nodes:   out,
-		HasMore: int32(len(out)) == limit,
+		HasMore: hasMore,
 	}, nil
 }
 

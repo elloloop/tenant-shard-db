@@ -64,6 +64,51 @@ func (g *GlobalStore) ListSharedToUser(ctx context.Context, userID string, limit
 	return scanSharedRows(rows)
 }
 
+// SharedCursor anchors a keyset seek over the shared_index stream for a
+// grantee (ADR-029). The effective sort is (shared_at DESC, source_tenant
+// DESC, node_id DESC) — (source_tenant, node_id) uniquely identifies a
+// shared node — so the seek resumes strictly after this tuple. The tuple
+// shape is shared with the per-tenant node_access source so the API layer
+// can merge both under one unified cursor.
+type SharedCursor struct {
+	SharedAt     int64
+	SourceTenant string
+	NodeID       string
+}
+
+// ListSharedToUserPaged is ListSharedToUser with a keyset cursor
+// (ADR-029): up to `limit` rows for the grantee ordered (shared_at DESC,
+// source_tenant DESC, node_id DESC), seeking strictly after `cursor` when
+// non-nil.
+func (g *GlobalStore) ListSharedToUserPaged(ctx context.Context, userID string, limit int, cursor *SharedCursor) ([]*SharedEntry, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	q := `SELECT user_id, source_tenant, node_id, permission, shared_at
+	      FROM shared_index WHERE user_id = ?`
+	args := []any{userID}
+	// Keyset seek (ADR-029): resume strictly after the cursor tuple in the
+	// effective DESC order. The expanded disjunction avoids relying on
+	// SQLite row-value comparison.
+	if cursor != nil {
+		q += ` AND (shared_at < ?` +
+			` OR (shared_at = ? AND source_tenant < ?)` +
+			` OR (shared_at = ? AND source_tenant = ? AND node_id < ?))`
+		args = append(args,
+			cursor.SharedAt,
+			cursor.SharedAt, cursor.SourceTenant,
+			cursor.SharedAt, cursor.SourceTenant, cursor.NodeID)
+	}
+	q += ` ORDER BY shared_at DESC, source_tenant DESC, node_id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := g.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("globalstore: list shared paged to %q: %w", userID, err)
+	}
+	defer rows.Close()
+	return scanSharedRows(rows)
+}
+
 // ListSharedFromNode returns all shared_index rows for a (source_tenant,
 // node_id), newest first.
 func (g *GlobalStore) ListSharedFromNode(ctx context.Context, sourceTenant, nodeID string) ([]*SharedEntry, error) {

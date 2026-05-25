@@ -61,7 +61,14 @@ type Transport interface {
 	// GetEdgesTo retrieves incoming edges to a node.
 	GetEdgesTo(ctx context.Context, tenantID, actor, toNodeID string, edgeTypeID int) ([]*Edge, error)
 	// SearchNodes performs full-text search across searchable fields.
-	SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string) ([]*Node, error)
+	//
+	// ADR-029 FTS carve-out: search is relevance-ranked top-N and is
+	// OFFSET-paged, NOT cursor-paged — FTS5 `rank` is not a stable keyset
+	// column. The transport does NOT auto-follow to completion (unlike
+	// QueryNodes / GetEdges / shared-with-me). pageSize bounds one page
+	// (alias for the legacy limit); offset advances within the ranked set.
+	// Returns the page plus has_more so callers can page deliberately.
+	SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string, pageSize, offset int32) ([]*Node, bool, error)
 	// GetTenantQuota retrieves the tenant's quota configuration
 	// and current usage (monthly writes + per-tenant / per-user
 	// RPS buckets).
@@ -81,8 +88,11 @@ type Transport interface {
 	// edges of ``edgeTypeID`` — server-side ACL filtered.
 	GetConnectedNodes(ctx context.Context, tenantID, actor, nodeID string, edgeTypeID int) ([]*Node, error)
 	// ListSharedWithMe returns nodes other actors have shared with
-	// the calling actor (cross-tenant included).
-	ListSharedWithMe(ctx context.Context, tenantID, actor string, limit, offset int32) ([]*Node, error)
+	// the calling actor (cross-tenant included). The transport follows
+	// the ADR-029 unified keyset cursor across pages so the COMPLETE set
+	// is returned, never a silent prefix. limit caps the total when
+	// positive; limit <= 0 returns every shared node.
+	ListSharedWithMe(ctx context.Context, tenantID, actor string, limit int32) ([]*Node, error)
 	// RevokeAccess removes a previously-shared grant from a node.
 	RevokeAccess(ctx context.Context, tenantID, actor, nodeID, granteeActor string) (bool, error)
 	// TransferOwnership reassigns ``nodeID``'s ``owner_actor`` to
@@ -603,27 +613,31 @@ func (t *grpcTransport) getEdgesPaged(ctx context.Context, tenantID, actor, node
 	return out, nil
 }
 
-func (t *grpcTransport) SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string) ([]*Node, error) {
+func (t *grpcTransport) SearchNodes(ctx context.Context, tenantID, actor string, typeID int, query string, pageSize, offset int32) ([]*Node, bool, error) {
 	client, err := t.ensureReady()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	var trailer metadata.MD
+	// ADR-029 FTS carve-out: a single ranked page. No auto-follow — search
+	// is top-N by relevance; deep-paging ranked results is an anti-pattern.
 	resp, err := client.SearchNodes(t.callContext(ctx, tenantID), &pb.SearchNodesRequest{
 		TenantId: tenantID,
 		Actor:    actor,
 		TypeId:   int32(typeID),
 		Query:    query,
+		PageSize: pageSize,
+		Offset:   offset,
 	}, grpc.Trailer(&trailer))
 	if err != nil {
-		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+		return nil, false, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
 	}
 	nodes := resp.GetNodes()
 	out := make([]*Node, 0, len(nodes))
 	for _, n := range nodes {
 		out = append(out, nodeFromProto(n))
 	}
-	return out, nil
+	return out, resp.GetHasMore(), nil
 }
 
 func (t *grpcTransport) GetTenantQuota(ctx context.Context, actor, tenantID string) (*TenantQuota, error) {
@@ -733,24 +747,48 @@ func (t *grpcTransport) GetConnectedNodes(ctx context.Context, tenantID, actor, 
 	return out, nil
 }
 
-func (t *grpcTransport) ListSharedWithMe(ctx context.Context, tenantID, actor string, limit, offset int32) ([]*Node, error) {
+func (t *grpcTransport) ListSharedWithMe(ctx context.Context, tenantID, actor string, limit int32) ([]*Node, error) {
 	client, err := t.ensureReady()
 	if err != nil {
 		return nil, err
 	}
-	var trailer metadata.MD
-	resp, err := client.ListSharedWithMe(t.callContext(ctx, tenantID), &pb.ListSharedWithMeRequest{
-		Context: &pb.RequestContext{TenantId: tenantID, Actor: actor},
-		Limit:   limit,
-		Offset:  offset,
-	}, grpc.Trailer(&trailer))
-	if err != nil {
-		return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
-	}
-	nodes := resp.GetNodes()
-	out := make([]*Node, 0, len(nodes))
-	for _, n := range nodes {
-		out = append(out, nodeFromProto(n))
+	// Auto-follow the ADR-029 unified keyset cursor: loop next_page_token
+	// to exhaustion (or until `limit` rows) so a shared-with-me read
+	// returns the COMPLETE set across BOTH merged sources, never a silent
+	// prefix — the same guarantee QueryNodes / GetEdges give.
+	var out []*Node
+	pageToken := ""
+	capped := limit > 0
+	for page := 0; ; page++ {
+		if page > maxAutoFollowPages {
+			return nil, fmt.Errorf("entdb: ListSharedWithMe: pagination did not terminate after %d pages", maxAutoFollowPages)
+		}
+		pageSize := int32(maxQueryPageSize)
+		if capped {
+			if rem := limit - int32(len(out)); rem < pageSize {
+				pageSize = rem
+			}
+		}
+		var trailer metadata.MD
+		resp, err := client.ListSharedWithMe(t.callContext(ctx, tenantID), &pb.ListSharedWithMeRequest{
+			Context:   &pb.RequestContext{TenantId: tenantID, Actor: actor},
+			PageSize:  pageSize,
+			PageToken: pageToken,
+		}, grpc.Trailer(&trailer))
+		if err != nil {
+			return nil, translateGRPCStatusWithTrailer(err, trailer, tenantID, t.address)
+		}
+		for _, n := range resp.GetNodes() {
+			out = append(out, nodeFromProto(n))
+		}
+		pageToken = resp.GetNextPageToken()
+		if capped && int32(len(out)) >= limit {
+			out = out[:limit]
+			break
+		}
+		if pageToken == "" {
+			break
+		}
 	}
 	return out, nil
 }

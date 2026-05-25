@@ -388,6 +388,92 @@ func TestSearchNodes_TypeWithNoSearchableFields(t *testing.T) {
 	}
 }
 
+// TestSearchNodes_PageSizeAndHasMore: ADR-029 FTS carve-out. SearchNodes
+// keeps OFFSET paging; page_size aliases limit and takes precedence, and
+// has_more is EXACT (the store is asked for limit+1 and the probe row is
+// trimmed). Seed five matching nodes, page through them with page_size=2,
+// and assert: each non-final page returns 2 rows with has_more=true, the
+// final page returns 1 row with has_more=false.
+func TestSearchNodes_PageSizeAndHasMore(t *testing.T) {
+	t.Parallel()
+	srv, cs, tenantID := newSearchTestServer(t)
+
+	// Five nodes all matching "widget".
+	for _, id := range []string{"p1", "p2", "p3", "p4", "p5"} {
+		seedIndexedNode(t, cs, tenantID, id, "user:alice",
+			map[string]any{"1": "widget " + id, "2": "a widget body"}, nil)
+	}
+
+	// Page 0 + page 1: 2 rows each, has_more=true.
+	for page, off := 0, int32(0); page < 2; page, off = page+1, off+2 {
+		resp, err := srv.SearchNodes(context.Background(), &pb.SearchNodesRequest{
+			TenantId: tenantID,
+			Actor:    "user:alice",
+			TypeId:   searchTypeID,
+			Query:    "widget",
+			PageSize: 2,
+			Offset:   off,
+		})
+		if err != nil {
+			t.Fatalf("SearchNodes page %d: %v", page, err)
+		}
+		if got := len(resp.GetNodes()); got != 2 {
+			t.Fatalf("SearchNodes page %d: nodes got %d, want 2", page, got)
+		}
+		if !resp.GetHasMore() {
+			t.Fatalf("SearchNodes page %d: has_more got false, want true", page)
+		}
+	}
+
+	// Page 2: the last row, has_more=false.
+	resp, err := srv.SearchNodes(context.Background(), &pb.SearchNodesRequest{
+		TenantId: tenantID,
+		Actor:    "user:alice",
+		TypeId:   searchTypeID,
+		Query:    "widget",
+		PageSize: 2,
+		Offset:   4,
+	})
+	if err != nil {
+		t.Fatalf("SearchNodes final page: %v", err)
+	}
+	if got := len(resp.GetNodes()); got != 1 {
+		t.Fatalf("SearchNodes final page: nodes got %d, want 1", got)
+	}
+	if resp.GetHasMore() {
+		t.Fatalf("SearchNodes final page: has_more got true, want false")
+	}
+}
+
+// TestSearchNodes_PageSizePrecedesLimit: when both page_size and the
+// legacy limit are set, page_size wins (AIP-158 alias precedence).
+func TestSearchNodes_PageSizePrecedesLimit(t *testing.T) {
+	t.Parallel()
+	srv, cs, tenantID := newSearchTestServer(t)
+	for _, id := range []string{"p1", "p2", "p3", "p4"} {
+		seedIndexedNode(t, cs, tenantID, id, "user:alice",
+			map[string]any{"1": "widget " + id, "2": "body"}, nil)
+	}
+
+	resp, err := srv.SearchNodes(context.Background(), &pb.SearchNodesRequest{
+		TenantId: tenantID,
+		Actor:    "user:alice",
+		TypeId:   searchTypeID,
+		Query:    "widget",
+		Limit:    100, // legacy, should be ignored
+		PageSize: 1,   // wins
+	})
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	if got := len(resp.GetNodes()); got != 1 {
+		t.Fatalf("SearchNodes: page_size did not take precedence; got %d nodes, want 1", got)
+	}
+	if !resp.GetHasMore() {
+		t.Fatalf("SearchNodes: has_more got false, want true (3 more rows)")
+	}
+}
+
 // nodeIDs lives in helpers_external_test.go.
 
 // codeOf extracts a grpc code from err for compact assertions.

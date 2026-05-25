@@ -4305,10 +4305,27 @@ func (x *RevokeAccessResponse) GetError() string {
 }
 
 type ListSharedWithMeRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Context       *RequestContext        `protobuf:"bytes,1,opt,name=context,proto3" json:"context,omitempty"`
-	Limit         int32                  `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32                  `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Context *RequestContext        `protobuf:"bytes,1,opt,name=context,proto3" json:"context,omitempty"`
+	// Pagination. `offset` is DEPRECATED (ADR-029): it is applied
+	// independently to each merged source, so page boundaries do not
+	// line up. Use keyset cursor pagination via `page_size` +
+	// `page_token` below.
+	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Deprecated: Marked as deprecated in entdb.proto.
+	Offset int32 `protobuf:"varint,3,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Keyset cursor pagination (ADR-029, AIP-158). `page_size` bounds one
+	// page (alias for `limit`, takes precedence); `page_token` is the
+	// opaque `next_page_token` from a prior response. The cursor is a
+	// UNIFIED seek over `(timestamp, source_tenant, node_id)` across BOTH
+	// merged sources — the per-tenant `node_access` index (keyed on
+	// `granted_at`) and the cross-tenant `shared_index` (keyed on
+	// `shared_at`) — so the merged stream resumes exactly after the last
+	// row without skip/duplicate. The token is bound to the calling actor
+	// by a fingerprint; mixing `page_token` with the deprecated `offset`
+	// is INVALID_ARGUMENT.
+	PageSize      int32  `protobuf:"varint,4,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
+	PageToken     string `protobuf:"bytes,5,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4357,6 +4374,7 @@ func (x *ListSharedWithMeRequest) GetLimit() int32 {
 	return 0
 }
 
+// Deprecated: Marked as deprecated in entdb.proto.
 func (x *ListSharedWithMeRequest) GetOffset() int32 {
 	if x != nil {
 		return x.Offset
@@ -4364,10 +4382,28 @@ func (x *ListSharedWithMeRequest) GetOffset() int32 {
 	return 0
 }
 
+func (x *ListSharedWithMeRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
+func (x *ListSharedWithMeRequest) GetPageToken() string {
+	if x != nil {
+		return x.PageToken
+	}
+	return ""
+}
+
 type ListSharedWithMeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
-	HasMore       bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Nodes   []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	HasMore bool                   `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
+	// Opaque keyset cursor for the next page (ADR-029). Empty on the last
+	// page; non-empty whenever rows were omitted, so shared-with-me reads
+	// never silently truncate.
+	NextPageToken string `protobuf:"bytes,3,opt,name=next_page_token,json=nextPageToken,proto3" json:"next_page_token,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4414,6 +4450,13 @@ func (x *ListSharedWithMeResponse) GetHasMore() bool {
 		return x.HasMore
 	}
 	return false
+}
+
+func (x *ListSharedWithMeResponse) GetNextPageToken() string {
+	if x != nil {
+		return x.NextPageToken
+	}
+	return ""
 }
 
 type GroupMemberRequest struct {
@@ -7511,9 +7554,17 @@ type SearchNodesRequest struct {
 	Actor    string                 `protobuf:"bytes,2,opt,name=actor,proto3" json:"actor,omitempty"`
 	TypeId   int32                  `protobuf:"varint,3,opt,name=type_id,json=typeId,proto3" json:"type_id,omitempty"`
 	// FTS5 match expression (supports AND/OR/NOT/phrase/prefix)
-	Query         string `protobuf:"bytes,4,opt,name=query,proto3" json:"query,omitempty"`
-	Limit         int32  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
-	Offset        int32  `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
+	Query string `protobuf:"bytes,4,opt,name=query,proto3" json:"query,omitempty"`
+	Limit int32  `protobuf:"varint,5,opt,name=limit,proto3" json:"limit,omitempty"`
+	// Offset paging is RETAINED here, NOT keyset (ADR-029 FTS carve-out).
+	// FTS5 `rank` is computed by the MATCH and cannot be filtered in a
+	// WHERE seek, so it is not a stable keyset column. Search is
+	// relevance-ranked top-N; deep-paging ranked results is an
+	// anti-pattern. `page_size` is an alias for `limit` and takes
+	// precedence when both are set; `offset` advances within the ranked
+	// result set.
+	Offset        int32 `protobuf:"varint,6,opt,name=offset,proto3" json:"offset,omitempty"`
+	PageSize      int32 `protobuf:"varint,7,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7590,9 +7641,21 @@ func (x *SearchNodesRequest) GetOffset() int32 {
 	return 0
 }
 
+func (x *SearchNodesRequest) GetPageSize() int32 {
+	if x != nil {
+		return x.PageSize
+	}
+	return 0
+}
+
 type SearchNodesResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nodes         []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Nodes []*Node                `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	// True when the ranked result set has more rows beyond this page.
+	// Page with `offset` to fetch the next slice. There is NO
+	// `next_page_token` for search — ranked results are offset-paged, not
+	// cursor-paged (ADR-029 FTS carve-out).
+	HasMore       bool `protobuf:"varint,2,opt,name=has_more,json=hasMore,proto3" json:"has_more,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -7632,6 +7695,13 @@ func (x *SearchNodesResponse) GetNodes() []*Node {
 		return x.Nodes
 	}
 	return nil
+}
+
+func (x *SearchNodesResponse) GetHasMore() bool {
+	if x != nil {
+		return x.HasMore
+	}
+	return false
 }
 
 var File_entdb_proto protoreflect.FileDescriptor
@@ -7981,14 +8051,18 @@ const file_entdb_proto_rawDesc = "" +
 	"\bactor_id\x18\x03 \x01(\tR\aactorId\"B\n" +
 	"\x14RevokeAccessResponse\x12\x14\n" +
 	"\x05found\x18\x01 \x01(\bR\x05found\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\"{\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\"\xbb\x01\n" +
 	"\x17ListSharedWithMeRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x03 \x01(\x05R\x06offset\"[\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x1a\n" +
+	"\x06offset\x18\x03 \x01(\x05B\x02\x18\x01R\x06offset\x12\x1b\n" +
+	"\tpage_size\x18\x04 \x01(\x05R\bpageSize\x12\x1d\n" +
+	"\n" +
+	"page_token\x18\x05 \x01(\tR\tpageToken\"\x83\x01\n" +
 	"\x18ListSharedWithMeResponse\x12$\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x19\n" +
-	"\bhas_more\x18\x02 \x01(\bR\ahasMore\"\x9f\x01\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore\x12&\n" +
+	"\x0fnext_page_token\x18\x03 \x01(\tR\rnextPageToken\"\x9f\x01\n" +
 	"\x12GroupMemberRequest\x122\n" +
 	"\acontext\x18\x01 \x01(\v2\x18.entdb.v1.RequestContextR\acontext\x12\x19\n" +
 	"\bgroup_id\x18\x02 \x01(\tR\agroupId\x12&\n" +
@@ -8211,16 +8285,18 @@ const file_entdb_proto_rawDesc = "" +
 	"typedValueJ\x04\b\x04\x10\x05J\x04\b\x05\x10\x06R\bkey_nameR\tkey_value\"P\n" +
 	"\x14GetNodeByKeyResponse\x12\"\n" +
 	"\x04node\x18\x01 \x01(\v2\x0e.entdb.v1.NodeR\x04node\x12\x14\n" +
-	"\x05found\x18\x02 \x01(\bR\x05found\"\xa4\x01\n" +
+	"\x05found\x18\x02 \x01(\bR\x05found\"\xc1\x01\n" +
 	"\x12SearchNodesRequest\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x14\n" +
 	"\x05actor\x18\x02 \x01(\tR\x05actor\x12\x17\n" +
 	"\atype_id\x18\x03 \x01(\x05R\x06typeId\x12\x14\n" +
 	"\x05query\x18\x04 \x01(\tR\x05query\x12\x14\n" +
 	"\x05limit\x18\x05 \x01(\x05R\x05limit\x12\x16\n" +
-	"\x06offset\x18\x06 \x01(\x05R\x06offset\";\n" +
+	"\x06offset\x18\x06 \x01(\x05R\x06offset\x12\x1b\n" +
+	"\tpage_size\x18\a \x01(\x05R\bpageSize\"V\n" +
 	"\x13SearchNodesResponse\x12$\n" +
-	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes*^\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x0e.entdb.v1.NodeR\x05nodes\x12\x19\n" +
+	"\bhas_more\x18\x02 \x01(\bR\ahasMore*^\n" +
 	"\vStorageMode\x12\x17\n" +
 	"\x13STORAGE_MODE_TENANT\x10\x00\x12\x1d\n" +
 	"\x19STORAGE_MODE_USER_MAILBOX\x10\x01\x12\x17\n" +

@@ -83,6 +83,13 @@ type fakeServer struct {
 	sharedReq      *pb.ListSharedWithMeRequest
 	sharedResp     *pb.ListSharedWithMeResponse
 	sharedErr      error
+	// sharedPages, when set, makes ListSharedWithMe serve keyset pages:
+	// the request's page_token is the index into sharedPages ("" => 0),
+	// each page's NextPageToken points at the next index. Exercises the
+	// SDK's ADR-029 unified-keyset auto-follow loop.
+	sharedPages []*pb.ListSharedWithMeResponse
+	sharedReqs  []*pb.ListSharedWithMeRequest
+	searchReqs  []*pb.SearchNodesRequest
 	revokeReq      *pb.RevokeAccessRequest
 	revokeResp     *pb.RevokeAccessResponse
 	revokeErr      error
@@ -199,6 +206,7 @@ func (s *fakeServer) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) 
 
 func (s *fakeServer) SearchNodes(ctx context.Context, req *pb.SearchNodesRequest) (*pb.SearchNodesResponse, error) {
 	s.searchReq = req
+	s.searchReqs = append(s.searchReqs, req)
 	s.sendTrailer(ctx)
 	if s.searchErr != nil {
 		return nil, s.searchErr
@@ -293,9 +301,21 @@ func (s *fakeServer) GetConnectedNodes(ctx context.Context, req *pb.GetConnected
 
 func (s *fakeServer) ListSharedWithMe(ctx context.Context, req *pb.ListSharedWithMeRequest) (*pb.ListSharedWithMeResponse, error) {
 	s.sharedReq = req
+	s.sharedReqs = append(s.sharedReqs, req)
 	s.sendTrailer(ctx)
 	if s.sharedErr != nil {
 		return nil, s.sharedErr
+	}
+	if s.sharedPages != nil {
+		idx := 0
+		if req.GetPageToken() != "" {
+			i, err := strconv.Atoi(req.GetPageToken())
+			if err != nil {
+				return nil, err
+			}
+			idx = i
+		}
+		return s.sharedPages[idx], nil
 	}
 	return s.sharedResp, nil
 }
@@ -743,18 +763,115 @@ func TestGrpcTransport_SearchNodes_HappyPath(t *testing.T) {
 	}
 	tr := startFakeServer(t, svc)
 
-	nodes, err := tr.SearchNodes(context.Background(), "acme", "user:alice", 201, "deluxe")
+	nodes, hasMore, err := tr.SearchNodes(context.Background(), "acme", "user:alice", 201, "deluxe", 0, 0)
 	if err != nil {
 		t.Fatalf("SearchNodes: %v", err)
 	}
 	if len(nodes) != 1 {
 		t.Fatalf("got %d nodes, want 1", len(nodes))
 	}
+	if hasMore {
+		t.Errorf("has_more = true, want false")
+	}
 	if svc.searchReq.GetQuery() != "deluxe" {
 		t.Errorf("server saw query = %q", svc.searchReq.GetQuery())
 	}
 	if svc.searchReq.GetTypeId() != 201 {
 		t.Errorf("server saw type_id = %d", svc.searchReq.GetTypeId())
+	}
+}
+
+// TestGrpcTransport_SearchNodes_OffsetPagedNoAutoFollow pins the ADR-029
+// FTS carve-out: search is OFFSET-paged top-N, NOT cursor-paged. The
+// transport makes exactly ONE request (no auto-follow), forwards
+// page_size + offset, and surfaces has_more verbatim.
+func TestGrpcTransport_SearchNodes_OffsetPagedNoAutoFollow(t *testing.T) {
+	svc := &fakeServer{
+		searchResp: &pb.SearchNodesResponse{
+			Nodes:   makeNodes("hit", 2),
+			HasMore: true,
+		},
+	}
+	tr := startFakeServer(t, svc)
+
+	nodes, hasMore, err := tr.SearchNodes(context.Background(), "acme", "user:alice", 201, "widget", 2, 4)
+	if err != nil {
+		t.Fatalf("SearchNodes: %v", err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("got %d nodes, want 2", len(nodes))
+	}
+	if !hasMore {
+		t.Errorf("has_more = false, want true (server reported more)")
+	}
+	// Exactly one request — search does NOT auto-follow.
+	if len(svc.searchReqs) != 1 {
+		t.Fatalf("made %d search requests, want 1 (no auto-follow)", len(svc.searchReqs))
+	}
+	if svc.searchReq.GetPageSize() != 2 {
+		t.Errorf("server saw page_size = %d, want 2", svc.searchReq.GetPageSize())
+	}
+	if svc.searchReq.GetOffset() != 4 {
+		t.Errorf("server saw offset = %d, want 4", svc.searchReq.GetOffset())
+	}
+}
+
+// TestGrpcTransport_ListSharedWithMe_AutoFollowsCursor pins the ADR-029
+// unified-keyset auto-follow: a single ListSharedWithMe call follows
+// next_page_token across pages and returns the complete merged set.
+func TestGrpcTransport_ListSharedWithMe_AutoFollowsCursor(t *testing.T) {
+	svc := &fakeServer{
+		sharedPages: []*pb.ListSharedWithMeResponse{
+			{Nodes: makeNodes("a", 1000), HasMore: true, NextPageToken: "1"},
+			{Nodes: makeNodes("b", 1000), HasMore: true, NextPageToken: "2"},
+			{Nodes: makeNodes("c", 300), HasMore: false, NextPageToken: ""},
+		},
+	}
+	tr := startFakeServer(t, svc)
+
+	nodes, err := tr.ListSharedWithMe(context.Background(), "acme", "user:alice", 0)
+	if err != nil {
+		t.Fatalf("ListSharedWithMe: %v", err)
+	}
+	if len(nodes) != 2300 {
+		t.Fatalf("got %d nodes, want 2300 (complete set across 3 pages)", len(nodes))
+	}
+	if len(svc.sharedReqs) != 3 {
+		t.Fatalf("made %d requests, want 3 (auto-follow)", len(svc.sharedReqs))
+	}
+	if svc.sharedReqs[0].GetPageToken() != "" {
+		t.Errorf("page 1 token = %q, want empty", svc.sharedReqs[0].GetPageToken())
+	}
+	if svc.sharedReqs[1].GetPageToken() != "1" || svc.sharedReqs[2].GetPageToken() != "2" {
+		t.Errorf("cursor not advanced: %q, %q", svc.sharedReqs[1].GetPageToken(), svc.sharedReqs[2].GetPageToken())
+	}
+}
+
+// TestGrpcTransport_ListSharedWithMe_LimitCapsTotal pins the limit cap:
+// the transport stops following once `limit` rows are collected and asks
+// only for the remaining count on the final page.
+func TestGrpcTransport_ListSharedWithMe_LimitCapsTotal(t *testing.T) {
+	svc := &fakeServer{
+		sharedPages: []*pb.ListSharedWithMeResponse{
+			{Nodes: makeNodes("a", 1000), HasMore: true, NextPageToken: "1"},
+			{Nodes: makeNodes("b", 1000), HasMore: true, NextPageToken: "2"},
+			{Nodes: makeNodes("c", 1000), HasMore: false, NextPageToken: ""},
+		},
+	}
+	tr := startFakeServer(t, svc)
+
+	nodes, err := tr.ListSharedWithMe(context.Background(), "acme", "user:alice", 1200)
+	if err != nil {
+		t.Fatalf("ListSharedWithMe: %v", err)
+	}
+	if len(nodes) != 1200 {
+		t.Fatalf("got %d nodes, want 1200 (limit cap)", len(nodes))
+	}
+	if len(svc.sharedReqs) != 2 {
+		t.Fatalf("made %d requests, want 2 (stop at cap)", len(svc.sharedReqs))
+	}
+	if svc.sharedReqs[1].GetPageSize() != 200 {
+		t.Errorf("page 2 page_size = %d, want 200", svc.sharedReqs[1].GetPageSize())
 	}
 }
 
@@ -999,7 +1116,7 @@ func TestGrpcTransport_ResourceExhaustedError(t *testing.T) {
 	}
 	tr := startFakeServer(t, svc)
 
-	_, err := tr.SearchNodes(context.Background(), "acme", "user:alice", 201, "widget")
+	_, _, err := tr.SearchNodes(context.Background(), "acme", "user:alice", 201, "widget", 0, 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}

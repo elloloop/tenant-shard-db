@@ -129,6 +129,103 @@ func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string,
 	return out, nil
 }
 
+// SharedCursor anchors a keyset seek over the shared-with-me stream
+// (ADR-029). The effective sort is (timestamp DESC, source_tenant DESC,
+// node_id DESC) where timestamp is `granted_at` for the per-tenant
+// node_access source and `shared_at` for the cross-tenant shared_index
+// source. The same tuple shape anchors BOTH sources so the merged stream
+// is a single total order — (source_tenant, node_id) uniquely identifies
+// a shared node. The seek resumes strictly after this tuple.
+type SharedCursor struct {
+	Timestamp    int64
+	SourceTenant string
+	NodeID       string
+}
+
+// SharedRow is one row of the per-tenant shared-with-me keyset query: the
+// node plus its `granted_at` timestamp, so the handler can mint a unified
+// cursor that merges with the cross-tenant shared_index source.
+type SharedRow struct {
+	Node      *Node
+	GrantedAt int64
+}
+
+// ListSharedWithMePaged is ListSharedWithMe with a unified keyset cursor
+// (ADR-029). It returns up to `limit` of the actor's non-deny, non-
+// expired node_access grants ordered (granted_at DESC, tenant DESC,
+// node_id DESC), seeking strictly after `cursor` when non-nil. Each row
+// carries its granted_at so the API layer can merge it with the global
+// shared_index source under one cursor.
+func (s *CanonicalStore) ListSharedWithMePaged(ctx context.Context, tenantID string, actorIDs []string, limit int, cursor *SharedCursor) ([]*SharedRow, error) {
+	if len(actorIDs) == 0 {
+		return nil, nil
+	}
+	db, err := s.readDB(tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	ph := strings.Repeat("?,", len(actorIDs))
+	ph = ph[:len(ph)-1]
+	q := fmt.Sprintf(`
+		SELECT n.tenant_id, n.node_id, n.type_id, n.payload_json,
+		       n.created_at, n.updated_at, n.owner_actor, n.acl_blob,
+		       MAX(na.granted_at) AS granted_at
+		FROM nodes n
+		JOIN node_access na ON na.node_id = n.node_id
+		WHERE n.tenant_id = ?
+		  AND na.actor_id IN (%s)
+		  AND na.permission != 'deny'
+		  AND (na.expires_at IS NULL OR na.expires_at > ?)
+		GROUP BY n.node_id`, ph,
+	)
+	args := make([]any, 0, 6+len(actorIDs))
+	args = append(args, tenantID)
+	for _, a := range actorIDs {
+		args = append(args, a)
+	}
+	args = append(args, s.now())
+	// Keyset seek (ADR-029): resume strictly after the cursor tuple in the
+	// effective DESC order (granted_at, source_tenant, node_id). The
+	// source_tenant for every per-tenant row is tenantID itself, so the
+	// middle comparison degenerates but is kept for symmetry with the
+	// merged cross-tenant source. The expanded disjunction avoids relying
+	// on SQLite row-value comparison. Applied via HAVING because granted_at
+	// is an aggregate (MAX over possibly-many grants for the same node).
+	if cursor != nil {
+		q += ` HAVING (granted_at < ?` +
+			` OR (granted_at = ? AND n.tenant_id < ?)` +
+			` OR (granted_at = ? AND n.tenant_id = ? AND n.node_id < ?))`
+		args = append(args,
+			cursor.Timestamp,
+			cursor.Timestamp, cursor.SourceTenant,
+			cursor.Timestamp, cursor.SourceTenant, cursor.NodeID)
+	}
+	q += ` ORDER BY granted_at DESC, n.tenant_id DESC, n.node_id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: ListSharedWithMePaged: %w", err)
+	}
+	defer rows.Close()
+	var out []*SharedRow
+	for rows.Next() {
+		n := &Node{}
+		var grantedAt int64
+		if err := rows.Scan(&n.TenantID, &n.NodeID, &n.TypeID, &n.PayloadJSON,
+			&n.CreatedAt, &n.UpdatedAt, &n.OwnerActor, &n.ACLJSON, &grantedAt); err != nil {
+			return nil, fmt.Errorf("store: ListSharedWithMePaged scan: %w", err)
+		}
+		out = append(out, &SharedRow{Node: n, GrantedAt: grantedAt})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: ListSharedWithMePaged rows: %w", err)
+	}
+	return out, nil
+}
+
 // ListSharedWithMe returns nodes the actor (or any of their groups) has
 // an explicit, non-deny, non-expired node_access entry on.
 //
