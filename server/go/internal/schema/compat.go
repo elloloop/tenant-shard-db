@@ -34,16 +34,17 @@ const (
 
 	// Node-level
 	ChangeKindNodeAdded
-	ChangeKindNodeRemoved         // BREAKING — WAL events referencing the type become unreplayable
+	ChangeKindNodeRemoved         // non-breaking (ADR-032: removal is loosening; reuse is the break — see TYPE_ID_REUSED)
 	ChangeKindNodeRenamed         // RETIRED (ADR-031: registry is name-free) — never emitted
 	ChangeKindTypeIDChanged       // RETIRED (ADR-031: name-based detection gone) — never emitted
 	ChangeKindSubjectFieldChanged // BREAKING — GDPR routing changes
 	ChangeKindDataPolicyTightened // non-breaking — encryption tier strengthens
 	ChangeKindDataPolicyLoosened  // BREAKING — historical data leaks downward
+	ChangeKindTypeIDReused        // BREAKING (ADR-032) — a reserved/removed type_id reappears as a live type
 
 	// Field-level
 	ChangeKindFieldAdded
-	ChangeKindFieldRemoved           // BREAKING — historic rows still carry the field
+	ChangeKindFieldRemoved           // non-breaking (ADR-032: removal is loosening; reuse is the break — see FIELD_ID_REUSED)
 	ChangeKindFieldIDChanged         // RETIRED (ADR-031: name-based detection gone) — never emitted
 	ChangeKindFieldKindChanged       // BREAKING — type-coercion of stored bytes is unsafe
 	ChangeKindFieldRenamed           // RETIRED (ADR-031: registry is name-free) — never emitted
@@ -55,6 +56,11 @@ const (
 	ChangeKindFieldUndeprecated      // non-breaking
 	ChangeKindFieldRefTypeChanged    // BREAKING — dangling references
 	ChangeKindFieldPIIToggled        // non-breaking — informational, but flagged
+	ChangeKindFieldIDReused          // BREAKING (ADR-032) — a reserved/removed field_id reappears as a live field
+	ChangeKindFieldIndexedAdded      // non-breaking (ADR-032) — query index is additive
+	ChangeKindFieldIndexedRemoved    // non-breaking (ADR-032) — dropping a query index loosens
+	ChangeKindFieldSearchableAdded   // non-breaking (ADR-032) — FTS index is additive
+	ChangeKindFieldSearchableRemoved // non-breaking (ADR-032) — dropping FTS loosens
 
 	// Enum-level (per field)
 	ChangeKindEnumValueAdded     // non-breaking — append-only
@@ -68,12 +74,13 @@ const (
 
 	// Edge-level
 	ChangeKindEdgeAdded
-	ChangeKindEdgeRemoved              // BREAKING — historical edges orphaned
+	ChangeKindEdgeRemoved              // non-breaking (ADR-032: removal is loosening; reuse is the break — see EDGE_ID_REUSED)
 	ChangeKindEdgeFromTypeChanged      // BREAKING — edge semantics shift
 	ChangeKindEdgeToTypeChanged        // BREAKING — edge semantics shift
 	ChangeKindEdgeUniquePerFromAdded   // BREAKING — historical edges may already violate
 	ChangeKindEdgeUniquePerFromRemoved // non-breaking
 	ChangeKindOnSubjectExitChanged     // BREAKING — GDPR delete semantics shift
+	ChangeKindEdgeIDReused             // BREAKING (ADR-032) — a reserved/removed edge_id reappears as a live edge
 )
 
 // changeKindName is the textual constant used in JSON output and text
@@ -101,6 +108,13 @@ var changeKindName = map[ChangeKind]string{
 	ChangeKindFieldUndeprecated:        "FIELD_UNDEPRECATED",
 	ChangeKindFieldRefTypeChanged:      "FIELD_REF_TYPE_CHANGED",
 	ChangeKindFieldPIIToggled:          "FIELD_PII_TOGGLED",
+	ChangeKindTypeIDReused:             "TYPE_ID_REUSED",
+	ChangeKindFieldIDReused:            "FIELD_ID_REUSED",
+	ChangeKindEdgeIDReused:             "EDGE_ID_REUSED",
+	ChangeKindFieldIndexedAdded:        "FIELD_INDEXED_ADDED",
+	ChangeKindFieldIndexedRemoved:      "FIELD_INDEXED_REMOVED",
+	ChangeKindFieldSearchableAdded:     "FIELD_SEARCHABLE_ADDED",
+	ChangeKindFieldSearchableRemoved:   "FIELD_SEARCHABLE_REMOVED",
 	ChangeKindEnumValueAdded:           "ENUM_VALUE_ADDED",
 	ChangeKindEnumValueRemoved:         "ENUM_VALUE_REMOVED",
 	ChangeKindEnumValueReordered:       "ENUM_VALUE_REORDERED",
@@ -133,13 +147,19 @@ func (k ChangeKind) MarshalJSON() ([]byte, error) {
 // breakingKinds maps each ChangeKind to its breaking-or-not classification.
 // A nil entry means non-breaking. Reviewers: flipping a classification
 // here is the audit trail.
+// Per ADR-032 the governing principle is LOOSENING is safe, TIGHTENING
+// is breaking. Type/field/edge *removal* is loosening (safe) — the
+// breaking move is reusing the freed id, captured by the *_REUSED kinds.
+// FIELD_ID_CHANGED / TYPE_ID_CHANGED are retired under ADR-031 (name-free,
+// so a "change" is a remove+add); they are listed here for the historical
+// audit trail but are never emitted.
 var breakingKinds = map[ChangeKind]bool{
-	ChangeKindNodeRemoved:            true,
-	ChangeKindTypeIDChanged:          true,
+	ChangeKindTypeIDChanged:          true, // retired (ADR-031); never emitted
+	ChangeKindTypeIDReused:           true,
 	ChangeKindSubjectFieldChanged:    true,
 	ChangeKindDataPolicyLoosened:     true,
-	ChangeKindFieldRemoved:           true,
-	ChangeKindFieldIDChanged:         true,
+	ChangeKindFieldIDChanged:         true, // retired (ADR-031); never emitted
+	ChangeKindFieldIDReused:          true,
 	ChangeKindFieldKindChanged:       true,
 	ChangeKindFieldRequiredTightened: true,
 	ChangeKindFieldUniqueAdded:       true,
@@ -148,11 +168,11 @@ var breakingKinds = map[ChangeKind]bool{
 	ChangeKindEnumValueReordered:     true,
 	ChangeKindCompositeUniqueAdded:   true,
 	ChangeKindCompositeUniqueChanged: true,
-	ChangeKindEdgeRemoved:            true,
 	ChangeKindEdgeFromTypeChanged:    true,
 	ChangeKindEdgeToTypeChanged:      true,
 	ChangeKindEdgeUniquePerFromAdded: true,
 	ChangeKindOnSubjectExitChanged:   true,
+	ChangeKindEdgeIDReused:           true,
 }
 
 // IsBreaking reports whether the kind is classified as a breaking
@@ -270,6 +290,7 @@ func diffNodes(oldR, newR *Registry) []Change {
 		out = append(out, diffNodeBody(oldNode, newNode)...)
 	}
 
+	oldReservedTypes := int32Set(reservedTypeIDs(oldR))
 	newIDs := make([]int32, 0, len(newByID))
 	for id := range newByID {
 		newIDs = append(newIDs, id)
@@ -280,6 +301,20 @@ func diffNodes(oldR, newR *Registry) []Change {
 			continue
 		}
 		newNode := newByID[id]
+		// ADR-032: a baseline-reserved type_id reappearing as a live type
+		// is a BREAKING reuse, not a benign add.
+		if _, reserved := oldReservedTypes[id]; reserved {
+			out = append(out, Change{
+				Kind:     ChangeKindTypeIDReused,
+				Path:     fmt.Sprintf("node:%d", newNode.TypeID),
+				NewValue: newNode.TypeID,
+				Message: fmt.Sprintf(
+					"type_id=%d was reserved in the baseline but is re-introduced as a live type (id reuse)",
+					newNode.TypeID,
+				),
+			})
+			continue
+		}
 		out = append(out, Change{
 			Kind:     ChangeKindNodeAdded,
 			Path:     fmt.Sprintf("node:%d", newNode.TypeID),
@@ -288,6 +323,38 @@ func diffNodes(oldR, newR *Registry) []Change {
 		})
 	}
 	return out
+}
+
+// reservedTypeIDs / reservedEdgeIDs read the schema-level tombstone lists
+// off a registry, tolerating a nil registry.
+func reservedTypeIDs(r *Registry) []int32 {
+	if r == nil {
+		return nil
+	}
+	return r.ReservedTypeIDs()
+}
+
+func reservedEdgeIDs(r *Registry) []int32 {
+	if r == nil {
+		return nil
+	}
+	return r.ReservedEdgeIDs()
+}
+
+func int32Set(ids []int32) map[int32]struct{} {
+	m := make(map[int32]struct{}, len(ids))
+	for _, id := range ids {
+		m[id] = struct{}{}
+	}
+	return m
+}
+
+func uint32Set(ids []uint32) map[uint32]struct{} {
+	m := make(map[uint32]struct{}, len(ids))
+	for _, id := range ids {
+		m[id] = struct{}{}
+	}
+	return m
 }
 
 func diffNodeBody(oldNode, newNode *NodeTypeDef) []Change {
@@ -358,6 +425,7 @@ func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 		})
 	}
 
+	oldReserved := uint32Set(oldNode.ReservedFieldIDs)
 	newIDs := make([]uint32, 0, len(newFields))
 	for id := range newFields {
 		newIDs = append(newIDs, id)
@@ -366,6 +434,21 @@ func diffFields(oldNode, newNode *NodeTypeDef) []Change {
 	for _, id := range newIDs {
 		nf := newFields[id]
 		if _, ok := oldFields[id]; ok {
+			continue
+		}
+		// ADR-032: a baseline-reserved field_id reappearing as a live
+		// field is a BREAKING reuse — historic rows keyed by that id mean
+		// something else.
+		if _, reserved := oldReserved[id]; reserved {
+			out = append(out, Change{
+				Kind:     ChangeKindFieldIDReused,
+				Path:     fmt.Sprintf("node:%d.field:%d", newNode.TypeID, nf.FieldID),
+				NewValue: nf.FieldID,
+				Message: fmt.Sprintf(
+					"field_id=%d on node type_id=%d was reserved in the baseline but is re-introduced as a live field (id reuse)",
+					nf.FieldID, newNode.TypeID,
+				),
+			})
 			continue
 		}
 		out = append(out, Change{
@@ -438,6 +521,36 @@ func diffFieldBody(typeID int32, of, nf *FieldDef) []Change {
 				Message:  fmt.Sprintf("field_id=%d on node type_id=%d no longer unique", nf.FieldID, typeID),
 			})
 		}
+	}
+	if of.Indexed != nf.Indexed {
+		kind := ChangeKindFieldIndexedRemoved
+		msg := fmt.Sprintf("field_id=%d on node type_id=%d no longer indexed", nf.FieldID, typeID)
+		if nf.Indexed {
+			kind = ChangeKindFieldIndexedAdded
+			msg = fmt.Sprintf("field_id=%d on node type_id=%d now indexed (additive query index)", nf.FieldID, typeID)
+		}
+		out = append(out, Change{
+			Kind:     kind,
+			Path:     base,
+			OldValue: of.Indexed,
+			NewValue: nf.Indexed,
+			Message:  msg,
+		})
+	}
+	if of.Searchable != nf.Searchable {
+		kind := ChangeKindFieldSearchableRemoved
+		msg := fmt.Sprintf("field_id=%d on node type_id=%d no longer searchable", nf.FieldID, typeID)
+		if nf.Searchable {
+			kind = ChangeKindFieldSearchableAdded
+			msg = fmt.Sprintf("field_id=%d on node type_id=%d now searchable (additive FTS index)", nf.FieldID, typeID)
+		}
+		out = append(out, Change{
+			Kind:     kind,
+			Path:     base,
+			OldValue: of.Searchable,
+			NewValue: nf.Searchable,
+			Message:  msg,
+		})
 	}
 	if of.Deprecated != nf.Deprecated {
 		kind := ChangeKindFieldUndeprecated
@@ -643,6 +756,7 @@ func diffEdges(oldR, newR *Registry) []Change {
 		}
 		out = append(out, diffEdgeBody(oe, ne)...)
 	}
+	oldReservedEdges := int32Set(reservedEdgeIDs(oldR))
 	newIDs := make([]int32, 0, len(newByID))
 	for id := range newByID {
 		newIDs = append(newIDs, id)
@@ -653,6 +767,20 @@ func diffEdges(oldR, newR *Registry) []Change {
 			continue
 		}
 		ne := newByID[id]
+		// ADR-032: a baseline-reserved edge_id reappearing as a live edge
+		// is a BREAKING reuse.
+		if _, reserved := oldReservedEdges[id]; reserved {
+			out = append(out, Change{
+				Kind:     ChangeKindEdgeIDReused,
+				Path:     fmt.Sprintf("edge:%d", ne.EdgeID),
+				NewValue: ne.EdgeID,
+				Message: fmt.Sprintf(
+					"edge_id=%d was reserved in the baseline but is re-introduced as a live edge (id reuse)",
+					ne.EdgeID,
+				),
+			})
+			continue
+		}
 		out = append(out, Change{
 			Kind:     ChangeKindEdgeAdded,
 			Path:     fmt.Sprintf("edge:%d", ne.EdgeID),

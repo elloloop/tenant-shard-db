@@ -178,6 +178,15 @@ type NodeTypeDef struct {
 	SubjectField    *uint32              `json:"subject_field,omitempty"`
 	LegalBasis      *string              `json:"legal_basis,omitempty"`
 	CompositeUnique []CompositeUniqueDef `json:"composite_unique,omitempty"`
+	// ReservedFieldIDs is the tombstone list for removed field_ids. Per
+	// ADR-032 removing a field is SAFE only when its id is then reserved
+	// here so it can never be reused for a different field — the same
+	// guarantee proto's native `reserved` gives. The compat checker treats
+	// a live field_id that appears in this list (i.e. a removed/reserved
+	// id brought back to life) as a BREAKING reuse. Emitted only when
+	// non-empty so it does not perturb the fingerprint of schemas that
+	// don't reserve.
+	ReservedFieldIDs []uint32 `json:"reserved_field_ids,omitempty"`
 }
 
 // Validate checks NodeTypeDef invariants: positive type_id, no duplicate
@@ -199,6 +208,15 @@ func (n *NodeTypeDef) Validate() error {
 			return fmt.Errorf("duplicate field_id %d in node type_id %d", f.FieldID, n.TypeID)
 		}
 		fieldIDs[f.FieldID] = struct{}{}
+	}
+
+	for _, rid := range n.ReservedFieldIDs {
+		if _, live := fieldIDs[rid]; live {
+			return fmt.Errorf(
+				"node type_id %d declares field_id %d both live and reserved",
+				n.TypeID, rid,
+			)
+		}
 	}
 
 	if len(n.CompositeUnique) > 0 {
@@ -256,6 +274,9 @@ type EdgeTypeDef struct {
 	// OnSubjectExit is always emitted (defaults to "both"); the JSON
 	// contract writes this key unconditionally.
 	OnSubjectExit OnSubjectExit `json:"on_subject_exit"`
+	// ReservedFieldIDs is the tombstone list for removed prop field_ids
+	// (same semantics as NodeTypeDef.ReservedFieldIDs, per ADR-032).
+	ReservedFieldIDs []uint32 `json:"reserved_field_ids,omitempty"`
 }
 
 // Validate checks EdgeTypeDef invariants: positive edge_id, no duplicate
@@ -274,6 +295,14 @@ func (e *EdgeTypeDef) Validate() error {
 			return fmt.Errorf("duplicate field_id %d in edge type_id %d", p.FieldID, e.EdgeID)
 		}
 		propIDs[p.FieldID] = struct{}{}
+	}
+	for _, rid := range e.ReservedFieldIDs {
+		if _, live := propIDs[rid]; live {
+			return fmt.Errorf(
+				"edge type_id %d declares field_id %d both live and reserved",
+				e.EdgeID, rid,
+			)
+		}
 	}
 	return nil
 }

@@ -60,6 +60,9 @@ func TestCompat_NodeAdded(t *testing.T) {
 	}
 }
 
+// TestCompat_NodeRemoved: ADR-032 — removing a type is LOOSENING and
+// therefore SAFE (its id should be reserved so it cannot be reused; the
+// reuse is the break, covered by TestCompat_TypeIDReused).
 func TestCompat_NodeRemoved(t *testing.T) {
 	user := userNode()
 	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
@@ -70,8 +73,8 @@ func TestCompat_NodeRemoved(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected NODE_REMOVED, got %v", c)
 	}
-	if !got.Breaking {
-		t.Fatalf("NODE_REMOVED must be breaking")
+	if got.Breaking {
+		t.Fatalf("NODE_REMOVED must NOT be breaking (ADR-032: removal is safe)")
 	}
 }
 
@@ -90,6 +93,9 @@ func TestCompat_FieldAdded(t *testing.T) {
 	}
 }
 
+// TestCompat_FieldRemoved: ADR-032 — removing a field is LOOSENING and
+// therefore SAFE. The id must be reserved so it cannot be reused; reuse
+// is the break (TestCompat_FieldIDReused).
 func TestCompat_FieldRemoved(t *testing.T) {
 	old := regWith([]NodeTypeDef{userNode()}, nil)
 	user2 := userNode()
@@ -100,8 +106,8 @@ func TestCompat_FieldRemoved(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected FIELD_REMOVED, got %v", c)
 	}
-	if !got.Breaking {
-		t.Fatalf("FIELD_REMOVED must be breaking")
+	if got.Breaking {
+		t.Fatalf("FIELD_REMOVED must NOT be breaking (ADR-032: removal is safe)")
 	}
 }
 
@@ -342,6 +348,9 @@ func TestCompat_EdgeAdded(t *testing.T) {
 	}
 }
 
+// TestCompat_EdgeRemoved: ADR-032 — removing an edge type is LOOSENING
+// and therefore SAFE; reuse of the edge_id is the break
+// (TestCompat_EdgeIDReused).
 func TestCompat_EdgeRemoved(t *testing.T) {
 	user := userNode()
 	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
@@ -352,8 +361,8 @@ func TestCompat_EdgeRemoved(t *testing.T) {
 	if got == nil {
 		t.Fatalf("expected EDGE_REMOVED, got %v", c)
 	}
-	if !got.Breaking {
-		t.Fatalf("EDGE_REMOVED must be breaking")
+	if got.Breaking {
+		t.Fatalf("EDGE_REMOVED must NOT be breaking (ADR-032: removal is safe)")
 	}
 }
 
@@ -509,15 +518,320 @@ func TestChangeKindMarshalJSON(t *testing.T) {
 func TestRenderText_Smoke(t *testing.T) {
 	r1 := regWith([]NodeTypeDef{userNode()}, nil)
 	user2 := userNode()
-	user2.Fields = user2.Fields[:1] // remove field 2 → breaking
+	user2.Fields[1].Kind = KindInteger // change field 2 kind → breaking
 	r2 := regWith([]NodeTypeDef{user2}, nil)
 	c := Check(r1, r2)
 	out := RenderText(c, "baseline.json")
 	if !strings.Contains(out, "BREAKING") {
 		t.Fatalf("expected BREAKING header, got: %s", out)
 	}
-	if !strings.Contains(out, "FIELD_REMOVED") {
+	if !strings.Contains(out, "FIELD_KIND_CHANGED") {
 		t.Fatalf("expected rule name, got: %s", out)
+	}
+}
+
+// -----------------------------------------------------------------------------
+// ADR-032 matrix: reserved-id reuse (BREAKING) + index/searchable toggles
+// (SAFE). Loosening is safe; tightening/identity-reuse is breaking.
+// -----------------------------------------------------------------------------
+
+// TestCompat_FieldIDReused: baseline reserves field_id 9; the new schema
+// brings field_id 9 back as a live field. Reusing a reserved id is the
+// breaking move that pairs with the safe FIELD_REMOVED.
+func TestCompat_FieldIDReused(t *testing.T) {
+	base := userNode()
+	base.ReservedFieldIDs = []uint32{9}
+	old := regWith([]NodeTypeDef{base}, nil)
+
+	reuse := userNode()
+	reuse.Fields = append(reuse.Fields, FieldDef{FieldID: 9, Kind: KindString})
+	newR := regWith([]NodeTypeDef{reuse}, nil)
+
+	c := Check(old, newR)
+	got := findChange(c, ChangeKindFieldIDReused)
+	if got == nil {
+		t.Fatalf("expected FIELD_ID_REUSED, got %v", c)
+	}
+	if !got.Breaking {
+		t.Fatalf("FIELD_ID_REUSED must be breaking")
+	}
+	// A reserved id reappearing must NOT also be reported as a benign add.
+	if findChange(c, ChangeKindFieldAdded) != nil {
+		t.Fatalf("a reserved-id reuse must not be classified as FIELD_ADDED: %v", c)
+	}
+}
+
+// TestCompat_FieldAddedFreshIsSafe: adding a brand-new field_id (not in
+// the reserved list) is loosening and SAFE — distinguishes the reuse case
+// from an ordinary add.
+func TestCompat_FieldAddedFreshIsSafe(t *testing.T) {
+	base := userNode()
+	base.ReservedFieldIDs = []uint32{9}
+	old := regWith([]NodeTypeDef{base}, nil)
+
+	add := userNode()
+	add.ReservedFieldIDs = []uint32{9} // keep the tombstone
+	add.Fields = append(add.Fields, FieldDef{FieldID: 10, Kind: KindString})
+	newR := regWith([]NodeTypeDef{add}, nil)
+
+	c := Check(old, newR)
+	got := findChange(c, ChangeKindFieldAdded)
+	if got == nil {
+		t.Fatalf("expected FIELD_ADDED for a fresh id, got %v", c)
+	}
+	if got.Breaking {
+		t.Fatalf("FIELD_ADDED for a fresh id must not be breaking")
+	}
+	if HasBreaking(c) {
+		t.Fatalf("adding a fresh field id must be fully safe, got %v", c)
+	}
+}
+
+// TestCompat_TypeIDReused: baseline reserves type_id 7; new schema brings
+// type_id 7 back as a live node.
+func TestCompat_TypeIDReused(t *testing.T) {
+	body := []byte(`{"node_types":[{"type_id":1,"fields":[{"field_id":1,"kind":"str"}]}],"reserved_type_ids":[7]}`)
+	old, err := LoadFromJSON(body)
+	if err != nil {
+		t.Fatalf("load old: %v", err)
+	}
+	reuse := regWith([]NodeTypeDef{
+		{TypeID: 1, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}},
+		{TypeID: 7, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}},
+	}, nil)
+	c := Check(old, reuse)
+	got := findChange(c, ChangeKindTypeIDReused)
+	if got == nil {
+		t.Fatalf("expected TYPE_ID_REUSED, got %v", c)
+	}
+	if !got.Breaking {
+		t.Fatalf("TYPE_ID_REUSED must be breaking")
+	}
+	if findChange(c, ChangeKindNodeAdded) != nil {
+		t.Fatalf("a reserved type_id reuse must not be classified as NODE_ADDED: %v", c)
+	}
+}
+
+// TestCompat_EdgeIDReused: baseline reserves edge_id 50; new schema brings
+// edge_id 50 back as a live edge.
+func TestCompat_EdgeIDReused(t *testing.T) {
+	body := []byte(`{
+		"node_types":[
+			{"type_id":1,"fields":[{"field_id":1,"kind":"str"}]},
+			{"type_id":2,"fields":[{"field_id":1,"kind":"str"}]}
+		],
+		"edge_types":[],
+		"reserved_edge_ids":[50]
+	}`)
+	old, err := LoadFromJSON(body)
+	if err != nil {
+		t.Fatalf("load old: %v", err)
+	}
+	user := NodeTypeDef{TypeID: 1, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
+	post := NodeTypeDef{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}}
+	reuse := regWith([]NodeTypeDef{user, post},
+		[]EdgeTypeDef{{EdgeID: 50, FromTypeID: 1, ToTypeID: 2, OnSubjectExit: OnSubjectExitBoth}})
+	c := Check(old, reuse)
+	got := findChange(c, ChangeKindEdgeIDReused)
+	if got == nil {
+		t.Fatalf("expected EDGE_ID_REUSED, got %v", c)
+	}
+	if !got.Breaking {
+		t.Fatalf("EDGE_ID_REUSED must be breaking")
+	}
+	if findChange(c, ChangeKindEdgeAdded) != nil {
+		t.Fatalf("a reserved edge_id reuse must not be classified as EDGE_ADDED: %v", c)
+	}
+}
+
+func TestCompat_IndexedAdded(t *testing.T) {
+	old := regWith([]NodeTypeDef{userNode()}, nil)
+	user2 := userNode()
+	user2.Fields[1].Indexed = true
+	newR := regWith([]NodeTypeDef{user2}, nil)
+	c := Check(old, newR)
+	got := findChange(c, ChangeKindFieldIndexedAdded)
+	if got == nil {
+		t.Fatalf("expected FIELD_INDEXED_ADDED, got %v", c)
+	}
+	if got.Breaking {
+		t.Fatalf("FIELD_INDEXED_ADDED must not be breaking")
+	}
+}
+
+func TestCompat_IndexedRemoved(t *testing.T) {
+	base := userNode()
+	base.Fields[1].Indexed = true
+	old := regWith([]NodeTypeDef{base}, nil)
+	newR := regWith([]NodeTypeDef{userNode()}, nil) // indexed back to false
+	c := Check(old, newR)
+	got := findChange(c, ChangeKindFieldIndexedRemoved)
+	if got == nil {
+		t.Fatalf("expected FIELD_INDEXED_REMOVED, got %v", c)
+	}
+	if got.Breaking {
+		t.Fatalf("FIELD_INDEXED_REMOVED must not be breaking")
+	}
+}
+
+func TestCompat_SearchableAdded(t *testing.T) {
+	old := regWith([]NodeTypeDef{userNode()}, nil)
+	user2 := userNode()
+	user2.Fields[1].Searchable = true
+	newR := regWith([]NodeTypeDef{user2}, nil)
+	c := Check(old, newR)
+	got := findChange(c, ChangeKindFieldSearchableAdded)
+	if got == nil {
+		t.Fatalf("expected FIELD_SEARCHABLE_ADDED, got %v", c)
+	}
+	if got.Breaking {
+		t.Fatalf("FIELD_SEARCHABLE_ADDED must not be breaking")
+	}
+}
+
+func TestCompat_SearchableRemoved(t *testing.T) {
+	base := userNode()
+	base.Fields[1].Searchable = true
+	old := regWith([]NodeTypeDef{base}, nil)
+	newR := regWith([]NodeTypeDef{userNode()}, nil)
+	c := Check(old, newR)
+	got := findChange(c, ChangeKindFieldSearchableRemoved)
+	if got == nil {
+		t.Fatalf("expected FIELD_SEARCHABLE_REMOVED, got %v", c)
+	}
+	if got.Breaking {
+		t.Fatalf("FIELD_SEARCHABLE_REMOVED must not be breaking")
+	}
+}
+
+// TestCompat_Matrix is the table-driven sweep over the full ADR-032
+// loosen-safe / tighten-breaking matrix. Each row applies a transform to
+// a fixture, runs Check, and asserts the expected kind fired with the
+// expected breaking classification. It is the single source of truth for
+// the rule matrix; per-kind tests above remain for focused failure
+// messages.
+func TestCompat_Matrix(t *testing.T) {
+	// base fixture: one node (type 1) with a required+unique str field 1
+	// and a plain str field 2, plus one edge (100) from 1→2.
+	base := func() ([]NodeTypeDef, []EdgeTypeDef) {
+		return []NodeTypeDef{
+				{TypeID: 1, Fields: []FieldDef{
+					{FieldID: 1, Kind: KindString, Required: true, Unique: true},
+					{FieldID: 2, Kind: KindString},
+				}},
+				{TypeID: 2, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}},
+			}, []EdgeTypeDef{
+				{EdgeID: 100, FromTypeID: 1, ToTypeID: 2, OnSubjectExit: OnSubjectExitBoth},
+			}
+	}
+
+	cases := []struct {
+		name     string
+		mutate   func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef)
+		wantKind ChangeKind
+		breaking bool
+	}{
+		// ---- TIGHTENING / identity / data-corrupting → BREAKING ----
+		{"unique added (false→true)", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[1].Unique = true
+			return n, e
+		}, ChangeKindFieldUniqueAdded, true},
+		{"required added (false→true)", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[1].Required = true
+			return n, e
+		}, ChangeKindFieldRequiredTightened, true},
+		{"field kind changed", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[1].Kind = KindInteger
+			return n, e
+		}, ChangeKindFieldKindChanged, true},
+		{"composite_unique added", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].CompositeUnique = []CompositeUniqueDef{{FieldIDs: []uint32{1, 2}}}
+			return n, e
+		}, ChangeKindCompositeUniqueAdded, true},
+		{"edge from-type changed", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			e[0].FromTypeID = 2
+			return n, e
+		}, ChangeKindEdgeFromTypeChanged, true},
+		{"edge to-type changed", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			e[0].ToTypeID = 1
+			return n, e
+		}, ChangeKindEdgeToTypeChanged, true},
+
+		// ---- LOOSENING / additive → SAFE ----
+		{"unique dropped", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[0].Unique = false
+			return n, e
+		}, ChangeKindFieldUniqueRemoved, false},
+		{"required dropped", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[0].Required = false
+			return n, e
+		}, ChangeKindFieldRequiredLoosened, false},
+		{"indexed added", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[1].Indexed = true
+			return n, e
+		}, ChangeKindFieldIndexedAdded, false},
+		{"indexed removed", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			// baseline is set indexed in the switch below; mutate is a no-op.
+			return n, e
+		}, ChangeKindFieldIndexedRemoved, false},
+		{"searchable added", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields[1].Searchable = true
+			return n, e
+		}, ChangeKindFieldSearchableAdded, false},
+		{"new field added", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields = append(n[0].Fields, FieldDef{FieldID: 3, Kind: KindString})
+			return n, e
+		}, ChangeKindFieldAdded, false},
+		{"field removed", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n[0].Fields = n[0].Fields[:1]
+			return n, e
+		}, ChangeKindFieldRemoved, false},
+		{"new type added", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			n = append(n, NodeTypeDef{TypeID: 3, Fields: []FieldDef{{FieldID: 1, Kind: KindString}}})
+			return n, e
+		}, ChangeKindNodeAdded, false},
+		{"type removed", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			// remove type 2 and the edge that referenced it
+			return n[:1], nil
+		}, ChangeKindNodeRemoved, false},
+		{"composite_unique dropped", func(n []NodeTypeDef, e []EdgeTypeDef) ([]NodeTypeDef, []EdgeTypeDef) {
+			// baseline gets the constraint; new drops it (handled below).
+			return n, e
+		}, ChangeKindCompositeUniqueRemoved, false},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			oldN, oldE := base()
+			var newN []NodeTypeDef
+			var newE []EdgeTypeDef
+
+			switch tc.name {
+			case "indexed removed":
+				oldN[0].Fields[1].Indexed = true
+				newN, newE = base() // indexed false on field 2
+			case "composite_unique dropped":
+				oldN[0].CompositeUnique = []CompositeUniqueDef{{FieldIDs: []uint32{1, 2}}}
+				newN, newE = base() // no composite
+			default:
+				newN, newE = tc.mutate(base())
+			}
+
+			old := regWith(oldN, oldE)
+			newR := regWith(newN, newE)
+			c := Check(old, newR)
+			got := findChange(c, tc.wantKind)
+			if got == nil {
+				t.Fatalf("%s: expected %s, got %v", tc.name, tc.wantKind, c)
+			}
+			if got.Breaking != tc.breaking {
+				t.Fatalf("%s: %s breaking=%v, want %v", tc.name, tc.wantKind, got.Breaking, tc.breaking)
+			}
+			if tc.breaking != HasBreaking(c) {
+				t.Fatalf("%s: HasBreaking=%v, want %v (changes=%v)", tc.name, HasBreaking(c), tc.breaking, c)
+			}
+		})
 	}
 }
 

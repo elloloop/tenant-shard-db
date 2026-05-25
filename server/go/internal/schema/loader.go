@@ -17,9 +17,18 @@ import (
 // schemaFile is the wire shape of the to_dict() / from_dict() document.
 // It is the on-disk envelope for both the JSON loader and the
 // fingerprint canonicaliser.
+//
+// ReservedTypeIDs / ReservedEdgeIDs are the schema-level tombstone lists
+// for removed node-type / edge-type ids (ADR-032). Like a field-level
+// reservation, removing a type is SAFE only when its id is reserved here
+// so it can never be reused for a different type. Both are emitted only
+// when non-empty (omitempty), so the fingerprint of schemas that don't
+// reserve is unchanged.
 type schemaFile struct {
-	NodeTypes []NodeTypeDef `json:"node_types"`
-	EdgeTypes []EdgeTypeDef `json:"edge_types"`
+	NodeTypes       []NodeTypeDef `json:"node_types"`
+	EdgeTypes       []EdgeTypeDef `json:"edge_types"`
+	ReservedTypeIDs []int32       `json:"reserved_type_ids,omitempty"`
+	ReservedEdgeIDs []int32       `json:"reserved_edge_ids,omitempty"`
 }
 
 // LoadFromJSON parses the SchemaRegistry JSON shape into a fresh,
@@ -50,6 +59,19 @@ func LoadFromJSON(data []byte) (*Registry, error) {
 			return nil, fmt.Errorf("schema: register edge edge_id %d: %w", et.EdgeID, err)
 		}
 	}
+	// A live id cannot also be reserved — that is a definition error, the
+	// schema-level analogue of the field-level live/reserved conflict.
+	for _, rid := range f.ReservedTypeIDs {
+		if r.NodeTypeByID(rid) != nil {
+			return nil, fmt.Errorf("schema: type_id %d is both live and reserved", rid)
+		}
+	}
+	for _, rid := range f.ReservedEdgeIDs {
+		if r.EdgeTypeByID(rid) != nil {
+			return nil, fmt.Errorf("schema: edge_id %d is both live and reserved", rid)
+		}
+	}
+	r.setReservedIDs(f.ReservedTypeIDs, f.ReservedEdgeIDs)
 	return r, nil
 }
 
@@ -73,8 +95,10 @@ func (r *Registry) MarshalJSON() ([]byte, error) {
 func (r *Registry) toFile() schemaFile {
 	s := r.load()
 	doc := schemaFile{
-		NodeTypes: make([]NodeTypeDef, 0, len(s.nodes)),
-		EdgeTypes: make([]EdgeTypeDef, 0, len(s.edges)),
+		NodeTypes:       make([]NodeTypeDef, 0, len(s.nodes)),
+		EdgeTypes:       make([]EdgeTypeDef, 0, len(s.edges)),
+		ReservedTypeIDs: s.reservedTypeIDs,
+		ReservedEdgeIDs: s.reservedEdgeIDs,
 	}
 	ids := make([]int32, 0, len(s.nodes))
 	for id := range s.nodes {

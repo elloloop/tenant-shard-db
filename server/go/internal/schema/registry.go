@@ -39,6 +39,11 @@ var ErrSchemaConflict = errors.New("schema: conflicting type definition")
 type snapshot struct {
 	nodes map[int32]*NodeTypeDef
 	edges map[int32]*EdgeTypeDef
+	// reservedTypeIDs / reservedEdgeIDs are the schema-level tombstone
+	// lists (ADR-032). They are pure metadata consulted by the compat
+	// checker; the runtime registry never reads them on the hot path.
+	reservedTypeIDs []int32
+	reservedEdgeIDs []int32
 }
 
 // clone returns a shallow copy of s with fresh top-level maps. The
@@ -48,8 +53,10 @@ type snapshot struct {
 // registration O(types) rather than O(fields).
 func (s *snapshot) clone() *snapshot {
 	out := &snapshot{
-		nodes: make(map[int32]*NodeTypeDef, len(s.nodes)+1),
-		edges: make(map[int32]*EdgeTypeDef, len(s.edges)+1),
+		nodes:           make(map[int32]*NodeTypeDef, len(s.nodes)+1),
+		edges:           make(map[int32]*EdgeTypeDef, len(s.edges)+1),
+		reservedTypeIDs: s.reservedTypeIDs,
+		reservedEdgeIDs: s.reservedEdgeIDs,
 	}
 	for k, v := range s.nodes {
 		out.nodes[k] = v
@@ -361,6 +368,27 @@ func (r *Registry) EdgeType(id any) *EdgeTypeDef {
 
 // EdgeTypeByID is the explicit-id helper.
 func (r *Registry) EdgeTypeByID(id int32) *EdgeTypeDef { return r.load().edges[id] }
+
+// ReservedTypeIDs returns the schema-level tombstone list of removed
+// node-type ids (ADR-032). The returned slice is the snapshot's own
+// backing array; callers must not mutate it.
+func (r *Registry) ReservedTypeIDs() []int32 { return r.load().reservedTypeIDs }
+
+// ReservedEdgeIDs returns the schema-level tombstone list of removed
+// edge-type ids (ADR-032).
+func (r *Registry) ReservedEdgeIDs() []int32 { return r.load().reservedEdgeIDs }
+
+// setReservedIDs publishes the schema-level reserved type/edge id lists
+// onto the current snapshot. Used by the JSON loader; callers must hold
+// no special lock since it runs during single-threaded load.
+func (r *Registry) setReservedIDs(typeIDs, edgeIDs []int32) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	next := r.load().clone()
+	next.reservedTypeIDs = typeIDs
+	next.reservedEdgeIDs = edgeIDs
+	r.snap.Store(next)
+}
 
 // NodeTypes returns the registered node types in deterministic order
 // (sorted by type_id). The returned slice is a copy; callers may

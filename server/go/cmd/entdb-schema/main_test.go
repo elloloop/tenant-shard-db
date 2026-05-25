@@ -209,6 +209,103 @@ func TestValidateClean(t *testing.T) {
 	}
 }
 
+// TestBreakingVerb exercises the buf-breaking-style `breaking`
+// subcommand (ADR-032): same engine, same exit-code contract as `check`.
+func TestBreakingVerb(t *testing.T) {
+	baseline := writeFile(t, "baseline.json", sampleSchema)
+	current := writeFile(t, "current.json", breakingSchema)
+
+	// Compatible against self → exit 0.
+	var so, se bytes.Buffer
+	if rc := cmdBreaking([]string{"--baseline", baseline, "--from-file", baseline}, &so, &se); rc != 0 {
+		t.Fatalf("breaking (self) rc=%d (want 0); stderr=%q", rc, se.String())
+	}
+
+	// Breaking change → exit 1.
+	so.Reset()
+	se.Reset()
+	rc := cmdBreaking([]string{"--baseline", baseline, "--from-file", current, "--format", "json"}, &so, &se)
+	if rc != 1 {
+		t.Fatalf("breaking (kind change) rc=%d (want 1); stderr=%q stdout=%q", rc, se.String(), so.String())
+	}
+	var out struct {
+		Compatible    bool `json:"compatible"`
+		BreakingCount int  `json:"breaking_count"`
+	}
+	if err := json.Unmarshal(so.Bytes(), &out); err != nil {
+		t.Fatalf("decode json: %v\n%s", err, so.String())
+	}
+	if out.Compatible || out.BreakingCount == 0 {
+		t.Fatalf("expected compatible=false and breaking_count>0, got %+v", out)
+	}
+
+	// --allow-breaking → exit 0 despite the break.
+	so.Reset()
+	se.Reset()
+	if rc := cmdBreaking([]string{"--baseline", baseline, "--from-file", current, "--allow-breaking"}, &so, &se); rc != 0 {
+		t.Fatalf("breaking --allow-breaking rc=%d (want 0); stderr=%q", rc, se.String())
+	}
+
+	// Missing baseline → exit 2.
+	so.Reset()
+	se.Reset()
+	if rc := cmdBreaking([]string{"--from-file", current}, &so, &se); rc != 2 {
+		t.Fatalf("breaking (no baseline) rc=%d (want 2)", rc)
+	}
+}
+
+// TestBreakingSafeRemoval confirms the ADR-032 reclassification at the
+// CLI: dropping a field (and a whole type) is SAFE and exits 0.
+func TestBreakingSafeRemoval(t *testing.T) {
+	const reduced = `{
+  "node_types": [
+    {"type_id": 1, "fields": [
+      {"field_id": 1, "kind": "str", "required": true, "unique": true}
+    ]}
+  ],
+  "edge_types": []
+}`
+	baseline := writeFile(t, "baseline.json", sampleSchema)
+	current := writeFile(t, "reduced.json", reduced)
+	var so, se bytes.Buffer
+	rc := cmdBreaking([]string{"--baseline", baseline, "--from-file", current}, &so, &se)
+	if rc != 0 {
+		t.Fatalf("breaking (safe removals) rc=%d (want 0); stdout=%q stderr=%q", rc, so.String(), se.String())
+	}
+}
+
+// TestBreakingFieldIDReuse confirms the reserved-id reuse break fires at
+// the CLI and exits 1.
+func TestBreakingFieldIDReuse(t *testing.T) {
+	const baselineWithReserve = `{
+  "node_types": [
+    {"type_id": 1, "fields": [
+      {"field_id": 1, "kind": "str"}
+    ], "reserved_field_ids": [9]}
+  ],
+  "edge_types": []
+}`
+	const reuse = `{
+  "node_types": [
+    {"type_id": 1, "fields": [
+      {"field_id": 1, "kind": "str"},
+      {"field_id": 9, "kind": "int"}
+    ]}
+  ],
+  "edge_types": []
+}`
+	baseline := writeFile(t, "baseline.json", baselineWithReserve)
+	current := writeFile(t, "reuse.json", reuse)
+	var so, se bytes.Buffer
+	rc := cmdBreaking([]string{"--baseline", baseline, "--from-file", current, "--format", "json"}, &so, &se)
+	if rc != 1 {
+		t.Fatalf("breaking (field id reuse) rc=%d (want 1); stdout=%q stderr=%q", rc, so.String(), se.String())
+	}
+	if !strings.Contains(so.String(), "FIELD_ID_REUSED") {
+		t.Fatalf("expected FIELD_ID_REUSED in output, got %q", so.String())
+	}
+}
+
 func TestCheckMissingBaseline(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := cmdCheck([]string{"--from-file", "irrelevant.json"}, &stdout, &stderr)

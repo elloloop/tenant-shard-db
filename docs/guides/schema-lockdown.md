@@ -5,10 +5,23 @@ of EntDB). This guide walks through using `entdb-schema` to lock down
 your runtime schema and gate your application's pull requests against
 silent breaking changes.
 
-> Companion to `docs/schema-evolution.md` (which covers the rules
-> themselves) and to issue #488 (which is the design reference).
-> `entdb-schema` is shipped as a sibling binary to `entdb-server` —
-> install once, use independently.
+> Companion to [ADR-032](../adr/032-schema-evolution-compat-rules.md)
+> (the compat rule matrix and the customer-runnable gate) and to issue
+> #488 (the original CLI design reference). `entdb-schema` ships as a
+> ghcr image and a prebuilt release binary — install once, use
+> independently in local dev and CI.
+
+> **The one command.** A single buf-breaking-style invocation, run
+> IDENTICALLY in local dev and in CI:
+>
+> ```bash
+> entdb-schema breaking --baseline schema.lock.json --from-file new.json
+> ```
+>
+> It exits non-zero on any breaking change and prints each offending
+> change. `breaking` is the buf-style verb; `check` is an exact alias.
+> The schema is **name-free** (ids only, [ADR-031](../adr/031-self-describing-name-free-schema.md));
+> the snapshot you compare is generated from your own proto.
 
 ## What this solves
 
@@ -19,21 +32,32 @@ are the **on-disk keys**, plus metadata (`required`, `unique`,
 …) that the WAL, applier, payload-translation layer, and query planner
 all depend on.
 
-A few common changes look harmless at the proto level but silently
-break a running cluster:
+The governing principle ([ADR-032](../adr/032-schema-evolution-compat-rules.md))
+is: **LOOSENING is safe; TIGHTENING (or identity reuse / data
+corruption) is breaking.** A few common changes look harmless at the
+proto level but silently break a running cluster:
 
 | Change                                                | Effect                                                                                       |
 | ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| Reassigning `field_id` 7 from `email` to `phone`      | Historic rows storing field 7 are now read back as "phone" — silent data corruption.         |
-| Removing a node type                                  | WAL events referencing its `type_id` become unreplayable; rebuild halts.                     |
-| Reordering enum values                                | Old WAL events carry the old integer; replay produces the wrong logical value.               |
+| Reusing a reserved `field_id` (a freed id brought back to life) | Historic rows storing that id are now read back as a different field — silent data corruption. |
+| Making a field `unique` or `required`                 | Historical rows may already violate; the index build / validation fails (like Postgres).      |
+| Changing a field's `kind`                             | Type-coercion of stored bytes is unsafe.                                                       |
+| Reusing a reserved `type_id` / `edge_id`              | History routed to the freed id is mis-interpreted or orphaned.                                 |
+| Reordering enum values                                | Old WAL events carry the old integer; replay produces the wrong logical value.                |
 | `data_policy` downgrade (e.g. `FINANCIAL` → `BUSINESS`) | Encryption tier weakens for historical rows.                                                 |
 | Flipping `on_subject_exit: from` → `both` on an edge  | GDPR delete semantics shift for historical edges.                                            |
 
-`buf breaking` does **not** catch any of these — they live in the
+Conversely, **removing a field or type is SAFE** — as long as its id is
+**reserved** so it can never be reused (the same discipline proto
+`reserved` gives). Adding a field/type, dropping `unique`/`required`, and
+adding/removing `indexed`/`searchable` are all safe (loosening). The full
+matrix is in [ADR-032](../adr/032-schema-evolution-compat-rules.md).
+
+`buf breaking` does **not** catch the runtime breaks — they live in the
 runtime registry, not the proto wire contract. `entdb-schema` is the
-complementary tool: `buf breaking` defends the wire, `entdb-schema`
-defends the runtime.
+complementary tool: **`buf breaking` defends the wire, `entdb-schema
+breaking` defends the runtime.** Run both (see
+[the `buf.yaml` template](../recipes/buf.yaml.template)).
 
 ## How the lock-file works
 
@@ -103,7 +127,8 @@ entdb-schema — manage EntDB schema snapshots and check compatibility.
 
 Commands:
   snapshot   Emit the current schema as a deterministic JSON document.
-  check      Verify the current schema is compatible with a baseline.
+  breaking   Gate a schema change against a baseline (buf-breaking style).
+  check      Alias of breaking — verify compatibility with a baseline.
   diff       Show differences between two snapshot files.
   validate   Run cross-reference validation over a registry.
   version    Print version and exit.
@@ -151,21 +176,22 @@ Output flags:
   `--pretty` for the committed `.schema-snapshot.json`; the file is a
   byte-deterministic artifact and `--pretty` defeats that.
 
-### `check`
+### `breaking` (and `check`)
 
-Compare the current schema against a baseline. This is the primary
-CI command.
+Gate the current schema against a baseline — the buf-breaking-style
+verb and the primary CI command. `check` is an exact alias (same engine,
+same flags, same exit codes).
 
 ```bash
-entdb-schema check \
-  --baseline .schema-snapshot.json \
-  --from-server localhost:50051 \
+entdb-schema breaking \
+  --baseline schema.lock.json \
+  --from-file new.json \
   --format json
 ```
 
 Flags:
 
-- `-b, --baseline PATH` — required.
+- `-b, --baseline PATH` — the committed lock file (required).
 - `--from-file | --from-server | --from-descriptors` — source of the
   current schema (same semantics as `snapshot`).
 - `--format text|json` — `text` for human PR comments, `json` for CI
@@ -174,21 +200,26 @@ Flags:
   changes are still printed. Equivalent to the `breaking-schema-change`
   label override in CI, but at the binary level.
 
-Sample text output (breaking case):
+Sample text output (breaking case — name-free, ids only per
+[ADR-031](../adr/031-self-describing-name-free-schema.md)):
 
 ```
-BREAKING: 2 breaking change(s) detected against .schema-snapshot.json
+BREAKING: 3 breaking change(s) detected against schema.lock.json
 
-  [BREAKING] FIELD_ID_CHANGED
-    path:    node:User.field:email
-    message: field 'email' on User changed field_id from 3 to 7
+  [BREAKING] FIELD_UNIQUE_ADDED   node:1.field:2 — field_id=2 on node type_id=1 became unique (historical data may already violate)
+  [BREAKING] FIELD_ID_REUSED      node:1.field:9 — field_id=9 on node type_id=1 was reserved in the baseline but is re-introduced as a live field (id reuse)
+  [BREAKING] TYPE_ID_REUSED       node:7 — type_id=7 was reserved in the baseline but is re-introduced as a live type (id reuse)
+```
 
-  [BREAKING] ENUM_VALUE_REMOVED
-    path:    node:Order.field:status.enum:CANCELLED
-    message: enum value 'CANCELLED' (value 4) removed from Order.status
+A safe (loosening) change passes with exit 0:
 
-Non-breaking changes (informational): 1
-  [OK] FIELD_ADDED        node:User.field:phone — phone (field_id=8) added
+```
+OK: 3 non-breaking change(s) detected against schema.lock.json
+
+Non-breaking changes (informational): 3
+  [OK]       FIELD_UNIQUE_REMOVED   node:1.field:1 — field_id=1 on node type_id=1 no longer unique
+  [OK]       FIELD_REMOVED          node:1.field:2 — field_id=2 removed from node type_id=1
+  [OK]       FIELD_ADDED            node:1.field:3 — field_id=3 (kind=str) added to node type_id=1
 ```
 
 Same data shape in `--format json`:
@@ -196,21 +227,43 @@ Same data shape in `--format json`:
 ```json
 {
   "compatible": false,
-  "breaking_count": 2,
-  "non_breaking_count": 1,
+  "breaking_count": 1,
+  "non_breaking_count": 0,
   "changes": [
     {
-      "kind": "FIELD_ID_CHANGED",
-      "path": "node:User.field:email",
-      "old_value": 3,
-      "new_value": 7,
-      "message": "field 'email' on User changed field_id from 3 to 7",
+      "kind": "FIELD_ID_REUSED",
+      "path": "node:1.field:9",
+      "new_value": 9,
+      "message": "field_id=9 on node type_id=1 was reserved in the baseline but is re-introduced as a live field (id reuse)",
       "breaking": true
-    },
-    ...
+    }
   ]
 }
 ```
+
+### Reserved ids — making removal safe
+
+Removing a field or type is safe **only because the freed id is then
+reserved** so it can never be reused. Carry the tombstone in your
+snapshot so the checker turns any future reuse into a `*_REUSED`
+breaking change (the runtime analogue of proto `reserved`):
+
+```json
+{
+  "node_types": [
+    {"type_id": 1, "fields": [{"field_id": 1, "kind": "str"}],
+     "reserved_field_ids": [9]}
+  ],
+  "reserved_type_ids": [7],
+  "reserved_edge_ids": [50]
+}
+```
+
+`reserved_field_ids` lives on a node/edge type; `reserved_type_ids` /
+`reserved_edge_ids` live at the schema root. They are emitted only when
+non-empty, so they never perturb the fingerprint of a schema that
+doesn't reserve. Keep them in lockstep with the proto `reserved` your
+`buf breaking` step already enforces on the wire.
 
 ### `diff`
 
@@ -251,29 +304,36 @@ yet:
 
 ### 1. Capture the initial snapshot
 
-Boot your `entdb-server` against an empty data dir (or your usual
-local environment) and snapshot its registry:
+The snapshot is generated **from your own proto**. Under
+[ADR-031](../adr/031-self-describing-name-free-schema.md) the server
+boots empty and learns your schema from your writes (self-describing
+writes), so the lowest-friction path is: boot a local server, let your
+app (or its tests) make one write per type so the registry is
+established, then snapshot it.
 
 ```bash
 entdb-server -addr=:50051 -data-dir=/tmp/entdb-init -wal-backend=memory &
 SERVER_PID=$!
-
-# Wait for the server to bind, then snapshot.
 sleep 1
-entdb-schema snapshot --from-server localhost:50051 > .schema-snapshot.json
+
+# Run your app / its bootstrap once so each type is registered via a
+# self-describing write, then snapshot the registry the server learned.
+#   (your-app bootstrap …)
+entdb-schema snapshot --from-server localhost:50051 > schema.lock.json
 
 kill $SERVER_PID
 ```
 
-Commit the file at the repo root:
+Commit the lock file at the repo root:
 
 ```bash
-git add .schema-snapshot.json
+git add schema.lock.json
 git commit -m "chore: lock initial schema snapshot"
 ```
 
-`.schema-snapshot.json` is a **plain checked-in file** — not a
-generated artifact, not git-LFS, not gitignored.
+`schema.lock.json` is a **plain checked-in file** — not a generated
+artifact, not git-LFS, not gitignored. (Any filename works;
+`schema.lock.json` is the convention used throughout this guide.)
 
 ### 2. Wire the CI check
 
@@ -312,11 +372,12 @@ jobs:
 
       - name: Check schema compatibility
         run: |
-          # Replace this with however your CI gets the current schema —
-          # `--from-server` if you boot the server in CI, or `--from-file`
-          # against a snapshot regenerated by your build step.
-          entdb-schema check \
-            --baseline .schema-snapshot.json \
+          # The one command — IDENTICAL to your local `make schema-breaking`.
+          # Replace the --from-file source with however your CI produces the
+          # current snapshot (`--from-server` if you boot the server in CI,
+          # or `--from-file` against a snapshot regenerated by your build).
+          entdb-schema breaking \
+            --baseline schema.lock.json \
             --from-file ./build/current-snapshot.json \
             --format text
 
@@ -327,13 +388,51 @@ jobs:
           echo "Reviewer responsibility: ensure CHANGELOG has a BREAKING CHANGE entry."
 ```
 
+### 2b. Wire the local recipe (identical invocation)
+
+The whole point of the buf-breaking ergonomics is that the local and CI
+commands are the **same**. Use a `make` target so the invocation lives
+in one place:
+
+```makefile
+# Makefile (in your app repo)
+SCHEMA_BASELINE ?= schema.lock.json
+SCHEMA_CURRENT  ?= build/current-snapshot.json
+
+schema-breaking:
+	entdb-schema breaking --baseline $(SCHEMA_BASELINE) --from-file $(SCHEMA_CURRENT)
+```
+
+```bash
+make schema-breaking   # same gate, same exit code, on your laptop
+```
+
+…or as a pre-commit hook (`.pre-commit-config.yaml`):
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: entdb-schema-breaking
+        name: entdb-schema breaking
+        entry: entdb-schema breaking --baseline schema.lock.json --from-file build/current-snapshot.json
+        language: system
+        pass_filenames: false
+        files: '(^proto/|^schema\.lock\.json$)'
+```
+
+> This repo's own `Makefile` ships the same `schema-breaking` (and
+> `schema-snapshot`) targets as a reference.
+
 ### 3. Done
 
 Every subsequent PR runs the check. Non-breaking changes (adding a
-field, marking deprecated, appending an enum value, …) pass silently;
-breaking changes (reassigning field ids, removing types, reordering
-enum values, …) fail the job and post a comment summarising the
-violations.
+field, dropping `unique`/`required`, adding/removing `indexed` or
+`searchable`, removing a field/type whose id you reserve, appending an
+enum value, …) pass silently; breaking changes (making a field
+`unique`/`required`, changing a field `kind`, reusing a reserved id,
+reordering enum values, …) fail the job and post a comment summarising
+the violations.
 
 ## Opting in to a breaking change
 
@@ -384,28 +483,38 @@ captured Python-era snapshot; the test asserts the Go-computed
 fingerprint byte-equals the Python-era fingerprint embedded in the
 file).
 
-## About this repository's `.schema-snapshot.json`
+## Snapshot shape reference
 
-The `.schema-snapshot.json` committed at the root of *this* repo is
-intentionally minimal: it captures exactly what
-`server/go/internal/testseed.RegisterContractSchema` registers — the
-`User` / `Task` / `AssignedTo` types with bare `field_id` / `kind` /
-`name` only. No `required`, no `unique`, no `data_policy`, no
-`subject_field`, no `default_acl`, no `composite_unique`, no
-`enum_values`, no `pii`. That matches the contract test fixture that
-the integration suite runs against and lets the CI schema-compat job
-boot the server with `--seed-profile=contract` and get a byte-clean
-match.
+Under [ADR-031](../adr/031-self-describing-name-free-schema.md) the
+server boots with an **empty** registry and learns each app's schema
+from its self-describing writes — there is no boot seed and no
+`--seed-profile`. So there is no canonical committed snapshot in *this*
+repo to copy; you generate yours from your own proto.
 
-It is **not** a complete example of what a downstream consumer's
-snapshot should look like. A richer reference snapshot exercising
-those fields lives at
-`tests/contract/fixtures/python-snapshot-v1.json` — a captured
-Python-era snapshot used by the cross-implementation parity test. Use
-that as the shape reference when you're building your own snapshot for
-production use; capture yours via `entdb-schema snapshot --from-server`
-pointed at your actual server (with your full registry registered, not
-just the contract-test seed).
+The snapshot is **name-free**: node/edge types are keyed by
+`type_id` / `edge_id`, fields by `field_id`
+([ADR-018](../adr/018-field-id-keyed-payloads.md)). A minimal body looks
+like:
+
+```json
+{
+  "node_types": [
+    {"type_id": 1, "fields": [
+      {"field_id": 1, "kind": "str", "required": true, "unique": true},
+      {"field_id": 2, "kind": "str"}
+    ]}
+  ],
+  "edge_types": []
+}
+```
+
+Optional per-field attributes (`indexed`, `searchable`, `deprecated`,
+`pii`, `ref_type_id`, `enum_values`), per-type metadata (`data_policy`,
+`subject_field`, `composite_unique`), and the reserved-id tombstones
+(`reserved_field_ids`, `reserved_type_ids`, `reserved_edge_ids`) ride
+the same document. Capture yours via `entdb-schema snapshot
+--from-server` pointed at your actual server once your full schema has
+been established by writes.
 
 ## `delete_where` and `QueryNodes` on schema-less deployments
 

@@ -68,6 +68,7 @@ Quick orientation (one-liners, not normative — the ADR is normative):
 - [ADR-029](docs/adr/029-keyset-cursor-pagination.md) — keyset cursor pagination (`page_token`/`next_page_token`) with SDK auto-follow, replacing the silent 100-row read truncation (Accepted; design frozen, implementation pending — Bug A)
 - [ADR-030](docs/adr/030-composite-unique-constraints.md) — composite (multi-field) unique constraints via `(entdb.node).composite_unique`; tuple expression index enforced in the applier; `ALREADY_EXISTS` structured detail parsed into the typed `UniqueConstraintError` (Accepted; implemented — issue #566)
 - [ADR-031](docs/adr/031-self-describing-name-free-schema.md) — self-describing, name-free schema: schema rides ExecuteAtomic as a `register_schema` WAL op materialized by the applier (deterministic replay); ids at rest and on the wire (no field/type/constraint names); empty boot; establish-or-reject (Accepted; implementation in progress)
+- [ADR-032](docs/adr/032-schema-evolution-compat-rules.md) — schema-evolution compat rules (loosening safe / tightening breaking) + a customer-runnable buf-breaking-style gate (`entdb-schema breaking`); reserved-id tombstones make removal safe and reuse breaking; shipped as ghcr image + release binary (Proposed)
 
 ## Project Structure
 

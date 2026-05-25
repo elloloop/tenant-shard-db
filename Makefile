@@ -11,7 +11,18 @@
 #   make build       Build Docker images
 #
 
-.PHONY: help dev stop test e2e e2e-logs build clean proto
+.PHONY: help dev stop test e2e e2e-logs build clean proto schema-snapshot schema-breaking
+
+# Schema-evolution compat gate (ADR-032). SCHEMA_BASELINE is the
+# committed lock file; SCHEMA_CURRENT is the snapshot regenerated from
+# the current proto. Override on the command line, e.g.
+#   make schema-breaking SCHEMA_CURRENT=build/new-snapshot.json
+# The invocation is IDENTICAL to the CI step — the same `breaking` verb,
+# the same exit-code contract — so local dev and CI never diverge.
+SCHEMA_BIN     ?= entdb-schema
+SCHEMA_BASELINE ?= schema.lock.json
+SCHEMA_CURRENT  ?= build/current-snapshot.json
+SCHEMA_SERVER   ?= localhost:50051
 
 # Default target
 help:
@@ -93,6 +104,23 @@ proto:
 	buf generate --template sdk/go/entdb/buf.gen.yaml
 	@echo "Regenerating Python SDK stubs..."
 	./scripts/generate_proto.sh
+
+# =============================================================================
+# Schema evolution (ADR-032) — buf-breaking-style runtime-schema gate.
+# =============================================================================
+
+# Regenerate the current schema snapshot from a running server. Commit the
+# output once as your baseline (schema.lock.json), then run `schema-breaking`
+# on every change.
+schema-snapshot:
+	@mkdir -p $(dir $(SCHEMA_CURRENT))
+	$(SCHEMA_BIN) snapshot --from-server $(SCHEMA_SERVER) > $(SCHEMA_CURRENT)
+	@echo "Wrote $(SCHEMA_CURRENT) (commit it as $(SCHEMA_BASELINE) for the first baseline)"
+
+# The one-line gate. Exits non-zero on any breaking change. Identical
+# invocation in local dev and CI.
+schema-breaking:
+	$(SCHEMA_BIN) breaking --baseline $(SCHEMA_BASELINE) --from-file $(SCHEMA_CURRENT)
 
 # =============================================================================
 # Cleanup
