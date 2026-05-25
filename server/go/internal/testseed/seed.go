@@ -1,6 +1,18 @@
-// Package testseed wires the deterministic test-only fixtures the
+// Package testseed wires the deterministic test-only DATA fixtures the
 // cross-implementation suites (tests/python/integration/test_grpc_contract.py
-// and tests/python/e2e/) expect to find on a freshly-booted server.
+// and tests/python/e2e/) expect to find on a freshly-booted server so
+// that tests can authenticate and reach their assertions.
+//
+// NOTE (schema-less boot): this package used to ALSO populate the
+// server's in-memory schema registry (the RegisterContractSchema /
+// RegisterE2ESchema funcs). That was the only path that ever loaded a
+// schema into a running server — a test-only crutch with no production
+// equivalent. It has been removed: the server now boots schema-less in
+// every mode, and the in-memory schema registry stays empty until the
+// real self-describing-writes path lands the schema through
+// ExecuteAtomic. What remains here is purely the globalstore/data
+// bootstrap (tenant + users + the contract seed node), which does not
+// touch the schema registry and works against a schema-less server.
 //
 // The harness contract is documented in docs/go-port/shared/test-harness.md
 // (the `--seed-tenant` and `--seed-profile` rows). The in-process fixture
@@ -9,13 +21,10 @@
 // a follow-up ExecuteAtomic call. This package reproduces that state for
 // the Go subprocess harness.
 //
-// Profiles:
-//   - "contract": User/Task/AssignedTo schema + alice/bob users +
-//     seed node + seed-1 receipt.
-//   - "e2e": User/Product/Order schema (typeIDs 8001/8002/8003) + edge
-//     types (Purchased/PlacedOrder/OrderContains, 8101/8102/8103) +
-//     a single `e2e-runner` user as tenant owner. No seed node — the
-//     e2e suite creates all its own state.
+// Data profiles:
+//   - "contract": alice/bob users + seed node + seed-1 receipt.
+//   - "e2e": a single `e2e-runner` user as tenant owner. No seed node —
+//     the e2e suite creates all its own state.
 //
 // CLAUDE.md invariant #1 says all writes go through the WAL, and as of
 // GitHub issue #505 this seed honours it: the seed node is written by
@@ -34,7 +43,6 @@ import (
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
-	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 	"google.golang.org/grpc/codes"
@@ -43,22 +51,18 @@ import (
 // Contract-suite fixture constants — keep in lock-step with
 // tests/python/integration/conftest.py (TENANT, ALICE, SEED_NODE_ID)
 // and tests/python/integration/test_grpc_contract.py.
+//
+// UserTypeID is the type_id stamped on the contract seed node's WAL
+// event. With the server schema-less it is just an opaque type tag (no
+// registry validates it); the contract suite still keys off it.
 const (
-	AliceUserID  = "alice"
-	BobUserID    = "bob"
-	AliceActor   = "user:alice"
-	SeedNodeID   = "seeded-node"
-	SeedReceipt  = "seed-1"
-	SeedTopic    = "entdb-wal"
-	UserTypeID   = 1
-	TaskTypeID   = 2
-	AssignedToID = 100
-
-	// OAuthIdentityTypeID is the contract-suite type carrying a
-	// (provider, provider_user_id) composite unique constraint plus a
-	// single-field unique email — exercises issue #566 end-to-end.
-	// Field IDs: 1=provider, 2=provider_user_id, 3=email.
-	OAuthIdentityTypeID = 201
+	AliceUserID = "alice"
+	BobUserID   = "bob"
+	AliceActor  = "user:alice"
+	SeedNodeID  = "seeded-node"
+	SeedReceipt = "seed-1"
+	SeedTopic   = "entdb-wal"
+	UserTypeID  = 1
 )
 
 // E2E-suite fixture constants — keep in lock-step with
@@ -67,171 +71,8 @@ const (
 	E2ERunnerUserID = "e2e-runner"
 	E2ERunnerActor  = "user:e2e-runner"
 
-	E2EUserTypeID    = 8001
-	E2EProductTypeID = 8002
-	E2EOrderTypeID   = 8003
-
-	E2EPurchasedEdgeID     = 8101
-	E2EPlacedOrderEdgeID   = 8102
-	E2EOrderContainsEdgeID = 8103
+	E2EUserTypeID = 8001
 )
-
-// RegisterContractSchema populates reg with the User/Task/AssignedTo
-// types the contract suite asserts against. Mirrors
-// tests/python/integration/conftest.py:_build_python_registry.
-//
-// Idempotent on a fresh registry; a second call against an already-
-// populated registry returns ErrDuplicateRegistration.
-func RegisterContractSchema(reg *schema.Registry) error {
-	if reg == nil {
-		return errors.New("testseed: nil registry")
-	}
-	user := &schema.NodeTypeDef{
-		TypeID: UserTypeID,
-		Name:   "User",
-		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "email", Kind: schema.KindString},
-			{FieldID: 2, Name: "name", Kind: schema.KindString},
-		},
-	}
-	if err := reg.RegisterNode(user); err != nil {
-		return fmt.Errorf("testseed: register User: %w", err)
-	}
-	task := &schema.NodeTypeDef{
-		TypeID: TaskTypeID,
-		Name:   "Task",
-		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "title", Kind: schema.KindString},
-			{FieldID: 2, Name: "description", Kind: schema.KindString},
-		},
-	}
-	if err := reg.RegisterNode(task); err != nil {
-		return fmt.Errorf("testseed: register Task: %w", err)
-	}
-	edge := &schema.EdgeTypeDef{
-		EdgeID:     AssignedToID,
-		Name:       "AssignedTo",
-		FromTypeID: TaskTypeID,
-		ToTypeID:   UserTypeID,
-	}
-	if err := reg.RegisterEdge(edge); err != nil {
-		return fmt.Errorf("testseed: register AssignedTo: %w", err)
-	}
-	oauth := &schema.NodeTypeDef{
-		TypeID: OAuthIdentityTypeID,
-		Name:   "OAuthIdentity",
-		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "provider", Kind: schema.KindString},
-			{FieldID: 2, Name: "provider_user_id", Kind: schema.KindString},
-			{FieldID: 3, Name: "email", Kind: schema.KindString, Unique: true},
-		},
-		CompositeUnique: []schema.CompositeUniqueDef{
-			{Name: "provider_user_id", FieldIDs: []uint32{1, 2}},
-		},
-	}
-	if err := reg.RegisterNode(oauth); err != nil {
-		return fmt.Errorf("testseed: register OAuthIdentity: %w", err)
-	}
-	return nil
-}
-
-// RegisterE2ESchema populates reg with the User/Product/Order types +
-// Purchased/PlacedOrder/OrderContains edges the e2e suite asserts
-// against. Type IDs (8001/8002/8003) and edge IDs (8101/8102/8103)
-// must match tests/python/e2e/e2e_schema.proto verbatim — the e2e
-// SDK loads its registry from the proto descriptor at runtime and
-// the wire payloads will fail to route otherwise.
-//
-// Field IDs are derived from the proto field numbers (CLAUDE.md
-// invariant #6 — field IDs, not names, are the storage key).
-func RegisterE2ESchema(reg *schema.Registry) error {
-	if reg == nil {
-		return errors.New("testseed: nil registry")
-	}
-
-	user := &schema.NodeTypeDef{
-		TypeID: E2EUserTypeID,
-		Name:   "User",
-		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "email", Kind: schema.KindString, Required: true, Indexed: true},
-			{FieldID: 2, Name: "name", Kind: schema.KindString, Required: true, Searchable: true},
-			{FieldID: 3, Name: "age", Kind: schema.KindInteger},
-			{FieldID: 4, Name: "active", Kind: schema.KindBoolean},
-			{FieldID: 5, Name: "created_at", Kind: schema.KindInteger},
-		},
-	}
-	if err := reg.RegisterNode(user); err != nil {
-		return fmt.Errorf("testseed: register E2E User: %w", err)
-	}
-
-	product := &schema.NodeTypeDef{
-		TypeID: E2EProductTypeID,
-		Name:   "Product",
-		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "sku", Kind: schema.KindString, Required: true, Indexed: true, Unique: true},
-			{FieldID: 2, Name: "name", Kind: schema.KindString, Required: true, Searchable: true},
-			{FieldID: 3, Name: "price", Kind: schema.KindFloat, Required: true},
-			{FieldID: 4, Name: "category", Kind: schema.KindEnum, EnumValues: []string{"electronics", "clothing", "food", "other"}},
-			{FieldID: 5, Name: "in_stock", Kind: schema.KindBoolean},
-		},
-	}
-	if err := reg.RegisterNode(product); err != nil {
-		return fmt.Errorf("testseed: register E2E Product: %w", err)
-	}
-
-	order := &schema.NodeTypeDef{
-		TypeID: E2EOrderTypeID,
-		Name:   "Order",
-		Fields: []schema.FieldDef{
-			{FieldID: 1, Name: "order_number", Kind: schema.KindString, Required: true, Indexed: true, Unique: true},
-			{FieldID: 2, Name: "total", Kind: schema.KindFloat, Required: true},
-			{FieldID: 3, Name: "status", Kind: schema.KindEnum, EnumValues: []string{"pending", "paid", "shipped", "delivered", "cancelled"}},
-			{FieldID: 4, Name: "created_at", Kind: schema.KindInteger},
-		},
-	}
-	if err := reg.RegisterNode(order); err != nil {
-		return fmt.Errorf("testseed: register E2E Order: %w", err)
-	}
-
-	purchased := &schema.EdgeTypeDef{
-		EdgeID:     E2EPurchasedEdgeID,
-		Name:       "purchased",
-		FromTypeID: E2EUserTypeID,
-		ToTypeID:   E2EProductTypeID,
-		Props: []schema.FieldDef{
-			{FieldID: 1, Name: "quantity", Kind: schema.KindInteger, Required: true},
-			{FieldID: 2, Name: "price_paid", Kind: schema.KindFloat},
-		},
-	}
-	if err := reg.RegisterEdge(purchased); err != nil {
-		return fmt.Errorf("testseed: register E2E purchased: %w", err)
-	}
-
-	placedOrder := &schema.EdgeTypeDef{
-		EdgeID:     E2EPlacedOrderEdgeID,
-		Name:       "placed_order",
-		FromTypeID: E2EUserTypeID,
-		ToTypeID:   E2EOrderTypeID,
-	}
-	if err := reg.RegisterEdge(placedOrder); err != nil {
-		return fmt.Errorf("testseed: register E2E placed_order: %w", err)
-	}
-
-	orderContains := &schema.EdgeTypeDef{
-		EdgeID:     E2EOrderContainsEdgeID,
-		Name:       "contains",
-		FromTypeID: E2EOrderTypeID,
-		ToTypeID:   E2EProductTypeID,
-		Props: []schema.FieldDef{
-			{FieldID: 1, Name: "quantity", Kind: schema.KindInteger, Required: true},
-		},
-	}
-	if err := reg.RegisterEdge(orderContains); err != nil {
-		return fmt.Errorf("testseed: register E2E contains: %w", err)
-	}
-
-	return nil
-}
 
 // seedWaitTimeout bounds how long SeedTenantContract waits for the
 // running applier to materialise the seed event. Generous enough to
@@ -369,15 +210,6 @@ func waitForSeedApplied(ctx context.Context, s *store.CanonicalStore, tenantID, 
 			delay *= 2
 		}
 	}
-}
-
-// SeedTenant is a deprecated alias for SeedTenantContract kept until
-// every caller has been migrated. New callers MUST use the explicit
-// profile-aware variant.
-//
-// Deprecated: use SeedTenantContract.
-func SeedTenant(ctx context.Context, g *globalstore.GlobalStore, s *store.CanonicalStore, producer wal.Producer, topic, tenantID string) error {
-	return SeedTenantContract(ctx, g, s, producer, topic, tenantID)
 }
 
 // SeedTenantE2E applies the e2e-fixture seed for tenantID. Order:

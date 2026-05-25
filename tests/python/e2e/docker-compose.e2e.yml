@@ -74,9 +74,18 @@ services:
   # ==========================================================================
   # EntDB Server (Go binary)
   #
-  # `--seed-profile=e2e --seed-tenant=e2e-test` pre-creates the tenant,
-  # the `user:e2e-runner` actor (tenant owner), and the User/Product/
-  # Order schema (typeIDs 8001/8002/8003) the e2e suite expects.
+  # SCHEMA-LESS BOOT. `--seed-profile=e2e --seed-tenant=e2e-test` now
+  # pre-creates ONLY the DATA bootstrap: the tenant + the
+  # `user:e2e-runner` actor (tenant owner) so the e2e suite can
+  # authenticate. It NO LONGER loads any schema — the boot-time
+  # schema-registry crutch (the only path that ever populated a running
+  # server's in-memory registry) has been removed. The server boots with
+  # an empty schema registry, so server-side uniqueness / type validation
+  # / payload fingerprinting stay OFF until the real self-describing-
+  # writes path lands the schema through ExecuteAtomic. Schema-dependent
+  # e2e cases are EXPECTED to fail against this stack — the deliberate RED
+  # baseline. The data bootstrap is kept so those failures stay pinned on
+  # the schema gap rather than "tenant/user not found" auth noise.
   #
   # --wal-backend=kafka points the WAL at Redpanda. The applier consumer
   # group rejoins on restart and replays from the committed offset (or

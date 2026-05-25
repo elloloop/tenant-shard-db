@@ -164,13 +164,27 @@ SEED_NODE_ID = "seeded-node"
 async def _start_go_server(tmp_path_factory, *, profile: str = "contract") -> AsyncIterator[int]:
     """Go subprocess harness — yields the bound port.
 
-    ``profile`` selects the ``--seed-profile``. The default
-    ``"contract"`` (registry configured + seeded ``acme`` tenant) is
-    what every existing fixture relies on. ``"none"`` boots the server
-    schema-less (nil registry, no seeded tenant) — used by the issue
-    #545 schema-less DeleteWhere regression; a schema-less server
-    auto-opens a tenant on first write so no ``--seed-tenant`` is
-    passed.
+    SCHEMA-LESS BOOT. The server now boots WITHOUT a populated schema
+    registry in EVERY mode: the boot-time schema-registry crutch (the
+    only path that ever loaded a schema into a running server, with no
+    production equivalent) has been removed. Server-side uniqueness,
+    type validation and payload-fingerprint enforcement therefore stay
+    OFF until the real self-describing-writes path lands the schema
+    through ExecuteAtomic. Tests that depend on those (uniqueness, type
+    validation, much of the contract suite) are EXPECTED to fail against
+    this harness — that is the deliberate RED baseline.
+
+    ``profile`` selects only the ``--seed-profile`` DATA bootstrap (it no
+    longer loads schema):
+      - ``"contract"`` (default): seeds the ``acme`` tenant + alice/bob
+        users + the seed node so tests can still authenticate and reach
+        their (now-failing) schema assertions instead of erroring on
+        "tenant/user not found". This keeps the RED signal pinned on the
+        schema gap rather than auth noise.
+      - ``"none"``: no data seed at all — used by the issue #545
+        schema-less DeleteWhere regression; a schema-less server
+        auto-opens a tenant on first write so no ``--seed-tenant`` is
+        passed.
     """
     binary = _build_go_binary()
     data_dir = tmp_path_factory.mktemp("entdb-go-data")

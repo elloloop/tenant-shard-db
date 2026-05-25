@@ -132,22 +132,31 @@ func main() {
 	archiveBatchBytes := flag.Int("archive-batch-bytes", 10<<20, "approximate maximum uncompressed bytes per archive object")
 	archivePollTimeout := flag.Duration("archive-poll-timeout", time.Second, "how long the archive sidecar polls for WAL records")
 	archiveRetryBackoff := flag.Duration("archive-retry-backoff", 5*time.Second, "retry backoff after archive poll/write failures")
-	// --seed-tenant is a test-only flag honoured by the cross-impl
-	// contract harness (docs/go-port/shared/test-harness.md). When set,
-	// the binary pre-creates a tenant + the actors / nodes the chosen
-	// --seed-profile expects to find. Empty disables seeding.
-	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant before serving (paired with --seed-profile)")
-	// --seed-profile selects the fixture shape applied to --seed-tenant.
-	//   - "none" (default): no seeding (legacy --seed-tenant without
-	//     --seed-profile defaults to "contract" for backwards
-	//     compatibility with the harness).
-	//   - "contract": User/Task/AssignedTo schema + alice/bob users +
-	//     seed node + seed-1 receipt. Matches the cross-impl contract
-	//     suite (tests/python/integration/test_grpc_contract.py).
-	//   - "e2e": User/Product/Order schema (typeIDs 8001/8002/8003) +
-	//     Purchased/PlacedOrder/OrderContains edges + e2e-runner user
-	//     as tenant owner. Matches tests/python/e2e/.
-	seedProfile := flag.String("seed-profile", "", "test-only: seed profile {none, contract, e2e}; default 'contract' when --seed-tenant is set")
+	// --seed-tenant / --seed-profile are TEST-ONLY data-bootstrap flags
+	// honoured by the cross-impl harnesses (docs/go-port/shared/
+	// test-harness.md). When set, the binary pre-creates a tenant +
+	// the actors / nodes the chosen --seed-profile expects so tests can
+	// authenticate and reach assertions. Empty disables seeding.
+	//
+	// IMPORTANT: these flags NO LONGER load a server-side schema
+	// registry. The boot-time schema-registry crutch (the only
+	// production-less path that ever populated the in-memory registry)
+	// has been removed — the server now boots schema-less in every mode.
+	// Uniqueness / type-validation / fingerprint enforcement therefore
+	// stay OFF until the real self-describing-writes path lands the
+	// schema through ExecuteAtomic. These flags now drive ONLY the
+	// globalstore/data bootstrap (tenant + users + the contract seed
+	// node), which is independent of the schema registry.
+	seedTenant := flag.String("seed-tenant", "", "test-only: pre-create this tenant (data bootstrap only; no schema is loaded)")
+	// --seed-profile selects the DATA-bootstrap shape applied to
+	// --seed-tenant. It no longer selects any schema.
+	//   - "none" (default): no data seeding.
+	//   - "contract": alice/bob users + seed node + seed-1 receipt.
+	//     Matches the cross-impl contract suite
+	//     (tests/python/integration/test_grpc_contract.py).
+	//   - "e2e": e2e-runner user as tenant owner. Matches
+	//     tests/python/e2e/.
+	seedProfile := flag.String("seed-profile", "", "test-only: data-bootstrap profile {none, contract, e2e}; default 'contract' when --seed-tenant is set (no schema loaded)")
 	flag.Parse()
 
 	if strings.TrimSpace(*dataDir) == "" {
@@ -174,13 +183,13 @@ func main() {
 
 	srvOpts := []api.Option{}
 
-	registry, err := schemaRegistryForProfile(profile)
-	if err != nil {
-		log.Fatalf("entdb-server: schema registry: %v", err)
-	}
-	if registry != nil {
-		srvOpts = append(srvOpts, api.WithSchemaRegistry(registry))
-	}
+	// Schema-less boot. There is no production path that populates the
+	// in-memory schema registry yet (the boot-seed crutch was removed),
+	// so the server always boots with a nil registry. The WithSchemaRegistry
+	// wiring point is intentionally kept (left nil) for when the real
+	// self-describing-writes path lands.
+	var registry *schema.Registry
+	var err error
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -482,10 +491,14 @@ func main() {
 		log.Printf("entdb-server: legal-hold-lift worker idle (archive sidecar disabled; nothing to sweep)")
 	}
 
-	// Test-only seed: the cross-impl harnesses boot the binary with
+	// Test-only DATA seed: the cross-impl harnesses boot the binary with
 	// --seed-tenant <id> --seed-profile <name> and expect the tenant +
-	// fixture state to be queryable before the first RPC arrives.
-	// Skipped silently when profile=none.
+	// fixture DATA (tenant row, users, memberships, the contract seed
+	// node) to be queryable before the first RPC arrives so tests can
+	// authenticate and reach their assertions. This bootstrap is
+	// independent of the schema registry — it only writes globalstore
+	// rows + a WAL event — so it survives the schema-less boot. Skipped
+	// silently when profile=none.
 	if profile != "none" {
 		if *seedTenant == "" {
 			log.Fatalf("entdb-server: --seed-profile=%s requires --seed-tenant", profile)
@@ -666,37 +679,6 @@ func main() {
 			log.Printf("entdb-server: legal-hold-lift worker exited: %v", err)
 		}
 	}
-}
-
-// schemaRegistryForProfile returns nil for profile=none because a nil
-// registry is the API server's schema-less mode. An empty frozen
-// registry is materially different: QueryNodes rejects every type_id
-// as unknown.
-func schemaRegistryForProfile(profile string) (*schema.Registry, error) {
-	switch profile {
-	case "none":
-		return nil, nil
-	case "contract", "e2e":
-		// handled below
-	default:
-		return nil, fmt.Errorf("invalid profile %q", profile)
-	}
-
-	registry := schema.NewRegistry()
-	switch profile {
-	case "contract":
-		if err := testseed.RegisterContractSchema(registry); err != nil {
-			return nil, fmt.Errorf("register contract schema: %w", err)
-		}
-	case "e2e":
-		if err := testseed.RegisterE2ESchema(registry); err != nil {
-			return nil, fmt.Errorf("register e2e schema: %w", err)
-		}
-	}
-	if _, err := registry.Freeze(); err != nil {
-		return nil, fmt.Errorf("freeze registry: %w", err)
-	}
-	return registry, nil
 }
 
 // splitBrokers parses a comma-separated broker list and returns
