@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779708810105,
+  "lastUpdate": 1779710003694,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -7560,6 +7560,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00022247626634041269",
             "extra": "mean: 6.701911599996687 msec\nrounds: 140"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f2610a4173bb7cc2e91670a9ad24620d9b2f3d43",
+          "message": "fix(shared): stable total order on the ListSharedWithMe offset path (#593)\n\nThe deprecated offset path (store.ListSharedWithMe / globalstore.\nListSharedToUser) ordered by granted_at / shared_at DESC with no unique\ntiebreaker. With multiple grants sharing a timestamp, SQLite's row order\nwas unstable across successive offset windows, so a node could be skipped\n(or duplicated) between pages — TestListSharedWithMe_Pagination failed\nunder repeated runs. Append the node_id (and source_tenant) tiebreaker so\nthe offset order is a total order, matching the keyset path's ordering.\nShipped in v1.31.0; this is the follow-up fix.",
+          "timestamp": "2026-05-25T12:51:01+01:00",
+          "tree_id": "1c1bf0f69eccbc75a1ebb547a2f5e2b247821c9e",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/f2610a4173bb7cc2e91670a9ad24620d9b2f3d43"
+        },
+        "date": 1779710003180,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2384.995824701704,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003956568712444548",
+            "extra": "mean: 419.2879457661407 usec\nrounds: 1051"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1724.8723107202109,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000054677293418909854",
+            "extra": "mean: 579.75305985546 usec\nrounds: 969"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 912.1013058485154,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00043821742092361017",
+            "extra": "mean: 1.0963694422843893 msec\nrounds: 823"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 438.207501742026,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005370752267734388",
+            "extra": "mean: 2.2820239179490427 msec\nrounds: 390"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1197.9171037727658,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019896499879654386",
+            "extra": "mean: 834.7823040931313 usec\nrounds: 1368"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1081.1067280309237,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002761825043342787",
+            "extra": "mean: 924.9780563491196 usec\nrounds: 1331"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1224.984048666936,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019180317283029966",
+            "extra": "mean: 816.3371605436249 usec\nrounds: 1470"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1443.2279754046788,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000056898747163258756",
+            "extra": "mean: 692.8912251161163 usec\nrounds: 1075"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1461.4906379678425,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000329120616117989",
+            "extra": "mean: 684.2329153681538 usec\nrounds: 449"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1266.6269039078088,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004917435165039902",
+            "extra": "mean: 789.498467871471 usec\nrounds: 996"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2089.79081795728,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030181449176967795",
+            "extra": "mean: 478.51679288048354 usec\nrounds: 1545"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 151.7295950973124,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007995479151508988",
+            "extra": "mean: 6.590672039681158 msec\nrounds: 126"
           }
         ]
       }
