@@ -71,29 +71,30 @@ func (r *Registry) MarshalJSON() ([]byte, error) {
 // `null` (the schema JSON contract always emits the array, even when
 // empty).
 func (r *Registry) toFile() schemaFile {
+	s := r.load()
 	doc := schemaFile{
-		NodeTypes: make([]NodeTypeDef, 0, len(r.nodes)),
-		EdgeTypes: make([]EdgeTypeDef, 0, len(r.edges)),
+		NodeTypes: make([]NodeTypeDef, 0, len(s.nodes)),
+		EdgeTypes: make([]EdgeTypeDef, 0, len(s.edges)),
 	}
-	ids := make([]int32, 0, len(r.nodes))
-	for id := range r.nodes {
+	ids := make([]int32, 0, len(s.nodes))
+	for id := range s.nodes {
 		ids = append(ids, id)
 	}
 	sortInt32(ids)
 	for _, id := range ids {
-		n := *r.nodes[id]
+		n := *s.nodes[id]
 		if n.Fields == nil {
 			n.Fields = []FieldDef{}
 		}
 		doc.NodeTypes = append(doc.NodeTypes, n)
 	}
-	eids := make([]int32, 0, len(r.edges))
-	for id := range r.edges {
+	eids := make([]int32, 0, len(s.edges))
+	for id := range s.edges {
 		eids = append(eids, id)
 	}
 	sortInt32(eids)
 	for _, id := range eids {
-		e := *r.edges[id]
+		e := *s.edges[id]
 		if e.Props == nil {
 			e.Props = []FieldDef{}
 		}

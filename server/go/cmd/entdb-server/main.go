@@ -166,10 +166,10 @@ func main() {
 		}
 	}
 	switch profile {
-	case "none", "contract", "e2e":
+	case "none", "contract", "e2e", "selfdescribing":
 		// ok
 	default:
-		log.Fatalf("entdb-server: invalid --seed-profile %q (want none|contract|e2e)", profile)
+		log.Fatalf("entdb-server: invalid --seed-profile %q (want none|contract|e2e|selfdescribing)", profile)
 	}
 
 	srvOpts := []api.Option{}
@@ -676,6 +676,16 @@ func schemaRegistryForProfile(profile string) (*schema.Registry, error) {
 	switch profile {
 	case "none":
 		return nil, nil
+	case "selfdescribing":
+		// SELF-DESCRIBING WRITES: an empty, runtime-mutable (NOT frozen)
+		// registry. Types are registered as writes arrive (the handler
+		// rides them in the WAL register_schema op; the applier registers
+		// establish-or-reject) and the registry is rebuilt deterministically
+		// from the WAL on every boot via the applier's replay. The
+		// registry must be present (non-nil) so the server advertises a
+		// fingerprint and enforces uniqueness/indexes once a type is known;
+		// it must NOT be frozen so it can grow at runtime.
+		return schema.NewRegistry(), nil
 	case "contract", "e2e":
 		// handled below
 	default:

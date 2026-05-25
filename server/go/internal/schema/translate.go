@@ -5,19 +5,18 @@ package schema
 // (0, false)). This is the lookup primitive payload-translation
 // (.6) calls on the ingress hot path.
 //
-// Lock-free post-Freeze; before Freeze it falls back to a linear scan
-// of NodeTypeDef.Fields. The .6 payload package is expected to
-// run after Freeze, but the pre-freeze path keeps unit tests simple.
+// Lock-free: loads the current snapshot and indexes its prebuilt
+// name->id maps; these are present in both frozen and runtime-mutable
+// modes (publishNode builds them on every registration).
 func (r *Registry) FieldIDByName(typeName, fieldName string) (uint32, bool) {
-	n := r.nodesByName[typeName]
+	s := r.load()
+	n := s.nodesByName[typeName]
 	if n == nil {
 		return 0, false
 	}
-	if r.frozen.Load() {
-		if m := r.fieldNameToID[n.TypeID]; m != nil {
-			id, ok := m[fieldName]
-			return id, ok
-		}
+	if m := s.fieldNameToID[n.TypeID]; m != nil {
+		id, ok := m[fieldName]
+		return id, ok
 	}
 	if f := n.GetField(fieldName); f != nil {
 		return f.FieldID, true
@@ -29,13 +28,12 @@ func (r *Registry) FieldIDByName(typeName, fieldName string) (uint32, bool) {
 // FieldIDByName. Used by callers (ExecuteAtomic, GetNodeByKey) that
 // already have a type_id in hand and want to skip the name lookup.
 func (r *Registry) FieldIDByNameForType(typeID int32, fieldName string) (uint32, bool) {
-	if r.frozen.Load() {
-		if m := r.fieldNameToID[typeID]; m != nil {
-			id, ok := m[fieldName]
-			return id, ok
-		}
+	s := r.load()
+	if m := s.fieldNameToID[typeID]; m != nil {
+		id, ok := m[fieldName]
+		return id, ok
 	}
-	n := r.nodes[typeID]
+	n := s.nodes[typeID]
 	if n == nil {
 		return 0, false
 	}
@@ -53,15 +51,14 @@ func (r *Registry) FieldIDByNameForType(typeID int32, fieldName string) (uint32,
 // id key as-is for forward compatibility (per the schema-registry
 // spec, "unknown ids on egress are kept as-is").
 func (r *Registry) FieldNameByID(typeName string, fieldID uint32) (string, bool) {
-	n := r.nodesByName[typeName]
+	s := r.load()
+	n := s.nodesByName[typeName]
 	if n == nil {
 		return "", false
 	}
-	if r.frozen.Load() {
-		if m := r.fieldIDToName[n.TypeID]; m != nil {
-			name, ok := m[fieldID]
-			return name, ok
-		}
+	if m := s.fieldIDToName[n.TypeID]; m != nil {
+		name, ok := m[fieldID]
+		return name, ok
 	}
 	if f := n.GetFieldByID(fieldID); f != nil {
 		return f.Name, true
@@ -72,13 +69,12 @@ func (r *Registry) FieldNameByID(typeName string, fieldID uint32) (string, bool)
 // FieldNameByIDForType is the type-id-keyed counterpart of
 // FieldNameByID.
 func (r *Registry) FieldNameByIDForType(typeID int32, fieldID uint32) (string, bool) {
-	if r.frozen.Load() {
-		if m := r.fieldIDToName[typeID]; m != nil {
-			name, ok := m[fieldID]
-			return name, ok
-		}
+	s := r.load()
+	if m := s.fieldIDToName[typeID]; m != nil {
+		name, ok := m[fieldID]
+		return name, ok
 	}
-	n := r.nodes[typeID]
+	n := s.nodes[typeID]
 	if n == nil {
 		return "", false
 	}
