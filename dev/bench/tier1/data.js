@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779705029369,
+  "lastUpdate": 1779705036599,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -7020,6 +7020,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00023561343048858247",
             "extra": "mean: 6.962488390243378 msec\nrounds: 123"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "871f96c09b9e7000ba9f6ccdd6efd91229ee15eb",
+          "message": "feat(wal): durable Azure Blob checkpoint store for the Event Hubs backend (#570) (#589)\n\nThe Event Hubs backend kept per-partition checkpoints in memory, so a\nprocess restart replayed the hub from the configured start position\n(re-applying everything since). Adds an opt-in durable checkpoint store\nbacked by Azure Blob Storage: the per-partition sequence-number map is\npersisted on Commit and restored on Connect, so a restart resumes after\nthe last commit.\n\nDesign: a CheckpointStore interface (Load/Save the full map), wired into\nEventHubs — Connect loads, Commit saves under the existing lock. nil\nstore (the default) is byte-for-byte the prior in-memory behavior. The\nblob impl is split behind a tiny blobClient seam so its logic (marshal\nthe map, treat a missing blob as first-run) is unit-tested with a fake;\nonly the thin azblob upload/download wrapper is untested I/O, consistent\nwith the other cloud backends.\n\nServer flags (--wal-backend=eventhubs):\n  --wal-eventhubs-checkpoint-storage-connection-string (enables it)\n  --wal-eventhubs-checkpoint-container (default entdb-wal-checkpoints)\nOne blob per <hub>/<consumer-group> keeps distinct WALs from colliding.\nDocumented in docs/deployment.md.\n\nTests: blob store round-trip via a fake blobClient (incl. missing-blob\n⇒ empty map, and an int64 > 2^53 checkpoint); EventHubs restores\ncheckpoints on Connect and persists them on Commit via a fake store.\n\nCloses #570.",
+          "timestamp": "2026-05-25T11:28:40+01:00",
+          "tree_id": "9e78e54a76135d4a43192f7d958491f354ef53a2",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/871f96c09b9e7000ba9f6ccdd6efd91229ee15eb"
+        },
+        "date": 1779705035527,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3063.5790505496516,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002941423412288518",
+            "extra": "mean: 326.4156019804957 usec\nrounds: 1515"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2051.0104611979336,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004472283553557799",
+            "extra": "mean: 487.5645536278396 usec\nrounds: 1268"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 944.9275953768998,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009872310097244535",
+            "extra": "mean: 1.0582821423488364 msec\nrounds: 843"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 455.4016792460287,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012530715961012428",
+            "extra": "mean: 2.195863664041859 msec\nrounds: 381"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1926.9306549834896,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008588571028997401",
+            "extra": "mean: 518.9600349207005 usec\nrounds: 1575"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1908.1981920941585,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007321864642180683",
+            "extra": "mean: 524.0545788918009 usec\nrounds: 1876"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2006.9159971423255,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006469442421274403",
+            "extra": "mean: 498.27695898777694 usec\nrounds: 1146"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1580.3568335497428,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001377282270869214",
+            "extra": "mean: 632.7684854273289 usec\nrounds: 995"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1625.5638012250222,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005209113840712374",
+            "extra": "mean: 615.1711789142953 usec\nrounds: 313"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1303.3437513113795,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006301590011641117",
+            "extra": "mean: 767.2572941665117 usec\nrounds: 1217"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2540.124732243882,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003168979936217537",
+            "extra": "mean: 393.6814548144749 usec\nrounds: 2025"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 107.87123072368846,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023288768197365145",
+            "extra": "mean: 9.270312327867051 msec\nrounds: 122"
           }
         ]
       }
