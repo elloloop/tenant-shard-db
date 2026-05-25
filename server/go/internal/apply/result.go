@@ -23,6 +23,12 @@ const (
 	// precondition did not match observed state. Result.Precondition
 	// carries the typed failure detail. See GitHub issue #500.
 	StatusFailedPrecondition
+	// StatusUniqueViolation means a create/update op tripped a declared
+	// single-field or composite unique constraint. Result.UniqueViolation
+	// carries the structured ALREADY_EXISTS detail. Like
+	// FAILED_PRECONDITION it aborts the batch but advances the WAL
+	// offset (deterministic outcome). See issue #566.
+	StatusUniqueViolation
 )
 
 // String returns the wire form ("APPLIED" / "SKIPPED" / "FAILED" /
@@ -37,6 +43,8 @@ func (s Status) String() string {
 		return "FAILED"
 	case StatusFailedPrecondition:
 		return "FAILED_PRECONDITION"
+	case StatusUniqueViolation:
+		return "UNIQUE_VIOLATION"
 	default:
 		return "UNKNOWN"
 	}
@@ -71,6 +79,11 @@ type Result struct {
 	// wait_applied=true; otherwise served from the idempotency cache
 	// via GetReceiptStatus.
 	Precondition *PreconditionFailure
+
+	// UniqueViolation carries the structured ALREADY_EXISTS detail when
+	// Status is StatusUniqueViolation. The handler lifts it into a gRPC
+	// ALREADY_EXISTS status; the idempotency cache replays it on retry.
+	UniqueViolation *UniqueViolation
 }
 
 // EdgeRef is the in-result representation of a created edge. Used for

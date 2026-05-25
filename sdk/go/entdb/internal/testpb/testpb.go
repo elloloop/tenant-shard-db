@@ -43,12 +43,27 @@ var PurchaseEdgeDesc protoreflect.MessageDescriptor
 // used by negative tests.
 var NotAnEntityDesc protoreflect.MessageDescriptor
 
+// OAuthIdentityDesc is a node type carrying a composite unique
+// constraint (ADR-030 / issue #566):
+//
+//	message OAuthIdentity {
+//	    option (entdb.node) = {
+//	        type_id: 202
+//	        composite_unique: { name: "provider_user_id"
+//	                            fields: ["provider", "provider_user_id"] }
+//	    };
+//	    string provider         = 1;
+//	    string provider_user_id = 2;
+//	}
+var OAuthIdentityDesc protoreflect.MessageDescriptor
+
 func init() {
 	fd := buildFile()
 	ProductDesc = fd.Messages().ByName("Product")
 	PurchaseEdgeDesc = fd.Messages().ByName("PurchaseEdge")
 	NotAnEntityDesc = fd.Messages().ByName("NotAnEntity")
-	if ProductDesc == nil || PurchaseEdgeDesc == nil || NotAnEntityDesc == nil {
+	OAuthIdentityDesc = fd.Messages().ByName("OAuthIdentity")
+	if ProductDesc == nil || PurchaseEdgeDesc == nil || NotAnEntityDesc == nil || OAuthIdentityDesc == nil {
 		panic("testpb: missing test message descriptors")
 	}
 }
@@ -284,6 +299,44 @@ func buildFile() protoreflect.FileDescriptor {
 		Options: edgeOpts,
 	}
 
+	// OAuthIdentity message — (entdb.node) with a composite_unique
+	// constraint. NodeOpts is { type_id: 202 (field 1, varint),
+	// composite_unique: [...] (field 24, repeated message) }.
+	// UniqueConstraint is { fields: [...] (field 1, repeated string),
+	// name: "..." (field 2, string) }.
+	ucInner := append(
+		encodeStringField(1, "provider"),
+		encodeStringField(1, "provider_user_id")...,
+	)
+	ucInner = append(ucInner, encodeStringField(2, "provider_user_id")...)
+	oauthNodeOpts := append(
+		encodeVarintField(1, 202),
+		encodeLengthDelimitedField(24, ucInner)...,
+	)
+	oauthOptsRaw := encodeLengthDelimitedField(50100, oauthNodeOpts)
+	oauthOpts := &descriptorpb.MessageOptions{}
+	oauthOpts.ProtoReflect().SetUnknown(protoreflect.RawFields(oauthOptsRaw))
+	oauthMsg := &descriptorpb.DescriptorProto{
+		Name:    proto.String("OAuthIdentity"),
+		Options: oauthOpts,
+		Field: []*descriptorpb.FieldDescriptorProto{
+			{
+				Name:     proto.String("provider"),
+				Number:   proto.Int32(1),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				JsonName: proto.String("provider"),
+			},
+			{
+				Name:     proto.String("provider_user_id"),
+				Number:   proto.Int32(2),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				JsonName: proto.String("providerUserId"),
+			},
+		},
+	}
+
 	// NotAnEntity — no EntDB annotations.
 	notEntityMsg := &descriptorpb.DescriptorProto{
 		Name: proto.String("NotAnEntity"),
@@ -302,7 +355,7 @@ func buildFile() protoreflect.FileDescriptor {
 		Name:        proto.String(name),
 		Package:     proto.String(pkg),
 		Syntax:      proto.String(syntax),
-		MessageType: []*descriptorpb.DescriptorProto{productMsg, edgeMsg, notEntityMsg},
+		MessageType: []*descriptorpb.DescriptorProto{productMsg, edgeMsg, oauthMsg, notEntityMsg},
 	}
 
 	fd, err := protodesc.NewFile(fdp, nil)
@@ -320,6 +373,12 @@ func encodeVarintField(fieldNum, value uint64) []byte {
 	out = appendVarint(out, tag)
 	out = appendVarint(out, value)
 	return out
+}
+
+// encodeStringField returns the wire-format bytes for a single
+// string-typed field “(fieldNum, value)“ (length-delimited).
+func encodeStringField(fieldNum uint64, value string) []byte {
+	return encodeLengthDelimitedField(fieldNum, []byte(value))
 }
 
 // encodeLengthDelimitedField returns the wire-format bytes for a

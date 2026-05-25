@@ -45,11 +45,12 @@ func (a *Applier) applyUpdateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 
 	conn := tx.Conn()
 	row := conn.QueryRowContext(ctx,
-		`SELECT payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?`,
+		`SELECT type_id, payload_json FROM nodes WHERE tenant_id = ? AND node_id = ?`,
 		ev.TenantID, nodeID,
 	)
 	var existingJSON string
-	if err := row.Scan(&existingJSON); err != nil {
+	var typeID int32
+	if err := row.Scan(&typeID, &existingJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			// Missing target is a no-op.
 			// A precondition on a missing node is treated as a miss
@@ -91,10 +92,19 @@ func (a *Applier) applyUpdateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 	if now == 0 {
 		now = a.now()
 	}
+	// Ensure indexes exist before the UPDATE so a value-changing patch
+	// that collides with another row trips the constraint here (the
+	// node's type_id is read alongside the payload above).
+	if err := a.store.EnsureFieldIndexesTx(ctx, tx, typeID); err != nil {
+		return fmt.Errorf("apply update_node: ensure indexes: %w", err)
+	}
 	if _, err := conn.ExecContext(ctx,
 		`UPDATE nodes SET payload_json = ?, updated_at = ? WHERE tenant_id = ? AND node_id = ?`,
 		string(mergedJSON), now, ev.TenantID, nodeID,
 	); err != nil {
+		if detail, ok := a.store.BuildUniqueViolationDetail(ev.TenantID, merged, err); ok {
+			return &UniqueViolation{Detail: detail}
+		}
 		return fmt.Errorf("apply update_node: update: %w", err)
 	}
 	return nil

@@ -129,6 +129,58 @@ func findLengthDelimited(buf []byte, fieldNum uint64) ([]byte, bool) {
 	return nil, false
 }
 
+// findAllLengthDelimited scans a protobuf wire-format byte stream and
+// returns the payloads of EVERY length-delimited (wire type 2) field
+// matching fieldNum, in wire order. Used to pull each entry of a
+// repeated submessage / repeated string field (e.g. NodeOpts.
+// composite_unique and UniqueConstraint.fields) out of the parent.
+func findAllLengthDelimited(buf []byte, fieldNum uint64) [][]byte {
+	var out [][]byte
+	for len(buf) > 0 {
+		tag, n := decodeVarint(buf)
+		if n == 0 {
+			return out
+		}
+		buf = buf[n:]
+		wire := tag & 0x7
+		num := tag >> 3
+		switch wire {
+		case 0: // varint
+			_, n = decodeVarint(buf)
+			if n == 0 {
+				return out
+			}
+			buf = buf[n:]
+		case 1: // 64-bit fixed
+			if len(buf) < 8 {
+				return out
+			}
+			buf = buf[8:]
+		case 2: // length-delimited
+			ln, n := decodeVarint(buf)
+			if n == 0 {
+				return out
+			}
+			buf = buf[n:]
+			if uint64(len(buf)) < ln {
+				return out
+			}
+			if num == fieldNum {
+				out = append(out, buf[:ln])
+			}
+			buf = buf[ln:]
+		case 5: // 32-bit fixed
+			if len(buf) < 4 {
+				return out
+			}
+			buf = buf[4:]
+		default:
+			return out
+		}
+	}
+	return out
+}
+
 // findVarint scans a protobuf wire-format byte stream for a varint
 // (wire type 0) field with the given field number and returns its
 // value. Used to pull “type_id“/“edge_id“ out of the inner

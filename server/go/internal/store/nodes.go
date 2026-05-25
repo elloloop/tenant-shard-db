@@ -490,6 +490,13 @@ func (s *CanonicalStore) CreateNodeRaw(ctx context.Context, tenantID string, in 
 		)
 		if err != nil {
 			if isUniqueViolation(err) {
+				// Surface the structured ALREADY_EXISTS detail the SDK
+				// parsers consume (issue #566) when the violated index is
+				// a declared single-field/composite unique constraint;
+				// fall back to the generic message otherwise.
+				if detail, ok := s.BuildUniqueViolationDetail(tenantID, payload, err); ok {
+					return fmt.Errorf("%w: %s", ErrUniqueConstraint, detail)
+				}
 				return fmt.Errorf("%w: %s/%s", ErrUniqueConstraint, tenantID, in.NodeID)
 			}
 			return fmt.Errorf("store: insert node: %w", err)

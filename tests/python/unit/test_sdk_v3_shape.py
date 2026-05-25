@@ -212,6 +212,51 @@ class TestCanonicalFlow:
         assert err.type_id == 9001
         assert err.field_id == 1
         assert err.value == "WIDGET-1"
+        assert not err.is_composite
+
+    @pytest.mark.asyncio
+    async def test_duplicate_create_raises_typed_composite_unique_error(self, db):
+        """A composite (multi-field) collision surfaces as the same
+        ``UniqueConstraintError`` with ``is_composite`` set and the
+        constraint coordinates populated (issue #566).
+
+        The server emits a distinct ALREADY_EXISTS detail for composite
+        constraints; the SDK parser routes it to the composite branch.
+        Big-int values must round-trip losslessly (ADR-028).
+        """
+        from entdb_sdk._grpc_client import GrpcClient
+
+        class _FakeRpcError(grpc.RpcError):
+            def code(self):
+                return grpc.StatusCode.ALREADY_EXISTS
+
+            def details(self):
+                return (
+                    "Composite unique constraint violation: tenant=acme "
+                    "type_id=201 constraint='provider_user_id' fields=[1, 2] "
+                    "values=['google', 9223372036854775807] already exists"
+                )
+
+        real_grpc = GrpcClient(host="localhost", port=50051)
+        real_grpc._stub = AsyncMock()
+        real_grpc._retry = AsyncMock(side_effect=_FakeRpcError())
+        db._grpc = real_grpc
+
+        scope = db.tenant("acme").actor(Actor.user("alice"))
+        plan = scope.plan()
+        plan.create(ts.Product(sku="WIDGET-1", name="Dup"))
+
+        with pytest.raises(UniqueConstraintError) as exc_info:
+            await plan.commit(wait_applied=True)
+
+        err = exc_info.value
+        assert err.is_composite
+        assert err.tenant_id == "acme"
+        assert err.type_id == 201
+        assert err.constraint_name == "provider_user_id"
+        assert err.field_ids == (1, 2)
+        # Lossless big int (ADR-028): not collapsed to float / 2**53.
+        assert err.values == ("google", 9223372036854775807)
 
 
 # ── 2. Storage descriptors are the only way to pick a storage mode ──

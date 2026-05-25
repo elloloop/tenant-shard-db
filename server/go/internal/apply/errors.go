@@ -36,7 +36,46 @@ var (
 	// op_index / field / expected / observed coordinates via the typed
 	// wrapper below. See GitHub issue #500.
 	ErrPreconditionFailed = fmt.Errorf("%w: precondition failed", errs.ErrFailedPrecondition)
+
+	// ErrUniqueViolation is the sentinel returned when a create/update
+	// op trips a declared single-field or composite unique constraint.
+	// Like ErrPreconditionFailed this is an EXPECTED, deterministic
+	// outcome (re-applying the same event against the same materialised
+	// state always reproduces it), NOT a poison: the applier aborts the
+	// batch, memoizes the structured detail in the idempotency cache
+	// with status UNIQUE_VIOLATION, and advances the WAL offset without
+	// halting. The ExecuteAtomic handler lifts the memoized detail into
+	// a gRPC ALREADY_EXISTS status so the SDKs parse it as a typed
+	// UniqueConstraintError. See issue #566 and the composite-unique ADR.
+	ErrUniqueViolation = fmt.Errorf("%w: unique constraint violation", errs.ErrAlreadyExists)
 )
+
+// UniqueViolation is the typed wrapper carried alongside
+// ErrUniqueViolation. Detail is the fully-formatted ALREADY_EXISTS
+// string the store built (see store.BuildUniqueViolationDetail) — it is
+// memoized verbatim and replayed to the client, so the wire format is
+// owned entirely by the store and this struct just transports it.
+type UniqueViolation struct {
+	// Detail is the structured ALREADY_EXISTS message the SDK parsers
+	// consume. Format is pinned by the SDK contract tests.
+	Detail string
+}
+
+// Error implements error.
+func (e *UniqueViolation) Error() string { return "entdb: " + e.Detail }
+
+// Unwrap allows errors.Is(err, ErrUniqueViolation) on the typed wrapper.
+func (e *UniqueViolation) Unwrap() error { return ErrUniqueViolation }
+
+// AsUniqueViolation extracts a *UniqueViolation from err via errors.As,
+// returning nil when the chain has no such value.
+func AsUniqueViolation(err error) *UniqueViolation {
+	var uv *UniqueViolation
+	if errors.As(err, &uv) {
+		return uv
+	}
+	return nil
+}
 
 // PreconditionFailure is the typed wrapper carried alongside
 // ErrPreconditionFailed. It captures the coordinates of a CAS miss in a
