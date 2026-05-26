@@ -34,7 +34,10 @@ Required fields (validated in `from_dict`, `applier.py:256`):
 
 `ops[i]` is an open-ended dict keyed by `"op"`. Op types handled by the
 applier today: `create_node`, `update_node`, `delete_node`, `create_edge`,
-`delete_edge`, plus admin/GDPR/transfer/revocation ops registered in
+`delete_edge`, `delete_where`, `register_schema` (the self-describing
+schema op prepended by the ExecuteAtomic handler when client/server
+fingerprints differ — see [ADR-031](../../adr/031-self-describing-name-free-schema.md)),
+plus admin/GDPR/transfer/revocation ops registered in
 `Applier.apply_event` (`applier.py:1327`). The Go event struct must keep
 `ops` as a free-form list (`[]map[string]any` or, preferably, a
 `[]*pb.Op` once op types are protobufed) — handlers will mutate ops

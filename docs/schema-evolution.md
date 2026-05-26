@@ -8,7 +8,7 @@ EntDB uses protobuf for schema definition ([ADR-006](adr/006-proto-schema-defini
 2. **Never remove or reuse IDs.** Once a field number is in use, it can be deprecated but never reassigned.
 3. **Names are display-only.** Renaming a proto field doesn't touch the wire / disk format. Rename freely.
 4. **Field order doesn't matter.** Fields are identified by number.
-5. **Schema lockdown is CI-enforced.** `entdb-schema check` against a committed `.schema-snapshot.json` catches breaking changes before they merge.
+5. **Schema lockdown is CI-enforced.** `entdb-schema breaking` against a committed `schema.lock.json` catches breaking changes before they merge ([ADR-032](adr/032-schema-evolution-compat-rules.md)). Same `buf breaking`-style command runs identically in local dev and CI.
 
 ## Field types
 
@@ -167,41 +167,46 @@ If you need to add a required field, declare it required from the start; existin
 
 ### One-time setup
 
-Snapshot the schema and commit the snapshot:
+Capture the baseline snapshot once and commit it. Per [ADR-031](adr/031-self-describing-name-free-schema.md) the server boots **empty** — schema is registered via self-describing writes, so the snapshot is empty until your app drives its first write through the SDK. So:
 
 ```bash
-# Boot the server with your registered schema
+# 1. Boot a fresh server (empty registry by design)
 entdb-server -addr=:50051 -data-dir=/tmp/init -wal-backend=memory &
 SERVER_PID=$!
 sleep 1
 
-# Snapshot
-entdb-schema snapshot --from-server localhost:50051 > .schema-snapshot.json
+# 2. Drive at least one write per type from your app (the SDK auto-attaches
+#    a SchemaDescriptor; the applier materializes register_schema into the
+#    server's registry). Whatever your normal init / smoke-test does works.
+
+# 3. Snapshot the now-populated registry and commit it as the baseline.
+entdb-schema snapshot --from-server localhost:50051 > schema.lock.json
 
 kill $SERVER_PID
-git add .schema-snapshot.json
+git add schema.lock.json
 git commit -m "chore: lock initial schema snapshot"
 ```
 
 ### Every PR
 
-Run a compatibility check in CI:
+Run the compatibility gate in CI:
 
 ```bash
-entdb-schema check \
-  --baseline .schema-snapshot.json \
+entdb-schema breaking \
+  --baseline schema.lock.json \
   --from-server localhost:50051 \
   --format json
 ```
 
-Exit code 0 = compatible; non-zero = breaking change detected. The full GitHub Actions setup is in `docs/guides/schema-lockdown.md`.
+Exit code 0 = compatible; 1 = breaking change detected. The full GitHub Actions setup is in `docs/guides/schema-lockdown.md`.
 
 ### Subcommands
 
 | Command | Purpose |
 |---|---|
 | `entdb-schema snapshot` | Emit the current schema as a deterministic JSON envelope |
-| `entdb-schema check` | Verify the current schema is compatible with a baseline |
+| `entdb-schema breaking` | The `buf breaking`-style gate — exits non-zero on a breaking change (ADR-032) |
+| `entdb-schema check` | Alias for `breaking` (same exit-code contract; preserved for older scripts) |
 | `entdb-schema diff` | Show differences between two snapshots |
 | `entdb-schema validate` | Run cross-reference validation over a registry |
 | `entdb-schema version` | Print version |

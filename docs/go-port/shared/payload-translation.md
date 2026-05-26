@@ -48,6 +48,15 @@ they are `map[uint32]any` — the key is the field's stable numeric `field_id`
 
 ## Boundary
 
+> **Updated by [ADR-031](../../adr/031-self-describing-name-free-schema.md)
+> (2026-05-25):** server-side **ingress** translation was removed. The
+> server is now id-only end to end and rejects name-keyed payloads,
+> filters, and preconditions with `INVALID_ARGUMENT`. The SDKs do every
+> name↔id translation client-side from the proto descriptor (`fd.Number()`
+> IS the `field_id` per ADR-006) before the bytes leave the process.
+> The egress description below is still accurate (no server-side
+> translation); the **Ingress** point is historical.
+
 Translation happens at **exactly two points** inside the gRPC handler layer.
 Nowhere else.
 

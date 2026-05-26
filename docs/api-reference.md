@@ -81,7 +81,7 @@ WIRE:        {"1": "alice@example.com", "2": "Alice"}
 APP CODE:    {"email": "alice@example.com", "name": "Alice"}
 ```
 
-Schemaless ingress (server doesn't know the type's schema): only digit-string keys are accepted; name-keyed entries return `INVALID_ARGUMENT`.
+Per [ADR-031](adr/031-self-describing-name-free-schema.md), the server is id-only end to end: name-keyed entries are **always** rejected with `INVALID_ARGUMENT`. The SDKs do every name↔id translation client-side from the proto descriptor before the bytes leave the process.
 
 ### Idempotency
 
@@ -116,7 +116,7 @@ Actor prefixes:
 | Status | When |
 |---|---|
 | `OK` | Success |
-| `INVALID_ARGUMENT` | Malformed request, schema mismatch, name-keyed payload on schemaless type |
+| `INVALID_ARGUMENT` | Malformed request, schema mismatch, name-keyed payload/filter/precondition (ADR-031: server is id-only) |
 | `NOT_FOUND` | Node, tenant, user not found |
 | `ALREADY_EXISTS` | Duplicate `tenant_id`, duplicate unique-field value, etc. |
 | `PERMISSION_DENIED` | ACL check failed; actor not a tenant member; admin gate failed |
@@ -170,11 +170,15 @@ On egress, the wire shape is symmetric: `[]byte` re-encoded as base64, `int64` w
 | `delete_edge` | `DeleteEdgeOp` | Delete an edge. |
 | `delete_where` | `DeleteWhereOp` | Predicate sweeper: delete every node of a type matching all `where` filters, best-effort capped by `limit`, in one op (issue [#504](https://github.com/elloloop/tenant-shard-db/issues/504)). |
 
-`DeleteWhereOp.where` reuses the same `FieldFilter` / `FilterOp` shape as `QueryNodesRequest.filters`, so no new wire concept is introduced. As with `QueryNodes` filters, the filter `field` is normally a payload `field_id` resolved client-side from a name; against a **schema-less server** only digit-string keys translate (a name key returns `INVALID_ARGUMENT` — see [Field IDs, not field names](#field-ids-not-field-names) and the [schema-lockdown guide](guides/schema-lockdown.md#delete_where-and-querynodes-on-schema-less-deployments), issue [#545](https://github.com/elloloop/tenant-shard-db/issues/545)). `limit <= 0` selects the server default cap; the server clamps to a hard ceiling so a runaway predicate cannot pin the single applier goroutine for a tenant. Deleted ids are not returned (v1 scope, #504) — callers needing the ids keep using the `QueryNodes` + `DeleteNodeOp` loop.
+`DeleteWhereOp.where` reuses the same `FieldFilter` / `FilterOp` shape as `QueryNodesRequest.filters`, so no new wire concept is introduced. As with `QueryNodes` filters, `FieldFilter.field` is a payload `field_id` (decimal string); the SDKs translate any developer-facing name → id client-side from the proto before sending. Per [ADR-031](adr/031-self-describing-name-free-schema.md) the server is id-only, so a non-digit `field` returns `INVALID_ARGUMENT` regardless of registry state — see [Field IDs, not field names](#field-ids-not-field-names) and the [schema-lockdown guide](guides/schema-lockdown.md), issue [#545](https://github.com/elloloop/tenant-shard-db/issues/545). `limit <= 0` selects the server default cap; the server clamps to a hard ceiling so a runaway predicate cannot pin the single applier goroutine for a tenant. Deleted ids are not returned (v1 scope, #504) — callers needing the ids keep using the `QueryNodes` + `DeleteNodeOp` loop.
 
 ## Schema RPC
 
-`GetSchema` returns the **server's** registered schema (loaded at boot from `.schema-snapshot.json`). It's read-only — there is no `RegisterSchema` RPC. Clients use the schema for client-side validation; the SDKs maintain their own local registry via `register_proto_schema(my_pb2)` (Python) or generated code (Go).
+`GetSchema` returns the **server's** registered schema (ids + attributes only — names live client-side in the proto). It's read-only: there is no `RegisterSchema` RPC.
+
+Per [ADR-031](adr/031-self-describing-name-free-schema.md), the server **boots empty** (no schema, no data) and learns its schema from the writes themselves: every `ExecuteAtomic` carries an optional `SchemaDescriptor`, and when the client fingerprint differs from the server's the handler prepends a `register_schema` WAL op that the applier materializes (registry + per-tenant indexes) **before** the data ops. Because the schema lives in the WAL, the registry is rebuilt deterministically on replay; a fresh server reaches the same registry after replaying the same log. `GetSchema` returns whatever has accumulated to that point.
+
+The SDKs auto-attach the descriptor when their fingerprint doesn't match the cached server fingerprint and omit it once it does (re-sending only on a `SCHEMA_MISMATCH` response). Clients also maintain their own local registry via `register_proto_schema(my_pb2)` (Python) or generated code (Go) — that registry is the source of truth for names; the server never sees them.
 
 ## Where to find each handler
 

@@ -249,20 +249,20 @@ If your recovery floor needs to be shorter than "replay from offset 0," configur
 
 ## Schema operations
 
-The `entdb-schema` CLI ([guide](guides/schema-lockdown.md)) is the operator tool for runtime schema lockdown.
+The `entdb-schema` CLI ([guide](guides/schema-lockdown.md)) is the operator tool for runtime schema lockdown. Per [ADR-032](adr/032-schema-evolution-compat-rules.md) it ships a `buf breaking`-style verb that customers run identically in local dev and CI.
 
 ```bash
-# Snapshot what the running server has registered
-entdb-schema snapshot --from-server localhost:50051 > .schema-snapshot.json
+# Snapshot what the running server has registered (commit as the baseline)
+entdb-schema snapshot --from-server localhost:50051 > schema.lock.json
 
-# Compare against a committed baseline (CI)
-entdb-schema check --baseline .schema-snapshot.json --from-server localhost:50051
+# The CI gate — exits non-zero on a breaking change (loosen-safe / tighten-breaking)
+entdb-schema breaking --baseline schema.lock.json --from-file new.json
 
-# Diff two snapshots
-entdb-schema diff --old .schema-snapshot.json --new /tmp/new.json
+# Free-form diff between two snapshots
+entdb-schema diff --old schema.lock.json --new /tmp/new.json
 ```
 
-A schema compatibility check is the canonical CI gate. See `docs/guides/schema-lockdown.md` for the full workflow.
+`check` is preserved as an alias for `breaking` (same exit-code contract). See `docs/guides/schema-lockdown.md` for the full workflow + the loosen-safe/tighten-breaking matrix.
 
 ## Tenant onboarding
 
@@ -335,7 +335,7 @@ Auth interceptor rejected the request. Check the credential carrier:
 
 ### `INVALID_ARGUMENT: payload ... contains name-keyed field "..."` 
 
-The SDK predates v1.12.2's client-side name→id translation (see [ADR-018](adr/018-field-id-keyed-payloads.md)) or is operating on an unregistered type. Upgrade the SDK, or register the schema on the server.
+Per [ADR-031](adr/031-self-describing-name-free-schema.md), the server is id-only and **always** rejects name-keyed payloads/filters/preconditions (ADR-018: `field_id` is the storage key). Either upgrade to a v2.x SDK — which does client-side name→id translation from the proto and auto-attaches the `SchemaDescriptor` so the server learns the type — or, for hand-rolled clients, send `field_id`-keyed `data`/`patch` and decimal-string `FieldFilter.field` directly.
 
 ### Schema-compatibility CI failure
 

@@ -1,1 +1,3 @@
 bin/
+# Compiled plugin binary — do not commit
+protoc-gen-entdb-keys
