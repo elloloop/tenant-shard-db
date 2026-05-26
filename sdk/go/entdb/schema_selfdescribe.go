@@ -98,10 +98,30 @@ func newSchemaRegistry(msgs []proto.Message) *schemaRegistry {
 
 // nodeDescriptorFor builds a name-free pb.SchemaNodeTypeDef from a message
 // descriptor. composite_unique is identified by its field_ids tuple only
-// (ADR-031); names are never carried.
+// (ADR-031); names are never carried. All NodeOpts attributes the server's
+// canonical FieldDef/NodeTypeDef structs serialise are emitted here so
+// the client-computed fingerprint matches the server's.
 func nodeDescriptorFor(md protoreflect.MessageDescriptor, typeID int32) *pb.SchemaNodeTypeDef {
 	out := &pb.SchemaNodeTypeDef{TypeId: typeID}
 	out.Fields = fieldDescriptorsFor(md)
+	nopts := readNodeOpts(md)
+	if nopts.deprecated {
+		out.Deprecated = true
+	}
+	if nopts.description != "" {
+		out.Description = nopts.description
+	}
+	if dp := dataPolicyName(nopts.dataPolicy); dp != "" {
+		out.DataPolicy = dp
+	}
+	if nopts.subjectField != "" {
+		if fid, ok := protoFieldNameToID(md, nopts.subjectField); ok {
+			out.SubjectField = &fid
+		}
+	}
+	if nopts.legalBasis != "" {
+		out.LegalBasis = &nopts.legalBasis
+	}
 	if cu, err := extractCompositeUnique(md); err == nil {
 		for _, c := range cu {
 			ids := c["field_ids"].([]int64)
@@ -115,12 +135,45 @@ func nodeDescriptorFor(md protoreflect.MessageDescriptor, typeID int32) *pb.Sche
 	return out
 }
 
+// edgeDescriptorFor builds a name-free pb.SchemaEdgeTypeDef from a message
+// descriptor. EdgeOpts attributes (deprecated, description, data_policy,
+// unique_per_from, on_subject_exit) are carried; from_type_id/to_type_id
+// are NOT in EdgeOpts and must be resolved separately from the edge
+// message's `from`/`to` field types (tracked as a follow-up).
 func edgeDescriptorFor(md protoreflect.MessageDescriptor, edgeID int32) *pb.SchemaEdgeTypeDef {
-	return &pb.SchemaEdgeTypeDef{
+	eopts := readEdgeOpts(md)
+	out := &pb.SchemaEdgeTypeDef{
 		EdgeId:        edgeID,
 		Props:         fieldDescriptorsFor(md),
-		OnSubjectExit: "both",
+		OnSubjectExit: subjectExitName(eopts.onSubjectExit),
 	}
+	if eopts.uniquePerFrom {
+		out.UniquePerFrom = true
+	}
+	if eopts.deprecated {
+		out.Deprecated = true
+	}
+	if eopts.description != "" {
+		out.Description = eopts.description
+	}
+	if dp := dataPolicyName(eopts.dataPolicy); dp != "" {
+		out.DataPolicy = dp
+	}
+	return out
+}
+
+// protoFieldNameToID resolves a proto field NAME to its numeric field_id
+// within md. Used to lower NodeOpts.subject_field (a string name in the
+// proto option) to a name-free wire field_id (ADR-031).
+func protoFieldNameToID(md protoreflect.MessageDescriptor, name string) (uint32, bool) {
+	fds := md.Fields()
+	for i := 0; i < fds.Len(); i++ {
+		fd := fds.Get(i)
+		if string(fd.Name()) == name {
+			return uint32(fd.Number()), true
+		}
+	}
+	return 0, false
 }
 
 func fieldDescriptorsFor(md protoreflect.MessageDescriptor) []*pb.SchemaFieldDef {
@@ -145,6 +198,19 @@ func fieldDescriptorsFor(md protoreflect.MessageDescriptor) []*pb.SchemaFieldDef
 		if fopts.unique {
 			f.Unique = true
 		}
+		if fopts.pii {
+			f.Pii = true
+		}
+		if fopts.deprecated {
+			f.Deprecated = true
+		}
+		if fopts.description != "" {
+			f.Description = fopts.description
+		}
+		if fopts.hasRefType {
+			rt := fopts.refTypeID
+			f.RefTypeId = &rt
+		}
 		if fopts.enumValues != "" {
 			for _, ev := range splitEnumValues(fopts.enumValues) {
 				f.EnumValues = append(f.EnumValues, ev)
@@ -164,6 +230,24 @@ func canonNodeFor(md protoreflect.MessageDescriptor, typeID int32) map[string]an
 		"type_id": int64(typeID),
 		"fields":  canonFieldsFor(md),
 	}
+	nopts := readNodeOpts(md)
+	if nopts.deprecated {
+		out["deprecated"] = true
+	}
+	if nopts.description != "" {
+		out["description"] = nopts.description
+	}
+	if dp := dataPolicyName(nopts.dataPolicy); dp != "" {
+		out["data_policy"] = dp
+	}
+	if nopts.subjectField != "" {
+		if fid, ok := protoFieldNameToID(md, nopts.subjectField); ok {
+			out["subject_field"] = int64(fid)
+		}
+	}
+	if nopts.legalBasis != "" {
+		out["legal_basis"] = nopts.legalBasis
+	}
 	if cu, err := extractCompositeUnique(md); err == nil && len(cu) > 0 {
 		out["composite_unique"] = cu
 	}
@@ -171,13 +255,27 @@ func canonNodeFor(md protoreflect.MessageDescriptor, typeID int32) map[string]an
 }
 
 func canonEdgeFor(md protoreflect.MessageDescriptor, edgeID int32) map[string]any {
-	return map[string]any{
+	eopts := readEdgeOpts(md)
+	out := map[string]any{
 		"edge_id":         int64(edgeID),
 		"from_type_id":    int64(0),
 		"to_type_id":      int64(0),
 		"props":           canonFieldsFor(md),
-		"on_subject_exit": "both",
+		"on_subject_exit": subjectExitName(eopts.onSubjectExit),
 	}
+	if eopts.uniquePerFrom {
+		out["unique_per_from"] = true
+	}
+	if eopts.deprecated {
+		out["deprecated"] = true
+	}
+	if eopts.description != "" {
+		out["description"] = eopts.description
+	}
+	if dp := dataPolicyName(eopts.dataPolicy); dp != "" {
+		out["data_policy"] = dp
+	}
+	return out
 }
 
 func canonFieldsFor(md protoreflect.MessageDescriptor) []map[string]any {
@@ -196,11 +294,23 @@ func canonFieldsFor(md protoreflect.MessageDescriptor) []map[string]any {
 		if fopts.enumValues != "" {
 			entry["enum_values"] = splitEnumValues(fopts.enumValues)
 		}
+		if fopts.hasRefType {
+			entry["ref_type_id"] = int64(fopts.refTypeID)
+		}
 		if fopts.indexed {
 			entry["indexed"] = true
 		}
 		if fopts.searchable {
 			entry["searchable"] = true
+		}
+		if fopts.deprecated {
+			entry["deprecated"] = true
+		}
+		if fopts.description != "" {
+			entry["description"] = fopts.description
+		}
+		if fopts.pii {
+			entry["pii"] = true
 		}
 		if fopts.unique {
 			entry["unique"] = true

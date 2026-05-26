@@ -23,8 +23,12 @@ const (
 	fieldOptsRequiredField     = 1
 	fieldOptsSearchableField   = 2
 	fieldOptsIndexedField      = 3
+	fieldOptsPIIField          = 4  // bool pii = 4
 	fieldOptsEnumValuesField   = 6
 	fieldOptsKindOverrideField = 7
+	fieldOptsRefTypeIDField    = 8  // int32 ref_type_id = 8 (REQUIRED when kind == "ref")
+	fieldOptsDescriptionField  = 10 // string description = 10
+	fieldOptsDeprecatedField   = 11 // bool deprecated = 11
 	fieldOptsUniqueField       = 13
 )
 
@@ -32,12 +36,26 @@ const (
 // sdk/entdb_sdk/proto/entdb_options.proto). composite_unique is the
 // repeated UniqueConstraint message (ADR-030 / issue #566).
 const (
+	nodeOptsDataPolicyField   = 6  // DataPolicy data_policy = 6 (enum varint)
+	nodeOptsSubjectFieldField = 7  // string subject_field = 7 (proto field NAME; resolved to field_id)
+	nodeOptsLegalBasisField   = 9  // string legal_basis = 9
+	nodeOptsDescriptionField  = 10 // string description = 10
+	nodeOptsDeprecatedField   = 11 // bool deprecated = 11
 	nodeOptsCompositeUniqueField = 24 // repeated UniqueConstraint composite_unique = 24
 
 	// UniqueConstraint.fields submessage field number. NAME-FREE (ADR-031):
 	// the constraint name (field 2) is no longer read — a composite
 	// constraint is identified solely by its field_ids tuple.
 	uniqueConstraintFieldsField = 1 // repeated string fields = 1
+)
+
+// EdgeOpts extension field numbers consumed by the extractor.
+const (
+	edgeOptsUniquePerFromField = 4  // bool unique_per_from = 4
+	edgeOptsDataPolicyField    = 5  // DataPolicy data_policy = 5 (enum varint)
+	edgeOptsOnSubjectExitField = 6  // SubjectExitPolicy on_subject_exit = 6 (enum varint)
+	edgeOptsDescriptionField   = 9  // string description = 9
+	edgeOptsDeprecatedField    = 10 // bool deprecated = 10
 )
 
 // ExtractSchemaJSON reads an EntDB schema out of a compiled
@@ -319,8 +337,13 @@ type fieldOptsRaw struct {
 	searchable   bool
 	indexed      bool
 	unique       bool
+	pii          bool
+	deprecated   bool
 	enumValues   string
 	kindOverride string
+	description  string
+	refTypeID    int32 // 0 means unset (proto3 default)
+	hasRefType   bool  // explicit presence (any non-default decode counts)
 }
 
 func readFieldOpts(fd protoreflect.FieldDescriptor) fieldOptsRaw {
@@ -346,8 +369,18 @@ func readFieldOpts(fd protoreflect.FieldDescriptor) fieldOptsRaw {
 	if v, ok := findVarint(inner, uint64(fieldOptsIndexedField)); ok {
 		out.indexed = v != 0
 	}
+	if v, ok := findVarint(inner, uint64(fieldOptsPIIField)); ok {
+		out.pii = v != 0
+	}
+	if v, ok := findVarint(inner, uint64(fieldOptsDeprecatedField)); ok {
+		out.deprecated = v != 0
+	}
 	if v, ok := findVarint(inner, uint64(fieldOptsUniqueField)); ok {
 		out.unique = v != 0
+	}
+	if v, ok := findVarint(inner, uint64(fieldOptsRefTypeIDField)); ok {
+		out.refTypeID = int32(v)
+		out.hasRefType = v != 0
 	}
 	if s, ok := findString(inner, uint64(fieldOptsEnumValuesField)); ok {
 		out.enumValues = s
@@ -355,7 +388,140 @@ func readFieldOpts(fd protoreflect.FieldDescriptor) fieldOptsRaw {
 	if s, ok := findString(inner, uint64(fieldOptsKindOverrideField)); ok {
 		out.kindOverride = s
 	}
+	if s, ok := findString(inner, uint64(fieldOptsDescriptionField)); ok {
+		out.description = s
+	}
 	return out
+}
+
+// nodeOptsRaw mirrors the NodeOpts attributes the SchemaNodeTypeDef
+// descriptor needs to carry on the wire. ADR-031: name-free; the
+// subject_field name from the proto is RESOLVED to its numeric field_id
+// in nodeDescriptorFor (this struct only holds the unresolved name).
+type nodeOptsRaw struct {
+	deprecated   bool
+	dataPolicy   int32  // enum varint (0 = PERSONAL = unset on the wire)
+	hasDataPol   bool
+	subjectField string // proto field NAME, resolved to field_id by the caller
+	legalBasis   string
+	description  string
+}
+
+func readNodeOpts(md protoreflect.MessageDescriptor) nodeOptsRaw {
+	out := nodeOptsRaw{}
+	opts := md.Options()
+	if opts == nil {
+		return out
+	}
+	raw, err := proto.Marshal(opts)
+	if err != nil {
+		return out
+	}
+	inner, ok := findLengthDelimited(raw, uint64(extNodeOpts))
+	if !ok {
+		return out
+	}
+	if v, ok := findVarint(inner, uint64(nodeOptsDeprecatedField)); ok {
+		out.deprecated = v != 0
+	}
+	if v, ok := findVarint(inner, uint64(nodeOptsDataPolicyField)); ok {
+		out.dataPolicy = int32(v)
+		out.hasDataPol = v != 0 // PERSONAL (0) is the default and is omitted on the wire
+	}
+	if s, ok := findString(inner, uint64(nodeOptsSubjectFieldField)); ok {
+		out.subjectField = s
+	}
+	if s, ok := findString(inner, uint64(nodeOptsLegalBasisField)); ok {
+		out.legalBasis = s
+	}
+	if s, ok := findString(inner, uint64(nodeOptsDescriptionField)); ok {
+		out.description = s
+	}
+	return out
+}
+
+// edgeOptsRaw mirrors EdgeOpts attributes the SchemaEdgeTypeDef
+// descriptor needs to carry on the wire. NB: from_type_id / to_type_id
+// are NOT in EdgeOpts — they are derived from the proto's `from` / `to`
+// fields' message types; that derivation is tracked separately.
+type edgeOptsRaw struct {
+	uniquePerFrom bool
+	dataPolicy    int32 // enum varint (0 = PERSONAL = unset on the wire)
+	hasDataPol    bool
+	onSubjectExit int32 // enum varint (0 = BOTH default)
+	hasExit       bool  // any non-default decode emits the wire string
+	description   string
+	deprecated    bool
+}
+
+func readEdgeOpts(md protoreflect.MessageDescriptor) edgeOptsRaw {
+	out := edgeOptsRaw{}
+	opts := md.Options()
+	if opts == nil {
+		return out
+	}
+	raw, err := proto.Marshal(opts)
+	if err != nil {
+		return out
+	}
+	inner, ok := findLengthDelimited(raw, uint64(extEdgeOpts))
+	if !ok {
+		return out
+	}
+	if v, ok := findVarint(inner, uint64(edgeOptsUniquePerFromField)); ok {
+		out.uniquePerFrom = v != 0
+	}
+	if v, ok := findVarint(inner, uint64(edgeOptsDataPolicyField)); ok {
+		out.dataPolicy = int32(v)
+		out.hasDataPol = v != 0
+	}
+	if v, ok := findVarint(inner, uint64(edgeOptsOnSubjectExitField)); ok {
+		out.onSubjectExit = int32(v)
+		out.hasExit = true // BOTH (0) is the default but on_subject_exit is always emitted on the wire
+	}
+	if v, ok := findVarint(inner, uint64(edgeOptsDeprecatedField)); ok {
+		out.deprecated = v != 0
+	}
+	if s, ok := findString(inner, uint64(edgeOptsDescriptionField)); ok {
+		out.description = s
+	}
+	return out
+}
+
+// dataPolicyName maps a DataPolicy enum varint to its lowercase wire
+// string. Returns "" for PERSONAL (0, the default — omitted on the wire,
+// matching Python's _node_type_to_proto / _edge_type_to_proto).
+func dataPolicyName(v int32) string {
+	switch v {
+	case 0:
+		return "" // PERSONAL — default; omitted
+	case 1:
+		return "business"
+	case 2:
+		return "financial"
+	case 3:
+		return "audit"
+	case 4:
+		return "ephemeral"
+	case 5:
+		return "healthcare"
+	default:
+		return ""
+	}
+}
+
+// subjectExitName maps a SubjectExitPolicy enum varint to its lowercase
+// wire string. on_subject_exit is ALWAYS emitted (the schema JSON
+// contract requires the key), defaulting to "both".
+func subjectExitName(v int32) string {
+	switch v {
+	case 1:
+		return "from"
+	case 2:
+		return "to"
+	default:
+		return "both"
+	}
 }
 
 // fieldKindFor maps a proto field type to the EntDB “kind“ string
