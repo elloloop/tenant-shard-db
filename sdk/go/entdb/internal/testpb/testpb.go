@@ -43,6 +43,46 @@ var PurchaseEdgeDesc protoreflect.MessageDescriptor
 // used by negative tests.
 var NotAnEntityDesc protoreflect.MessageDescriptor
 
+// RichDocDesc is a node type exercising EVERY FieldOpts + NodeOpts
+// attribute the wire SchemaFieldDef / SchemaNodeTypeDef carries. It is
+// the regression fixture for the gap discovered in issue #604 (and the
+// 8 similar omissions the same diff fixes): without it the Go SDK's
+// auto-attach silently drops ref_type_id, pii, deprecated, description,
+// data_policy, subject_field, legal_basis (per node), etc.
+//
+//	message RichDoc {
+//	    option (entdb.node) = {
+//	        type_id: 401,
+//	        data_policy: DATA_POLICY_BUSINESS,
+//	        subject_field: "owner_id",
+//	        legal_basis: "user-consent",
+//	        description: "Rich doc; all NodeOpts attributes",
+//	        deprecated: true,
+//	    };
+//	    string title        = 1 [(entdb.field).description = "the title"];
+//	    string body         = 2;
+//	    string owner_id     = 3 [(entdb.field) = { kind: "ref", ref_type_id: 201 }];
+//	    string author_email = 4 [(entdb.field) = { pii: true, deprecated: true, description: "scrub on anonymise" }];
+//	}
+var RichDocDesc protoreflect.MessageDescriptor
+
+// RichEdgeDesc is an edge type exercising EVERY EdgeOpts attribute the
+// wire SchemaEdgeTypeDef carries (excluding from_type_id/to_type_id,
+// which are derived from the proto's from/to field types — a separate
+// fix tracked outside this regression set).
+//
+//	message RichEdge {
+//	    option (entdb.edge) = {
+//	        edge_id: 501,
+//	        unique_per_from: true,
+//	        data_policy: DATA_POLICY_AUDIT,
+//	        on_subject_exit: SUBJECT_EXIT_TO,
+//	        description: "Rich edge; all EdgeOpts attributes",
+//	        deprecated: true,
+//	    };
+//	}
+var RichEdgeDesc protoreflect.MessageDescriptor
+
 // OAuthIdentityDesc is a node type carrying a composite unique
 // constraint (ADR-030 / issue #566):
 //
@@ -63,7 +103,10 @@ func init() {
 	PurchaseEdgeDesc = fd.Messages().ByName("PurchaseEdge")
 	NotAnEntityDesc = fd.Messages().ByName("NotAnEntity")
 	OAuthIdentityDesc = fd.Messages().ByName("OAuthIdentity")
-	if ProductDesc == nil || PurchaseEdgeDesc == nil || NotAnEntityDesc == nil || OAuthIdentityDesc == nil {
+	RichDocDesc = fd.Messages().ByName("RichDoc")
+	RichEdgeDesc = fd.Messages().ByName("RichEdge")
+	if ProductDesc == nil || PurchaseEdgeDesc == nil || NotAnEntityDesc == nil ||
+		OAuthIdentityDesc == nil || RichDocDesc == nil || RichEdgeDesc == nil {
 		panic("testpb: missing test message descriptors")
 	}
 }
@@ -200,6 +243,60 @@ func (n *NotAnEntity) Reset() { *n = NotAnEntity{msg: dynamicpb.NewMessage(NotAn
 
 // String implements proto.Message.
 func (n *NotAnEntity) String() string { return "" }
+
+// RichDoc is a concrete proto.Message wrapper around RichDocDesc — used
+// by the regression test set covering #604 (ref_type_id) and every
+// adjacent FieldOpts / NodeOpts attribute the Go SDK had been silently
+// dropping (pii, deprecated, description, data_policy, subject_field,
+// legal_basis).
+type RichDoc struct {
+	msg *dynamicpb.Message
+}
+
+// NewRichDocMsg returns a fresh writable *RichDoc.
+func NewRichDocMsg() *RichDoc {
+	return &RichDoc{msg: dynamicpb.NewMessage(RichDocDesc)}
+}
+
+// ProtoReflect implements proto.Message.
+func (r *RichDoc) ProtoReflect() protoreflect.Message {
+	if r == nil || r.msg == nil {
+		return dynamicpb.NewMessage(RichDocDesc).ProtoReflect()
+	}
+	return r.msg.ProtoReflect()
+}
+
+// Reset implements proto.Message.
+func (r *RichDoc) Reset() { *r = RichDoc{msg: dynamicpb.NewMessage(RichDocDesc)} }
+
+// String implements proto.Message.
+func (r *RichDoc) String() string { return "" }
+
+// RichEdge is the edge-side regression fixture covering EdgeOpts
+// attributes (unique_per_from, on_subject_exit, data_policy,
+// deprecated, description) that the Go SDK had been hardcoding away.
+type RichEdge struct {
+	msg *dynamicpb.Message
+}
+
+// NewRichEdgeMsg returns a fresh writable *RichEdge.
+func NewRichEdgeMsg() *RichEdge {
+	return &RichEdge{msg: dynamicpb.NewMessage(RichEdgeDesc)}
+}
+
+// ProtoReflect implements proto.Message.
+func (e *RichEdge) ProtoReflect() protoreflect.Message {
+	if e == nil || e.msg == nil {
+		return dynamicpb.NewMessage(RichEdgeDesc).ProtoReflect()
+	}
+	return e.msg.ProtoReflect()
+}
+
+// Reset implements proto.Message.
+func (e *RichEdge) Reset() { *e = RichEdge{msg: dynamicpb.NewMessage(RichEdgeDesc)} }
+
+// String implements proto.Message.
+func (e *RichEdge) String() string { return "" }
 
 // SetProductFields populates the sku / name / price_cents fields on
 // a Product dynamic message.
@@ -351,11 +448,114 @@ func buildFile() protoreflect.FileDescriptor {
 		},
 	}
 
+	// RichDoc — node type that exercises every FieldOpts + NodeOpts
+	// attribute the wire SchemaFieldDef / SchemaNodeTypeDef carries.
+	// Regression fixture for #604 (ref_type_id) plus pii / deprecated /
+	// description per field, and data_policy / subject_field /
+	// legal_basis / deprecated / description per node.
+	//
+	// NodeOpts wire encoding: type_id=401 (field 1, varint),
+	// data_policy=BUSINESS (field 6 = 1), subject_field="owner_id"
+	// (field 7), legal_basis="user-consent" (field 9),
+	// description="Rich doc; all NodeOpts attributes" (field 10),
+	// deprecated=true (field 11 = 1).
+	richDocNodeOpts := encodeVarintField(1, 401)
+	richDocNodeOpts = append(richDocNodeOpts, encodeVarintField(6, 1)...)
+	richDocNodeOpts = append(richDocNodeOpts, encodeStringField(7, "owner_id")...)
+	richDocNodeOpts = append(richDocNodeOpts, encodeStringField(9, "user-consent")...)
+	richDocNodeOpts = append(richDocNodeOpts, encodeStringField(10, "Rich doc; all NodeOpts attributes")...)
+	richDocNodeOpts = append(richDocNodeOpts, encodeVarintField(11, 1)...)
+	richDocOptsRaw := encodeLengthDelimitedField(50100, richDocNodeOpts)
+	richDocOpts := &descriptorpb.MessageOptions{}
+	richDocOpts.ProtoReflect().SetUnknown(protoreflect.RawFields(richDocOptsRaw))
+
+	// title field: (entdb.field).description = "the title"
+	titleFieldOpts := &descriptorpb.FieldOptions{}
+	titleFieldOpts.ProtoReflect().SetUnknown(protoreflect.RawFields(
+		encodeLengthDelimitedField(50102, encodeStringField(10, "the title")),
+	))
+
+	// owner_id field: (entdb.field) = { kind: "ref", ref_type_id: 201 }
+	ownerInner := append(
+		encodeStringField(7, "ref"),
+		encodeVarintField(8, 201)...,
+	)
+	ownerFieldOpts := &descriptorpb.FieldOptions{}
+	ownerFieldOpts.ProtoReflect().SetUnknown(protoreflect.RawFields(
+		encodeLengthDelimitedField(50102, ownerInner),
+	))
+
+	// author_email field: pii=true, deprecated=true, description=...
+	authorInner := encodeVarintField(4, 1)                                       // pii
+	authorInner = append(authorInner, encodeStringField(10, "scrub on anonymise")...) // description
+	authorInner = append(authorInner, encodeVarintField(11, 1)...)               // deprecated
+	authorFieldOpts := &descriptorpb.FieldOptions{}
+	authorFieldOpts.ProtoReflect().SetUnknown(protoreflect.RawFields(
+		encodeLengthDelimitedField(50102, authorInner),
+	))
+
+	richDocMsg := &descriptorpb.DescriptorProto{
+		Name:    proto.String("RichDoc"),
+		Options: richDocOpts,
+		Field: []*descriptorpb.FieldDescriptorProto{
+			{
+				Name:     proto.String("title"),
+				Number:   proto.Int32(1),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				JsonName: proto.String("title"),
+				Options:  titleFieldOpts,
+			},
+			{
+				Name:     proto.String("body"),
+				Number:   proto.Int32(2),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				JsonName: proto.String("body"),
+			},
+			{
+				Name:     proto.String("owner_id"),
+				Number:   proto.Int32(3),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				JsonName: proto.String("ownerId"),
+				Options:  ownerFieldOpts,
+			},
+			{
+				Name:     proto.String("author_email"),
+				Number:   proto.Int32(4),
+				Type:     descriptorpb.FieldDescriptorProto_TYPE_STRING.Enum(),
+				Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
+				JsonName: proto.String("authorEmail"),
+				Options:  authorFieldOpts,
+			},
+		},
+	}
+
+	// RichEdge — exercises every EdgeOpts attribute. EdgeOpts wire:
+	// edge_id=501 (field 1), unique_per_from=true (field 4 = 1),
+	// data_policy=AUDIT (field 5 = 3), on_subject_exit=TO (field 6 = 2),
+	// description=... (field 9), deprecated=true (field 10 = 1).
+	richEdgeOptsInner := encodeVarintField(1, 501)
+	richEdgeOptsInner = append(richEdgeOptsInner, encodeVarintField(4, 1)...)
+	richEdgeOptsInner = append(richEdgeOptsInner, encodeVarintField(5, 3)...)
+	richEdgeOptsInner = append(richEdgeOptsInner, encodeVarintField(6, 2)...)
+	richEdgeOptsInner = append(richEdgeOptsInner, encodeStringField(9, "Rich edge; all EdgeOpts attributes")...)
+	richEdgeOptsInner = append(richEdgeOptsInner, encodeVarintField(10, 1)...)
+	richEdgeOptsRaw := encodeLengthDelimitedField(50101, richEdgeOptsInner)
+	richEdgeOpts := &descriptorpb.MessageOptions{}
+	richEdgeOpts.ProtoReflect().SetUnknown(protoreflect.RawFields(richEdgeOptsRaw))
+
+	richEdgeMsg := &descriptorpb.DescriptorProto{
+		Name:    proto.String("RichEdge"),
+		Options: richEdgeOpts,
+	}
+
 	fdp := &descriptorpb.FileDescriptorProto{
 		Name:        proto.String(name),
 		Package:     proto.String(pkg),
 		Syntax:      proto.String(syntax),
-		MessageType: []*descriptorpb.DescriptorProto{productMsg, edgeMsg, oauthMsg, notEntityMsg},
+		MessageType: []*descriptorpb.DescriptorProto{productMsg, edgeMsg, oauthMsg, notEntityMsg, richDocMsg, richEdgeMsg},
 	}
 
 	fd, err := protodesc.NewFile(fdp, nil)

@@ -65,9 +65,9 @@ func TestExtractSchemaJSON_ExtractsNodesAndEdgesFromTestPB(t *testing.T) {
 	schema := env["schema"].(map[string]any)
 
 	nodes := schema["node_types"].([]any)
-	// Product (201) + OAuthIdentity (202).
-	if len(nodes) != 2 {
-		t.Fatalf("want 2 nodes, got %d", len(nodes))
+	// Product (201) + OAuthIdentity (202) + RichDoc (401).
+	if len(nodes) != 3 {
+		t.Fatalf("want 3 nodes, got %d", len(nodes))
 	}
 	prod := nodes[0].(map[string]any) // sorted by type_id, Product (201) first
 	// NAME-FREE (ADR-031): no type name is emitted — identity is type_id.
@@ -83,20 +83,21 @@ func TestExtractSchemaJSON_ExtractsNodesAndEdgesFromTestPB(t *testing.T) {
 	for _, n := range nodes {
 		ids[int(n.(map[string]any)["type_id"].(float64))] = true
 	}
-	if !ids[201] || !ids[202] {
-		t.Errorf("want type_ids {201,202}, got %v", ids)
+	if !ids[201] || !ids[202] || !ids[401] {
+		t.Errorf("want type_ids {201,202,401}, got %v", ids)
 	}
 
 	edges := schema["edge_types"].([]any)
-	if len(edges) != 1 {
-		t.Fatalf("want 1 edge, got %d", len(edges))
+	// PurchaseEdge (301) + RichEdge (501).
+	if len(edges) != 2 {
+		t.Fatalf("want 2 edges, got %d", len(edges))
 	}
 	edge := edges[0].(map[string]any)
 	if _, ok := edge["name"]; ok {
 		t.Errorf("edge carried a name key; ADR-031 schema JSON is name-free")
 	}
 	if int(edge["edge_id"].(float64)) != 301 {
-		t.Errorf("edge_id = %v, want 301", edge["edge_id"])
+		t.Errorf("edge_id = %v, want 301 (first sorted by edge_id)", edge["edge_id"])
 	}
 }
 
@@ -248,14 +249,15 @@ func TestExtractSchemaJSON_HandlesMultipleFilesInSet(t *testing.T) {
 	// output (the SDK doesn't deduplicate; that's the customer's
 	// problem if their proto packages collide). What we verify here is
 	// that walking ranges over BOTH files rather than stopping at the
-	// first. Each file carries two node types (Product + OAuthIdentity)
-	// and one edge type (PurchaseEdge).
+	// first. Each file carries three node types (Product +
+	// OAuthIdentity + RichDoc) and two edge types (PurchaseEdge +
+	// RichEdge).
 	nodes := env["schema"].(map[string]any)["node_types"].([]any)
 	edges := env["schema"].(map[string]any)["edge_types"].([]any)
-	if len(nodes) != 4 {
-		t.Errorf("want 4 nodes (two per file), got %d", len(nodes))
+	if len(nodes) != 6 {
+		t.Errorf("want 6 nodes (three per file), got %d", len(nodes))
 	}
-	if len(edges) != 2 {
-		t.Errorf("want 2 edges (one per file), got %d", len(edges))
+	if len(edges) != 4 {
+		t.Errorf("want 4 edges (two per file), got %d", len(edges))
 	}
 }
