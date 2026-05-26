@@ -1,4 +1,4 @@
-module github.com/elloloop/tenant-shard-db/sdk/go/entdb
+module github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2
 
 go 1.25.0
 

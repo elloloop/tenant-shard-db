@@ -12,7 +12,7 @@
 //   ✗ DO NOT treat the wire format as a public contract. RPCs, fields, and
 //     semantics may change without notice between releases.
 //
-//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb
+//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2
 //   ✓ Use the Python SDK: pip install entdb-sdk
 //
 // If your language isn't supported, file an issue — don't reach for the
@@ -390,6 +390,30 @@ export class ExecuteAtomicRequest extends Message<ExecuteAtomicRequest> {
    */
   waitTimeoutMs = 0;
 
+  /**
+   * Self-describing write carrier (SELF-DESCRIBING WRITES).
+   *
+   * The client SDK already knows its schema (client-side registry from
+   * register_proto_schema). When the client's ``schema_fingerprint``
+   * (field 3) differs from the server's current registry fingerprint,
+   * the SDK rides the definitions of the node/edge types this write
+   * touches inside ``schema``. The server materializes them into a
+   * leading WAL schema op (applied BEFORE the data ops, in the SAME
+   * transaction) so replaying the log deterministically rebuilds the
+   * registry + per-tenant indexes.
+   *
+   * Steady state (fingerprints match) carries nothing extra: the SDK
+   * omits this field.
+   *
+   * Conflict policy (establish-or-reject): a type absent from the
+   * server registry is registered; a type present and byte-identical is
+   * a no-op; a type present but DIFFERENT is rejected. Online
+   * evolution / ALTER is out of scope.
+   *
+   * @generated from field: optional entdb.v1.SchemaDescriptor schema = 7;
+   */
+  schema?: SchemaDescriptor;
+
   constructor(data?: PartialMessage<ExecuteAtomicRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -404,6 +428,7 @@ export class ExecuteAtomicRequest extends Message<ExecuteAtomicRequest> {
     { no: 4, name: "operations", kind: "message", T: Operation, repeated: true },
     { no: 5, name: "wait_applied", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
     { no: 6, name: "wait_timeout_ms", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 7, name: "schema", kind: "message", T: SchemaDescriptor, opt: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ExecuteAtomicRequest {
@@ -420,6 +445,396 @@ export class ExecuteAtomicRequest extends Message<ExecuteAtomicRequest> {
 
   static equals(a: ExecuteAtomicRequest | PlainMessage<ExecuteAtomicRequest> | undefined, b: ExecuteAtomicRequest | PlainMessage<ExecuteAtomicRequest> | undefined): boolean {
     return proto3.util.equals(ExecuteAtomicRequest, a, b);
+  }
+}
+
+/**
+ * SchemaDescriptor carries a set of node/edge type definitions on the
+ * wire so a write can be self-describing. It mirrors the cross-language
+ * schema JSON contract (server/go/internal/schema/types.go) field-for-
+ * field; the proto field NUMBERS here are wire ids, NOT the schema
+ * ``field_id`` values (those live in SchemaFieldDef.field_id).
+ *
+ * NAME-FREE (ADR-031): types are identified by type_id / edge_id and
+ * fields by field_id only. No field name, type name, or constraint name
+ * is carried on the wire — names live only in the client's proto and are
+ * resolved by the SDK. The ``name`` field numbers are RESERVED so they
+ * are never reused.
+ *
+ * @generated from message entdb.v1.SchemaDescriptor
+ */
+export class SchemaDescriptor extends Message<SchemaDescriptor> {
+  /**
+   * @generated from field: repeated entdb.v1.SchemaNodeTypeDef node_types = 1;
+   */
+  nodeTypes: SchemaNodeTypeDef[] = [];
+
+  /**
+   * @generated from field: repeated entdb.v1.SchemaEdgeTypeDef edge_types = 2;
+   */
+  edgeTypes: SchemaEdgeTypeDef[] = [];
+
+  constructor(data?: PartialMessage<SchemaDescriptor>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.SchemaDescriptor";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "node_types", kind: "message", T: SchemaNodeTypeDef, repeated: true },
+    { no: 2, name: "edge_types", kind: "message", T: SchemaEdgeTypeDef, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SchemaDescriptor {
+    return new SchemaDescriptor().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SchemaDescriptor {
+    return new SchemaDescriptor().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SchemaDescriptor {
+    return new SchemaDescriptor().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SchemaDescriptor | PlainMessage<SchemaDescriptor> | undefined, b: SchemaDescriptor | PlainMessage<SchemaDescriptor> | undefined): boolean {
+    return proto3.util.equals(SchemaDescriptor, a, b);
+  }
+}
+
+/**
+ * SchemaFieldDef mirrors schema.FieldDef. ``field_id`` is the stable
+ * on-disk/wire field id (the proto field number of the user's own
+ * message per ADR-018), NOT this message's field numbers. Name-free
+ * (ADR-031): no field name is carried.
+ *
+ * @generated from message entdb.v1.SchemaFieldDef
+ */
+export class SchemaFieldDef extends Message<SchemaFieldDef> {
+  /**
+   * @generated from field: uint32 field_id = 1;
+   */
+  fieldId = 0;
+
+  /**
+   * kind is the schema.FieldKind wire string: str / int / float / bool
+   * / timestamp / json / bytes / enum / ref / list_str / list_int /
+   * list_ref.
+   *
+   * @generated from field: string kind = 3;
+   */
+  kind = "";
+
+  /**
+   * @generated from field: bool required = 4;
+   */
+  required = false;
+
+  /**
+   * @generated from field: repeated string enum_values = 5;
+   */
+  enumValues: string[] = [];
+
+  /**
+   * ref_type_id is required when kind == "ref"; absent otherwise.
+   *
+   * @generated from field: optional int32 ref_type_id = 6;
+   */
+  refTypeId?: number;
+
+  /**
+   * @generated from field: bool indexed = 7;
+   */
+  indexed = false;
+
+  /**
+   * @generated from field: bool searchable = 8;
+   */
+  searchable = false;
+
+  /**
+   * @generated from field: bool deprecated = 9;
+   */
+  deprecated = false;
+
+  /**
+   * @generated from field: string description = 10;
+   */
+  description = "";
+
+  /**
+   * @generated from field: bool pii = 11;
+   */
+  pii = false;
+
+  /**
+   * @generated from field: bool unique = 12;
+   */
+  unique = false;
+
+  constructor(data?: PartialMessage<SchemaFieldDef>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.SchemaFieldDef";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "field_id", kind: "scalar", T: 13 /* ScalarType.UINT32 */ },
+    { no: 3, name: "kind", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 4, name: "required", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 5, name: "enum_values", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
+    { no: 6, name: "ref_type_id", kind: "scalar", T: 5 /* ScalarType.INT32 */, opt: true },
+    { no: 7, name: "indexed", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 8, name: "searchable", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 9, name: "deprecated", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 10, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 11, name: "pii", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 12, name: "unique", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SchemaFieldDef {
+    return new SchemaFieldDef().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SchemaFieldDef {
+    return new SchemaFieldDef().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SchemaFieldDef {
+    return new SchemaFieldDef().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SchemaFieldDef | PlainMessage<SchemaFieldDef> | undefined, b: SchemaFieldDef | PlainMessage<SchemaFieldDef> | undefined): boolean {
+    return proto3.util.equals(SchemaFieldDef, a, b);
+  }
+}
+
+/**
+ * SchemaCompositeUniqueDef mirrors schema.CompositeUniqueDef. Name-free
+ * (ADR-031): a composite constraint is identified solely by its
+ * field_ids tuple; no constraint name is carried.
+ *
+ * @generated from message entdb.v1.SchemaCompositeUniqueDef
+ */
+export class SchemaCompositeUniqueDef extends Message<SchemaCompositeUniqueDef> {
+  /**
+   * @generated from field: repeated uint32 field_ids = 2;
+   */
+  fieldIds: number[] = [];
+
+  constructor(data?: PartialMessage<SchemaCompositeUniqueDef>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.SchemaCompositeUniqueDef";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 2, name: "field_ids", kind: "scalar", T: 13 /* ScalarType.UINT32 */, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SchemaCompositeUniqueDef {
+    return new SchemaCompositeUniqueDef().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SchemaCompositeUniqueDef {
+    return new SchemaCompositeUniqueDef().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SchemaCompositeUniqueDef {
+    return new SchemaCompositeUniqueDef().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SchemaCompositeUniqueDef | PlainMessage<SchemaCompositeUniqueDef> | undefined, b: SchemaCompositeUniqueDef | PlainMessage<SchemaCompositeUniqueDef> | undefined): boolean {
+    return proto3.util.equals(SchemaCompositeUniqueDef, a, b);
+  }
+}
+
+/**
+ * SchemaNodeTypeDef mirrors schema.NodeTypeDef. Only the fields the
+ * server needs to enforce uniqueness / indexes / search / validation are
+ * carried; GDPR/ACL policy metadata can be added later without breaking
+ * the wire (additive field numbers). Name-free (ADR-031): identified by
+ * type_id only.
+ *
+ * @generated from message entdb.v1.SchemaNodeTypeDef
+ */
+export class SchemaNodeTypeDef extends Message<SchemaNodeTypeDef> {
+  /**
+   * @generated from field: int32 type_id = 1;
+   */
+  typeId = 0;
+
+  /**
+   * @generated from field: repeated entdb.v1.SchemaFieldDef fields = 3;
+   */
+  fields: SchemaFieldDef[] = [];
+
+  /**
+   * @generated from field: bool deprecated = 4;
+   */
+  deprecated = false;
+
+  /**
+   * @generated from field: string description = 5;
+   */
+  description = "";
+
+  /**
+   * data_policy is the schema.DataPolicy wire string (personal /
+   * business / financial / audit / ephemeral / healthcare); empty
+   * means unset.
+   *
+   * @generated from field: string data_policy = 6;
+   */
+  dataPolicy = "";
+
+  /**
+   * subject_field is the optional GDPR subject field_id (ADR-031:
+   * name-free); legal_basis is optional GDPR metadata. Absent means
+   * unset.
+   *
+   * @generated from field: optional uint32 subject_field = 7;
+   */
+  subjectField?: number;
+
+  /**
+   * @generated from field: optional string legal_basis = 8;
+   */
+  legalBasis?: string;
+
+  /**
+   * @generated from field: repeated entdb.v1.SchemaCompositeUniqueDef composite_unique = 9;
+   */
+  compositeUnique: SchemaCompositeUniqueDef[] = [];
+
+  constructor(data?: PartialMessage<SchemaNodeTypeDef>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.SchemaNodeTypeDef";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "type_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 3, name: "fields", kind: "message", T: SchemaFieldDef, repeated: true },
+    { no: 4, name: "deprecated", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 5, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 6, name: "data_policy", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 7, name: "subject_field", kind: "scalar", T: 13 /* ScalarType.UINT32 */, opt: true },
+    { no: 8, name: "legal_basis", kind: "scalar", T: 9 /* ScalarType.STRING */, opt: true },
+    { no: 9, name: "composite_unique", kind: "message", T: SchemaCompositeUniqueDef, repeated: true },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SchemaNodeTypeDef {
+    return new SchemaNodeTypeDef().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SchemaNodeTypeDef {
+    return new SchemaNodeTypeDef().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SchemaNodeTypeDef {
+    return new SchemaNodeTypeDef().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SchemaNodeTypeDef | PlainMessage<SchemaNodeTypeDef> | undefined, b: SchemaNodeTypeDef | PlainMessage<SchemaNodeTypeDef> | undefined): boolean {
+    return proto3.util.equals(SchemaNodeTypeDef, a, b);
+  }
+}
+
+/**
+ * SchemaEdgeTypeDef mirrors schema.EdgeTypeDef. Name-free (ADR-031):
+ * identified by edge_id only.
+ *
+ * @generated from message entdb.v1.SchemaEdgeTypeDef
+ */
+export class SchemaEdgeTypeDef extends Message<SchemaEdgeTypeDef> {
+  /**
+   * @generated from field: int32 edge_id = 1;
+   */
+  edgeId = 0;
+
+  /**
+   * @generated from field: int32 from_type_id = 3;
+   */
+  fromTypeId = 0;
+
+  /**
+   * @generated from field: int32 to_type_id = 4;
+   */
+  toTypeId = 0;
+
+  /**
+   * @generated from field: repeated entdb.v1.SchemaFieldDef props = 5;
+   */
+  props: SchemaFieldDef[] = [];
+
+  /**
+   * @generated from field: bool unique_per_from = 6;
+   */
+  uniquePerFrom = false;
+
+  /**
+   * @generated from field: bool deprecated = 7;
+   */
+  deprecated = false;
+
+  /**
+   * @generated from field: string description = 8;
+   */
+  description = "";
+
+  /**
+   * data_policy wire string; empty means unset.
+   *
+   * @generated from field: string data_policy = 9;
+   */
+  dataPolicy = "";
+
+  /**
+   * on_subject_exit is the schema.OnSubjectExit wire string
+   * (from / to / both); empty defaults to "both".
+   *
+   * @generated from field: string on_subject_exit = 10;
+   */
+  onSubjectExit = "";
+
+  constructor(data?: PartialMessage<SchemaEdgeTypeDef>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.SchemaEdgeTypeDef";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "edge_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 3, name: "from_type_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 4, name: "to_type_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 5, name: "props", kind: "message", T: SchemaFieldDef, repeated: true },
+    { no: 6, name: "unique_per_from", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 7, name: "deprecated", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 8, name: "description", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 9, name: "data_policy", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 10, name: "on_subject_exit", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SchemaEdgeTypeDef {
+    return new SchemaEdgeTypeDef().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): SchemaEdgeTypeDef {
+    return new SchemaEdgeTypeDef().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): SchemaEdgeTypeDef {
+    return new SchemaEdgeTypeDef().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: SchemaEdgeTypeDef | PlainMessage<SchemaEdgeTypeDef> | undefined, b: SchemaEdgeTypeDef | PlainMessage<SchemaEdgeTypeDef> | undefined): boolean {
+    return proto3.util.equals(SchemaEdgeTypeDef, a, b);
   }
 }
 
@@ -460,6 +875,12 @@ export class Operation extends Message<Operation> {
      */
     value: DeleteEdgeOp;
     case: "deleteEdge";
+  } | {
+    /**
+     * @generated from field: entdb.v1.DeleteWhereOp delete_where = 6;
+     */
+    value: DeleteWhereOp;
+    case: "deleteWhere";
   } | { case: undefined; value?: undefined } = { case: undefined };
 
   constructor(data?: PartialMessage<Operation>) {
@@ -475,6 +896,7 @@ export class Operation extends Message<Operation> {
     { no: 3, name: "delete_node", kind: "message", T: DeleteNodeOp, oneof: "op" },
     { no: 4, name: "create_edge", kind: "message", T: CreateEdgeOp, oneof: "op" },
     { no: 5, name: "delete_edge", kind: "message", T: DeleteEdgeOp, oneof: "op" },
+    { no: 6, name: "delete_where", kind: "message", T: DeleteWhereOp, oneof: "op" },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Operation {
@@ -491,6 +913,101 @@ export class Operation extends Message<Operation> {
 
   static equals(a: Operation | PlainMessage<Operation> | undefined, b: Operation | PlainMessage<Operation> | undefined): boolean {
     return proto3.util.equals(Operation, a, b);
+  }
+}
+
+/**
+ * EntValue is the typed, lossless carrier for a single payload field
+ * value (ADR-028). It replaces google.protobuf.Struct's IEEE-754
+ * double-backed numbers so INTEGER / TIMESTAMP fields preserve the full
+ * int64 range. Absence of `v` denotes an explicit null.
+ *
+ * @generated from message entdb.v1.EntValue
+ */
+export class EntValue extends Message<EntValue> {
+  /**
+   * @generated from oneof entdb.v1.EntValue.v
+   */
+  v: {
+    /**
+     * INTEGER / TIMESTAMP — lossless
+     *
+     * @generated from field: int64 int_value = 1;
+     */
+    value: bigint;
+    case: "intValue";
+  } | {
+    /**
+     * DOUBLE
+     *
+     * @generated from field: double double_value = 2;
+     */
+    value: number;
+    case: "doubleValue";
+  } | {
+    /**
+     * BOOLEAN
+     *
+     * @generated from field: bool bool_value = 3;
+     */
+    value: boolean;
+    case: "boolValue";
+  } | {
+    /**
+     * STRING / ENUM
+     *
+     * @generated from field: string string_value = 4;
+     */
+    value: string;
+    case: "stringValue";
+  } | {
+    /**
+     * BYTES (no base64-in-a-string)
+     *
+     * @generated from field: bytes bytes_value = 5;
+     */
+    value: Uint8Array;
+    case: "bytesValue";
+  } | {
+    /**
+     * JSON (arbitrary, dynamically typed)
+     *
+     * @generated from field: google.protobuf.Value json_value = 6;
+     */
+    value: Value;
+    case: "jsonValue";
+  } | { case: undefined; value?: undefined } = { case: undefined };
+
+  constructor(data?: PartialMessage<EntValue>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.EntValue";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "int_value", kind: "scalar", T: 3 /* ScalarType.INT64 */, oneof: "v" },
+    { no: 2, name: "double_value", kind: "scalar", T: 1 /* ScalarType.DOUBLE */, oneof: "v" },
+    { no: 3, name: "bool_value", kind: "scalar", T: 8 /* ScalarType.BOOL */, oneof: "v" },
+    { no: 4, name: "string_value", kind: "scalar", T: 9 /* ScalarType.STRING */, oneof: "v" },
+    { no: 5, name: "bytes_value", kind: "scalar", T: 12 /* ScalarType.BYTES */, oneof: "v" },
+    { no: 6, name: "json_value", kind: "message", T: Value, oneof: "v" },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): EntValue {
+    return new EntValue().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): EntValue {
+    return new EntValue().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): EntValue {
+    return new EntValue().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: EntValue | PlainMessage<EntValue> | undefined, b: EntValue | PlainMessage<EntValue> | undefined): boolean {
+    return proto3.util.equals(EntValue, a, b);
   }
 }
 
@@ -557,6 +1074,15 @@ export class CreateNodeOp extends Message<CreateNodeOp> {
    */
   targetUserId = "";
 
+  /**
+   * Typed, lossless payload (ADR-028). Preferred over `data` when set;
+   * the server dual-reads (typed_data first, else `data`). Carries the
+   * full int64 range that the Struct `data` field cannot.
+   *
+   * @generated from field: map<uint32, entdb.v1.EntValue> typed_data = 12;
+   */
+  typedData: { [key: number]: EntValue } = {};
+
   constructor(data?: PartialMessage<CreateNodeOp>) {
     super();
     proto3.util.initPartial(data, this);
@@ -573,6 +1099,7 @@ export class CreateNodeOp extends Message<CreateNodeOp> {
     { no: 8, name: "acl", kind: "message", T: AclEntry, repeated: true },
     { no: 9, name: "storage_mode", kind: "enum", T: proto3.getEnumType(StorageMode) },
     { no: 10, name: "target_user_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 12, name: "typed_data", kind: "map", K: 13 /* ScalarType.UINT32 */, V: {kind: "message", T: EntValue} },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CreateNodeOp {
@@ -645,6 +1172,13 @@ export class UpdateNodeOp extends Message<UpdateNodeOp> {
    */
   precondition?: UpdateNodePrecondition;
 
+  /**
+   * Typed, lossless patch (ADR-028). Preferred over `patch` when set.
+   *
+   * @generated from field: map<uint32, entdb.v1.EntValue> typed_patch = 8;
+   */
+  typedPatch: { [key: number]: EntValue } = {};
+
   constructor(data?: PartialMessage<UpdateNodeOp>) {
     super();
     proto3.util.initPartial(data, this);
@@ -658,6 +1192,7 @@ export class UpdateNodeOp extends Message<UpdateNodeOp> {
     { no: 4, name: "field_mask", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
     { no: 5, name: "patch", kind: "message", T: Struct },
     { no: 7, name: "precondition", kind: "message", T: UpdateNodePrecondition },
+    { no: 8, name: "typed_patch", kind: "map", K: 13 /* ScalarType.UINT32 */, V: {kind: "message", T: EntValue} },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): UpdateNodeOp {
@@ -719,6 +1254,15 @@ export class UpdateNodePrecondition extends Message<UpdateNodePrecondition> {
    */
   fieldId = 0;
 
+  /**
+   * Typed, lossless expected value (ADR-028 / #572). Preferred over
+   * `equals` when set, so a CAS on an int64 >2^53 field compares the
+   * exact value instead of a float64-truncated one.
+   *
+   * @generated from field: entdb.v1.EntValue typed_equals = 4;
+   */
+  typedEquals?: EntValue;
+
   constructor(data?: PartialMessage<UpdateNodePrecondition>) {
     super();
     proto3.util.initPartial(data, this);
@@ -730,6 +1274,7 @@ export class UpdateNodePrecondition extends Message<UpdateNodePrecondition> {
     { no: 1, name: "field", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "equals", kind: "message", T: Value },
     { no: 3, name: "field_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 4, name: "typed_equals", kind: "message", T: EntValue },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): UpdateNodePrecondition {
@@ -797,6 +1342,90 @@ export class DeleteNodeOp extends Message<DeleteNodeOp> {
 }
 
 /**
+ * DeleteWhereOp is a single-RPC predicate-based sweeper: it deletes
+ * every node of ``type_id`` whose payload matches ALL of the ``where``
+ * predicates, inside one ``ExecuteAtomic`` op. It collapses the
+ * standard "QueryNodes to find ids, then ExecuteAtomic to delete them"
+ * loop into a single round trip — the TTL-sweeper pattern. See GitHub
+ * issue #504.
+ *
+ * The ``where`` predicates reuse the exact ``FieldFilter`` / ``FilterOp``
+ * types shipped for ``QueryNodes`` (issue #501), so no new wire concept
+ * is introduced — Eq/Ne/Lt/Le/Gt/Ge are supported and AND-ed together.
+ *
+ * Limit semantics are BEST-EFFORT (Postgres ``DELETE … LIMIT`` style):
+ * at most ``limit`` matching nodes are deleted in this op; the rest
+ * remain for a subsequent sweep. This matches sweeper semantics — a
+ * caller polls until a sweep deletes zero rows. The server caps
+ * ``limit`` to a server-side maximum so a runaway predicate cannot pin
+ * the single applier goroutine for one tenant (CLAUDE.md single-applier
+ * invariant). ``limit <= 0`` means "use the server default cap".
+ *
+ * Out of scope for v1 (issue #504): the deleted ids are NOT returned in
+ * the response — callers that need the ids keep using the
+ * QueryNodes + DeleteNodeOp loop.
+ *
+ * @generated from message entdb.v1.DeleteWhereOp
+ */
+export class DeleteWhereOp extends Message<DeleteWhereOp> {
+  /**
+   * Node type ID (required). Only nodes of this type are considered.
+   *
+   * @generated from field: int32 type_id = 1;
+   */
+  typeId = 0;
+
+  /**
+   * Predicate filters, AND-ed together. Same shape as
+   * ``QueryNodesRequest.filters``. An empty list is rejected
+   * (INVALID_ARGUMENT) — an unconditional bulk delete is too
+   * dangerous to express implicitly; delete by id or pass an
+   * explicit always-true predicate.
+   *
+   * @generated from field: repeated entdb.v1.FieldFilter where = 2;
+   */
+  where: FieldFilter[] = [];
+
+  /**
+   * Best-effort cap on the number of nodes deleted by this op.
+   * ``<= 0`` selects the server default. The server clamps this to
+   * its own hard ceiling regardless of the requested value.
+   *
+   * @generated from field: int32 limit = 3;
+   */
+  limit = 0;
+
+  constructor(data?: PartialMessage<DeleteWhereOp>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "entdb.v1.DeleteWhereOp";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "type_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 2, name: "where", kind: "message", T: FieldFilter, repeated: true },
+    { no: 3, name: "limit", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DeleteWhereOp {
+    return new DeleteWhereOp().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): DeleteWhereOp {
+    return new DeleteWhereOp().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): DeleteWhereOp {
+    return new DeleteWhereOp().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: DeleteWhereOp | PlainMessage<DeleteWhereOp> | undefined, b: DeleteWhereOp | PlainMessage<DeleteWhereOp> | undefined): boolean {
+    return proto3.util.equals(DeleteWhereOp, a, b);
+  }
+}
+
+/**
  * @generated from message entdb.v1.CreateEdgeOp
  */
 export class CreateEdgeOp extends Message<CreateEdgeOp> {
@@ -828,6 +1457,13 @@ export class CreateEdgeOp extends Message<CreateEdgeOp> {
    */
   props?: Struct;
 
+  /**
+   * Typed, lossless props (ADR-028). Preferred over `props` when set.
+   *
+   * @generated from field: map<uint32, entdb.v1.EntValue> typed_props = 6;
+   */
+  typedProps: { [key: number]: EntValue } = {};
+
   constructor(data?: PartialMessage<CreateEdgeOp>) {
     super();
     proto3.util.initPartial(data, this);
@@ -840,6 +1476,7 @@ export class CreateEdgeOp extends Message<CreateEdgeOp> {
     { no: 2, name: "from", kind: "message", T: NodeRef },
     { no: 3, name: "to", kind: "message", T: NodeRef },
     { no: 5, name: "props", kind: "message", T: Struct },
+    { no: 6, name: "typed_props", kind: "map", K: 13 /* ScalarType.UINT32 */, V: {kind: "message", T: EntValue} },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CreateEdgeOp {
@@ -1310,6 +1947,18 @@ export class GetNodeRequest extends Message<GetNodeRequest> {
    */
   waitTimeoutMs = 0;
 
+  /**
+   * Mailbox scope (#568). When set, the read is restricted to the named
+   * user's USER_MAILBOX nodes: a node that is not a mailbox node owned
+   * by this user reads as not-found (the privacy boundary). Empty (the
+   * default) is an ordinary tenant read, unchanged. The value is a bare
+   * user id (e.g. "alice"), not a "user:alice" principal — the SDK does
+   * the wire translation.
+   *
+   * @generated from field: string target_user = 12;
+   */
+  targetUser = "";
+
   constructor(data?: PartialMessage<GetNodeRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1323,6 +1972,7 @@ export class GetNodeRequest extends Message<GetNodeRequest> {
     { no: 3, name: "node_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 10, name: "after_offset", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 11, name: "wait_timeout_ms", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 12, name: "target_user", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetNodeRequest {
@@ -1416,6 +2066,15 @@ export class GetNodesRequest extends Message<GetNodesRequest> {
    */
   waitTimeoutMs = 0;
 
+  /**
+   * Mailbox scope (#568). Same semantics as GetNodeRequest.target_user:
+   * when set, only the named user's USER_MAILBOX nodes are returned;
+   * every other requested id lands in missing_ids.
+   *
+   * @generated from field: string target_user = 12;
+   */
+  targetUser = "";
+
   constructor(data?: PartialMessage<GetNodesRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1429,6 +2088,7 @@ export class GetNodesRequest extends Message<GetNodesRequest> {
     { no: 3, name: "node_ids", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
     { no: 10, name: "after_offset", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 11, name: "wait_timeout_ms", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 12, name: "target_user", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetNodesRequest {
@@ -1506,14 +2166,20 @@ export class QueryNodesRequest extends Message<QueryNodesRequest> {
   typeId = 0;
 
   /**
-   * Pagination
+   * Pagination.
+   *
+   * `limit`/`offset` are the legacy LIMIT/OFFSET shape. `offset` is
+   * DEPRECATED (ADR-029): it is O(n) to skip and skips/duplicates rows
+   * under concurrent writes. New code uses keyset cursor pagination via
+   * `page_size` + `page_token` below.
    *
    * @generated from field: int32 limit = 4;
    */
   limit = 0;
 
   /**
-   * @generated from field: int32 offset = 5;
+   * @generated from field: int32 offset = 5 [deprecated = true];
+   * @deprecated
    */
   offset = 0;
 
@@ -1548,6 +2214,39 @@ export class QueryNodesRequest extends Message<QueryNodesRequest> {
    */
   waitTimeoutMs = 0;
 
+  /**
+   * Keyset cursor pagination (ADR-029, AIP-158).
+   *
+   * `page_size` bounds one page (defaults to 100, clamped to 1000); it
+   * is an alias for `limit` and takes precedence when both are set.
+   * `page_token` is the opaque `next_page_token` from a prior response;
+   * it encodes a keyset seek over `(order_by, node_id)` plus a
+   * fingerprint of the query, so the server resumes exactly after the
+   * last row without skip/duplicate under concurrent writes. A token
+   * presented against a different query (type_id / filters / order_by)
+   * is rejected with INVALID_ARGUMENT, as is mixing `page_token` with
+   * the deprecated `offset`.
+   *
+   * @generated from field: int32 page_size = 12;
+   */
+  pageSize = 0;
+
+  /**
+   * @generated from field: string page_token = 13;
+   */
+  pageToken = "";
+
+  /**
+   * Mailbox scope (#568). When set, the query is restricted to the named
+   * user's USER_MAILBOX nodes (target_user_id == target_user AND
+   * storage_mode == USER_MAILBOX). Empty (the default) is an ordinary
+   * tenant query, unchanged — tenant queries never see mailbox-private
+   * rows. The value is a bare user id, not a principal.
+   *
+   * @generated from field: string target_user = 14;
+   */
+  targetUser = "";
+
   constructor(data?: PartialMessage<QueryNodesRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1565,6 +2264,9 @@ export class QueryNodesRequest extends Message<QueryNodesRequest> {
     { no: 8, name: "filters", kind: "message", T: FieldFilter, repeated: true },
     { no: 10, name: "after_offset", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 11, name: "wait_timeout_ms", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 12, name: "page_size", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 13, name: "page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 14, name: "target_user", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): QueryNodesRequest {
@@ -1603,6 +2305,16 @@ export class QueryNodesResponse extends Message<QueryNodesResponse> {
    */
   hasMore = false;
 
+  /**
+   * Opaque keyset cursor for the next page (ADR-029). Empty when the
+   * last page has been reached. A non-empty value MUST be followed to
+   * retrieve the remainder — a response that omits rows always sets it,
+   * so reads never silently truncate.
+   *
+   * @generated from field: string next_page_token = 4;
+   */
+  nextPageToken = "";
+
   constructor(data?: PartialMessage<QueryNodesResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1614,6 +2326,7 @@ export class QueryNodesResponse extends Message<QueryNodesResponse> {
     { no: 1, name: "nodes", kind: "message", T: Node, repeated: true },
     { no: 2, name: "total_count", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 3, name: "has_more", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 4, name: "next_page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): QueryNodesResponse {
@@ -1675,6 +2388,14 @@ export class Node extends Message<Node> {
   payload?: Struct;
 
   /**
+   * Typed, lossless payload (ADR-028). Populated alongside `payload`;
+   * newer SDKs read this, older SDKs fall back to `payload`.
+   *
+   * @generated from field: map<uint32, entdb.v1.EntValue> typed_payload = 11;
+   */
+  typedPayload: { [key: number]: EntValue } = {};
+
+  /**
    * ACL entries
    *
    * @generated from field: repeated entdb.v1.AclEntry acl = 10;
@@ -1696,6 +2417,7 @@ export class Node extends Message<Node> {
     { no: 6, name: "updated_at", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
     { no: 7, name: "owner_actor", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 9, name: "payload", kind: "message", T: Struct },
+    { no: 11, name: "typed_payload", kind: "map", K: 13 /* ScalarType.UINT32 */, V: {kind: "message", T: EntValue} },
     { no: 10, name: "acl", kind: "message", T: AclEntry, repeated: true },
   ]);
 
@@ -1738,16 +2460,35 @@ export class GetEdgesRequest extends Message<GetEdgesRequest> {
   edgeTypeId = 0;
 
   /**
-   * Pagination
+   * Pagination. `offset` is DEPRECATED (ADR-029); use keyset cursor
+   * pagination via `page_size` + `page_token`.
    *
    * @generated from field: int32 limit = 4;
    */
   limit = 0;
 
   /**
-   * @generated from field: int32 offset = 5;
+   * @generated from field: int32 offset = 5 [deprecated = true];
+   * @deprecated
    */
   offset = 0;
+
+  /**
+   * Keyset cursor pagination (ADR-029, AIP-158). `page_size` bounds one
+   * page (alias for `limit`, takes precedence); `page_token` is the
+   * opaque `next_page_token` from a prior response, a seek over
+   * (created_at, edge_type_id, peer_node_id) bound to this query by a
+   * fingerprint. Mixing `page_token` with the deprecated `offset` is
+   * INVALID_ARGUMENT.
+   *
+   * @generated from field: int32 page_size = 6;
+   */
+  pageSize = 0;
+
+  /**
+   * @generated from field: string page_token = 7;
+   */
+  pageToken = "";
 
   constructor(data?: PartialMessage<GetEdgesRequest>) {
     super();
@@ -1762,6 +2503,8 @@ export class GetEdgesRequest extends Message<GetEdgesRequest> {
     { no: 3, name: "edge_type_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 4, name: "limit", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 5, name: "offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 6, name: "page_size", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 7, name: "page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetEdgesRequest {
@@ -1795,6 +2538,15 @@ export class GetEdgesResponse extends Message<GetEdgesResponse> {
    */
   hasMore = false;
 
+  /**
+   * Opaque keyset cursor for the next page (ADR-029). Empty on the last
+   * page; non-empty whenever rows were omitted, so edge reads never
+   * silently truncate.
+   *
+   * @generated from field: string next_page_token = 3;
+   */
+  nextPageToken = "";
+
   constructor(data?: PartialMessage<GetEdgesResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1805,6 +2557,7 @@ export class GetEdgesResponse extends Message<GetEdgesResponse> {
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "edges", kind: "message", T: Edge, repeated: true },
     { no: 2, name: "has_more", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 3, name: "next_page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetEdgesResponse {
@@ -1860,6 +2613,13 @@ export class Edge extends Message<Edge> {
    */
   props?: Struct;
 
+  /**
+   * Typed, lossless props (ADR-028). Populated alongside `props`.
+   *
+   * @generated from field: map<uint32, entdb.v1.EntValue> typed_props = 8;
+   */
+  typedProps: { [key: number]: EntValue } = {};
+
   constructor(data?: PartialMessage<Edge>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1874,6 +2634,7 @@ export class Edge extends Message<Edge> {
     { no: 4, name: "to_node_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 6, name: "created_at", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
     { no: 7, name: "props", kind: "message", T: Struct },
+    { no: 8, name: "typed_props", kind: "map", K: 13 /* ScalarType.UINT32 */, V: {kind: "message", T: EntValue} },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Edge {
@@ -2740,6 +3501,15 @@ export class FieldFilter extends Message<FieldFilter> {
    */
   value?: Value;
 
+  /**
+   * Typed, lossless filter value (ADR-028 / #572). Preferred over
+   * `value` when set, so an int64 >2^53 filter matches the right rows
+   * instead of corrupting through google.protobuf.Value's double.
+   *
+   * @generated from field: entdb.v1.EntValue typed_value = 4;
+   */
+  typedValue?: EntValue;
+
   constructor(data?: PartialMessage<FieldFilter>) {
     super();
     proto3.util.initPartial(data, this);
@@ -2751,6 +3521,7 @@ export class FieldFilter extends Message<FieldFilter> {
     { no: 1, name: "field", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "op", kind: "enum", T: proto3.getEnumType(FilterOp) },
     { no: 3, name: "value", kind: "message", T: Value },
+    { no: 4, name: "typed_value", kind: "message", T: EntValue },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): FieldFilter {
@@ -3208,14 +3979,41 @@ export class ListSharedWithMeRequest extends Message<ListSharedWithMeRequest> {
   context?: RequestContext;
 
   /**
+   * Pagination. `offset` is DEPRECATED (ADR-029): it is applied
+   * independently to each merged source, so page boundaries do not
+   * line up. Use keyset cursor pagination via `page_size` +
+   * `page_token` below.
+   *
    * @generated from field: int32 limit = 2;
    */
   limit = 0;
 
   /**
-   * @generated from field: int32 offset = 3;
+   * @generated from field: int32 offset = 3 [deprecated = true];
+   * @deprecated
    */
   offset = 0;
+
+  /**
+   * Keyset cursor pagination (ADR-029, AIP-158). `page_size` bounds one
+   * page (alias for `limit`, takes precedence); `page_token` is the
+   * opaque `next_page_token` from a prior response. The cursor is a
+   * UNIFIED seek over `(timestamp, source_tenant, node_id)` across BOTH
+   * merged sources — the per-tenant `node_access` index (keyed on
+   * `granted_at`) and the cross-tenant `shared_index` (keyed on
+   * `shared_at`) — so the merged stream resumes exactly after the last
+   * row without skip/duplicate. The token is bound to the calling actor
+   * by a fingerprint; mixing `page_token` with the deprecated `offset`
+   * is INVALID_ARGUMENT.
+   *
+   * @generated from field: int32 page_size = 4;
+   */
+  pageSize = 0;
+
+  /**
+   * @generated from field: string page_token = 5;
+   */
+  pageToken = "";
 
   constructor(data?: PartialMessage<ListSharedWithMeRequest>) {
     super();
@@ -3228,6 +4026,8 @@ export class ListSharedWithMeRequest extends Message<ListSharedWithMeRequest> {
     { no: 1, name: "context", kind: "message", T: RequestContext },
     { no: 2, name: "limit", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 3, name: "offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 4, name: "page_size", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 5, name: "page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListSharedWithMeRequest {
@@ -3261,6 +4061,15 @@ export class ListSharedWithMeResponse extends Message<ListSharedWithMeResponse> 
    */
   hasMore = false;
 
+  /**
+   * Opaque keyset cursor for the next page (ADR-029). Empty on the last
+   * page; non-empty whenever rows were omitted, so shared-with-me reads
+   * never silently truncate.
+   *
+   * @generated from field: string next_page_token = 3;
+   */
+  nextPageToken = "";
+
   constructor(data?: PartialMessage<ListSharedWithMeResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -3271,6 +4080,7 @@ export class ListSharedWithMeResponse extends Message<ListSharedWithMeResponse> 
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "nodes", kind: "message", T: Node, repeated: true },
     { no: 2, name: "has_more", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
+    { no: 3, name: "next_page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListSharedWithMeResponse {
@@ -3865,9 +4675,29 @@ export class ListUsersRequest extends Message<ListUsersRequest> {
   limit = 0;
 
   /**
-   * @generated from field: int32 offset = 4;
+   * DEPRECATED (ADR-029): use keyset cursor pagination via page_size +
+   * page_token below.
+   *
+   * @generated from field: int32 offset = 4 [deprecated = true];
+   * @deprecated
    */
   offset = 0;
+
+  /**
+   * Keyset cursor pagination (ADR-029, AIP-158). page_size bounds one
+   * page (alias for limit, takes precedence); page_token is the opaque
+   * next_page_token from a prior response, a seek over
+   * (created_at, user_id) bound to the status filter by a fingerprint.
+   * Mixing page_token with the deprecated offset is INVALID_ARGUMENT.
+   *
+   * @generated from field: int32 page_size = 5;
+   */
+  pageSize = 0;
+
+  /**
+   * @generated from field: string page_token = 6;
+   */
+  pageToken = "";
 
   constructor(data?: PartialMessage<ListUsersRequest>) {
     super();
@@ -3881,6 +4711,8 @@ export class ListUsersRequest extends Message<ListUsersRequest> {
     { no: 2, name: "status", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 3, name: "limit", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 4, name: "offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 5, name: "page_size", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 6, name: "page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListUsersRequest {
@@ -3909,6 +4741,15 @@ export class ListUsersResponse extends Message<ListUsersResponse> {
    */
   users: UserInfo[] = [];
 
+  /**
+   * Opaque keyset cursor for the next page (ADR-029). Empty on the last
+   * page; non-empty whenever rows were omitted, so the user list never
+   * silently truncates.
+   *
+   * @generated from field: string next_page_token = 2;
+   */
+  nextPageToken = "";
+
   constructor(data?: PartialMessage<ListUsersResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -3918,6 +4759,7 @@ export class ListUsersResponse extends Message<ListUsersResponse> {
   static readonly typeName = "entdb.v1.ListUsersResponse";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "users", kind: "message", T: UserInfo, repeated: true },
+    { no: 2, name: "next_page_token", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ListUsersResponse {
@@ -5716,6 +6558,15 @@ export class GetNodeByKeyRequest extends Message<GetNodeByKeyRequest> {
    */
   value?: Value;
 
+  /**
+   * Typed, lossless unique-key value (ADR-028 / #572). Preferred over
+   * `value`, so a large int64 unique key (Snowflake/external id)
+   * matches exactly instead of corrupting through a double.
+   *
+   * @generated from field: entdb.v1.EntValue typed_value = 9;
+   */
+  typedValue?: EntValue;
+
   constructor(data?: PartialMessage<GetNodeByKeyRequest>) {
     super();
     proto3.util.initPartial(data, this);
@@ -5730,6 +6581,7 @@ export class GetNodeByKeyRequest extends Message<GetNodeByKeyRequest> {
     { no: 6, name: "after_offset", kind: "scalar", T: 3 /* ScalarType.INT64 */ },
     { no: 7, name: "field_id", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 8, name: "value", kind: "message", T: Value },
+    { no: 9, name: "typed_value", kind: "message", T: EntValue },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): GetNodeByKeyRequest {
@@ -5824,9 +6676,32 @@ export class SearchNodesRequest extends Message<SearchNodesRequest> {
   limit = 0;
 
   /**
+   * Offset paging is RETAINED here, NOT keyset (ADR-029 FTS carve-out).
+   * FTS5 `rank` is computed by the MATCH and cannot be filtered in a
+   * WHERE seek, so it is not a stable keyset column. Search is
+   * relevance-ranked top-N; deep-paging ranked results is an
+   * anti-pattern. `page_size` is an alias for `limit` and takes
+   * precedence when both are set; `offset` advances within the ranked
+   * result set.
+   *
    * @generated from field: int32 offset = 6;
    */
   offset = 0;
+
+  /**
+   * @generated from field: int32 page_size = 7;
+   */
+  pageSize = 0;
+
+  /**
+   * Mailbox scope (#568). When set, the FTS search is restricted to the
+   * named user's USER_MAILBOX nodes. Empty (the default) is an ordinary
+   * tenant search, unchanged. The value is a bare user id, not a
+   * principal.
+   *
+   * @generated from field: string target_user = 8;
+   */
+  targetUser = "";
 
   constructor(data?: PartialMessage<SearchNodesRequest>) {
     super();
@@ -5842,6 +6717,8 @@ export class SearchNodesRequest extends Message<SearchNodesRequest> {
     { no: 4, name: "query", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 5, name: "limit", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 6, name: "offset", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 7, name: "page_size", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 8, name: "target_user", kind: "scalar", T: 9 /* ScalarType.STRING */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SearchNodesRequest {
@@ -5870,6 +6747,16 @@ export class SearchNodesResponse extends Message<SearchNodesResponse> {
    */
   nodes: Node[] = [];
 
+  /**
+   * True when the ranked result set has more rows beyond this page.
+   * Page with `offset` to fetch the next slice. There is NO
+   * `next_page_token` for search — ranked results are offset-paged, not
+   * cursor-paged (ADR-029 FTS carve-out).
+   *
+   * @generated from field: bool has_more = 2;
+   */
+  hasMore = false;
+
   constructor(data?: PartialMessage<SearchNodesResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -5879,6 +6766,7 @@ export class SearchNodesResponse extends Message<SearchNodesResponse> {
   static readonly typeName = "entdb.v1.SearchNodesResponse";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "nodes", kind: "message", T: Node, repeated: true },
+    { no: 2, name: "has_more", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): SearchNodesResponse {

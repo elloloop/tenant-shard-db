@@ -95,7 +95,7 @@ import (
     "context"
     "log"
 
-    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 )
 
 func main() {

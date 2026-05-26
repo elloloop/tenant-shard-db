@@ -23,7 +23,7 @@ THE SOFTWARE.
 ---
 
 This LICENSE applies to the EntDB Go SDK
-(`github.com/elloloop/tenant-shard-db/sdk/go/entdb`), the `entdbctl` CLI
+(`github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2`), the `entdbctl` CLI
 under `cmd/entdbctl/`, and the `entdb-console` debug binary under
 `cmd/entdb-console/`. All three are client-side tooling.
 

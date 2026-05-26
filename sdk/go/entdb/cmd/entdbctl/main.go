@@ -11,7 +11,7 @@
 // Distribution: a static Go binary released alongside
 // the existing Python and Go SDKs. Install with
 //
-//	go install github.com/elloloop/tenant-shard-db/sdk/go/entdb/cmd/entdbctl@latest
+//	go install github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/cmd/entdbctl@latest
 //
 // or grab a prebuilt archive from the GitHub release page.
 package main

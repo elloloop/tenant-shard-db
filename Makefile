@@ -122,7 +122,7 @@ test-server:
 	cd server/go && go vet ./... && go test ./...
 
 # sdk/go/entdb: the published Go SDK module
-# (`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb`). Carries
+# (`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2`). Carries
 # its own checked-in pb stubs + the self-describing-write transport
 # (ADR-031). ~10 s.
 test-sdk-go:
@@ -263,6 +263,8 @@ proto:
 	buf generate --template server/go/buf.gen.yaml
 	buf generate --template server/go/buf.gen.console.yaml
 	buf generate --template sdk/go/entdb/buf.gen.yaml
+	@echo "Regenerating SDK console v1 (Go) + entdb-console TS frontend via root buf.gen.yaml..."
+	buf generate --template buf.gen.yaml
 	@echo "Regenerating Python SDK stubs..."
 	./scripts/generate_proto.sh
 

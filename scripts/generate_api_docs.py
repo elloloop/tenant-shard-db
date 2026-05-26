@@ -372,9 +372,9 @@ def render_go(godoc: str | None) -> str:
         GENERATED_BANNER,
         "# Go SDK Reference (generated)",
         "",
-        "Module `github.com/elloloop/tenant-shard-db/sdk/go/entdb`. "
+        "Module `github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2`. "
         "Canonical rendered docs: "
-        "<https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb>.",
+        "<https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2>.",
         "",
     ]
     if godoc is None:

@@ -5,7 +5,7 @@
 > The gRPC API is an **internal transport** between the server and the official SDKs. The wire format is not a stable public contract; field IDs, actor strings, ACL encoding, idempotency keys, schema fingerprints, and tenant routing all have non-obvious invariants the SDKs enforce.
 >
 > **Sanctioned clients:**
-> - **Go:** `github.com/elloloop/tenant-shard-db/sdk/go/entdb` ([pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb))
+> - **Go:** `github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2` ([pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2))
 > - **Python:** `pip install entdb-sdk` ([PyPI](https://pypi.org/project/entdb-sdk/))
 >
 > Hand-rolled clients (curl, grpcurl-as-protocol, custom stubs) **will break** and are unsupported. If your language isn't covered, please [open an issue](https://github.com/elloloop/tenant-shard-db/issues) — don't reach for the proto.
@@ -44,7 +44,7 @@ Install an SDK:
 
 ```bash
 pip install entdb-sdk                                              # Python
-go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest     # Go
+go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2@latest     # Go
 ```
 
 ## A 30-second taste
@@ -212,7 +212,7 @@ EntDB is dual-licensed. The split follows the standard open-source database patt
 Practical implications:
 
 - Running EntDB *server* in production is fine. Modifying the server and offering it as a network service (SaaS) requires you to publish your changes under AGPL.
-- Building an application against `entdb-sdk` (Python) or `github.com/elloloop/tenant-shard-db/sdk/go/entdb` (Go) imposes **no** copyleft obligations on your application — it's MIT.
+- Building an application against `entdb-sdk` (Python) or `github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2` (Go) imposes **no** copyleft obligations on your application — it's MIT.
 - Forking `entdbctl` or `entdb-console` is fine under MIT; attribution required.
 
 ## Contributing

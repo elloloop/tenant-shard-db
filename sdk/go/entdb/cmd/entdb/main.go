@@ -37,7 +37,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"

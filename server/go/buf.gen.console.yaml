@@ -26,7 +26,7 @@ version: v2
 # consumers of the SDK don't transitively pull server stubs.
 
 # console.proto declares
-#   option go_package = "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1;consolev1";
+#   option go_package = "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1;consolev1";
 # pointing at the SDK module. Managed mode rewrites it to the server
 # module's path; the trailing `;consolev1` is preserved by buf so the
 # Go package name remains `consolev1`.

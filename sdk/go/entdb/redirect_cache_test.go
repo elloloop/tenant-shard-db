@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 // redirectFakeServer is a minimal EntDBService backend that

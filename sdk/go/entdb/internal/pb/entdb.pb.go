@@ -12,7 +12,7 @@
 //   ✗ DO NOT treat the wire format as a public contract. RPCs, fields, and
 //     semantics may change without notice between releases.
 //
-//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb
+//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2
 //   ✓ Use the Python SDK: pip install entdb-sdk
 //
 // If your language isn't supported, file an issue — don't reach for the
@@ -8983,9 +8983,9 @@ const file_entdb_proto_rawDesc = "" +
 	"\x12CancelUserDeletion\x12#.entdb.v1.CancelUserDeletionRequest\x1a$.entdb.v1.CancelUserDeletionResponse\x12S\n" +
 	"\x0eGetTenantQuota\x12\x1f.entdb.v1.GetTenantQuotaRequest\x1a .entdb.v1.GetTenantQuotaResponse\x12M\n" +
 	"\fGetNodeByKey\x12\x1d.entdb.v1.GetNodeByKeyRequest\x1a\x1e.entdb.v1.GetNodeByKeyResponse\x12J\n" +
-	"\vSearchNodes\x12\x1c.entdb.v1.SearchNodesRequest\x1a\x1d.entdb.v1.SearchNodesResponseB\x99\x01\n" +
+	"\vSearchNodes\x12\x1c.entdb.v1.SearchNodesRequest\x1a\x1d.entdb.v1.SearchNodesResponseB\x9c\x01\n" +
 	"\fcom.entdb.v1B\n" +
-	"EntdbProtoP\x01Z<github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb\xa2\x02\x03EXX\xaa\x02\bEntdb.V1\xca\x02\bEntdb\\V1\xe2\x02\x14Entdb\\V1\\GPBMetadata\xea\x02\tEntdb::V1b\x06proto3"
+	"EntdbProtoP\x01Z?github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb\xa2\x02\x03EXX\xaa\x02\bEntdb.V1\xca\x02\bEntdb\\V1\xe2\x02\x14Entdb\\V1\\GPBMetadata\xea\x02\tEntdb::V1b\x06proto3"
 
 var (
 	file_entdb_proto_rawDescOnce sync.Once

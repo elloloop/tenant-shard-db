@@ -12,7 +12,7 @@
 //   ✗ DO NOT treat the wire format as a public contract. RPCs, fields, and
 //     semantics may change without notice between releases.
 //
-//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb
+//   ✓ Use the Go SDK:     github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2
 //   ✓ Use the Python SDK: pip install entdb-sdk
 //
 // If your language isn't supported, file an issue — don't reach for the

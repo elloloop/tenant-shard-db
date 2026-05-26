@@ -14,7 +14,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 // dialOverride lets tests replace the dialer with a bufconn-backed

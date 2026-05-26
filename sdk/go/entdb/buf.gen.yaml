@@ -22,7 +22,7 @@ managed:
   enabled: true
   override:
     - file_option: go_package
-      value: github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb
+      value: github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb
 
 plugins:
   - remote: buf.build/protocolbuffers/go:v1.36.11

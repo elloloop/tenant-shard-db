@@ -291,7 +291,7 @@ jobs:
       - name: Trigger Go module proxy
         run: |
           VER="${GITHUB_REF_NAME#v}"
-          MODULE="github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+          MODULE="github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
           curl -fsSL "https://proxy.golang.org/${MODULE}/@v/v${VER}.info" || \
             echo "Module proxy will index within ~30 minutes"
 

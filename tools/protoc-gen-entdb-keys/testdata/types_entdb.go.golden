@@ -3,7 +3,7 @@
 
 package typesfixture
 
-import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 
 var (
 	AllScalarsFString   = entdb.UniqueKey[string]{TypeID: 300, FieldID: 1, Name: "f_string"}

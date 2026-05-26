@@ -9,7 +9,7 @@ import (
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/types/descriptorpb"
 
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/testpb"
 )
 
 // fdsFromTestPB wraps the in-package testpb file descriptor into

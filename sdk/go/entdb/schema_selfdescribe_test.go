@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/testpb"
 )
 
 // The name-free fingerprint must be DETERMINISTIC and ID-driven (ADR-031):

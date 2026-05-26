@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 func TestTenantsList_Table(t *testing.T) {

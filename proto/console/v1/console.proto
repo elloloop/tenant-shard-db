@@ -29,7 +29,7 @@ package entdb.console.v1;
 import "entdb.proto";
 import "google/protobuf/struct.proto";
 
-option go_package = "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1;consolev1";
+option go_package = "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1;consolev1";
 
 // Console — curated read-only surface for the EntDB web console.
 //

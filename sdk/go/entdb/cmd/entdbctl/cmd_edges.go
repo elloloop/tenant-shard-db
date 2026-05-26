@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 func newEdgesCmd() *cobra.Command {

@@ -6,9 +6,9 @@ import (
 	"errors"
 
 	"connectrpc.com/connect"
-	consolev1 "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1"
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1/consolev1connect"
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	consolev1 "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1/consolev1connect"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 // sandboxWaitTimeoutMs is the wait-applied timeout sent on every

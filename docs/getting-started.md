@@ -46,7 +46,7 @@ Browser tools:
 
 ```bash
 pip install entdb-sdk                                              # Python
-go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest     # Go
+go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2@latest     # Go
 ```
 
 Both SDKs talk to `localhost:50051` over gRPC.
@@ -175,7 +175,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
     myschema "example.com/myapp/schema"
 )
 

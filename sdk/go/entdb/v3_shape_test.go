@@ -5,7 +5,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/testpb"
 )
 
 // ProductSKU is a hand-rolled token that mirrors what the
