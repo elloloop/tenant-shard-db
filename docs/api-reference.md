@@ -6,7 +6,7 @@
 >
 > Use one of the sanctioned SDKs:
 >
-> - **Go:** `github.com/elloloop/tenant-shard-db/sdk/go/entdb` ([pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb))
+> - **Go:** `github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2` ([pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2))
 > - **Python:** `pip install entdb-sdk` ([PyPI](https://pypi.org/project/entdb-sdk/))
 >
 > This reference is for SDK maintainers and operators debugging the wire — not for application code. For application-level docs, see [sdk-reference.md](sdk-reference.md).

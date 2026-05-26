@@ -32,7 +32,7 @@ Do NOT push code that you haven't verified locally. Do NOT rely on GitHub CI to 
 Tagging `vX.Y.Z` on `main` triggers `.github/workflows/release.yml` which:
 1. Builds + pushes the Go server Docker image. **Note the tag normalization**: the git tag is `vX.Y.Z`, but `docker/metadata-action` strips the leading `v`, so the image is pulled as `ghcr.io/elloloop/tenant-shard-db:X.Y.Z` (also `:X.Y`, `:X`, `:latest`, `:sha-<7>`). Multi-arch (linux/amd64 + linux/arm64).
 2. Publishes Python SDK to PyPI (`pip install entdb-sdk==X.Y.Z`).
-3. Publishes Go SDK by tagging `sdk/go/entdb/vX.Y.Z` and warming the Go module proxy. Consumers install with `go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@vX.Y.Z`. Docs auto-render at `pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb`.
+3. Publishes Go SDK by tagging `sdk/go/entdb/vX.Y.Z` and warming the Go module proxy. Consumers install with `go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2@vX.Y.Z`. Docs auto-render at `pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2`.
 
 Go modules don't need a registry — the Go proxy pulls directly from git tags. Sub-module tags MUST be prefixed `sdk/go/entdb/vX.Y.Z` (the release workflow creates them automatically).
 
@@ -97,7 +97,7 @@ server/
 
 sdk/
   python/entdb_sdk/           — Python SDK (MIT, PyPI: entdb-sdk)
-  go/entdb/                   — Go SDK (module: github.com/elloloop/tenant-shard-db/sdk/go/entdb)
+  go/entdb/                   — Go SDK (module: github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2)
 
 tests/
   python/                     — all integration/e2e/benchmarks driven through the SDK against the Go gRPC server

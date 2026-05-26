@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 // Tests for the v1.5 Admin namespace — the 9 cross-tenant identity

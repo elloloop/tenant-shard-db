@@ -32,8 +32,8 @@ import (
 	connect "connectrpc.com/connect"
 	context "context"
 	errors "errors"
-	v1 "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1"
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	v1 "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 	http "net/http"
 	strings "strings"
 )

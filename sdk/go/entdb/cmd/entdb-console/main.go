@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1/consolev1connect"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1/consolev1connect"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )

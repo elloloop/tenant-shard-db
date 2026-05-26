@@ -61,7 +61,7 @@ globex = db.tenant("globex").actor(Actor.user("bob"))`} lang="plaintext" />
 Actor.user("alice")        # user:alice
 Actor.group("eng")         # group:eng
 Actor.service("ingest-api") # service:ingest-api`}
-    go={`import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    go={`import "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 
 entdb.UserActor("alice")          // user:alice
 entdb.GroupActor("eng")           // group:eng

@@ -3,7 +3,7 @@
 
 package shop
 
-import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 
 var (
 	ProductSKU     = entdb.UniqueKey[string]{TypeID: 201, FieldID: 1, Name: "sku"}

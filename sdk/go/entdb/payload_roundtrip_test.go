@@ -7,8 +7,8 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/testpb"
 )
 
 // TestPayloadRoundTrip_IDKeyed_HydratesProtoFields verifies that a

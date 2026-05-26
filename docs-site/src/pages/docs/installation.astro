@@ -13,7 +13,7 @@ import CodeTabs from "../../components/CodeTabs.astro";
   <Code code={`uv add entdb-sdk`} lang="bash" />
 
   <h2>Go SDK</h2>
-  <Code code={`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest`} lang="bash" />
+  <Code code={`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2@latest`} lang="bash" />
 
   <h2>Server (Docker)</h2>
   <Code code={`# Pull the latest image
@@ -62,7 +62,7 @@ import (
     "fmt"
     "log"
 
-    "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+    "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 )
 
 func main() {

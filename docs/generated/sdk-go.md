@@ -4,10 +4,10 @@
 
 # Go SDK Reference (generated)
 
-Module `github.com/elloloop/tenant-shard-db/sdk/go/entdb`. Canonical rendered docs: <https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb>.
+Module `github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2`. Canonical rendered docs: <https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2>.
 
 ```text
-package entdb // import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+package entdb // import "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 
 SPDX-License-Identifier: MIT
 

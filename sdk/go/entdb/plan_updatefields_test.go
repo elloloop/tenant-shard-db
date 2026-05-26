@@ -4,7 +4,7 @@ package entdb
 import (
 	"testing"
 
-	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/testpb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/testpb"
 )
 
 // TestPlan_UpdateFields_IncludesZeroValue pins the #574 fix: UpdateFields

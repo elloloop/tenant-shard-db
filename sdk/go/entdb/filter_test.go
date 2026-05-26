@@ -5,7 +5,7 @@ import (
 	"sort"
 	"testing"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 // TestFilterToProto_Equality covers the bare-value shorthand —

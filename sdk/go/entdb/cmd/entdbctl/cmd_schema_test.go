@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/protobuf/types/known/structpb"
 
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 )
 
 func mustStruct(t *testing.T, m map[string]any) *structpb.Struct {

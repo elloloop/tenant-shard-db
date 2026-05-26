@@ -31,7 +31,7 @@
 package consolev1
 
 import (
-	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/pb"
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"
@@ -410,7 +410,7 @@ const file_console_proto_rawDesc = "" +
 	"\x11GetConnectedNodes\x12\".entdb.v1.GetConnectedNodesRequest\x1a#.entdb.v1.GetConnectedNodesResponse\x12P\n" +
 	"\rSearchMailbox\x12\x1e.entdb.v1.SearchMailboxRequest\x1a\x1f.entdb.v1.SearchMailboxResponse\x12l\n" +
 	"\x11SandboxCreateNode\x12*.entdb.console.v1.SandboxCreateNodeRequest\x1a+.entdb.console.v1.SandboxCreateNodeResponse\x12l\n" +
-	"\x11SandboxCreateEdge\x12*.entdb.console.v1.SandboxCreateEdgeRequest\x1a+.entdb.console.v1.SandboxCreateEdgeResponseBPZNgithub.com/elloloop/tenant-shard-db/sdk/go/entdb/internal/console/v1;consolev1b\x06proto3"
+	"\x11SandboxCreateEdge\x12*.entdb.console.v1.SandboxCreateEdgeRequest\x1a+.entdb.console.v1.SandboxCreateEdgeResponseBSZQgithub.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/console/v1;consolev1b\x06proto3"
 
 var (
 	file_console_proto_rawDescOnce sync.Once

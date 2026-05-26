@@ -17,10 +17,10 @@ Requires Python 3.10+.
 **Go:**
 
 ```bash
-go get github.com/elloloop/tenant-shard-db/sdk/go/entdb@latest
+go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2@latest
 ```
 
-Requires Go 1.22+. Docs auto-render at [pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb).
+Requires Go 1.22+. Docs auto-render at [pkg.go.dev](https://pkg.go.dev/github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2).
 
 ## Schema
 
@@ -95,7 +95,7 @@ async with DbClient(endpoint=..., tenant_id=..., actor=...) as client:
 ### Go — `entdb.Client`
 
 ```go
-import "github.com/elloloop/tenant-shard-db/sdk/go/entdb"
+import "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
 
 client, err := entdb.NewClient("localhost:50051",
     entdb.WithTLS(tlsConfig),         // omit for dev plaintext
