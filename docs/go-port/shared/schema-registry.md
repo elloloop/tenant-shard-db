@@ -210,9 +210,12 @@ is pure data + lookup.
   via the registry's unique-field bookkeeping; falls back to
   `NOT_FOUND` if the type has no unique field with that id.
 - **SearchNodes / QueryNodes** — consult `IndexedFieldIDs` and
-  `SearchableFieldIDs` to pick an index-backed plan vs a full scan;
-  also rely on `Node(typeID).GetField(name)` for filter-name → field-id
-  rewriting when a client sends a name-keyed filter.
+  `SearchableFieldIDs` to pick an index-backed plan vs a full scan.
+  (Pre-[ADR-031](../../adr/031-self-describing-name-free-schema.md) the
+  server also did filter-name → field-id rewriting; that path is gone.
+  `FieldFilter.field` is now an `field_id` (decimal string); name keys
+  are rejected with `INVALID_ARGUMENT`. SDKs do the translation
+  client-side from the proto.)
 - **CreateUser / CreateTenant / admin RPCs** — use `DataPolicy` and
   `SubjectField` to label new nodes for GDPR tracking.
 

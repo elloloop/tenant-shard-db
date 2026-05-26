@@ -367,7 +367,7 @@ aws s3api put-object-lock-configuration \\
 
   <h3>Archive lag &mdash; <code>entdb_archive_lag_events</code></h3>
   <p>
-    Gauge, labelled <code>{topic, partition}</code>. It is the number of
+    Gauge, labelled <code>{'{topic, partition}'}</code>. It is the number of
     WAL records the archiver has polled from a partition but not yet
     durably written to S3 + committed. A healthy archiver drives it to 0
     after each cycle. <strong>A sustained non-zero lag means the archiver

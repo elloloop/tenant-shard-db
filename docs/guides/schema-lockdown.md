@@ -112,7 +112,7 @@ version tag, don't run `:latest` in CI.
 ### `go install`
 
 ```bash
-go install github.com/elloloop/tenant-shard-db/server/go/cmd/entdb-schema@v1.0.0
+go install github.com/elloloop/tenant-shard-db/server/go/cmd/entdb-schema@v2.0.1
 ```
 
 Useful for local dev. For CI we recommend the pre-built binary or the
@@ -518,11 +518,13 @@ been established by writes.
 
 ## `delete_where` and `QueryNodes` on schema-less deployments
 
-Some deployments run `entdb-server` **without** a registered schema —
-no `.schema-snapshot.json`, no `--seed-profile`, the registry empty by
-design (a thin keyed-blob store, or an early bootstrap stage before the
-schema is locked). That mode is fully supported for predicate
-operations, with one rule you must know.
+Per [ADR-031](../adr/031-self-describing-name-free-schema.md) every
+server boots with an **empty** registry; it stays empty until the first
+self-describing write registers a type. So in the window before any
+schema write — or in a deployment that intentionally runs as a thin
+keyed-blob store and never sends one — the server has nothing to consult
+when translating predicates. That mode is fully supported, with one rule
+you must know.
 
 EntDB payloads are keyed on the wire and on disk by numeric
 `field_id`, never by name ([ADR-018](../adr/018-field-id-keyed-payloads.md)).
