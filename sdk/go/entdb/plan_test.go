@@ -670,3 +670,61 @@ func TestScope_Share(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// ── Issue #606: Plan.Commit WithWaitApplied option ──────────────────
+
+// TestPlanCommit_WithWaitAppliedTrue pins that WithWaitApplied(true) is
+// propagated to the transport, so the loser of a composite-unique race
+// can finally see the applier's ALREADY_EXISTS instead of a phantom
+// success. The mock records the resolved commitOpts; the test reads
+// them back. Issue #606.
+func TestPlanCommit_WithWaitAppliedTrue(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-1")
+	plan.Create(newProduct("sku-1", "Widget", 100))
+	if _, err := plan.Commit(context.Background(), WithWaitApplied(true)); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if !mock.lastWaitAppliedSet {
+		t.Fatal("transport did not see WithWaitApplied; option not propagated")
+	}
+	if !mock.lastWaitApplied {
+		t.Errorf("waitApplied = false; want true")
+	}
+}
+
+// TestPlanCommit_WithWaitAppliedFalse_OverridesPreconditionAuto pins
+// that an explicit WithWaitApplied(false) overrides the auto-enable
+// triggered by Precondition (issue #500), so callers retain control.
+// Issue #606.
+func TestPlanCommit_WithWaitAppliedFalse_OverridesPreconditionAuto(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-2")
+	// An UpdateNode with a precondition would normally auto-enable
+	// waitApplied. The explicit option must win.
+	plan.UpdateIf("n1", newProduct("sku-1", "Widget", 200), "name", "Widget")
+	if _, err := plan.Commit(context.Background(), WithWaitApplied(false)); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if !mock.lastWaitAppliedSet {
+		t.Fatal("transport did not see WithWaitApplied; option not propagated")
+	}
+	if mock.lastWaitApplied {
+		t.Errorf("waitApplied = true; want false (the explicit option must override the precondition auto-enable)")
+	}
+}
+
+// TestPlanCommit_NoOption_PreservesBackwardCompat pins that
+// Plan.Commit(ctx) with no options keeps the pre-issue-#606 behaviour:
+// no commitOpts on the transport (so the auto-default path runs).
+func TestPlanCommit_NoOption_PreservesBackwardCompat(t *testing.T) {
+	mock := &mockTransport{}
+	plan := newPlan(mock, "t1", "user:alice", "key-3")
+	plan.Create(newProduct("sku-1", "Widget", 100))
+	if _, err := plan.Commit(context.Background()); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if mock.lastWaitAppliedSet {
+		t.Errorf("waitApplied was set without an option — backward-compat broken")
+	}
+}
