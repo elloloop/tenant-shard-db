@@ -672,9 +672,16 @@ jobs:
       - name: Upload SBOMs to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # --repo is REQUIRED — this job intentionally skips
+        # actions/checkout (the SBOMs come in via download-artifact),
+        # so the runner has no .git directory for `gh release upload`
+        # to infer the repo from. v2.1.3 failed exactly here ('fatal:
+        # not a git repository'); v2.1.4 is the first release where
+        # this lands without a manual retrofit.
         run: |
           set -euo pipefail
           gh release upload "$GITHUB_REF_NAME" \
             /tmp/sbom-assets/sbom-server-"$GITHUB_REF_NAME".spdx.json \
             /tmp/sbom-assets/sbom-schema-"$GITHUB_REF_NAME".spdx.json \
-            --clobber
+            --clobber \
+            --repo "${{ github.repository }}"
