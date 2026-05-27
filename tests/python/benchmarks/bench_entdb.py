@@ -157,7 +157,7 @@ def test_entdb_execute_atomic_create_node(entdb_stub, entdb_seeded, benchmark) -
                     create_node=pb.CreateNodeOp(
                         type_id=TASK_TYPE_ID,
                         id=nid,
-                        data=_struct({"title": "bench write", "description": "x" * 200}),
+                        data=_struct({"1": "bench write", "2": "x" * 200}),
                     )
                 )
             ],
@@ -191,7 +191,7 @@ def test_entdb_execute_atomic_create_node_and_edge(entdb_stub, entdb_seeded, ben
                     create_node=pb.CreateNodeOp(
                         type_id=TASK_TYPE_ID,
                         id=nid,
-                        data=_struct({"title": "multi", "description": "y" * 100}),
+                        data=_struct({"1": "multi", "2": "y" * 100}),
                     )
                 ),
                 pb.Operation(create_edge=edge_op),
@@ -225,7 +225,7 @@ def test_entdb_execute_atomic_update_node(entdb_stub, entdb_seeded, benchmark) -
                     update_node=pb.UpdateNodeOp(
                         type_id=TASK_TYPE_ID,
                         id=ids[i],
-                        patch=_struct({"description": f"updated-{i}"}),
+                        patch=_struct({"2": f"updated-{i}"}),
                     )
                 )
             ],

@@ -362,16 +362,27 @@ def _generate_corpus(size: int) -> list[dict]:
         body = (
             f"node-{i} body-token-{rng.randrange(10**6):06d}-" + "x" * 64 + f" owner=user-{i % 25}"
         )
+        owner = f"user-{i % 25}"
         rows.append(
             {
                 "node_id": nid,
+                # Postgres-facing payload: schema column is JSONB with a
+                # GIN expression index on ``payload->>'title'`` /
+                # ``payload->>'description'``, so the keys must be the
+                # human names the SQL refers to.
                 "payload": {
                     "title": subject,
                     "description": body,
                     # Used by Postgres-side mailbox-list query (predicate
                     # on ``owner``). EntDB doesn't filter on this in the
                     # bench — it queries by ``type_id``.
-                    "owner": f"user-{i % 25}",
+                    "owner": owner,
+                },
+                # EntDB-facing payload: id-keyed per ADR-031 / CLAUDE.md
+                # invariant #6 (Task: title=1, description=2).
+                "payload_ids": {
+                    "1": subject,
+                    "2": body,
                 },
             }
         )
@@ -424,7 +435,7 @@ def entdb_seeded(entdb_stub, corpus):
                     create_node=pb.CreateNodeOp(
                         type_id=TASK_TYPE_ID,
                         id=row["node_id"],
-                        data=_to_struct(row["payload"]),
+                        data=_to_struct(row["payload_ids"]),
                     )
                 )
             )
