@@ -363,8 +363,108 @@ func parseUniqueConstraintFromStatus(err error, tenantID string) *UniqueConstrai
 			uce.TypeID = tid
 			uce.Details["type_id"] = tid
 		}
+		return uce
+	}
+	// Single-field violation: the server-side store/unique_violation.go
+	// emits the form
+	//
+	//   Unique constraint violation: tenant=<t> type_id=<T> field_id=<F>
+	//                                value=<pyRepr> already exists
+	//
+	// Without this branch the typed UCE is returned with TypeID/FieldID/
+	// Value all zero, which silently breaks any caller that needs to act
+	// on the colliding coordinates — InsertIfNotExists (#599) is the
+	// canonical example, since its post-conflict GetNodeByKey lookup uses
+	// exactly these three fields.
+	if tid, fid, val, ok := parseSingleFieldUniqueDetail(msg); ok {
+		uce.TypeID = tid
+		uce.FieldID = fid
+		uce.Value = val
+		uce.Details["type_id"] = tid
+		uce.Details["field_id"] = fid
+		uce.Details["value"] = val
 	}
 	return uce
+}
+
+// singleFieldUniqueDetailRE matches the server's single-field
+// ALREADY_EXISTS detail (store/unique_violation.go::BuildUniqueViolationDetail).
+// The message form is:
+//
+//	Unique constraint violation: tenant=<t> type_id=<T> field_id=<F> value=<pyRepr> already exists
+//
+// where <pyRepr> is a Python-style scalar literal (single-quoted
+// strings, bare numbers, None / True / False).
+var singleFieldUniqueDetailRE = regexp.MustCompile(
+	`tenant=(\S+)\s+type_id=(\d+)\s+field_id=(\d+)\s+value=(.+?)\s+already exists`,
+)
+
+// parseSingleFieldUniqueDetail extracts (type_id, field_id, value)
+// from a server-emitted single-field UNIQUE detail. Returns ok=false
+// when the message is not in that shape (e.g. composite, or a future
+// version's encoding). The value is best-effort-decoded from the
+// pyRepr form the server's store helper produces.
+func parseSingleFieldUniqueDetail(detail string) (int32, int32, any, bool) {
+	if detail == "" {
+		return 0, 0, nil, false
+	}
+	m := singleFieldUniqueDetailRE.FindStringSubmatch(detail)
+	if m == nil {
+		return 0, 0, nil, false
+	}
+	tid, err1 := strconv.Atoi(m[2])
+	fid, err2 := strconv.Atoi(m[3])
+	if err1 != nil || err2 != nil {
+		return 0, 0, nil, false
+	}
+	val := decodePyRepr(strings.TrimSpace(m[4]))
+	return int32(tid), int32(fid), val, true
+}
+
+// decodePyRepr undoes the server's pyRepr() rendering for the common
+// scalar shapes the typed UCE needs:
+//
+//	'foo'  -> "foo"   (single-quoted, with \\ + \' escapes)
+//	123    -> int64(123)
+//	1.5    -> float64(1.5)
+//	True   -> true
+//	False  -> false
+//	None   -> nil
+//
+// Unrecognised forms fall through to the raw string so callers can
+// still log / fingerprint them; the SDK never round-trips arbitrary
+// repr() shapes back through GetNodeByKey, only the scalars a
+// declared unique field can actually carry.
+func decodePyRepr(s string) any {
+	switch s {
+	case "None":
+		return nil
+	case "True":
+		return true
+	case "False":
+		return false
+	}
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		inner := s[1 : len(s)-1]
+		var b strings.Builder
+		b.Grow(len(inner))
+		for i := 0; i < len(inner); i++ {
+			if inner[i] == '\\' && i+1 < len(inner) {
+				b.WriteByte(inner[i+1])
+				i++
+				continue
+			}
+			b.WriteByte(inner[i])
+		}
+		return b.String()
+	}
+	if i, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return i
+	}
+	if f, err := strconv.ParseFloat(s, 64); err == nil {
+		return f
+	}
+	return s
 }
 
 // compositeUniqueDetailRE matches the server's composite-unique

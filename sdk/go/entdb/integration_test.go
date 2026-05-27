@@ -28,6 +28,7 @@ import (
 	"time"
 
 	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
+	"github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/testpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -490,4 +491,120 @@ func TestIntegration_ZeroValueUpdateRealServer(t *testing.T) {
 	if got := node.Payload["4"]; got != false {
 		t.Fatalf("active after zero-update = %v (%T), want false — explicit zero dropped over the real wire", got, got)
 	}
+}
+
+// TestIntegration_InsertIfNotExists_Created proves the happy path
+// against a real server: a unique-keyed write with no prior collider
+// returns (created, "", nil) and the created node is queryable by id.
+// Regression pin for the v2.1.0 InsertIfNotExists helper (#599).
+//
+// A FRESH client carrying testpb.Product (type_id 201, sku=1 unique)
+// drives the test; that schema is disjoint from the integration
+// bootstrap's 8001/8002 so the SDK's auto-attached register_schema op
+// lands cleanly on the first ExecuteAtomic.
+func TestIntegration_InsertIfNotExists_Created(t *testing.T) {
+	ctx := context.Background()
+	c := newSchemaClientForIINE(t, ctx)
+
+	scope := c.Tenant(itTenant).Actor(UserActor("e2e-runner"))
+	p := testpb.NewProductMsg()
+	p.SetFields("IINE-created-1", "Widget", 100)
+
+	created, existed, err := scope.InsertIfNotExists(ctx, "iine-create-1", p)
+	if err != nil {
+		t.Fatalf("InsertIfNotExists: %v", err)
+	}
+	if created == "" {
+		t.Fatalf("created id is empty; got existed=%q", existed)
+	}
+	if existed != "" {
+		t.Fatalf("existed id is non-empty on a fresh write: %q", existed)
+	}
+
+	node, gerr := c.transport.GetNode(ctx, itTenant, "user:e2e-runner", 201, created)
+	if gerr != nil {
+		t.Fatalf("GetNode(%s): %v", created, gerr)
+	}
+	if node == nil {
+		t.Fatalf("created node %q not visible after wait_applied write", created)
+	}
+	if node.Payload["1"] != "IINE-created-1" {
+		t.Fatalf("payload sku = %v, want IINE-created-1", node.Payload["1"])
+	}
+}
+
+// TestIntegration_InsertIfNotExists_ResolvesConflict proves the
+// conflict path against a real server: a second write of the same
+// unique-keyed payload returns ("", existingID, nil) and the existing
+// id matches the prior winner. This is the racy idiom (#599) the
+// helper closes — without it the loser would race with its own
+// GetByKey and either see a phantom success (no wait_applied) or have
+// to hand-roll the catch+lookup.
+func TestIntegration_InsertIfNotExists_ResolvesConflict(t *testing.T) {
+	ctx := context.Background()
+	c := newSchemaClientForIINE(t, ctx)
+
+	scope := c.Tenant(itTenant).Actor(UserActor("e2e-runner"))
+
+	p1 := testpb.NewProductMsg()
+	p1.SetFields("IINE-race-1", "Widget", 100)
+	firstID, existed, err := scope.InsertIfNotExists(ctx, "iine-race-1a", p1)
+	if err != nil {
+		t.Fatalf("first InsertIfNotExists: %v", err)
+	}
+	if firstID == "" || existed != "" {
+		t.Fatalf("first call should be a CREATE; got created=%q existed=%q", firstID, existed)
+	}
+
+	// Same sku, different node payload — the unique-constraint trip
+	// must reroute to the first node, NOT mint a second id and NOT
+	// silently swallow the conflict.
+	p2 := testpb.NewProductMsg()
+	p2.SetFields("IINE-race-1", "Different Name", 999)
+	created2, resolved, err := scope.InsertIfNotExists(ctx, "iine-race-1b", p2)
+	if err != nil {
+		t.Fatalf("second InsertIfNotExists: %v", err)
+	}
+	if created2 != "" {
+		t.Fatalf("second call should NOT be a create; got created=%q", created2)
+	}
+	if resolved != firstID {
+		t.Fatalf("resolved existing id = %q, want %q (the first winner's id)", resolved, firstID)
+	}
+
+	// And the canonical node still carries the FIRST writer's payload —
+	// InsertIfNotExists does not overwrite; that's an upsert primitive
+	// we have deliberately not shipped (see v2.1.0 ADR notes).
+	node, gerr := c.transport.GetNode(ctx, itTenant, "user:e2e-runner", 201, firstID)
+	if gerr != nil {
+		t.Fatalf("GetNode(%s): %v", firstID, gerr)
+	}
+	if node == nil {
+		t.Fatalf("first node %q not visible", firstID)
+	}
+	if got := node.Payload["1"]; got != "IINE-race-1" {
+		t.Fatalf("sku = %v, want IINE-race-1 (first writer wins)", got)
+	}
+	if got := node.Payload["2"]; got != "Widget" {
+		t.Fatalf("name = %v, want Widget (first writer wins); the helper must NOT overwrite", got)
+	}
+}
+
+// newSchemaClientForIINE constructs a fresh DbClient with WithSchema
+// (testpb.Product) so the high-level Scope API can drive InsertIfNotExists.
+// The integration harness's `itClient` is schema-less by design (the
+// other cases hit the raw transport with op maps); InsertIfNotExists
+// lives on Scope and needs the SDK's self-describing-write path.
+func newSchemaClientForIINE(t *testing.T, ctx context.Context) *DbClient {
+	t.Helper()
+	addr := itClient.transport.(*grpcTransport).address
+	c, err := NewClient(addr, WithSchema(testpb.NewProductMsg()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
 }
