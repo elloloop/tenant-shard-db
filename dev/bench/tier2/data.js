@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779858650434,
+  "lastUpdate": 1779858693347,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -9180,6 +9180,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00020799047189069662",
             "extra": "mean: 7.215483358334514 msec\nrounds: 120"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6c38ed1508bb71606db4c6f32c8400e1c6311fa7",
+          "message": "fix(release): gh release upload needs --repo when actions/checkout is skipped (#621)\n\nv2.1.3's attach-sboms-to-release job failed at the last step:\n\n  failed to run git: fatal: not a git repository (or any of the\n  parent directories): .git\n  ##[error]Process completed with exit code 1.\n\n`gh release upload` infers the repo from the local git remote when\ncalled inside a checkout. This job intentionally skips\nactions/checkout (the SBOMs arrive via download-artifact, no source\nneeded), so the runner has no .git for gh to read.\n\nFix: pass --repo ${{ github.repository }} explicitly. v2.1.3 was\npatched manually post-hoc; v2.1.4 is the first release where this\nlands without a retrofit.",
+          "timestamp": "2026-05-27T06:08:23+01:00",
+          "tree_id": "800d11f4f1a64c30bb2c30b21a18c59a2a8e7d08",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/6c38ed1508bb71606db4c6f32c8400e1c6311fa7"
+        },
+        "date": 1779858692625,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2945.3521757216326,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005630813447590944",
+            "extra": "mean: 339.5179728396971 usec\nrounds: 1215"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2026.3099082466504,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006170567492579542",
+            "extra": "mean: 493.5079258756089 usec\nrounds: 742"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 907.2670367358504,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004989959691518177",
+            "extra": "mean: 1.1022113220356629 msec\nrounds: 649"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 468.9137836240741,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001652641805242589",
+            "extra": "mean: 2.132588196216674 msec\nrounds: 423"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1288.223803110887,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0013616118011681542",
+            "extra": "mean: 776.2626319938622 usec\nrounds: 1519"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1299.8125813926345,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0016848610319035115",
+            "extra": "mean: 769.3416838053594 usec\nrounds: 1556"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1573.261490639625,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008476368194770451",
+            "extra": "mean: 635.6222445853169 usec\nrounds: 1431"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1604.6161985416036,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011857933236619425",
+            "extra": "mean: 623.2019849412436 usec\nrounds: 1129"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1596.3429282083289,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000053638392716857166",
+            "extra": "mean: 626.4318163280617 usec\nrounds: 392"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1360.640966866434,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008309857078059055",
+            "extra": "mean: 734.9477373910086 usec\nrounds: 1150"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2473.101177484445,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004338994733458843",
+            "extra": "mean: 404.3506222487695 usec\nrounds: 1681"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 142.35589866894694,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003196613211296421",
+            "extra": "mean: 7.024647445944836 msec\nrounds: 148"
           }
         ]
       }
