@@ -40,8 +40,6 @@ services:
       - "-addr=:50051"
       - "-data-dir=/var/lib/entdb"
       - "-wal-backend=memory"
-      - "-seed-profile=contract"
-      - "-seed-tenant=bench"
     ports:
       - "50051:50051"
     volumes:
