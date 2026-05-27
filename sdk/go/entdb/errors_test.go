@@ -216,3 +216,65 @@ func TestUniqueConstraintError_ImplementsErrorInterface(t *testing.T) {
 		t.Errorf("FieldID=%d, want 3", uce.FieldID)
 	}
 }
+
+// TestParseUniqueConstraintFromStatus_SingleFieldExtractsCoordinates
+// pins the single-field branch of the ALREADY_EXISTS parser. Before
+// this branch was added, a single-field violation surfaced as a typed
+// UCE with TypeID/FieldID/Value all zero, which silently broke
+// InsertIfNotExists's post-conflict GetNodeByKey lookup (#599 v2.1.0
+// integration regression: the conflict path returned the raw error
+// instead of resolving to the existing id).
+func TestParseUniqueConstraintFromStatus_SingleFieldExtractsCoordinates(t *testing.T) {
+	// Exact wire form emitted by server/go/internal/store/unique_violation.go.
+	detail := "Unique constraint violation: tenant=acme type_id=201 field_id=1 value='SKU-1' already exists"
+	st := status.New(codes.AlreadyExists, detail)
+	uce := parseUniqueConstraintFromStatus(st.Err(), "acme")
+	if uce == nil {
+		t.Fatal("expected *UniqueConstraintError, got nil")
+	}
+	if uce.TypeID != 201 {
+		t.Errorf("TypeID = %d, want 201", uce.TypeID)
+	}
+	if uce.FieldID != 1 {
+		t.Errorf("FieldID = %d, want 1", uce.FieldID)
+	}
+	if uce.Value != "SKU-1" {
+		t.Errorf("Value = %v (%T), want \"SKU-1\"", uce.Value, uce.Value)
+	}
+	if uce.IsComposite() {
+		t.Error("IsComposite() = true for a single-field violation")
+	}
+}
+
+// TestParseUniqueConstraintFromStatus_SingleFieldScalarTypes pins
+// that pyRepr-style values round-trip back into Go scalars so the
+// follow-up GetNodeByKey gets the right typed value (int vs str vs
+// bool collisions matter to the server's typed-value path, #572).
+func TestParseUniqueConstraintFromStatus_SingleFieldScalarTypes(t *testing.T) {
+	tests := []struct {
+		name   string
+		detail string
+		want   any
+	}{
+		{"string", "Unique constraint violation: tenant=t type_id=1 field_id=1 value='hello' already exists", "hello"},
+		{"string with escaped quote", `Unique constraint violation: tenant=t type_id=1 field_id=1 value='it\'s' already exists`, "it's"},
+		{"int", "Unique constraint violation: tenant=t type_id=1 field_id=1 value=42 already exists", int64(42)},
+		{"big int", "Unique constraint violation: tenant=t type_id=1 field_id=1 value=9007199254740993 already exists", int64(9007199254740993)},
+		{"float", "Unique constraint violation: tenant=t type_id=1 field_id=1 value=1.5 already exists", 1.5},
+		{"bool true", "Unique constraint violation: tenant=t type_id=1 field_id=1 value=True already exists", true},
+		{"bool false", "Unique constraint violation: tenant=t type_id=1 field_id=1 value=False already exists", false},
+		{"none", "Unique constraint violation: tenant=t type_id=1 field_id=1 value=None already exists", nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			st := status.New(codes.AlreadyExists, tc.detail)
+			uce := parseUniqueConstraintFromStatus(st.Err(), "t")
+			if uce == nil {
+				t.Fatal("expected *UniqueConstraintError")
+			}
+			if uce.Value != tc.want {
+				t.Errorf("Value = %v (%T), want %v (%T)", uce.Value, uce.Value, tc.want, tc.want)
+			}
+		})
+	}
+}
