@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779714960555,
+  "lastUpdate": 1779851816789,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -8208,6 +8208,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0002005414523288641",
             "extra": "mean: 6.473799576388038 msec\nrounds: 144"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c983e77d34a4b46b476870ce0d81c553305ee6bc",
+          "message": "feat(sdk): v2.1.0 — InsertIfNotExists helper (#599) + ADR-031 CI restoration (#613)\n\n* feat(sdk): InsertIfNotExists — atomic insert-or-resolve helper (#599)\n\nCloses the racy 'query-then-create' idiom under concurrent writers of\nthe same uniquely-keyed payload: exactly one writer wins and the rest\nlearn the existing canonical node id without a second user-visible\nround trip into client code.\n\nAPI (both SDKs):\n\n  Go:     created, existing, err :=\n            scope.InsertIfNotExists(ctx, idempotencyKey, msg)\n  Python: created, existing =\n            await scope.insert_if_not_exists(msg, idempotency_key='...')\n\nExactly one of (created, existing) is non-empty on success. The helper\nforces wait_applied=True so the applier's outcome surfaces\nsynchronously (otherwise the loser of a unique race would see a\nphantom success — #606). A typed UniqueConstraintError on commit\ntriggers a follow-up GetNodeByKey using the (type_id, field_id, value)\ntuple the server attached to the error; the resolved id is returned.\n\nv2.1.0 boundary (deliberate scope):\n\n- SINGLE-FIELD unique only. A composite-unique violation (ADR-030)\n  re-raises the typed error without a follow-up lookup — there is no\n  GetByCompositeKey RPC in v2.x, so callers needing composite upsert\n  query themselves. Tracked for v2.2.\n\n- This is still TWO round trips (commit + GetNodeByKey on conflict).\n  The single-round-trip server-side path (NodeConflictPolicy_SKIP +\n  ExecuteAtomicResponse.existing_node_ids threaded back through the\n  handler) is v2.2; doing it now would require either extending the\n  idempotency cache schema or adding a direct applier→handler result\n  channel, neither of which I want to land half-done.\n\nThis release closes the correctness gap (the racy idiom) NOW with the\nprimitives already shipped in v2.0.x.\n\nTests\n-----\n\nGo (sdk/go/entdb/insert_if_not_exists_test.go):\n  - HappyPath:        commit succeeds → (created, '', nil); WaitApplied\n                      is forced on (pinned via mock.lastWaitApplied*)\n  - SingleField:      *UniqueConstraintError → GetNodeByKey called with\n                      the UCE tuple → ('', existing, nil)\n  - Composite:        composite UCE → propagated; GetNodeByKey is NOT\n                      called\n  - Unrelated:        non-UCE error bubbles up unchanged\n  - NilMsg:           precondition short-circuits before any RPC\n\nPython (tests/python/unit/test_insert_if_not_exists.py): the same\nfive branches, using AsyncMock against the DbClient._grpc transport.\n\nCI: all four Go modules + python unit (454) + python integration (115)\ngreen locally.\n\n* docs(generated): refresh sdk-go.md (catches up v2.0.x + new InsertIfNotExists)\n\n`docs/generated/sdk-go.md` had been stale since the v2.0.x refactor\nlanded (WithWaitApplied / WithWaitTimeout / CommittedOffset were missing).\nv2.1.0 adds InsertIfNotExists, so regenerate end-to-end with the\ngo.mod-pinned toolchain (Go 1.25.0) per the regen-docs-with-pinned-go\nrule — newer local Go can drift the rendered output in ways the\n\"Docs Coverage & Examples\" CI gate flags as stale.\n\n* ci: restore green gates after ADR-031 (--seed-profile callers + stale snapshot)\n\nADR-031 removed the server's boot-seed flags (--seed-profile,\n--seed-tenant) but five call sites still passed them, so every CI run\nsince the ADR landed has been red on:\n\n  - Go SDK             (sdk/go/entdb/integration_test.go)\n  - Docs Coverage      (examples/_harness.py — runs runnable docs)\n  - Schema Compat      (.github/workflows/ci.yml + schema-compat.yml)\n  - Tier 1 benchmark   (tests/python/benchmarks/conftest.py +\n                        docker-compose.bench.yml)\n\nRecent PRs (#609, #610, #611) merged through despite the red gates.\nv2.1.0 deserves an actually-verified release.\n\nSites switched to empty-boot + API-driven bootstrap (mirror of\ntests/python/integration/conftest.py:_bootstrap_contract):\n\n* examples/_harness.py — provisions tenant + alice/bob via the gRPC\n  API after boot; lets the SDK auto-attach the schema on each\n  example's first ExecuteAtomic (hand-built descriptor fingerprints\n  differ from the SDK's canonicaliser → establish-or-reject would\n  reject the SDK write).\n\n* sdk/go/entdb/integration_test.go — adds bootstrapIntegrationContract\n  using a raw pb.EntDBServiceClient: CreateTenant + CreateUser +\n  AddTenantMember, then a self-describing ExecuteAtomic carrying the\n  itUserType (8001)/itProductType (8002)/edge 8101 SchemaDescriptor.\n\n* tests/python/benchmarks/conftest.py — adds _bootstrap_bench called\n  from the entdb_stub fixture (tenant + user + member). Tolerates\n  ALREADY_EXISTS so ENTDB_BENCH_ENDPOINT (an already-running container)\n  is a no-op.\n\n* .github/workflows/ci.yml + schema-compat.yml — drop the flags. The\n  step still runs entdb-schema check, just against an empty boot. With\n  the stale .schema-snapshot.json removed (see below) the boot+check\n  step's hashFiles() guard skips cleanly.\n\n* .schema-snapshot.json — DELETED. It carried names (pre-ADR-031\n  format) and was structurally incompatible with current GetSchema\n  output. Per ADR-032 the baseline is a customer artefact, not a\n  self-referential file in this repo — the workflows' `if:\n  hashFiles('.schema-snapshot.json') != ''` already guards on\n  presence, falling back to a 'No baseline — recommend committing\n  one' notice.\n\n* tests/python/benchmarks/docker-compose.bench.yml — drop the flags\n  from the EntDB service command. The bench corpus is still\n  name-keyed and will fail downstream of boot; that is a separate\n  pre-existing issue, tracked for a follow-up.\n\n* ci(bench): switch corpus to id-keyed payloads for EntDB seed (ADR-031)\n\nThe Postgres-vs-EntDB benchmark corpus generator produced\n`{title, description}` dict payloads consumed by BOTH backends. Per\nADR-031 (Bug C / CLAUDE.md invariant #6) the EntDB wire payload is\nfield-id-keyed, so the EntDB seed has been failing with\n`INVALID_ARGUMENT: payload contains non-field_id key \"title\"` ever\nsince name-keyed payloads were rejected.\n\n  - tests/python/benchmarks/conftest.py — corpus rows now carry a\n    sibling `payload_ids` ({'1': title, '2': description}) used by\n    `entdb_seeded`; `payload` (name-keyed) is retained verbatim\n    because the Postgres schema's JSONB expression-index keys on\n    `payload->>'title'`/`'description'` — both paths need their\n    historical shape.\n  - tests/python/benchmarks/bench_entdb.py — single-op + multi-op\n    write and update microbenchmarks now emit field-id-keyed\n    {'1': ..., '2': ...} maps to match the seed corpus.\n\nAll 12 bench_entdb cases pass locally with --benchmark-disable.",
+          "timestamp": "2026-05-27T04:14:34+01:00",
+          "tree_id": "96ef1a5d3d52d8e2d34387379dfdf7a1389458cb",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/c983e77d34a4b46b476870ce0d81c553305ee6bc"
+        },
+        "date": 1779851815428,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2941.124386341798,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002969200019828766",
+            "extra": "mean: 340.00602104551274 usec\nrounds: 1378"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1941.4705476033396,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000583324372898449",
+            "extra": "mean: 515.0734844957891 usec\nrounds: 1032"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 956.5392477878191,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012672514882572158",
+            "extra": "mean: 1.0454354092764016 msec\nrounds: 733"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 471.3422817208703,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001323823198176209",
+            "extra": "mean: 2.121600456358383 msec\nrounds: 401"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1400.9789901751399,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0013896315873151031",
+            "extra": "mean: 713.7865785374751 usec\nrounds: 1286"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1281.4515011862234,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019183917125374515",
+            "extra": "mean: 780.3650774721577 usec\nrounds: 1678"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1485.0324776142947,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0011384453978568907",
+            "extra": "mean: 673.3859461488009 usec\nrounds: 1337"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1609.8405710745794,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004465415365434234",
+            "extra": "mean: 621.1795242136885 usec\nrounds: 1177"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1592.8324051532793,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004991274837967773",
+            "extra": "mean: 627.8124407594341 usec\nrounds: 422"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1354.209648544248,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007317442998133102",
+            "extra": "mean: 738.4381000940162 usec\nrounds: 1079"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2489.9674079102097,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000027678224344843435",
+            "extra": "mean: 401.6116824755084 usec\nrounds: 1729"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 156.6050846902274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000485136889254912",
+            "extra": "mean: 6.385488708607703 msec\nrounds: 151"
           }
         ]
       }
