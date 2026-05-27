@@ -196,6 +196,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # OIDC for keyless cosign signing — no long-lived signing key
+      # to rotate; the sigstore Fulcio CA mints a short-lived cert
+      # bound to the workflow identity (repo + ref + workflow).
+      id-token: write
+      # Attestations API for SBOM + provenance.
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -257,6 +263,49 @@ jobs:
         run: |
           docker buildx imagetools inspect \
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}:${{ steps.meta.outputs.version }}
+
+      # Resolve the manifest list to its content-addressable digest so
+      # everything below pins the EXACT artifact we just pushed
+      # (mutable tags can be re-pointed; digests cannot).
+      - name: Resolve image digest
+        id: digest
+        run: |
+          DIGEST=$(docker buildx imagetools inspect \
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}:${{ steps.meta.outputs.version }} \
+            --format '{{json .Manifest}}' | jq -r '.digest')
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "Resolved digest: $DIGEST"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Keyless signing (OIDC -> Fulcio short-lived cert). Verification:
+      #   cosign verify ghcr.io/.../tenant-shard-db@<digest> \
+      #     --certificate-identity-regexp '^https://github.com/elloloop/tenant-shard-db/' \
+      #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+      - name: Sign image with cosign (keyless)
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}@${{ steps.digest.outputs.digest }}
+        run: cosign sign --yes "$IMAGE"
+
+      - name: Generate SBOM (SPDX) with syft
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}@${{ steps.digest.outputs.digest }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.target }}.spdx.json
+          upload-artifact: true
+          upload-release-assets: true
+
+      # GitHub-native build provenance — attaches a signed in-toto
+      # SLSA-3 provenance attestation to the digest. Verifiable via
+      # `gh attestation verify oci://<image>@<digest> --repo elloloop/tenant-shard-db`.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}
+          subject-digest: ${{ steps.digest.outputs.digest }}
+          push-to-registry: true
 
   publish-go-sdk:
     name: Publish Go SDK

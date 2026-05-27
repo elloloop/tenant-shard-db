@@ -415,13 +415,73 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@master
+      # Tag-pinned (was @master). master is a moving target that can
+      # ship breaking arg changes; the major-version tag is stable
+      # within v0 and GitHub keeps an audit log of tag rewrites.
+      - uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
           severity: 'CRITICAL,HIGH'
           exit-code: '1'
           ignore-unfixed: true
+
+  # Go call-graph CVE scan. Unlike Trivy (which reads go.sum and
+  # alerts on any vulnerable version), govulncheck only fails when the
+  # vulnerable symbol is REACHABLE from the entrypoint — so a CVE in
+  # an unused part of a transitive dep doesn't block PRs. Runs once
+  # per Go module.
+  go-vuln:
+    name: Go Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.go == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - name: server/go
+        working-directory: server/go
+        run: govulncheck ./...
+      - name: sdk/go/entdb
+        working-directory: sdk/go/entdb
+        run: govulncheck ./...
+      - name: tests/contract
+        working-directory: tests/contract
+        run: govulncheck ./...
+      - name: tools/protoc-gen-entdb-keys
+        working-directory: tools/protoc-gen-entdb-keys
+        run: govulncheck ./...
+
+  # Python dependency CVE scan. pip-audit reads the SDK's installed
+  # dependency tree (incl. transitive) and flags any package with an
+  # advisory in PyPA's database.
+  python-vuln:
+    name: Python Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit SDK + dev dependencies
+        # Audit the installed dependency tree of the workspace-root
+        # `pyproject.toml` (covers the SDK + test/lint extras the CI
+        # pipeline uses). `--strict` makes non-fixable advisories block
+        # too; use `--ignore-vuln <ID>` to pre-approve a specific
+        # advisory when the upstream fix is pending, and record the
+        # reason in SECURITY.md.
+        run: |
+          pip install -e ./sdk/python
+          pip-audit --strict
 
   # Aggregator job for branch protection. `if: always()` so it runs even
   # when upstream jobs were skipped by path filters; the script then
@@ -430,7 +490,7 @@ jobs:
     name: All Checks Passed
     runs-on: ubuntu-latest
     if: always()
-    needs: [lint, unit-tests, integration-tests, docs-coverage, schema-compat, go-server-build, go-sdk, go-server-proto-drift, docker-build, e2e-tests, security-scan]
+    needs: [lint, unit-tests, integration-tests, docs-coverage, schema-compat, go-server-build, go-sdk, go-server-proto-drift, docker-build, e2e-tests, security-scan, go-vuln, python-vuln]
     steps:
       - name: Verify required checks
         env:

@@ -22,3 +22,43 @@ updates:
       actions:
         patterns:
           - "*"
+
+  # All four Go modules. The repo's go.work doesn't aggregate them
+  # for Dependabot — each module path needs its own entry. Grouped so
+  # a transitive bump (e.g. golang.org/x/net) lands as ONE PR per
+  # module rather than ten.
+  - package-ecosystem: "gomod"
+    directory: "/server/go"
+    schedule:
+      interval: "weekly"
+    groups:
+      go-server:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/sdk/go/entdb"
+    schedule:
+      interval: "weekly"
+    groups:
+      go-sdk:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/tests/contract"
+    schedule:
+      interval: "weekly"
+    groups:
+      go-contract-tests:
+        patterns:
+          - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/tools/protoc-gen-entdb-keys"
+    schedule:
+      interval: "weekly"
+    groups:
+      go-tools:
+        patterns:
+          - "*"

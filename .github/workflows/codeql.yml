@@ -1,0 +1,71 @@
+# CodeQL — semantic SAST for Go + Python.
+#
+# Complements Trivy (package-manifest scan) and govulncheck (Go call-
+# graph CVE scan) by catching bug PATTERNS those tools don't see:
+# tainted-flow SQLi, hard-coded credentials, missing error-checking
+# patterns, command injection, etc.
+#
+# Runs:
+#   - on every PR touching Go or Python source
+#   - weekly on the default branch (catches new query packs)
+#
+# Findings land in the Security tab; high/critical block PRs via the
+# branch-protection 'CodeQL' status context (configured separately).
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - '**/*.go'
+      - '**/*.py'
+      - '.github/workflows/codeql.yml'
+  schedule:
+    # Mondays 06:00 UTC. Independent of PR traffic so a newly-shipped
+    # CodeQL query pack runs against the current main.
+    - cron: '0 6 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, python]
+    steps:
+      - uses: actions/checkout@v4
+
+      # Go toolchain matches the go.mod-pinned version so build-mode
+      # autobuild succeeds for all four modules.
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # security-extended adds queries beyond the default suite
+          # (taint-tracking, security-quality, etc.). Worth the extra
+          # ~2 min of analyze time on a repo this size.
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
