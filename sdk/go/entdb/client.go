@@ -616,12 +616,17 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 		// after_offset (mirrors the Python SDK).
 		t.offsets.record(tenantID, r.GetStreamPosition())
 	}
+	committedOffset := ""
+	if receipt != nil {
+		committedOffset = receipt.StreamPosition
+	}
 	return &CommitResult{
-		Success:        resp.GetSuccess(),
-		Receipt:        receipt,
-		CreatedNodeIDs: resp.GetCreatedNodeIds(),
-		Applied:        resp.GetAppliedStatus() == pb.ReceiptStatus_RECEIPT_STATUS_APPLIED,
-		Error:          resp.GetError(),
+		Success:         resp.GetSuccess(),
+		Receipt:         receipt,
+		CreatedNodeIDs:  resp.GetCreatedNodeIds(),
+		Applied:         resp.GetAppliedStatus() == pb.ReceiptStatus_RECEIPT_STATUS_APPLIED,
+		Error:           resp.GetError(),
+		CommittedOffset: committedOffset,
 	}, nil
 }
 
@@ -1542,6 +1547,33 @@ func (c *DbClient) GetTenantQuota(ctx context.Context, actor, tenantID string) (
 // commit chain.
 func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error) {
 	return c.transport.WaitForOffset(ctx, tenantID, actor, streamPosition, timeoutMs)
+}
+
+// WaitForCommit is a convenience wrapper around [DbClient.WaitForOffset]
+// that takes the result of a prior [Plan.Commit] and blocks until that
+// specific write has been applied. Use it instead of polling the field
+// value when multiple goroutines may write to the same node — a
+// value-based "wait until x == V_a" poll DEADLOCKS if a concurrent
+// writer overwrites the field with V_b, but an offset-based wait only
+// observes monotonic progress. Issue #600.
+//
+//	receipt, err := plan.Commit(ctx)
+//	if err != nil { return err }
+//	if ok, _, err := client.WaitForCommit(ctx, tenantID, actor, receipt, 30000); !ok {
+//	    return fmt.Errorf("applier did not catch up: %v", err)
+//	}
+//
+// Returns (false, "", nil) immediately when receipt is nil or carries
+// no offset (e.g. an idempotent-replay response). timeoutMs <= 0 falls
+// back to the server's default cap (30s).
+func (c *DbClient) WaitForCommit(ctx context.Context, tenantID, actor string, receipt *CommitResult, timeoutMs int32) (bool, string, error) {
+	if receipt == nil || receipt.CommittedOffset == "" {
+		return false, "", nil
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = 30000
+	}
+	return c.transport.WaitForOffset(ctx, tenantID, actor, receipt.CommittedOffset, timeoutMs)
 }
 
 // offsetClearer is the optional capability a Transport exposes when

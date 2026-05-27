@@ -68,6 +68,34 @@ The server now rejects name-keyed payloads, filters, and `UpdateNodePrecondition
 
 As of v2.0.3 the Go SDK's `Plan.Commit` accepts `CommitOption` values, including `WithWaitApplied(bool)` and `WithWaitTimeout(time.Duration)`. Set `WithWaitApplied(true)` on writes whose **uniqueness or precondition outcome the caller needs to react to** — without it, the loser of a unique-constraint race gets a phantom success and only discovers the failure via a follow-up read. The Python SDK has exposed `wait_applied=True` since v2.0.0.
 
+## Unique-constraint enforcement: when it actually fires (issue #601)
+
+`(entdb.field).unique = true` and `(entdb.node).composite_unique` are enforced **only after** the server's registry knows about the type. Under v2's ADR-031 model the server **boots empty** and learns each type from a `SchemaDescriptor` the SDK auto-attaches on the first write for that connection. So in v2.x with the official SDKs:
+
+1. App boots, opens a `DbClient` (the SDK builds a name-free `SchemaDescriptor` from its proto registry).
+2. First write of a uniquely-keyed type → SDK attaches the descriptor → server prepends a `register_schema` op → applier registers the type **and creates the per-tenant unique expression index** before the data op lands.
+3. From that moment on, duplicate writes for that key surface as `*UniqueConstraintError` (gRPC `ALREADY_EXISTS`).
+
+The annotation is **not silently ignored** in v2.x. If you observe duplicates landing on a uniquely-annotated field, check one of:
+
+- **Old SDK.** Pre-v2.0.2 the Go SDK dropped `(entdb.field).ref_type_id` from the descriptor, so `register_schema` was rejected for any node with a `kind:"ref"` field — schema never landed → unique never enforced. Upgrade to **v2.0.2+** (or **v2.0.4+** for the wider attribute coverage and the `Plan.Commit(ctx, WithWaitApplied(true))` option from #606 that surfaces the loser's `ALREADY_EXISTS` synchronously).
+- **Hand-rolled client / schema not attached.** Anything that talks to the server without sending a `SchemaDescriptor` keeps the registry empty for that type, and unique stays metadata-only (the proto option ships but no SQLite expression index is ever created). Use an official SDK or call `register_schema` explicitly.
+- **`Plan.Commit` without `WithWaitApplied(true)`.** Without it, the *loser* of a concurrent unique-race gets a phantom success: a UUID returned synchronously, the applier rejecting the write seconds later, no error surfaced to the caller. Use `WithWaitApplied(true)` (issue #606) on writes whose uniqueness outcome you need to react to.
+
+If you genuinely want to run the server schemaless and rely on the annotation, you can't — the annotation is a *client-side* declaration that flows to the server via the SDK's `SchemaDescriptor`. There is no server-side path that consults proto options without the descriptor.
+
+## Recommended Go codegen toolchain (issue #602)
+
+Wire **`protoc-gen-entdb-keys`** into your `buf generate` pipeline so the SDK's typed `UniqueKey[T]` tokens are generated from your proto rather than hand-constructed. Hand-construction couples your code to an internal wire format the SDK explicitly disclaims as unstable.
+
+Install the plugin once (each release tags the tools submodule too):
+
+```bash
+go install github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys@v2.0.4
+```
+
+Then drop [`docs/recipes/buf.gen.yaml.template`](recipes/buf.gen.yaml.template) into your repo as `buf.gen.yaml`. It generates `protoc-gen-go` + `protoc-gen-go-grpc` + `protoc-gen-entdb-keys` sidecars in one `buf generate` pass. The generated tokens are then the only way to call `sdk.GetByKey`, and any future change to the token shape only ripples through codegen rather than every consumer.
+
 ## What is *not* breaking
 
 - The `schema_fingerprint` on `ExecuteAtomic` still exists; the SDK manages it for you.
