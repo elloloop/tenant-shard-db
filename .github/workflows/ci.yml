@@ -418,7 +418,7 @@ jobs:
       # Tag-pinned (was @master). master is a moving target that can
       # ship breaking arg changes; the major-version tag is stable
       # within v0 and GitHub keeps an audit log of tag rewrites.
-      - uses: aquasecurity/trivy-action@0.28.0
+      - uses: aquasecurity/trivy-action@0.30.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
