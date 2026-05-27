@@ -9,7 +9,7 @@ package entdb;
 
 import "google/protobuf/descriptor.proto";
 
-option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/entdbopts";
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2/testdata/entdbopts";
 
 message NodeOpts {
   int32 type_id = 1;

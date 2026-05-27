@@ -1,4 +1,4 @@
-module github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys
+module github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2
 
 go 1.22
 

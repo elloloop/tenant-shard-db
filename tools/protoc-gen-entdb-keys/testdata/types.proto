@@ -4,7 +4,7 @@ package types_fixture;
 
 import "entdb_options.proto";
 
-option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/typesfixture";
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2/testdata/typesfixture";
 
 message AllScalars {
   option (entdb.node) = { type_id: 300 };

@@ -300,7 +300,7 @@ jobs:
         # Go's sub-module versioning requires `<path>/vX.Y.Z` tags, so we
         # mint one alongside the SDK tag. Without this, consumers
         # cannot `go install
-        # github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys@vX.Y.Z`
+        # github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2@vX.Y.Z`
         # — they have to build from a clone. Issue #602.
         run: |
           VER="${GITHUB_REF_NAME#v}"
@@ -319,7 +319,7 @@ jobs:
           curl -fsSL "https://proxy.golang.org/${MODULE}/@v/v${VER}.info" || \
             echo "Module proxy will index within ~30 minutes"
           # Warm the plugin module too so `go install` resolves promptly.
-          TOOLS_MODULE="github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys"
+          TOOLS_MODULE="github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2"
           curl -fsSL "https://proxy.golang.org/${TOOLS_MODULE}/@v/v${VER}.info" || \
             echo "Tools module proxy will index within ~30 minutes"
 
