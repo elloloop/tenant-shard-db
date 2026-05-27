@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779851796433,
+  "lastUpdate": 1779853921368,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -8424,6 +8424,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0020234759151915097",
             "extra": "mean: 8.515850318519192 msec\nrounds: 135"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "da4b0a226fa2679a6f3bd462e88ca241a0cb3905",
+          "message": "fix(sdk/go): typed coordinates on single-field UniqueConstraintError (#614)\n\nLive-server integration tests for InsertIfNotExists surfaced a real\nbug the mock unit tests couldn't have caught: the SDK's\nparseUniqueConstraintFromStatus only decoded composite-unique\nviolations into typed (TypeID, FieldIDs, Values), and for single-field\nviolations returned a *UniqueConstraintError with TypeID/FieldID/Value\nall zero. (The code itself even had a comment admitting this:\n\"intentionally left for future structured-error work\".)\n\nInsertIfNotExists's post-conflict resolution is\n\n    s.client.transport.GetNodeByKey(ctx, tenantID, actor,\n        uce.TypeID, uce.FieldID, uce.Value)\n\nso the zero-coordinates path silently sent GetNodeByKey(0, 0, nil),\ngot back no node, and surfaced the raw UCE instead of the existing\nid — meaning InsertIfNotExists was BROKEN for single-field conflicts\nin v2.1.0. Mock-based unit tests hand-built UCE.TypeID/FieldID/Value\nso the gap survived review.\n\nFix\n---\n\nAdded parseSingleFieldUniqueDetail + decodePyRepr to errors.go.\nparser branch is now:\n\n  composite? -> ConstraintName, FieldIDs, Values, TypeID\n  single?    -> TypeID, FieldID, Value (NEW)\n  fallback   -> Message only (last resort)\n\ndecodePyRepr round-trips the server's pyRepr() rendering:\n\n  'foo'       -> \"foo\"  (single-quoted strings with \\\\ / \\' escapes)\n  42          -> int64(42)\n  1.5         -> float64(1.5)\n  True/False  -> bool\n  None        -> nil\n\nBig ints (>2^53) round-trip losslessly through int64 — matches the\nADR-028 typed-value path.\n\nTests\n-----\n\n1) sdk/go/entdb/errors_test.go — two new cases:\n   - SingleFieldExtractsCoordinates: pins the wire-form parse.\n   - SingleFieldScalarTypes: 8 sub-tests covering string + escapes +\n     int + big int + float + True + False + None.\n\n2) sdk/go/entdb/integration_test.go — two new -tags=integration cases\n   against a real entdb-server (uses testpb.Product / type_id 201):\n   - InsertIfNotExists_Created: happy path, node is queryable.\n   - InsertIfNotExists_ResolvesConflict: second write with the same\n     unique sku returns the FIRST writer's id; first writer's payload\n     is preserved (no upsert overwrite).\n\n3) tests/python/integration/test_insert_if_not_exists.py — mirror\n   suite against the Python SDK. The Python parser already handled\n   single-field details so no Python fix is needed; the integration\n   test guards future regressions through the full applier round\n   trip.\n\nThese are the regression pins the user asked for after v2.1.0 — the\nmock unit tests prove the SDK BRANCHING logic; the integration tests\nprove the END-TO-END wire path (which is where the bug actually was).\n\nCI: all four Go modules + python unit (459) + python integration\n(115 → 117 with the new cases) green locally.",
+          "timestamp": "2026-05-27T04:50:16+01:00",
+          "tree_id": "dfe2ada6be2bd2b388f7774b8add0182546a0909",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/da4b0a226fa2679a6f3bd462e88ca241a0cb3905"
+        },
+        "date": 1779853920876,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3317.803176013108,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026256285279264754",
+            "extra": "mean: 301.40425665686 usec\nrounds: 1352"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2120.836503672797,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004483868710891783",
+            "extra": "mean: 471.5120652951003 usec\nrounds: 1118"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1028.8592907090472,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000946905090042784",
+            "extra": "mean: 971.9502064376961 usec\nrounds: 901"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 404.76617296580065,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00035665622540928776",
+            "extra": "mean: 2.470562183279312 msec\nrounds: 311"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1773.3118515738995,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015377467660110164",
+            "extra": "mean: 563.9166055944711 usec\nrounds: 1430"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1805.6386427301607,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015532861003761717",
+            "extra": "mean: 553.8206683968508 usec\nrounds: 1734"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1860.014095536083,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00015589088005148638",
+            "extra": "mean: 537.630334307647 usec\nrounds: 1026"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1671.2541873938578,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000057022491784646443",
+            "extra": "mean: 598.3530258550275 usec\nrounds: 1199"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1708.993737832408,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005485543074504271",
+            "extra": "mean: 585.1396513999777 usec\nrounds: 393"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1440.7126614833307,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007201273000786754",
+            "extra": "mean: 694.1009312505234 usec\nrounds: 1120"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2632.778178675739,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003805734630321361",
+            "extra": "mean: 379.82690987775885 usec\nrounds: 1964"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 137.22205246509998,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001915562159013942",
+            "extra": "mean: 7.287458408001385 msec\nrounds: 125"
           }
         ]
       }
