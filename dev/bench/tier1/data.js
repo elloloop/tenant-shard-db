@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779857492370,
+  "lastUpdate": 1779857543743,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -8964,6 +8964,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0002331596087170724",
             "extra": "mean: 7.304461519685147 msec\nrounds: 127"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d4e4eb771f6992379841a4a1e5de7a889d19ce79",
+          "message": "fix(release): attach SBOMs to GitHub Release in post-create-release job (#620)\n\nv2.1.2 surfaced an ordering bug in the v2.1.2-shipped SBOM pipeline:\n\n  anchore/sbom-action's 'upload-release-assets: true' runs in the\n  'merge' job. But the 'create-release' job runs LATER (needs:\n  [merge]). At the time the SBOM step executes the release does not\n  exist yet, so the action silently falls back to artifact-only.\n  v2.1.2's SBOMs landed as workflow artifacts; the release page\n  ended up missing 'sbom-server-v2.1.2.spdx.json' and\n  'sbom-schema-v2.1.2.spdx.json' (retrofitted manually post-hoc).\n\nFix\n---\n\n1) merge.Generate SBOM step: turn off 'upload-release-assets' (it's\n   a no-op there anyway) and pin a deterministic 'artifact-name' so\n   the post-release job can resolve it across both matrix legs.\n\n2) New job 'attach-sboms-to-release' that needs both 'merge' and\n   'create-release', downloads the SBOM workflow artifacts, renames\n   them to 'sbom-<target>-<tag>.spdx.json' (matching the\n   entdb-schema-<tag>-... naming convention already on the release),\n   and uploads via 'gh release upload --clobber'.\n\nv2.1.3 is the first release where SBOMs land automatically on the\nrelease page; v2.1.2 was patched manually in the same session this\nfix was authored.\n\nVerification (post-v2.1.3):\n  gh release view v2.1.3 --json assets --jq '[.assets[] | select(.name | startswith(\"sbom-\")) | .name]'\n  # expect: ['sbom-schema-v2.1.3.spdx.json', 'sbom-server-v2.1.3.spdx.json']",
+          "timestamp": "2026-05-27T05:49:41+01:00",
+          "tree_id": "840e343c966109eda66f9d1766344837d9a5fa35",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/d4e4eb771f6992379841a4a1e5de7a889d19ce79"
+        },
+        "date": 1779857543239,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3310.1634154139892,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000025728720802453428",
+            "extra": "mean: 302.0998888886982 usec\nrounds: 756"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2126.1733127210273,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004290686708561689",
+            "extra": "mean: 470.3285447225481 usec\nrounds: 1118"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1029.9879114064454,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009675431685722973",
+            "extra": "mean: 970.8851812003336 usec\nrounds: 883"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 453.31447978966077,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00014946170941062688",
+            "extra": "mean: 2.205974096534492 msec\nrounds: 404"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1928.202985536573,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008263902256816608",
+            "extra": "mean: 518.617597577116 usec\nrounds: 1568"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1934.4960746825334,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009433405313289567",
+            "extra": "mean: 516.9304880414959 usec\nrounds: 1547"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1967.709287798604,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008515064415711157",
+            "extra": "mean: 508.20515317014167 usec\nrounds: 1593"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1845.9824118682304,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004567358941807732",
+            "extra": "mean: 541.716970633511 usec\nrounds: 1294"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1844.996826804927,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005062734702080499",
+            "extra": "mean: 542.0063522449249 usec\nrounds: 423"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1545.0762561709544,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007873322612209287",
+            "extra": "mean: 647.2172464019507 usec\nrounds: 1181"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2647.2233660842344,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000037438733120360856",
+            "extra": "mean: 377.7542963740144 usec\nrounds: 1903"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 133.6799830292416,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005625324336095549",
+            "extra": "mean: 7.480551518182469 msec\nrounds: 110"
           }
         ]
       }
