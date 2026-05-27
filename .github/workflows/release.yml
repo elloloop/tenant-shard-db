@@ -293,9 +293,22 @@ jobs:
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}@${{ steps.digest.outputs.digest }}
           format: spdx-json
+          # Pin the artifact name to a deterministic value so the later
+          # `attach-sboms-to-release` job can resolve it across both
+          # matrix legs (server / schema). Without the override the
+          # action embeds the digest in the artifact name, which the
+          # downstream job can't predict.
+          artifact-name: sbom-${{ matrix.target }}.spdx.json
           output-file: sbom-${{ matrix.target }}.spdx.json
           upload-artifact: true
-          upload-release-assets: true
+          # NOTE: upload-release-assets is intentionally OFF here. The
+          # `create-release` job runs AFTER `merge`, so at THIS point
+          # the release doesn't exist yet and the action would silently
+          # fall back to artifact-only. The dedicated
+          # `attach-sboms-to-release` job below picks them up after
+          # the release is created. v2.1.2 was patched manually; v2.1.3
+          # is the first release where this lands automatically.
+          upload-release-assets: false
 
       # GitHub-native build provenance — attaches a signed in-toto
       # SLSA-3 provenance attestation to the digest. Verifiable via
@@ -614,3 +627,54 @@ jobs:
             github.com/elloloop/tenant-shard-db/server/go/cmd/entdb-schema@${{ github.ref_name }}`.
           draft: false
           prerelease: ${{ contains(github.ref, '-') }}
+
+  # SBOMs are produced in the `merge` job (per-target: server + schema)
+  # but at that point the GitHub Release doesn't exist yet, so the SBOM
+  # action's `upload-release-assets: true` would silently fall back to
+  # artifact-only. This job runs AFTER `create-release` and uploads the
+  # already-generated artifacts as release assets — fixing the
+  # ordering bug that surfaced in v2.1.2 (where SBOMs landed as
+  # workflow artifacts only and had to be manually retrofitted).
+  attach-sboms-to-release:
+    name: Attach SBOMs to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [merge, create-release]
+    permissions:
+      contents: write
+    steps:
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # Both matrix legs (server + schema) upload under their pinned
+          # names; this fetches them into ./sboms/<name>/<name>.spdx.json.
+          pattern: sbom-*.spdx.json
+          path: sboms
+          merge-multiple: false
+
+      - name: Stage SBOMs with versioned filenames
+        # The release-asset name carries the tag so consumers can pick
+        # the right SBOM for the image digest they're running, matching
+        # the entdb-schema / entdbctl asset naming convention on the
+        # same release.
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/sbom-assets
+          for target in server schema; do
+            src="sboms/sbom-${target}.spdx.json/sbom-${target}.spdx.json"
+            if [ -f "$src" ]; then
+              cp "$src" "/tmp/sbom-assets/sbom-${target}-${GITHUB_REF_NAME}.spdx.json"
+            else
+              echo "::warning::SBOM artifact for ${target} not found at ${src}"
+            fi
+          done
+          ls -lh /tmp/sbom-assets
+
+      - name: Upload SBOMs to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release upload "$GITHUB_REF_NAME" \
+            /tmp/sbom-assets/sbom-server-"$GITHUB_REF_NAME".spdx.json \
+            /tmp/sbom-assets/sbom-schema-"$GITHUB_REF_NAME".spdx.json \
+            --clobber
