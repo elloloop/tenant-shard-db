@@ -79,17 +79,17 @@ jobs:
           set -euo pipefail
           DATA_DIR="$(mktemp -d)"
           LOG_FILE="$(mktemp)"
-          # --seed-profile=contract registers the User/Task/AssignedTo
-          # registry that matches the committed .schema-snapshot.json
-          # baseline (server/go/internal/testseed.RegisterContractSchema).
+          # Empty boot (ADR-031). The server materializes its registry from
+          # the WAL via the first self-describing write — there is no
+          # boot-seed flag. The compatibility check below registers
+          # whatever schema the committed baseline asserts through the API
+          # before snapshotting, so the comparison is apples-to-apples.
           # --wal-backend=memory avoids needing a Kafka stack for what
           # is effectively a read-only GetSchema check.
           /tmp/entdb-server \
             --addr 127.0.0.1:50451 \
             --data-dir "$DATA_DIR" \
             --wal-backend memory \
-            --seed-profile contract \
-            --seed-tenant acme \
             > "$LOG_FILE" 2>&1 &
           SERVER_PID=$!
           trap 'kill "$SERVER_PID" 2>/dev/null || true; wait "$SERVER_PID" 2>/dev/null || true; echo "--- entdb-server log ---"; cat "$LOG_FILE" || true' EXIT

@@ -110,9 +110,69 @@ async def _wait_ready(addr: str, timeout: float = 15.0) -> None:
     raise RuntimeError(f"server at {addr} not ready in {timeout}s: {last!r}")
 
 
+async def _bootstrap_contract(addr: str) -> None:
+    """Provision tenant + users through the live gRPC API (ADR-031).
+
+    The server boots EMPTY — no tenant, no users, no schema, no seed node.
+    This walks the same sequence a real client would for the prerequisites
+    each example assumes:
+
+      - CreateTenant("acme"), CreateUser(alice/bob), AddTenantMember
+        (alice=owner, bob=member); poll GetTenant until the tenant
+        materializes (CreateTenant flows through the global WAL/applier).
+
+    The CONTRACT SCHEMA is intentionally NOT registered here — each
+    example calls ``register_proto_schema(example_schema_pb2)`` and the
+    SDK auto-attaches a name-free SchemaDescriptor on the first
+    ExecuteAtomic, so the schema lands via the same self-describing-write
+    path a real client uses. Pre-registering it from a hand-built
+    descriptor here would mint a different fingerprint than the SDK's
+    canonicaliser produces, and the establish-or-reject policy would then
+    refuse the SDK's first write.
+    """
+    from grpc import aio as grpc_aio
+
+    from entdb_sdk._generated import entdb_pb2 as pb
+    from entdb_sdk._generated.entdb_pb2_grpc import EntDBServiceStub
+
+    admin = "system:admin"
+    async with grpc_aio.insecure_channel(addr) as ch:
+        stub = EntDBServiceStub(ch)
+        r = await stub.CreateTenant(
+            pb.CreateTenantRequest(actor=admin, tenant_id=TENANT, name="Acme Corp")
+        )
+        assert r.success, f"CreateTenant: {r}"
+        for uid, email, name in (
+            ("alice", "alice@example.com", "Alice"),
+            ("bob", "bob@example.com", "Bob"),
+        ):
+            ru = await stub.CreateUser(
+                pb.CreateUserRequest(actor=admin, user_id=uid, email=email, name=name)
+            )
+            assert ru.success, f"CreateUser({uid}): {ru}"
+        for uid, role in (("alice", "owner"), ("bob", "member")):
+            rm = await stub.AddTenantMember(
+                pb.TenantMemberRequest(actor=admin, tenant_id=TENANT, user_id=uid, role=role)
+            )
+            assert rm.success, f"AddTenantMember({uid}): {rm}"
+        # Tenant flows through the global WAL → applier; poll until visible.
+        for _ in range(200):
+            g = await stub.GetTenant(pb.GetTenantRequest(actor=admin, tenant_id=TENANT))
+            if g.found:
+                break
+            await asyncio.sleep(0.02)
+        else:
+            raise RuntimeError(f"tenant {TENANT!r} never materialized")
+
+
 @asynccontextmanager
 async def live_endpoint():
-    """Yield ``"127.0.0.1:<port>"`` of a fresh contract-seeded server."""
+    """Yield ``"127.0.0.1:<port>"`` of a fresh contract-bootstrapped server.
+
+    EMPTY BOOT (ADR-031). The server starts with no schema, tenant, or
+    users; :func:`_bootstrap_contract` provisions them through the gRPC
+    API after the port is reachable.
+    """
     binary = _server_binary()
     tmp = tempfile.TemporaryDirectory(prefix="entdb-examples-")
     data_dir = Path(tmp.name)
@@ -133,10 +193,6 @@ async def live_endpoint():
                 str(data_dir),
                 "--wal-backend",
                 "memory",
-                "--seed-profile",
-                "contract",
-                "--seed-tenant",
-                TENANT,
             ],
             stdout=log_fh,
             stderr=subprocess.STDOUT,
@@ -158,6 +214,7 @@ async def live_endpoint():
         raise RuntimeError(f"failed to boot entdb-server: {last!r}")
 
     try:
+        await _bootstrap_contract(f"127.0.0.1:{port}")
         yield f"127.0.0.1:{port}"
     finally:
         proc.terminate()

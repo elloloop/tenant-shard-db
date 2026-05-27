@@ -217,10 +217,6 @@ def entdb_endpoint(tmp_path_factory) -> Iterator[str]:
             str(data_dir),
             "--wal-backend",
             "memory",
-            "--seed-profile",
-            "contract",
-            "--seed-tenant",
-            BENCH_TENANT,
         ]
         log_fh = open(log_path, "ab", buffering=0)  # noqa: SIM115
         proc = subprocess.Popen(
@@ -256,6 +252,65 @@ def entdb_endpoint(tmp_path_factory) -> Iterator[str]:
             proc.kill()
 
 
+def _bootstrap_bench(stub) -> None:
+    """Provision the bench tenant + bench actor (ADR-031 empty boot).
+
+    The server boots with no schema/tenant/users; the bench corpus is
+    written against ``BENCH_TENANT`` so the tenant + an actor with write
+    grants must exist before ``entdb_seeded`` runs. The schema itself
+    is registered automatically by the first ExecuteAtomic the seed
+    fixture sends (the SDK-style self-describing-write — the bench
+    payload uses ``TASK_TYPE_ID``/``ASSIGNED_TO_EDGE_ID`` so the
+    descriptor on the wire matches the corpus).
+    """
+    import time
+
+    from entdb_sdk._generated import entdb_pb2 as pb
+
+    admin = "system:admin"
+    # Idempotent: re-runs in the same process (ENTDB_BENCH_ENDPOINT
+    # override) tolerate ALREADY_EXISTS.
+    try:
+        stub.CreateTenant(
+            pb.CreateTenantRequest(actor=admin, tenant_id=BENCH_TENANT, name="Bench"),
+            timeout=10.0,
+        )
+    except Exception:
+        pass
+    try:
+        stub.CreateUser(
+            pb.CreateUserRequest(
+                actor=admin, user_id="bench", email="bench@example.invalid", name="Bench"
+            ),
+            timeout=10.0,
+        )
+    except Exception:
+        pass
+    try:
+        stub.AddTenantMember(
+            pb.TenantMemberRequest(
+                actor=admin, tenant_id=BENCH_TENANT, user_id="bench", role="owner"
+            ),
+            timeout=10.0,
+        )
+    except Exception:
+        pass
+    # CreateTenant flows through the global WAL → applier; poll until
+    # the tenant is visible before the first per-tenant write.
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        try:
+            r = stub.GetTenant(
+                pb.GetTenantRequest(actor=admin, tenant_id=BENCH_TENANT), timeout=2.0
+            )
+            if r.found:
+                return
+        except Exception:  # noqa: BLE001 - poll-and-retry
+            pass
+        time.sleep(0.02)
+    raise RuntimeError(f"bench tenant {BENCH_TENANT!r} never materialized")
+
+
 @pytest.fixture(scope="session")
 def entdb_stub(entdb_endpoint: str):
     """Session-scoped sync ``EntDBServiceStub``.
@@ -271,6 +326,7 @@ def entdb_stub(entdb_endpoint: str):
 
     channel = grpc.insecure_channel(entdb_endpoint)
     stub = EntDBServiceStub(channel)
+    _bootstrap_bench(stub)
     yield stub
     channel.close()
 
@@ -306,16 +362,27 @@ def _generate_corpus(size: int) -> list[dict]:
         body = (
             f"node-{i} body-token-{rng.randrange(10**6):06d}-" + "x" * 64 + f" owner=user-{i % 25}"
         )
+        owner = f"user-{i % 25}"
         rows.append(
             {
                 "node_id": nid,
+                # Postgres-facing payload: schema column is JSONB with a
+                # GIN expression index on ``payload->>'title'`` /
+                # ``payload->>'description'``, so the keys must be the
+                # human names the SQL refers to.
                 "payload": {
                     "title": subject,
                     "description": body,
                     # Used by Postgres-side mailbox-list query (predicate
                     # on ``owner``). EntDB doesn't filter on this in the
                     # bench — it queries by ``type_id``.
-                    "owner": f"user-{i % 25}",
+                    "owner": owner,
+                },
+                # EntDB-facing payload: id-keyed per ADR-031 / CLAUDE.md
+                # invariant #6 (Task: title=1, description=2).
+                "payload_ids": {
+                    "1": subject,
+                    "2": body,
                 },
             }
         )
@@ -368,7 +435,7 @@ def entdb_seeded(entdb_stub, corpus):
                     create_node=pb.CreateNodeOp(
                         type_id=TASK_TYPE_ID,
                         id=row["node_id"],
-                        data=_to_struct(row["payload"]),
+                        data=_to_struct(row["payload_ids"]),
                     )
                 )
             )

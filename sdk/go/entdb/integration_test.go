@@ -26,7 +26,24 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	pb "github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2/internal/pb"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/protobuf/types/known/structpb"
 )
+
+// newBootstrapPayload renders the placeholder User the bootstrap write
+// creates so the schema-register op has something to ride on (an empty
+// operations list is rejected by the handler). Field 1 = email
+// (declared unique); field 2 = name. The values are intentionally
+// distinct from anything an integration test creates.
+func newBootstrapPayload() (*structpb.Struct, error) {
+	return structpb.NewStruct(map[string]any{
+		"1": "it-bootstrap@example.invalid",
+		"2": "Bootstrap",
+	})
+}
 
 const (
 	itTenant = "acme"
@@ -80,12 +97,14 @@ func runIntegration(m *testing.M) int {
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
+	// EMPTY BOOT (ADR-031). The server starts with no schema, tenant,
+	// or users; bootstrapIntegrationContract provisions them through the
+	// gRPC API below — same path a real client would use, mirror of the
+	// Python conftest's `_bootstrap_contract`.
 	srv := exec.Command(bin,
 		"--addr", addr,
 		"--data-dir", filepath.Join(tmp, "data"),
 		"--wal-backend", "memory",
-		"--seed-profile", "e2e",
-		"--seed-tenant", itTenant,
 	)
 	srv.Stdout, srv.Stderr = os.Stderr, os.Stderr
 	if err := srv.Start(); err != nil {
@@ -123,8 +142,126 @@ func runIntegration(m *testing.M) int {
 		return 1
 	}
 
+	if err := bootstrapIntegrationContract(ctx, addr); err != nil {
+		fmt.Fprintf(os.Stderr, "integration: bootstrap: %v\n", err)
+		return 1
+	}
+
 	itClient = client
 	return m.Run()
+}
+
+// bootstrapIntegrationContract provisions the tenant, the e2e-runner
+// user, and the integration-test schema through the live gRPC API
+// (ADR-031 empty boot, mirror of tests/python/integration/conftest.py
+// :_bootstrap_contract).
+//
+// Schema:
+//
+//	User    type_id 8001 — email=1 str unique, name=2 str, age=3 int,
+//	                       active=4 bool
+//	Product type_id 8002 — sku=1 str unique
+//
+// These ids match the constants the test cases below use. The schema
+// rides a self-describing ExecuteAtomic with a placeholder write
+// (an empty op list is rejected); the placeholder uses a node id +
+// email that no integration test creates so it can't collide.
+func bootstrapIntegrationContract(ctx context.Context, addr string) error {
+	conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return fmt.Errorf("dial bootstrap: %w", err)
+	}
+	defer conn.Close()
+	stub := pb.NewEntDBServiceClient(conn)
+	admin := "system:admin"
+
+	if _, err := stub.CreateTenant(ctx, &pb.CreateTenantRequest{
+		Actor: admin, TenantId: itTenant, Name: "Acme Corp",
+	}); err != nil {
+		return fmt.Errorf("CreateTenant: %w", err)
+	}
+	if _, err := stub.CreateUser(ctx, &pb.CreateUserRequest{
+		Actor: admin, UserId: "e2e-runner", Email: "e2e@example.invalid", Name: "E2E",
+	}); err != nil {
+		return fmt.Errorf("CreateUser: %w", err)
+	}
+	if _, err := stub.AddTenantMember(ctx, &pb.TenantMemberRequest{
+		Actor: admin, TenantId: itTenant, UserId: "e2e-runner", Role: "owner",
+	}); err != nil {
+		return fmt.Errorf("AddTenantMember: %w", err)
+	}
+	// Mailbox node test creates a mailbox-private node owned by user
+	// "mail-user"; provision them so the membership grant exists.
+	if _, err := stub.CreateUser(ctx, &pb.CreateUserRequest{
+		Actor: admin, UserId: "mail-user", Email: "mail@example.invalid", Name: "Mail",
+	}); err != nil {
+		return fmt.Errorf("CreateUser(mail): %w", err)
+	}
+	if _, err := stub.AddTenantMember(ctx, &pb.TenantMemberRequest{
+		Actor: admin, TenantId: itTenant, UserId: "mail-user", Role: "member",
+	}); err != nil {
+		return fmt.Errorf("AddTenantMember(mail): %w", err)
+	}
+
+	// Poll until the tenant is visible (CreateTenant flows through the
+	// global WAL → applier; the first per-tenant write must wait).
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r, gerr := stub.GetTenant(ctx, &pb.GetTenantRequest{Actor: admin, TenantId: itTenant})
+		if gerr == nil && r.GetFound() {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	// Name-free SchemaDescriptor (ADR-031).
+	user := &pb.SchemaNodeTypeDef{
+		TypeId: itUserType,
+		Fields: []*pb.SchemaFieldDef{
+			{FieldId: 1, Kind: "str", Unique: true},
+			{FieldId: 2, Kind: "str"},
+			{FieldId: 3, Kind: "int"},
+			{FieldId: 4, Kind: "bool"},
+		},
+	}
+	product := &pb.SchemaNodeTypeDef{
+		TypeId: itProductType,
+		Fields: []*pb.SchemaFieldDef{
+			{FieldId: 1, Kind: "str", Unique: true},
+		},
+	}
+	edgeFromUser := &pb.SchemaEdgeTypeDef{
+		EdgeId: 8101, FromTypeId: itUserType, ToTypeId: itUserType,
+	}
+	descriptor := &pb.SchemaDescriptor{
+		NodeTypes: []*pb.SchemaNodeTypeDef{user, product},
+		EdgeTypes: []*pb.SchemaEdgeTypeDef{edgeFromUser},
+	}
+
+	// Send the schema register on a placeholder User write — empty op
+	// list is rejected. The placeholder's id + email avoid colliding
+	// with any test below.
+	bootstrapPayload, err := newBootstrapPayload()
+	if err != nil {
+		return fmt.Errorf("bootstrap payload: %w", err)
+	}
+	if _, err := stub.ExecuteAtomic(ctx, &pb.ExecuteAtomicRequest{
+		Context:        &pb.RequestContext{TenantId: itTenant, Actor: itActor},
+		IdempotencyKey: "it-bootstrap-schema",
+		Schema:         descriptor,
+		Operations: []*pb.Operation{
+			{Op: &pb.Operation_CreateNode{CreateNode: &pb.CreateNodeOp{
+				TypeId: itUserType,
+				Id:     "it-bootstrap",
+				Data:   bootstrapPayload,
+			}}},
+		},
+		WaitApplied:   true,
+		WaitTimeoutMs: 10000,
+	}); err != nil {
+		return fmt.Errorf("schema register: %w", err)
+	}
+	return nil
 }
 
 func freePort() (int, error) {

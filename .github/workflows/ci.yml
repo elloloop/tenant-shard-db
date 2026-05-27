@@ -245,17 +245,14 @@ jobs:
           set -euo pipefail
           DATA_DIR="$(mktemp -d)"
           LOG_FILE="$(mktemp)"
-          # Boot in the background on a fixed loopback port; --wal-backend=memory
-          # avoids needing a Kafka stack just to read the schema. The
-          # --seed-profile=contract flag registers the User/Task/AssignedTo
-          # registry that matches the committed .schema-snapshot.json
-          # baseline (server/go/internal/testseed.RegisterContractSchema).
+          # Empty boot (ADR-031). The registry is materialized from the
+          # WAL via the first self-describing write — no boot-seed flag.
+          # --wal-backend=memory avoids needing a Kafka stack just to
+          # read the (empty) GetSchema.
           /tmp/entdb-server \
             --addr 127.0.0.1:50451 \
             --data-dir "$DATA_DIR" \
             --wal-backend memory \
-            --seed-profile contract \
-            --seed-tenant acme \
             > "$LOG_FILE" 2>&1 &
           SERVER_PID=$!
           # Be sure to clean up even on early exit.

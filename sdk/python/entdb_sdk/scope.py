@@ -522,6 +522,77 @@ class ActorScope:
         )
         return ScopedPlan(raw_plan)
 
+    async def insert_if_not_exists(
+        self,
+        msg: Any,
+        *,
+        idempotency_key: str,
+        timeout: float | None = None,
+    ) -> tuple[str | None, str | None]:
+        """Insert ``msg`` if no node with its unique keys exists.
+
+        Closes the racy ``get_by_key → create`` idiom: under N
+        concurrent writers exactly one wins and the rest learn the
+        existing canonical node id without a second user-visible round
+        trip into client code.
+
+        Returns ``(created_id, existing_id)``; exactly one is non-None
+        on success. ``created_id`` is the freshly-minted id when this
+        call won the race; ``existing_id`` is the canonical id of the
+        prior winner when a single-field unique constraint tripped.
+
+        Issue #599. v2.1.0 boundary:
+
+        - SINGLE-FIELD unique only. A composite-unique violation
+          (ADR-030) re-raises the typed
+          :class:`UniqueConstraintError` without a follow-up
+          lookup — there is no ``GetByCompositeKey`` RPC, so callers
+          needing composite upsert must query themselves. Tracked
+          for v2.2.
+
+        - The follow-up :py:meth:`get_node_by_key` is a SECOND round
+          trip. A truly atomic single-round-trip insert-if-not-exists
+          (server-side ``NodeConflictPolicy_SKIP``) is the v2.2 path;
+          this helper closes the correctness gap NOW with the
+          primitives shipped in v2.0.x.
+
+        - ``wait_applied=True`` is forced so the synchronous error
+          path observes the applier's outcome (without it the loser
+          of a unique race sees a phantom success — issue #606).
+        """
+        from .errors import UniqueConstraintError
+
+        if msg is None:
+            raise TypeError("insert_if_not_exists: msg is required (got None)")
+
+        scoped_plan = self.plan(idempotency_key=idempotency_key)
+        scoped_plan.create(msg)
+        try:
+            result = await scoped_plan.commit(wait_applied=True, timeout=timeout)
+        except UniqueConstraintError as uce:
+            if uce.is_composite:
+                # No GetByCompositeKey RPC in v2.x. Surface the typed
+                # error so callers can do their own composite lookup.
+                raise
+            node = await self._client._grpc.get_node_by_key(
+                tenant_id=self._tenant_id,
+                actor=self._actor,
+                type_id=int(uce.type_id),
+                field_id=int(uce.field_id),
+                value=uce.value,
+                timeout=timeout,
+            )
+            if node is None:
+                # The applier just told us this key collided with a
+                # committed row; if the lookup misses, re-raise so the
+                # caller can act on the unique-constraint detail.
+                raise
+            return (None, node.node_id)
+
+        if not result.created_node_ids:
+            raise RuntimeError("insert_if_not_exists: commit returned no created_node_ids")
+        return (result.created_node_ids[0], None)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────
 

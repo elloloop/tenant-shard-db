@@ -44,6 +44,8 @@ SPDX-License-Identifier: MIT
 
 SPDX-License-Identifier: MIT
 
+SPDX-License-Identifier: MIT
+
 VARIABLES
 
 var ErrPreconditionFailed = errors.New("entdb: precondition failed")
@@ -504,12 +506,48 @@ func WithUnaryClientInterceptors(interceptors ...grpc.UnaryClientInterceptor) Cl
     interceptors are also installed, for example node redirect handling,
     these interceptors run first and wrap the full outbound RPC.
 
+type CommitOption func(*commitOpts)
+    CommitOption configures a single Plan.Commit / ExecuteAtomic call. Pass
+    values to Plan.Commit as variadic args:
+
+        receipt, err := plan.Commit(ctx, entdb.WithWaitApplied(true))
+
+    Options are independent and can be combined. Issue #606.
+
+func WithWaitApplied(b bool) CommitOption
+    WithWaitApplied controls whether Plan.Commit blocks until the WAL
+    applier has processed every op in the batch BEFORE returning. When true,
+    the applier's outcome (success, ALREADY_EXISTS on a unique- constraint
+    violation, FAILED_PRECONDITION on a CAS miss, …) is surfaced synchronously.
+    When false (the default), the call returns as soon as the WAL has accepted
+    the event, and an applier-side rejection only shows up via a follow-up read.
+
+    Prior to issue #606 the Plan API auto-enabled this ONLY for ops carrying
+    a Precondition. For unique-constraint races (no precondition) the LOSER
+    otherwise got a phantom success: a UUID returned by Commit, then a silent
+    ALREADY_EXISTS at apply time. Set this explicitly to true on writes whose
+    uniqueness outcome the caller needs to react to.
+
+func WithWaitTimeout(d time.Duration) CommitOption
+    WithWaitTimeout sets the upper bound on how long the server will block
+    waiting for the applier when WaitApplied is true. Zero (the default) selects
+    the SDK's default of 30s. Values are clamped to >= 1ms.
+
 type CommitResult struct {
 	Success        bool     `json:"success"`
 	Receipt        *Receipt `json:"receipt,omitempty"`
 	CreatedNodeIDs []string `json:"created_node_ids,omitempty"`
 	Applied        bool     `json:"applied"`
 	Error          string   `json:"error,omitempty"`
+	// CommittedOffset is the WAL stream position at which this write
+	// was recorded (shortcut for Receipt.StreamPosition; empty when no
+	// receipt was returned). Pass it to [DbClient.WaitForCommit] /
+	// [DbClient.WaitForOffset] to block from any goroutine until the
+	// applier has caught up — the offset-based primitive for
+	// read-after-write under concurrency, where a value-based "poll
+	// until field equals X" wait deadlocks if a concurrent writer
+	// overwrites the field. Issue #600.
+	CommittedOffset string `json:"committed_offset,omitempty"`
 }
     CommitResult is the result of committing a Plan.
 
@@ -683,6 +721,24 @@ func (c *DbClient) Transport() Transport
     tooling or tests) that need to reach the transport without resorting to
     reflection and unsafe. The returned value must be treated as read-only;
     mutating transport state out from under the client is unsupported.
+
+func (c *DbClient) WaitForCommit(ctx context.Context, tenantID, actor string, receipt *CommitResult, timeoutMs int32) (bool, string, error)
+    WaitForCommit is a convenience wrapper around DbClient.WaitForOffset that
+    takes the result of a prior Plan.Commit and blocks until that specific write
+    has been applied. Use it instead of polling the field value when multiple
+    goroutines may write to the same node — a value-based "wait until x ==
+    V_a" poll DEADLOCKS if a concurrent writer overwrites the field with V_b,
+    but an offset-based wait only observes monotonic progress. Issue #600.
+
+        receipt, err := plan.Commit(ctx)
+        if err != nil { return err }
+        if ok, _, err := client.WaitForCommit(ctx, tenantID, actor, receipt, 30000); !ok {
+            return fmt.Errorf("applier did not catch up: %v", err)
+        }
+
+    Returns (false, "", nil) immediately when receipt is nil or carries no
+    offset (e.g. an idempotent-replay response). timeoutMs <= 0 falls back to
+    the server's default cap (30s).
 
 func (c *DbClient) WaitForOffset(ctx context.Context, tenantID, actor, streamPosition string, timeoutMs int32) (bool, string, error)
     WaitForOffset blocks server-side until the WAL applier has reached
@@ -946,9 +1002,13 @@ type Plan struct {
 func (p *Plan) Actor() string
     Actor returns the actor this plan is bound to.
 
-func (p *Plan) Commit(ctx context.Context) (*CommitResult, error)
+func (p *Plan) Commit(ctx context.Context, opts ...CommitOption) (*CommitResult, error)
     Commit sends all accumulated operations to the server as a single atomic
     transaction. The Plan cannot be used after Commit is called.
+
+    Pass WithWaitApplied / WithWaitTimeout to block until the applier has
+    processed the batch — useful when racing on a unique constraint where the
+    loser otherwise sees a phantom success (issue #606).
 
 func (p *Plan) Create(msg proto.Message, opts ...CreateOption) string
     Create accumulates a create-node operation.
@@ -1186,6 +1246,39 @@ func (s *Scope) EdgesFrom(ctx context.Context, fromNodeID string, edgeTypeID int
 func (s *Scope) EdgesTo(ctx context.Context, toNodeID string, edgeTypeID int) ([]*Edge, error)
     EdgesTo retrieves incoming edges to a node via this scope.
 
+func (s *Scope) InsertIfNotExists(ctx context.Context, idempotencyKey string, msg proto.Message) (created, existed string, err error)
+    InsertIfNotExists is an upsert-style helper for the racy query-then-create
+    idiom: under N concurrent writers of the same uniquely-keyed payload,
+    exactly one wins and the rest learn the existing canonical node id without a
+    second round trip into client code.
+
+    Mechanics: a single CreateNodeOp is committed with WaitApplied so the
+    server-side outcome is surfaced synchronously. On success the new id is
+    returned (created != ""). When the applier trips a single-field unique
+    constraint the typed *UniqueConstraintError surfaces the (type_id, field_id,
+    value) tuple; the helper follows up with GetNodeByKey on the same connection
+    and returns the existing id (existed != ""). Exactly one of created /
+    existed is non-empty on a non-error return; the caller branches on whichever
+    side it cares about.
+
+    Issue #599. Notes for v2.1.0:
+
+      - SINGLE-FIELD unique only. A composite-unique violation (the v2.x
+        server enforces these atomically; see ADR-030) returns the raw
+        *UniqueConstraintError without a follow-up lookup — there is no
+        GetByCompositeKey RPC, so callers needing composite upsert must query
+        themselves. Tracked for v2.2.
+
+      - The follow-up GetNodeByKey is a SECOND round trip. The truly
+        atomic insert-if-not-exists (one round trip via a server-side
+        NodeConflictPolicy_SKIP) is the v2.2 path; this helper closes the
+        correctness gap (the racy query-then-create) NOW with the primitives
+        already shipped in v2.0.x.
+
+      - WaitApplied is forced on so the synchronous error path observes the
+        applier's outcome (without it, the loser sees a phantom success — issue
+        #606).
+
 func (s *Scope) Plan() *Plan
     Plan creates a new Plan pre-bound to this scope's tenant and actor.
 
@@ -1352,8 +1445,10 @@ type Transport interface {
 	// returned, never a silent 100-row prefix. limit caps the total when
 	// positive; limit <= 0 returns every matching row.
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any, limit int) ([]*Node, error)
-	// ExecuteAtomic commits a batch of operations atomically.
-	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error)
+	// ExecuteAtomic commits a batch of operations atomically. Optional
+	// CommitOption values (e.g. [WithWaitApplied]) configure a single
+	// call; see issue #606.
+	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation, opts ...CommitOption) (*CommitResult, error)
 	// Share grants permission on a node to another actor.
 	Share(ctx context.Context, tenantID, actor, nodeID, grantee, permission string) error
 	// GetEdgesFrom retrieves outgoing edges from a node.
