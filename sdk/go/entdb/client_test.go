@@ -36,6 +36,10 @@ type mockTransport struct {
 	lastQueryLimit        int
 	lastCommitOperations  []Operation
 	lastCommitIdempotency string
+	// lastWaitAppliedSet records whether the caller passed
+	// WithWaitApplied; lastWaitApplied is the value (issue #606).
+	lastWaitApplied    bool
+	lastWaitAppliedSet bool
 
 	// Mailbox read tracking (#568).
 	lastMailboxTargetUser string
@@ -90,10 +94,23 @@ func (m *mockTransport) QueryNodes(_ context.Context, _, _ string, typeID int, f
 	return m.queryResp, m.queryErr
 }
 
-func (m *mockTransport) ExecuteAtomic(_ context.Context, _, _, idempotencyKey string, ops []Operation) (*CommitResult, error) {
+func (m *mockTransport) ExecuteAtomic(_ context.Context, _, _, idempotencyKey string, ops []Operation, opts ...CommitOption) (*CommitResult, error) {
 	m.commitCalls++
 	m.lastCommitIdempotency = idempotencyKey
 	m.lastCommitOperations = append([]Operation(nil), ops...)
+	// Record the resolved commit options so race tests can inspect what
+	// Plan.Commit propagated (issue #606).
+	mco := commitOpts{}
+	for _, o := range opts {
+		o(&mco)
+	}
+	if mco.waitApplied != nil {
+		m.lastWaitApplied = *mco.waitApplied
+		m.lastWaitAppliedSet = true
+	} else {
+		m.lastWaitApplied = false
+		m.lastWaitAppliedSet = false
+	}
 	return m.commitResp, m.commitErr
 }
 
@@ -501,5 +518,51 @@ func TestScope_EdgesFromTo(t *testing.T) {
 
 	if mock.edgesFromCalls != 1 || mock.edgesToCalls != 1 {
 		t.Errorf("expected 1 call each, got from=%d to=%d", mock.edgesFromCalls, mock.edgesToCalls)
+	}
+}
+
+// ── Issue #607: serverFingerprint race ──────────────────────────────
+
+// TestGrpcTransport_ServerFingerprintConcurrentAccess is the regression
+// guard for issue #607. The grpcTransport's serverFingerprint was a
+// plain string mutated without synchronisation; multiple goroutines
+// hitting their first ExecuteAtomic concurrently raced on the field
+// and tripped Go's -race detector even though the logical outcome was
+// fine. The fix wraps reads/writes in an RWMutex (loadServerFingerprint
+// / storeServerFingerprint). This test fans out N concurrent reader +
+// writer goroutines against those accessors; the test target is
+// `go test -race` running clean.
+func TestGrpcTransport_ServerFingerprintConcurrentAccess(t *testing.T) {
+	tr := &grpcTransport{}
+	const goroutines = 32
+	const iterations = 1000
+	done := make(chan struct{})
+	for i := 0; i < goroutines; i++ {
+		// Half readers, half writers — exactly the shape that bit a
+		// real consumer (their conformance suite fans out N goroutines
+		// doing first-time writes, every one of which reads the
+		// fingerprint to decide on schema attach and then writes it
+		// after the server confirms).
+		if i%2 == 0 {
+			go func() {
+				for j := 0; j < iterations; j++ {
+					_ = tr.loadServerFingerprint()
+				}
+				done <- struct{}{}
+			}()
+		} else {
+			go func(seed int) {
+				for j := 0; j < iterations; j++ {
+					tr.storeServerFingerprint("sha256:fp")
+				}
+				done <- struct{}{}
+			}(i)
+		}
+	}
+	for i := 0; i < goroutines; i++ {
+		<-done
+	}
+	if got := tr.loadServerFingerprint(); got != "sha256:fp" {
+		t.Errorf("final fingerprint = %q; want sha256:fp", got)
 	}
 }

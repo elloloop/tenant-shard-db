@@ -4,6 +4,7 @@ package entdb
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -52,8 +53,10 @@ type Transport interface {
 	// returned, never a silent 100-row prefix. limit caps the total when
 	// positive; limit <= 0 returns every matching row.
 	QueryNodes(ctx context.Context, tenantID, actor string, typeID int, filter map[string]any, limit int) ([]*Node, error)
-	// ExecuteAtomic commits a batch of operations atomically.
-	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error)
+	// ExecuteAtomic commits a batch of operations atomically. Optional
+	// CommitOption values (e.g. [WithWaitApplied]) configure a single
+	// call; see issue #606.
+	ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation, opts ...CommitOption) (*CommitResult, error)
 	// Share grants permission on a node to another actor.
 	Share(ctx context.Context, tenantID, actor, nodeID, grantee, permission string) error
 	// GetEdgesFrom retrieves outgoing edges from a node.
@@ -268,7 +271,31 @@ type grpcTransport struct {
 	// While it differs from config.schema.fingerprint, ExecuteAtomic
 	// attaches the SchemaDescriptor; once it matches, the descriptor is
 	// omitted. Reset on a SCHEMA_MISMATCH response.
+	//
+	// Protected by serverFPMu — multiple goroutines may concurrently
+	// race on the first ExecuteAtomic call (every one of them sees the
+	// fingerprint empty and writes the same confirmed value); the
+	// outcome is logically correct but Go's -race detector flags the
+	// unsynchronised read/write, so we serialise the field. Read-heavy
+	// after the first round trip, hence RWMutex (issue #607).
+	serverFPMu        sync.RWMutex
 	serverFingerprint string
+}
+
+// loadServerFingerprint returns the last server-confirmed fingerprint
+// under the read lock. Safe for concurrent callers (issue #607).
+func (t *grpcTransport) loadServerFingerprint() string {
+	t.serverFPMu.RLock()
+	defer t.serverFPMu.RUnlock()
+	return t.serverFingerprint
+}
+
+// storeServerFingerprint sets the cached fingerprint under the write
+// lock. Idempotent under concurrent callers writing the same value.
+func (t *grpcTransport) storeServerFingerprint(fp string) {
+	t.serverFPMu.Lock()
+	t.serverFingerprint = fp
+	t.serverFPMu.Unlock()
 }
 
 func newGRPCTransport(address string, cfg clientConfig) *grpcTransport {
@@ -480,7 +507,7 @@ func (t *grpcTransport) QueryNodes(ctx context.Context, tenantID, actor string, 
 	return out, nil
 }
 
-func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation) (*CommitResult, error) {
+func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idempotencyKey string, ops []Operation, opts ...CommitOption) (*CommitResult, error) {
 	client, err := t.ensureReady()
 	if err != nil {
 		return nil, err
@@ -489,18 +516,29 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 	if err != nil {
 		return nil, err
 	}
-	// Auto-enable wait_applied when any op carries a precondition.
-	// CAS is only useful synchronously — the caller needs to learn
-	// the outcome before the next request. We pick a generous
-	// 30s timeout to match the server's default cap; callers who
-	// need finer control can drop down to the raw transport.
-	// GitHub issue #500.
-	waitApplied := false
-	for _, op := range ops {
-		if op.Precondition != nil {
-			waitApplied = true
-			break
+	// Resolve commit options. WithWaitApplied OVERRIDES the auto-default;
+	// in its absence we keep the issue-#500 behaviour of auto-enabling
+	// wait_applied for any op carrying a Precondition (CAS is only useful
+	// synchronously). Without that override, the loser of a composite-unique
+	// race gets a phantom success (issue #606).
+	co := commitOpts{}
+	for _, opt := range opts {
+		opt(&co)
+	}
+	var waitApplied bool
+	if co.waitApplied != nil {
+		waitApplied = *co.waitApplied
+	} else {
+		for _, op := range ops {
+			if op.Precondition != nil {
+				waitApplied = true
+				break
+			}
 		}
+	}
+	waitTimeoutMs := int32(30000)
+	if co.waitTimeoutMs > 0 {
+		waitTimeoutMs = co.waitTimeoutMs
 	}
 	// SELF-DESCRIBING WRITES (ADR-031). Attach a name-free SchemaDescriptor
 	// + fingerprint whenever the server has not yet confirmed this schema
@@ -514,7 +552,7 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 		clientFP = t.config.schema.fingerprint
 		descriptor = t.config.schema.descriptor
 	}
-	attachSchema := descriptor != nil && clientFP != "" && t.serverFingerprint != clientFP
+	attachSchema := descriptor != nil && clientFP != "" && t.loadServerFingerprint() != clientFP
 
 	buildReq := func(withSchema bool) *pb.ExecuteAtomicRequest {
 		r := &pb.ExecuteAtomicRequest{
@@ -524,7 +562,7 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 			WaitApplied:    waitApplied,
 		}
 		if waitApplied {
-			r.WaitTimeoutMs = 30000
+			r.WaitTimeoutMs = waitTimeoutMs
 		}
 		if withSchema {
 			r.SchemaFingerprint = clientFP
@@ -544,7 +582,7 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 	// server does not have and sent no descriptor to reconcile with —
 	// re-send once WITH the descriptor.
 	if resp.GetErrorCode() == "SCHEMA_MISMATCH" && descriptor != nil {
-		t.serverFingerprint = ""
+		t.storeServerFingerprint("")
 		var t2 metadata.MD
 		resp, err = client.ExecuteAtomic(
 			t.callContext(ctx, tenantID), buildReq(true), grpc.Trailer(&t2),
@@ -557,7 +595,7 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 	// server now holds exactly this fingerprint; cache it so subsequent
 	// writes omit the descriptor.
 	if attachSchema && resp.GetErrorCode() != "SCHEMA_MISMATCH" {
-		t.serverFingerprint = clientFP
+		t.storeServerFingerprint(clientFP)
 	}
 	// Precondition failure surfaces in-band: applied_status =
 	// RECEIPT_STATUS_FAILED_PRECONDITION + structured detail in

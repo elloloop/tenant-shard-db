@@ -124,10 +124,12 @@ test-server:
 # sdk/go/entdb: the published Go SDK module
 # (`go get github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2`). Carries
 # its own checked-in pb stubs + the self-describing-write transport
-# (ADR-031). ~10 s.
+# (ADR-031). Run under `-race` so concurrent paths (transport
+# fingerprint cache, etc.) are exercised by the race detector — guards
+# against regressions of the kind issue #607 reported. ~20 s.
 test-sdk-go:
-	@echo "=== test-sdk-go: sdk/go/entdb vet + test ==="
-	cd sdk/go/entdb && go vet ./... && go test ./...
+	@echo "=== test-sdk-go: sdk/go/entdb vet + test (-race) ==="
+	cd sdk/go/entdb && go vet ./... && go test -race ./...
 
 # tests/contract: cross-language schema-snapshot parity tests — round-
 # trip + self-consistency against the entdb-schema CLI. SEPARATE go.mod,

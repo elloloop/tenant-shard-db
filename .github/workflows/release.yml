@@ -230,8 +230,15 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}${{ matrix.suffix }}
           tags: |
-            # Semantic version from tag
+            # Semantic version from tag. docker/metadata-action strips
+            # the leading "v" by default, so a git tag of v2.0.2 yields
+            # an image tag of 2.0.2. We ALSO emit the v-prefixed form
+            # so consumers who template `image: ...:${VERSION}` with
+            # ${VERSION}=v2.0.2 (the git tag spelling — the natural
+            # choice when bumping from a VERSION file or `git describe`)
+            # don't hit a "manifest unknown" pull miss (issue #608).
             type=semver,pattern={{version}}
+            type=semver,pattern=v{{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
             # Latest for stable releases

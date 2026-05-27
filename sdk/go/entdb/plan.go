@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sync/atomic"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -354,12 +355,64 @@ func (p *Plan) Actor() string { return p.actor }
 // IdempotencyKey returns the idempotency key for this plan.
 func (p *Plan) IdempotencyKey() string { return p.idempotencyKey }
 
+// commitOpts is the resolved options pack for a single Commit /
+// ExecuteAtomic call. Callers configure it via CommitOption values.
+type commitOpts struct {
+	// waitApplied, when non-nil, OVERRIDES the auto-default
+	// (precondition-driven). nil = auto-default.
+	waitApplied   *bool
+	waitTimeoutMs int32
+}
+
+// CommitOption configures a single Plan.Commit / ExecuteAtomic call.
+// Pass values to [Plan.Commit] as variadic args:
+//
+//	receipt, err := plan.Commit(ctx, entdb.WithWaitApplied(true))
+//
+// Options are independent and can be combined. Issue #606.
+type CommitOption func(*commitOpts)
+
+// WithWaitApplied controls whether [Plan.Commit] blocks until the WAL
+// applier has processed every op in the batch BEFORE returning. When
+// true, the applier's outcome (success, ALREADY_EXISTS on a unique-
+// constraint violation, FAILED_PRECONDITION on a CAS miss, …) is
+// surfaced synchronously. When false (the default), the call returns
+// as soon as the WAL has accepted the event, and an applier-side
+// rejection only shows up via a follow-up read.
+//
+// Prior to issue #606 the Plan API auto-enabled this ONLY for ops
+// carrying a Precondition. For unique-constraint races (no
+// precondition) the LOSER otherwise got a phantom success: a UUID
+// returned by Commit, then a silent ALREADY_EXISTS at apply time.
+// Set this explicitly to true on writes whose uniqueness outcome the
+// caller needs to react to.
+func WithWaitApplied(b bool) CommitOption {
+	return func(o *commitOpts) { o.waitApplied = &b }
+}
+
+// WithWaitTimeout sets the upper bound on how long the server will
+// block waiting for the applier when WaitApplied is true. Zero (the
+// default) selects the SDK's default of 30s. Values are clamped to
+// >= 1ms.
+func WithWaitTimeout(d time.Duration) CommitOption {
+	return func(o *commitOpts) {
+		ms := d / time.Millisecond
+		if ms > 0 {
+			o.waitTimeoutMs = int32(ms)
+		}
+	}
+}
+
 // Commit sends all accumulated operations to the server as a single atomic
 // transaction. The Plan cannot be used after Commit is called.
-func (p *Plan) Commit(ctx context.Context) (*CommitResult, error) {
+//
+// Pass [WithWaitApplied] / [WithWaitTimeout] to block until the applier
+// has processed the batch — useful when racing on a unique constraint
+// where the loser otherwise sees a phantom success (issue #606).
+func (p *Plan) Commit(ctx context.Context, opts ...CommitOption) (*CommitResult, error) {
 	p.ensureNotCommitted()
 	p.committed = true
-	return p.client.ExecuteAtomic(ctx, p.tenantID, p.actor, p.idempotencyKey, p.operations)
+	return p.client.ExecuteAtomic(ctx, p.tenantID, p.actor, p.idempotencyKey, p.operations, opts...)
 }
 
 // ensureNotCommitted panics if the Plan has already been committed.
