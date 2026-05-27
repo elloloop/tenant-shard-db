@@ -41,6 +41,12 @@ type mockTransport struct {
 	lastWaitApplied    bool
 	lastWaitAppliedSet bool
 
+	// WaitForOffset capture for the issue #600 WaitForCommit helper.
+	waitOffsetCalls         int
+	lastWaitOffsetStreamPos string
+	lastWaitOffsetTimeoutMs int32
+	waitOffsetReached       bool
+
 	// Mailbox read tracking (#568).
 	lastMailboxTargetUser string
 	mailboxGetResp        *Node
@@ -164,8 +170,11 @@ func (m *mockTransport) GetReceiptStatus(_ context.Context, _, _, _ string) (Rec
 	return ReceiptStatusUnknown, "", nil
 }
 
-func (m *mockTransport) WaitForOffset(_ context.Context, _, _, _ string, _ int32) (bool, string, error) {
-	return false, "", nil
+func (m *mockTransport) WaitForOffset(_ context.Context, _, _, streamPosition string, timeoutMs int32) (bool, string, error) {
+	m.lastWaitOffsetStreamPos = streamPosition
+	m.lastWaitOffsetTimeoutMs = timeoutMs
+	m.waitOffsetCalls++
+	return m.waitOffsetReached, streamPosition, nil
 }
 
 func (m *mockTransport) GetConnectedNodes(_ context.Context, _, _, _ string, _ int) ([]*Node, error) {
@@ -564,5 +573,75 @@ func TestGrpcTransport_ServerFingerprintConcurrentAccess(t *testing.T) {
 	}
 	if got := tr.loadServerFingerprint(); got != "sha256:fp" {
 		t.Errorf("final fingerprint = %q; want sha256:fp", got)
+	}
+}
+
+// ── Issue #600: offset-based read-after-write primitive ─────────────
+
+// TestDbClient_WaitForCommit_PassesCommittedOffsetThroughToTransport
+// pins the wiring so a future refactor cannot silently regress the
+// offset-based wait into a no-op. Issue #600.
+func TestDbClient_WaitForCommit_PassesCommittedOffsetThroughToTransport(t *testing.T) {
+	mock := &mockTransport{waitOffsetReached: true}
+	client := newTestClient(t, mock)
+	result := &CommitResult{
+		Success:         true,
+		CommittedOffset: "wal:0:42",
+	}
+	ok, pos, err := client.WaitForCommit(context.Background(), "acme", "user:alice", result, 5000)
+	if err != nil {
+		t.Fatalf("WaitForCommit: %v", err)
+	}
+	if !ok {
+		t.Errorf("ok = false; want true (mock said reached)")
+	}
+	if pos != "wal:0:42" {
+		t.Errorf("returned position = %q, want wal:0:42 (the echoed offset)", pos)
+	}
+	if mock.waitOffsetCalls != 1 {
+		t.Errorf("WaitForOffset calls = %d, want 1", mock.waitOffsetCalls)
+	}
+	if mock.lastWaitOffsetStreamPos != "wal:0:42" {
+		t.Errorf("transport saw streamPosition = %q, want wal:0:42 — the CommittedOffset shortcut didn't propagate", mock.lastWaitOffsetStreamPos)
+	}
+	if mock.lastWaitOffsetTimeoutMs != 5000 {
+		t.Errorf("transport saw timeoutMs = %d, want 5000", mock.lastWaitOffsetTimeoutMs)
+	}
+}
+
+// TestDbClient_WaitForCommit_NilReceiptIsNoOp pins the safety guard:
+// passing a nil / empty-offset CommitResult must not call the server.
+func TestDbClient_WaitForCommit_NilReceiptIsNoOp(t *testing.T) {
+	mock := &mockTransport{}
+	client := newTestClient(t, mock)
+	ok, _, err := client.WaitForCommit(context.Background(), "acme", "user:alice", nil, 5000)
+	if err != nil || ok {
+		t.Errorf("nil CommitResult: ok=%v err=%v; want (false, nil)", ok, err)
+	}
+	if mock.waitOffsetCalls != 0 {
+		t.Errorf("server should not have been called; got %d calls", mock.waitOffsetCalls)
+	}
+	// Empty CommittedOffset must also short-circuit.
+	ok, _, err = client.WaitForCommit(context.Background(), "acme", "user:alice", &CommitResult{Success: true}, 5000)
+	if err != nil || ok {
+		t.Errorf("empty CommittedOffset: ok=%v err=%v; want (false, nil)", ok, err)
+	}
+	if mock.waitOffsetCalls != 0 {
+		t.Errorf("server still should not have been called; got %d calls", mock.waitOffsetCalls)
+	}
+}
+
+// TestDbClient_WaitForCommit_DefaultTimeout pins that timeoutMs <= 0
+// falls back to the 30s server default.
+func TestDbClient_WaitForCommit_DefaultTimeout(t *testing.T) {
+	mock := &mockTransport{waitOffsetReached: true}
+	client := newTestClient(t, mock)
+	_, _, err := client.WaitForCommit(context.Background(), "acme", "user:alice",
+		&CommitResult{CommittedOffset: "wal:0:1"}, 0)
+	if err != nil {
+		t.Fatalf("WaitForCommit: %v", err)
+	}
+	if mock.lastWaitOffsetTimeoutMs != 30000 {
+		t.Errorf("timeoutMs = %d, want 30000 (default fallback)", mock.lastWaitOffsetTimeoutMs)
 	}
 }

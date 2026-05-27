@@ -100,6 +100,15 @@ type CommitResult struct {
 	CreatedNodeIDs []string `json:"created_node_ids,omitempty"`
 	Applied        bool     `json:"applied"`
 	Error          string   `json:"error,omitempty"`
+	// CommittedOffset is the WAL stream position at which this write
+	// was recorded (shortcut for Receipt.StreamPosition; empty when no
+	// receipt was returned). Pass it to [DbClient.WaitForCommit] /
+	// [DbClient.WaitForOffset] to block from any goroutine until the
+	// applier has caught up — the offset-based primitive for
+	// read-after-write under concurrency, where a value-based "poll
+	// until field equals X" wait deadlocks if a concurrent writer
+	// overwrites the field. Issue #600.
+	CommittedOffset string `json:"committed_offset,omitempty"`
 }
 
 // ── Operations ──────────────────────────────────────────────────────

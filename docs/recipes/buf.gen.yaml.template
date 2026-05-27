@@ -1,0 +1,46 @@
+# buf.gen.yaml — codegen template for an EntDB app team.
+#
+# Drop this next to your buf.yaml and run `buf generate`. It produces:
+#   * Standard protoc-gen-go stubs (your .pb.go files)
+#   * protoc-gen-go-grpc service stubs
+#   * The EntDB sidecars from `protoc-gen-entdb-keys`: typed
+#     `UniqueKey[T]` tokens for every `(entdb.field).unique = true`
+#     field on your node types, plus a name-free schema descriptor for
+#     the SDKs' self-describing writes (ADR-031 / ADR-025).
+#
+# Wiring the EntDB plugin into your codegen is the recommended path
+# for v2+ consumers — hand-constructing UniqueKey values couples your
+# code to an internal wire format the SDK explicitly disclaims as
+# unstable. See issue #602 + ADR-025.
+#
+# Install the plugin once:
+#   go install github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys@v2.0.4
+# Then `buf generate` will pick it up via $PATH.
+
+version: v2
+
+plugins:
+  # ── Standard Go stubs ──────────────────────────────────────────────
+  - remote: buf.build/protocolbuffers/go:v1.36.11
+    out: gen/go
+    opt:
+      - paths=source_relative
+
+  - remote: buf.build/grpc/go:v1.5.1
+    out: gen/go
+    opt:
+      - paths=source_relative
+
+  # ── EntDB SDK sidecars ─────────────────────────────────────────────
+  # Reads (entdb.field).unique annotations from your .proto and emits a
+  # typed UniqueKey[T] for every unique field. Use the generated token
+  # as the only way to call sdk.GetByKey — never hand-construct one
+  # (issue #602; the struct's exported fields are an internal contract
+  # the SDK reserves the right to change).
+  - local: protoc-gen-entdb-keys
+    out: gen/go
+    opt:
+      - paths=source_relative
+
+inputs:
+  - directory: proto # <-- point at your own proto tree

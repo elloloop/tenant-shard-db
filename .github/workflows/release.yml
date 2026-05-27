@@ -295,12 +295,33 @@ jobs:
             git push origin "$GO_TAG"
           fi
 
+      - name: Tag protoc-gen-entdb-keys submodule
+        # The plugin is its own Go module (tools/protoc-gen-entdb-keys/go.mod);
+        # Go's sub-module versioning requires `<path>/vX.Y.Z` tags, so we
+        # mint one alongside the SDK tag. Without this, consumers
+        # cannot `go install
+        # github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys@vX.Y.Z`
+        # — they have to build from a clone. Issue #602.
+        run: |
+          VER="${GITHUB_REF_NAME#v}"
+          TOOL_TAG="tools/protoc-gen-entdb-keys/v${VER}"
+          if git rev-parse "$TOOL_TAG" >/dev/null 2>&1; then
+            echo "tools tag $TOOL_TAG already exists, skipping"
+          else
+            git tag -a "$TOOL_TAG" -m "protoc-gen-entdb-keys $TOOL_TAG"
+            git push origin "$TOOL_TAG"
+          fi
+
       - name: Trigger Go module proxy
         run: |
           VER="${GITHUB_REF_NAME#v}"
           MODULE="github.com/elloloop/tenant-shard-db/sdk/go/entdb/v2"
           curl -fsSL "https://proxy.golang.org/${MODULE}/@v/v${VER}.info" || \
             echo "Module proxy will index within ~30 minutes"
+          # Warm the plugin module too so `go install` resolves promptly.
+          TOOLS_MODULE="github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys"
+          curl -fsSL "https://proxy.golang.org/${TOOLS_MODULE}/@v/v${VER}.info" || \
+            echo "Tools module proxy will index within ~30 minutes"
 
   publish-pypi:
     name: Publish SDK to PyPI
