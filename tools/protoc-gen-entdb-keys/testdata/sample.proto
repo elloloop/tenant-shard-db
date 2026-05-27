@@ -4,7 +4,7 @@ package shop;
 
 import "entdb_options.proto";
 
-option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/shop";
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2/testdata/shop";
 
 message Product {
   option (entdb.node) = { type_id: 201 };

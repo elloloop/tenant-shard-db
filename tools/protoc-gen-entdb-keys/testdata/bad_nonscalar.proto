@@ -4,7 +4,7 @@ package badnonscalar;
 
 import "entdb_options.proto";
 
-option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/testdata/badnonscalar";
+option go_package = "github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2/testdata/badnonscalar";
 
 message Inner {
   string v = 1;

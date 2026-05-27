@@ -91,7 +91,7 @@ Wire **`protoc-gen-entdb-keys`** into your `buf generate` pipeline so the SDK's 
 Install the plugin once (each release tags the tools submodule too):
 
 ```bash
-go install github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys@v2.0.4
+go install github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2@v2.0.5
 ```
 
 Then drop [`docs/recipes/buf.gen.yaml.template`](recipes/buf.gen.yaml.template) into your repo as `buf.gen.yaml`. It generates `protoc-gen-go` + `protoc-gen-go-grpc` + `protoc-gen-entdb-keys` sidecars in one `buf generate` pass. The generated tokens are then the only way to call `sdk.GetByKey`, and any future change to the token shape only ripples through codegen rather than every consumer.
