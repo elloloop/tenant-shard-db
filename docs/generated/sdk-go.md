@@ -537,8 +537,18 @@ type CommitResult struct {
 	Success        bool     `json:"success"`
 	Receipt        *Receipt `json:"receipt,omitempty"`
 	CreatedNodeIDs []string `json:"created_node_ids,omitempty"`
-	Applied        bool     `json:"applied"`
-	Error          string   `json:"error,omitempty"`
+	// ExistingNodeIDs is the index-aligned twin of CreatedNodeIDs for
+	// create ops that carried OnConflict(ConflictSkip). At index i:
+	//
+	//   CreatedNodeIDs[i] != ""  / ExistingNodeIDs[i] == "" — created
+	//   CreatedNodeIDs[i] == ""  / ExistingNodeIDs[i] != "" — SKIP
+	//       swallowed a unique violation; the id is the pre-existing
+	//       row's. Empty / absent for batches that don't opt into
+	//       SKIP, and from pre-v2.2 servers regardless. v2.2 single-RTT
+	//       InsertIfNotExists, issue #599.
+	ExistingNodeIDs []string `json:"existing_node_ids,omitempty"`
+	Applied         bool     `json:"applied"`
+	Error           string   `json:"error,omitempty"`
 	// CommittedOffset is the WAL stream position at which this write
 	// was recorded (shortcut for Receipt.StreamPosition; empty when no
 	// receipt was returned). Pass it to [DbClient.WaitForCommit] /
@@ -590,6 +600,13 @@ func InTenant() CreateOption
     Included for symmetry with InMailbox / InPublic — calling sites that
     explicitly name the storage mode read more clearly than ones that rely on
     the zero value.
+
+func OnConflict(p NodeConflictPolicy) CreateOption
+    OnConflict sets the unique-violation policy for a create. v2.2 /
+    issue #599. Pre-v2.2 servers ignore the option and surface the legacy
+    *UniqueConstraintError; the SDK helpers using SKIP detect that and fall
+    back to the v2.1.x two-RTT GetNodeByKey lookup so the same SDK release works
+    against either server version.
 
 func WithACL(acl ...ACLEntry) CreateOption
     WithACL attaches explicit ACL entries to the new node.
@@ -869,6 +886,20 @@ func GetByKey[T any](ctx context.Context, s *Scope, key UniqueKey[T], value T) (
     The generic T on UniqueKey[T] constrains the value argument at compile time:
     passing an int where the key declares UniqueKey[string] does not type-check.
 
+type NodeConflictPolicy int32
+    NodeConflictPolicy is the wire-aligned policy carried on CreateNodeOp
+    for the v2.2 single-RTT InsertIfNotExists path (issue #599). Default
+    ConflictError mirrors the pre-v2.2 behaviour — a tripped unique index aborts
+    the batch and surfaces a typed *UniqueConstraintError.
+
+const (
+	// ConflictError aborts the batch on a unique violation. Default.
+	ConflictError NodeConflictPolicy = 0
+	// ConflictSkip swallows the violation server-side and returns the
+	// pre-existing row's id in CommitResult.ExistingNodeIDs at the
+	// op's index. Powers InsertIfNotExists's single-RTT path.
+	ConflictSkip NodeConflictPolicy = 1
+)
 type NodeResolver interface {
 	// Resolve returns the dial-target endpoint for ``nodeID``,
 	// or an error if the node is unknown.
@@ -944,6 +975,14 @@ type Operation struct {
 	// selects the server default; the server clamps to its own hard
 	// ceiling. Ignored for other op types.
 	Limit int `json:"limit,omitempty"`
+
+	// OnConflict carries the unique-violation policy for OpCreateNode
+	// (v2.2 / issue #599). Default ConflictError matches the pre-v2.2
+	// abort-the-batch behaviour; ConflictSkip turns the violation
+	// into a server-side lookup that surfaces the colliding row's id
+	// in CommitResult.ExistingNodeIDs. Only valid on OpCreateNode;
+	// ignored for other op types.
+	OnConflict NodeConflictPolicy `json:"on_conflict,omitempty"`
 }
     Operation represents a single mutation in a Plan.
 
@@ -1252,32 +1291,29 @@ func (s *Scope) InsertIfNotExists(ctx context.Context, idempotencyKey string, ms
     exactly one wins and the rest learn the existing canonical node id without a
     second round trip into client code.
 
-    Mechanics: a single CreateNodeOp is committed with WaitApplied so the
-    server-side outcome is surfaced synchronously. On success the new id is
-    returned (created != ""). When the applier trips a single-field unique
-    constraint the typed *UniqueConstraintError surfaces the (type_id, field_id,
-    value) tuple; the helper follows up with GetNodeByKey on the same connection
-    and returns the existing id (existed != ""). Exactly one of created /
-    existed is non-empty on a non-error return; the caller branches on whichever
-    side it cares about.
+    Wire mechanics by server version:
 
-    Issue #599. Notes for v2.1.0:
+      - v2.2+ server (single round trip): the SDK sends OnConflict(ConflictSkip)
+        on the CreateNodeOp. The applier swallows the unique violation,
+        looks the colliding row up in the same txn, and returns its id in
+        ExecuteAtomicResponse.existing_node_ids. Works for BOTH single-field
+        and composite unique constraints because the lookup is driven by the
+        violated index (not by an SDK-visible key token).
 
-      - SINGLE-FIELD unique only. A composite-unique violation (the v2.x
-        server enforces these atomically; see ADR-030) returns the raw
-        *UniqueConstraintError without a follow-up lookup — there is no
-        GetByCompositeKey RPC, so callers needing composite upsert must query
-        themselves. Tracked for v2.2.
+      - v2.1.x server (two round trips, fallback): SKIP is unknown to the
+        older server, which falls back to its legacy UniqueConstraintError.
+        The SDK catches that, follows up with GetNodeByKey using the typed
+        (TypeID, FieldID, Value) on the UCE, and returns the existing id.
+        Composite violations on a v2.1.x server re-raise the typed error (no
+        GetByCompositeKey RPC, never shipped); v2.2's server-side SKIP closes
+        that gap.
 
-      - The follow-up GetNodeByKey is a SECOND round trip. The truly
-        atomic insert-if-not-exists (one round trip via a server-side
-        NodeConflictPolicy_SKIP) is the v2.2 path; this helper closes the
-        correctness gap (the racy query-then-create) NOW with the primitives
-        already shipped in v2.0.x.
+    Exactly one of created / existed is non-empty on a non-error return.
+    WaitApplied is forced on so the synchronous outcome is observed regardless
+    of server version (without it, the loser of a v2.1.x race sees a phantom
+    success — issue #606).
 
-      - WaitApplied is forced on so the synchronous error path observes the
-        applier's outcome (without it, the loser sees a phantom success — issue
-        #606).
+    Issue #599.
 
 func (s *Scope) Plan() *Plan
     Plan creates a new Plan pre-bound to this scope's tenant and actor.

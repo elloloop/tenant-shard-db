@@ -67,6 +67,21 @@ type Result struct {
 	CreatedEdges   []EdgeRef
 	DeletedNodeIDs []string
 
+	// ExistingNodes is the index-aligned twin of CreatedNodes for v2.2
+	// CreateNodeOps that carried ``on_conflict=SKIP`` (issue #599
+	// single-RTT InsertIfNotExists). For each create op at index i:
+	//
+	//   CreatedNodes[i] != "" / ExistingNodes[i] == "" — the row was
+	//       freshly created (CreatedNodes[i] is the new id).
+	//   CreatedNodes[i] == "" / ExistingNodes[i] != "" — SKIP swallowed
+	//       a unique violation; ExistingNodes[i] is the pre-existing
+	//       row's id, looked up from the violated index.
+	//
+	// Always nil for batches that don't opt into SKIP. Persisted into
+	// the idempotency cache result envelope so a retry replay sees the
+	// same surface as the first call.
+	ExistingNodes []string
+
 	// SharedAdded / SharedRemoved record the (user_id, source_tenant,
 	// node_id) tuples whose grants changed in this event. Best-effort
 	// post-commit; consumed by shared-index maintenance.

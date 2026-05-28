@@ -400,6 +400,32 @@ message CreateNodeOp {
     // the server dual-reads (typed_data first, else `data`). Carries the
     // full int64 range that the Struct `data` field cannot.
     map<uint32, EntValue> typed_data = 12;
+
+    // Conflict policy when a declared unique (single-field or composite)
+    // constraint trips inside this op. The default ERROR matches the
+    // pre-v2.2 behaviour (the batch aborts and the SDK surfaces a typed
+    // UniqueConstraintError). SKIP turns the violation into a
+    // server-side lookup of the colliding row: the create is
+    // swallowed, the existing node_id is appended to
+    // ``ExecuteAtomicResponse.existing_node_ids`` in op order, and the
+    // batch completes as APPLIED. v2.2 / issue #599 single-RTT
+    // InsertIfNotExists path; SKIP applies to BOTH single-field and
+    // composite unique violations.
+    NodeConflictPolicy on_conflict = 13;
+}
+
+// NodeConflictPolicy is the policy carried on CreateNodeOp.on_conflict
+// for the v2.2 single-RTT InsertIfNotExists path (issue #599). ERROR
+// is the wire default for backward compatibility — pre-v2.2 callers
+// always saw a UniqueConstraintError on a tripped index.
+enum NodeConflictPolicy {
+    // Default: a tripped unique index aborts the batch and surfaces a
+    // gRPC ALREADY_EXISTS carrying the structured violation detail.
+    NODE_CONFLICT_POLICY_ERROR = 0;
+    // Swallow the violation: the server looks up the colliding row's
+    // node_id and returns it in ``existing_node_ids`` at the op's
+    // index; the batch completes APPLIED.
+    NODE_CONFLICT_POLICY_SKIP = 1;
 }
 
 message UpdateNodeOp {
@@ -600,6 +626,23 @@ message ExecuteAtomicResponse {
     // ``applied_status == RECEIPT_STATUS_FAILED_PRECONDITION`` so the
     // SDK can surface a typed error without re-fetching state.
     PreconditionFailure precondition_failure = 7;
+
+    // Existing node ids for create ops that carried
+    // ``on_conflict = NODE_CONFLICT_POLICY_SKIP``. Index-aligned with
+    // ``created_node_ids``: for the i-th create op,
+    //
+    //   created_node_ids[i] != "" / existing_node_ids[i] == "" — the
+    //       op created a fresh row (the id is the new one).
+    //   created_node_ids[i] == "" / existing_node_ids[i] != "" — SKIP
+    //       swallowed a unique violation; the id is the colliding
+    //       row's pre-existing id.
+    //
+    // The two are mutually exclusive at any given index, so a caller
+    // can read whichever side is non-empty. Empty / absent on every
+    // index for batches that don't opt into SKIP; pre-v2.2 servers
+    // omit the field entirely (proto3 default). v2.2 / issue #599
+    // single-RTT InsertIfNotExists.
+    repeated string existing_node_ids = 8;
 }
 
 // PreconditionFailure carries the coordinates of a CAS miss inside an

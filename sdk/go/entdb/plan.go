@@ -100,6 +100,7 @@ func (p *Plan) Create(msg proto.Message, opts ...CreateOption) string {
 		ACL:          cfg.acl,
 		StorageMode:  cfg.storage,
 		TargetUserID: cfg.targetUserID,
+		OnConflict:   cfg.onConflict,
 	})
 	return cfg.alias
 }

@@ -47,13 +47,16 @@ class ScopedPlan:
         storage: Storage | None = None,
         as_: str | None = None,
         fanout_to: list[Actor | str] | None = None,
+        on_conflict: str | None = None,
     ) -> ScopedPlan:
         """Create a node from a proto message.
 
         ``msg`` is a generated proto message instance. ``storage``
         defaults to :class:`Tenant`; pass :class:`Mailbox` or
         :class:`Public` for non-default routing. ``acl`` overrides the
-        per-type default ACL.
+        per-type default ACL. ``on_conflict`` selects the unique-
+        violation policy (v2.2 / issue #599); pass ``"skip"`` to opt
+        into the single-RTT InsertIfNotExists path.
         """
         fanout_strs = [str(a) for a in fanout_to] if fanout_to else None
         self._plan.create(
@@ -62,6 +65,7 @@ class ScopedPlan:
             storage=storage,
             as_=as_,
             fanout_to=fanout_strs,
+            on_conflict=on_conflict,
         )
         return self
 
@@ -541,24 +545,32 @@ class ActorScope:
         call won the race; ``existing_id`` is the canonical id of the
         prior winner when a single-field unique constraint tripped.
 
-        Issue #599. v2.1.0 boundary:
+        Wire mechanics by server version:
 
-        - SINGLE-FIELD unique only. A composite-unique violation
-          (ADR-030) re-raises the typed
-          :class:`UniqueConstraintError` without a follow-up
-          lookup — there is no ``GetByCompositeKey`` RPC, so callers
-          needing composite upsert must query themselves. Tracked
-          for v2.2.
+        - **v2.2+ server (single round trip)**: the SDK sends
+          ``on_conflict="skip"`` on the create op. The applier
+          swallows the violation, looks the colliding row up in the
+          same txn, and returns its id in
+          :attr:`CommitResult.existing_node_ids`. Works for BOTH
+          single-field and composite unique constraints because the
+          lookup is driven by the violated index (not by an
+          SDK-visible key token).
 
-        - The follow-up :py:meth:`get_node_by_key` is a SECOND round
-          trip. A truly atomic single-round-trip insert-if-not-exists
-          (server-side ``NodeConflictPolicy_SKIP``) is the v2.2 path;
-          this helper closes the correctness gap NOW with the
-          primitives shipped in v2.0.x.
+        - **v2.1.x server (two round trips, fallback)**: SKIP is
+          unknown to the older server, which falls back to its
+          legacy :class:`UniqueConstraintError`. The SDK catches
+          that, follows up with :py:meth:`get_node_by_key` using the
+          typed ``(type_id, field_id, value)`` on the UCE, and
+          returns the existing id. Composite violations on a v2.1.x
+          server re-raise the typed error (no ``GetByCompositeKey``
+          RPC was ever shipped); v2.2's server-side SKIP closes that
+          gap.
 
-        - ``wait_applied=True`` is forced so the synchronous error
-          path observes the applier's outcome (without it the loser
-          of a unique race sees a phantom success — issue #606).
+        ``wait_applied=True`` is forced so the synchronous outcome
+        is observed regardless of server version (without it, the
+        loser of a v2.1.x race sees a phantom success — issue #606).
+
+        Issue #599.
         """
         from .errors import UniqueConstraintError
 
@@ -566,13 +578,15 @@ class ActorScope:
             raise TypeError("insert_if_not_exists: msg is required (got None)")
 
         scoped_plan = self.plan(idempotency_key=idempotency_key)
-        scoped_plan.create(msg)
+        scoped_plan.create(msg, on_conflict="skip")
         try:
             result = await scoped_plan.commit(wait_applied=True, timeout=timeout)
         except UniqueConstraintError as uce:
+            # v2.1.x fallback path: SKIP was not honoured server-side;
+            # the legacy UniqueConstraintError surfaced. Do the
+            # two-RTT GetNodeByKey lookup. Composite UCE re-raises —
+            # no GetByCompositeKey RPC in v2.1.x.
             if uce.is_composite:
-                # No GetByCompositeKey RPC in v2.x. Surface the typed
-                # error so callers can do their own composite lookup.
                 raise
             node = await self._client._grpc.get_node_by_key(
                 tenant_id=self._tenant_id,
@@ -583,12 +597,16 @@ class ActorScope:
                 timeout=timeout,
             )
             if node is None:
-                # The applier just told us this key collided with a
-                # committed row; if the lookup misses, re-raise so the
-                # caller can act on the unique-constraint detail.
                 raise
             return (None, node.node_id)
 
+        # v2.2+ single-RTT path. The applier filled exactly one of
+        # the two parallel slots at index 0. ``existing_node_ids`` is
+        # the authoritative signal — pre-v2.2 servers leave it empty,
+        # so a non-empty entry there proves the server honoured
+        # ``on_conflict="skip"``.
+        if result.existing_node_ids and result.existing_node_ids[0]:
+            return (None, result.existing_node_ids[0])
         if not result.created_node_ids:
             raise RuntimeError("insert_if_not_exists: commit returned no created_node_ids")
         return (result.created_node_ids[0], None)

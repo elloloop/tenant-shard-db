@@ -323,7 +323,14 @@ class CommitResult:
     Attributes:
         success: Whether commit succeeded
         receipt: Transaction receipt
-        created_node_ids: IDs of created nodes
+        created_node_ids: IDs of created nodes (or "" at indices where
+            on_conflict=skip swallowed a unique violation — see
+            ``existing_node_ids`` for the pre-existing id at that
+            slot). v2.2 / issue #599.
+        existing_node_ids: Index-aligned twin of ``created_node_ids``
+            for create ops that carried ``on_conflict="skip"``. Empty
+            when no SKIP swallow occurred, AND on pre-v2.2 servers
+            regardless. Issue #599 v2.2 single-RTT InsertIfNotExists.
         applied: Whether event has been applied
         error: Error message if failed
     """
@@ -331,6 +338,7 @@ class CommitResult:
     success: bool
     receipt: Receipt | None = None
     created_node_ids: list[str] = field(default_factory=list)
+    existing_node_ids: list[str] = field(default_factory=list)
     applied: bool = False
     error: str | None = None
 
@@ -395,6 +403,7 @@ class Plan:
         as_: str | None = None,
         fanout_to: list[str] | None = None,
         id_: str | None = None,
+        on_conflict: str | None = None,
     ) -> Plan:
         """Create a node from a proto message.
 
@@ -470,6 +479,15 @@ class Plan:
             op["create_node"]["as"] = as_
         if fanout_to:
             op["create_node"]["fanout_to"] = fanout_to
+        if on_conflict:
+            # v2.2 single-RTT InsertIfNotExists (#599). Accepted values
+            # are "skip" (NODE_CONFLICT_POLICY_SKIP) and "error" (the
+            # default). The transport translates this into the proto
+            # enum before sending; pre-v2.2 servers ignore the field
+            # and fall back to the legacy UniqueConstraintError path.
+            if on_conflict not in ("skip", "error"):
+                raise ValueError(f"on_conflict must be 'skip' or 'error'; got {on_conflict!r}")
+            op["create_node"]["on_conflict"] = on_conflict
 
         # Storage routing — exactly one way to pick a storage mode.
         # Defaults to Tenant() so omitting ``storage=`` is identical
@@ -1607,6 +1625,7 @@ class DbClient:
             success=True,
             receipt=receipt,
             created_node_ids=result.created_node_ids,
+            existing_node_ids=result.existing_node_ids,
             applied=result.applied,
         )
 

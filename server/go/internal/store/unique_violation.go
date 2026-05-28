@@ -3,12 +3,22 @@
 package store
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"math"
 	"regexp"
 	"strconv"
 	"strings"
 )
+
+// execContext narrows what we need from a sql.Conn or sql.Tx — only
+// the read used by LookupNodeIDByUniqueViolation. Lets the helper run
+// inside the applier's per-event txn without re-typing the txn
+// boundary all the way down.
+type execContext interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
 
 // This file owns the translation of a raw SQLite UNIQUE-constraint
 // failure into the structured ALREADY_EXISTS detail strings the SDKs
@@ -152,6 +162,70 @@ func indexNameFromSQLiteError(err error) string {
 		return ""
 	}
 	return m[1]
+}
+
+// LookupNodeIDByUniqueViolation resolves the colliding row's node_id
+// when a CreateNodeOp's INSERT trips a declared unique index and the
+// op opted into ``on_conflict = SKIP`` (v2.2 single-RTT
+// InsertIfNotExists, issue #599). It reads the violated index name
+// out of err to recover the field_id tuple, then projects the
+// matching row out of the same transaction's connection — so the
+// lookup sees the SAME pre-insert state the INSERT just collided
+// against (read-after-write inside the txn, no cross-connection
+// race).
+//
+// Returns ("", false, nil) when the error isn't a recognised
+// unique-index violation (i.e. not a SKIP-able situation — the
+// caller should fall back to the typed UniqueViolation path).
+// Returns ("", false, err) on a genuine query/scan error.
+//
+// payload is the field-id-keyed map the INSERT carried; its values
+// pin down the row the index collided against (the index columns
+// are deterministic JSON paths into payload_json, so the colliding
+// row's payload has the same scalars at the same field_id keys).
+//
+// execContext narrows what we need from the txn-bound connection
+// without dragging the whole *sql.Tx type through the package
+// boundary — the same idiom used by EnsureFieldIndexesTx.
+func (s *CanonicalStore) LookupNodeIDByUniqueViolation(
+	ctx context.Context,
+	exec execContext,
+	tenantID string,
+	payload map[string]any,
+	err error,
+) (string, bool, error) {
+	idxName := indexNameFromSQLiteError(err)
+	if idxName == "" {
+		return "", false, nil
+	}
+	parts, ok := s.parseUniqueIndexName(idxName)
+	if !ok {
+		return "", false, nil
+	}
+	// Build the SELECT: one json_extract clause per field_id in the
+	// violated index, AND-ed. Single-field is degenerate composite.
+	var (
+		clauses = make([]string, 0, len(parts.FieldIDs))
+		args    = []any{tenantID, parts.TypeID}
+	)
+	for _, fid := range parts.FieldIDs {
+		path := fmt.Sprintf(`$."%d"`, fid)
+		clauses = append(clauses, "json_extract(payload_json, ?) = ?")
+		args = append(args, path, lookupPayloadValue(payload, fid))
+	}
+	q := "SELECT node_id FROM nodes WHERE tenant_id = ? AND type_id = ? AND " +
+		strings.Join(clauses, " AND ") + " LIMIT 1"
+	row := exec.QueryRowContext(ctx, q, args...)
+	var existing string
+	if scanErr := row.Scan(&existing); scanErr != nil {
+		// The row MUST be there — the INSERT just collided with it.
+		// A miss here would indicate index/row drift, which is
+		// non-recoverable; surface as a real error so the per-event
+		// loop falls back to memoising the original UniqueViolation
+		// instead of swallowing silently.
+		return "", false, fmt.Errorf("LookupNodeIDByUniqueViolation: row missed after %s violation: %w", idxName, scanErr)
+	}
+	return existing, true, nil
 }
 
 // BuildUniqueViolationDetail turns a raw SQLite UNIQUE-constraint error

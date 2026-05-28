@@ -298,6 +298,56 @@ func (e *RichEdge) Reset() { *e = RichEdge{msg: dynamicpb.NewMessage(RichEdgeDes
 // String implements proto.Message.
 func (e *RichEdge) String() string { return "" }
 
+// OAuthIdentity is a concrete wrapper around OAuthIdentityDesc — the
+// composite-unique fixture used by the v2.2 single-RTT
+// InsertIfNotExists tests (issue #599). (entdb.node) carries
+// composite_unique on (provider, provider_user_id).
+type OAuthIdentity struct {
+	msg *dynamicpb.Message
+}
+
+// NewOAuthIdentityMsg returns a fresh writable *OAuthIdentity.
+func NewOAuthIdentityMsg() *OAuthIdentity {
+	return &OAuthIdentity{msg: dynamicpb.NewMessage(OAuthIdentityDesc)}
+}
+
+// ProtoReflect implements proto.Message.
+func (o *OAuthIdentity) ProtoReflect() protoreflect.Message {
+	if o == nil {
+		return dynamicpb.NewMessage(OAuthIdentityDesc).ProtoReflect()
+	}
+	if o.msg == nil {
+		o.msg = dynamicpb.NewMessage(OAuthIdentityDesc)
+	}
+	return o.msg.ProtoReflect()
+}
+
+// Reset implements proto.Message.
+func (o *OAuthIdentity) Reset() { *o = OAuthIdentity{msg: dynamicpb.NewMessage(OAuthIdentityDesc)} }
+
+// String implements proto.Message.
+func (o *OAuthIdentity) String() string {
+	if o == nil || o.msg == nil {
+		return ""
+	}
+	return o.msg.String()
+}
+
+// SetFields populates the provider / provider_user_id fields.
+func (o *OAuthIdentity) SetFields(provider, providerUserID string) {
+	if o.msg == nil {
+		o.msg = dynamicpb.NewMessage(OAuthIdentityDesc)
+	}
+	mr := o.msg.ProtoReflect()
+	fields := mr.Descriptor().Fields()
+	if provider != "" {
+		mr.Set(fields.ByName("provider"), protoreflect.ValueOfString(provider))
+	}
+	if providerUserID != "" {
+		mr.Set(fields.ByName("provider_user_id"), protoreflect.ValueOfString(providerUserID))
+	}
+}
+
 // SetProductFields populates the sku / name / price_cents fields on
 // a Product dynamic message.
 func SetProductFields(m *dynamicpb.Message, sku, name string, priceCents int64) {

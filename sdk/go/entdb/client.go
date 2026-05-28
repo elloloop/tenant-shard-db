@@ -624,6 +624,7 @@ func (t *grpcTransport) ExecuteAtomic(ctx context.Context, tenantID, actor, idem
 		Success:         resp.GetSuccess(),
 		Receipt:         receipt,
 		CreatedNodeIDs:  resp.GetCreatedNodeIds(),
+		ExistingNodeIDs: resp.GetExistingNodeIds(),
 		Applied:         resp.GetAppliedStatus() == pb.ReceiptStatus_RECEIPT_STATUS_APPLIED,
 		Error:           resp.GetError(),
 		CommittedOffset: committedOffset,

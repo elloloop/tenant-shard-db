@@ -87,6 +87,38 @@ proto3.util.setEnumType(StorageMode, "entdb.v1.StorageMode", [
 ]);
 
 /**
+ * NodeConflictPolicy is the policy carried on CreateNodeOp.on_conflict
+ * for the v2.2 single-RTT InsertIfNotExists path (issue #599). ERROR
+ * is the wire default for backward compatibility — pre-v2.2 callers
+ * always saw a UniqueConstraintError on a tripped index.
+ *
+ * @generated from enum entdb.v1.NodeConflictPolicy
+ */
+export enum NodeConflictPolicy {
+  /**
+   * Default: a tripped unique index aborts the batch and surfaces a
+   * gRPC ALREADY_EXISTS carrying the structured violation detail.
+   *
+   * @generated from enum value: NODE_CONFLICT_POLICY_ERROR = 0;
+   */
+  ERROR = 0,
+
+  /**
+   * Swallow the violation: the server looks up the colliding row's
+   * node_id and returns it in ``existing_node_ids`` at the op's
+   * index; the batch completes APPLIED.
+   *
+   * @generated from enum value: NODE_CONFLICT_POLICY_SKIP = 1;
+   */
+  SKIP = 1,
+}
+// Retrieve enum metadata with: proto3.getEnumType(NodeConflictPolicy)
+proto3.util.setEnumType(NodeConflictPolicy, "entdb.v1.NodeConflictPolicy", [
+  { no: 0, name: "NODE_CONFLICT_POLICY_ERROR" },
+  { no: 1, name: "NODE_CONFLICT_POLICY_SKIP" },
+]);
+
+/**
  * @generated from enum entdb.v1.ReceiptStatus
  */
 export enum ReceiptStatus {
@@ -1083,6 +1115,22 @@ export class CreateNodeOp extends Message<CreateNodeOp> {
    */
   typedData: { [key: number]: EntValue } = {};
 
+  /**
+   * Conflict policy when a declared unique (single-field or composite)
+   * constraint trips inside this op. The default ERROR matches the
+   * pre-v2.2 behaviour (the batch aborts and the SDK surfaces a typed
+   * UniqueConstraintError). SKIP turns the violation into a
+   * server-side lookup of the colliding row: the create is
+   * swallowed, the existing node_id is appended to
+   * ``ExecuteAtomicResponse.existing_node_ids`` in op order, and the
+   * batch completes as APPLIED. v2.2 / issue #599 single-RTT
+   * InsertIfNotExists path; SKIP applies to BOTH single-field and
+   * composite unique violations.
+   *
+   * @generated from field: entdb.v1.NodeConflictPolicy on_conflict = 13;
+   */
+  onConflict = NodeConflictPolicy.ERROR;
+
   constructor(data?: PartialMessage<CreateNodeOp>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1100,6 +1148,7 @@ export class CreateNodeOp extends Message<CreateNodeOp> {
     { no: 9, name: "storage_mode", kind: "enum", T: proto3.getEnumType(StorageMode) },
     { no: 10, name: "target_user_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 12, name: "typed_data", kind: "map", K: 13 /* ScalarType.UINT32 */, V: {kind: "message", T: EntValue} },
+    { no: 13, name: "on_conflict", kind: "enum", T: proto3.getEnumType(NodeConflictPolicy) },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): CreateNodeOp {
@@ -1712,6 +1761,27 @@ export class ExecuteAtomicResponse extends Message<ExecuteAtomicResponse> {
    */
   preconditionFailure?: PreconditionFailure;
 
+  /**
+   * Existing node ids for create ops that carried
+   * ``on_conflict = NODE_CONFLICT_POLICY_SKIP``. Index-aligned with
+   * ``created_node_ids``: for the i-th create op,
+   *
+   *   created_node_ids[i] != "" / existing_node_ids[i] == "" — the
+   *       op created a fresh row (the id is the new one).
+   *   created_node_ids[i] == "" / existing_node_ids[i] != "" — SKIP
+   *       swallowed a unique violation; the id is the colliding
+   *       row's pre-existing id.
+   *
+   * The two are mutually exclusive at any given index, so a caller
+   * can read whichever side is non-empty. Empty / absent on every
+   * index for batches that don't opt into SKIP; pre-v2.2 servers
+   * omit the field entirely (proto3 default). v2.2 / issue #599
+   * single-RTT InsertIfNotExists.
+   *
+   * @generated from field: repeated string existing_node_ids = 8;
+   */
+  existingNodeIds: string[] = [];
+
   constructor(data?: PartialMessage<ExecuteAtomicResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -1727,6 +1797,7 @@ export class ExecuteAtomicResponse extends Message<ExecuteAtomicResponse> {
     { no: 5, name: "created_node_ids", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
     { no: 6, name: "applied_status", kind: "enum", T: proto3.getEnumType(ReceiptStatus) },
     { no: 7, name: "precondition_failure", kind: "message", T: PreconditionFailure },
+    { no: 8, name: "existing_node_ids", kind: "scalar", T: 9 /* ScalarType.STRING */, repeated: true },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): ExecuteAtomicResponse {

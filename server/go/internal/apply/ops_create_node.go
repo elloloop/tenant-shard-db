@@ -88,6 +88,7 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 	}
 
 	conn := tx.Conn()
+	onConflict := stringField(op, "on_conflict") // "" (default ERROR) | "skip" (v2.2 #599)
 	if _, err := conn.ExecContext(ctx, `
 		INSERT INTO nodes (tenant_id, node_id, type_id, payload_json,
 		                   created_at, updated_at, owner_actor, acl_blob,
@@ -97,6 +98,31 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		now, now, ev.Actor, string(aclJSON),
 		storageModeVal, targetUserID,
 	); err != nil {
+		// v2.2 single-RTT InsertIfNotExists (#599): when the op opted
+		// into on_conflict=SKIP, look up the colliding row's node_id
+		// from the SAME txn (no cross-connection race against the
+		// just-inserted row) and swallow the violation. The applier
+		// keeps the batch APPLIED; the handler routes the found id
+		// into ExecuteAtomicResponse.existing_node_ids at this op's
+		// slot. CreatedNodes/ExistingNodes stay index-aligned.
+		if onConflict == "skip" {
+			existing, found, lookupErr := a.store.LookupNodeIDByUniqueViolation(ctx, conn, ev.TenantID, payload, err)
+			if lookupErr != nil {
+				return fmt.Errorf("apply create_node: SKIP lookup: %w", lookupErr)
+			}
+			if found {
+				res.CreatedNodes = append(res.CreatedNodes, "")
+				res.ExistingNodes = append(res.ExistingNodes, existing)
+				if alias := stringField(op, "as"); alias != "" {
+					aliases[alias] = existing
+				}
+				return nil
+			}
+			// Not a recognised unique-index violation — fall through
+			// to the typed UniqueViolation path (SKIP only applies to
+			// declared unique constraints; foreign-key / NOT NULL
+			// failures still abort the batch).
+		}
 		// A declared unique/composite constraint trip is an EXPECTED,
 		// deterministic outcome — translate it to the typed
 		// *UniqueViolation so the per-event loop memoizes + replays it
@@ -123,6 +149,14 @@ func (a *Applier) applyCreateNode(ctx context.Context, tx *BatchTxn, ev *Event, 
 		aliases[alias] = nodeID
 	}
 	res.CreatedNodes = append(res.CreatedNodes, nodeID)
+	// ExistingNodes is the index-aligned twin of CreatedNodes (one
+	// slot per create_node op). Always extend it in lockstep on the
+	// success path so a mixed batch with some SKIPs preserves the
+	// per-op alignment the SDK relies on. The handler drops it from
+	// the wire response when every slot is empty (preserves the
+	// pre-v2.2 ExecuteAtomicResponse shape for batches that never
+	// opted into SKIP).
+	res.ExistingNodes = append(res.ExistingNodes, "")
 	return nil
 }
 

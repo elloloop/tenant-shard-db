@@ -109,7 +109,7 @@ Extracted from `sdk/python/entdb_sdk` — `__all__` plus the public methods of `
 | Method | Description |
 |---|---|
 | `async commit(wait_applied=..., *, timeout=...)` | Commit the transaction. |
-| `create(msg, *, acl=..., storage=..., as_=..., fanout_to=..., id_=...)` | Create a node from a proto message. |
+| `create(msg, *, acl=..., storage=..., as_=..., fanout_to=..., id_=..., on_conflict=...)` | Create a node from a proto message. |
 | `delete(node_type, node_id)` | Delete a node. |
 | `delete_where(node_type, where, *, limit=...)` | Delete every node of a type matching a predicate, in one op. |
 | `edge_create(edge_type, from_id, to_id, *, props=...)` | Create an edge. |
