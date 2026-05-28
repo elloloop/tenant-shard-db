@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779983621433,
+  "lastUpdate": 1779987258434,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -9828,6 +9828,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00017108969336937768",
             "extra": "mean: 6.507305628572217 msec\nrounds: 140"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "848fdc2fbc54a2a52ae861742d1e98d3d0285afd",
+          "message": "chore(deps): bump the go-server group across 1 directory with 9 updates (#623)\n\nBumps the go-server group with 7 updates in the /server/go directory:\n\n| Package | From | To |\n| --- | --- | --- |\n| [github.com/IBM/sarama](https://github.com/IBM/sarama) | `1.48.1` | `1.50.1` |\n| [github.com/aws/aws-sdk-go-v2/config](https://github.com/aws/aws-sdk-go-v2) | `1.32.17` | `1.32.18` |\n| [github.com/aws/aws-sdk-go-v2/service/kms](https://github.com/aws/aws-sdk-go-v2) | `1.51.1` | `1.52.0` |\n| [github.com/aws/aws-sdk-go-v2/service/s3](https://github.com/aws/aws-sdk-go-v2) | `1.101.0` | `1.102.0` |\n| [github.com/aws/smithy-go](https://github.com/aws/smithy-go) | `1.25.1` | `1.26.0` |\n| [google.golang.org/api](https://github.com/googleapis/google-api-go-client) | `0.272.0` | `0.282.0` |\n| [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) | `1.50.0` | `1.51.0` |\n\n\n\nUpdates `github.com/IBM/sarama` from 1.48.1 to 1.50.1\n- [Release notes](https://github.com/IBM/sarama/releases)\n- [Changelog](https://github.com/IBM/sarama/blob/main/CHANGELOG.md)\n- [Commits](https://github.com/IBM/sarama/compare/v1.48.1...v1.50.1)\n\nUpdates `github.com/aws/aws-sdk-go-v2/config` from 1.32.17 to 1.32.18\n- [Release notes](https://github.com/aws/aws-sdk-go-v2/releases)\n- [Commits](https://github.com/aws/aws-sdk-go-v2/compare/config/v1.32.17...config/v1.32.18)\n\nUpdates `github.com/aws/aws-sdk-go-v2/service/kms` from 1.51.1 to 1.52.0\n- [Release notes](https://github.com/aws/aws-sdk-go-v2/releases)\n- [Commits](https://github.com/aws/aws-sdk-go-v2/compare/service/s3/v1.51.1...service/s3/v1.52.0)\n\nUpdates `github.com/aws/aws-sdk-go-v2/service/s3` from 1.101.0 to 1.102.0\n- [Release notes](https://github.com/aws/aws-sdk-go-v2/releases)\n- [Commits](https://github.com/aws/aws-sdk-go-v2/compare/service/s3/v1.101.0...service/s3/v1.102.0)\n\nUpdates `github.com/aws/smithy-go` from 1.25.1 to 1.26.0\n- [Release notes](https://github.com/aws/smithy-go/releases)\n- [Changelog](https://github.com/aws/smithy-go/blob/main/CHANGELOG.md)\n- [Commits](https://github.com/aws/smithy-go/compare/v1.25.1...v1.26.0)\n\nUpdates `golang.org/x/crypto` from 0.51.0 to 0.52.0\n- [Commits](https://github.com/golang/crypto/compare/v0.51.0...v0.52.0)\n\nUpdates `google.golang.org/api` from 0.272.0 to 0.282.0\n- [Release notes](https://github.com/googleapis/google-api-go-client/releases)\n- [Changelog](https://github.com/googleapis/google-api-go-client/blob/main/CHANGES.md)\n- [Commits](https://github.com/googleapis/google-api-go-client/compare/v0.272.0...v0.282.0)\n\nUpdates `google.golang.org/grpc` from 1.80.0 to 1.81.1\n- [Release notes](https://github.com/grpc/grpc-go/releases)\n- [Commits](https://github.com/grpc/grpc-go/compare/v1.80.0...v1.81.1)\n\nUpdates `modernc.org/sqlite` from 1.50.0 to 1.51.0\n- [Changelog](https://gitlab.com/cznic/sqlite/blob/master/CHANGELOG.md)\n- [Commits](https://gitlab.com/cznic/sqlite/compare/v1.50.0...v1.51.0)\n\n---\nupdated-dependencies:\n- dependency-name: github.com/aws/aws-sdk-go-v2/config\n  dependency-version: 1.32.18\n  dependency-type: direct:production\n  update-type: version-update:semver-patch\n  dependency-group: go-server\n- dependency-name: github.com/aws/aws-sdk-go-v2/service/kms\n  dependency-version: 1.52.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: github.com/aws/aws-sdk-go-v2/service/s3\n  dependency-version: 1.102.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: github.com/aws/smithy-go\n  dependency-version: 1.26.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: github.com/IBM/sarama\n  dependency-version: 1.50.1\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: golang.org/x/crypto\n  dependency-version: 0.52.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: google.golang.org/api\n  dependency-version: 0.282.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: google.golang.org/grpc\n  dependency-version: 1.81.1\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n- dependency-name: modernc.org/sqlite\n  dependency-version: 1.51.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-server\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-05-28T16:51:33Z",
+          "tree_id": "1e9d4f3725ad53f70dd834dd7f747995f66d2b8e",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/848fdc2fbc54a2a52ae861742d1e98d3d0285afd"
+        },
+        "date": 1779987256925,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2289.4928285850087,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029837298714096565",
+            "extra": "mean: 436.77795689713383 usec\nrounds: 1044"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1614.0495778566556,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000886837522611868",
+            "extra": "mean: 619.5596552417737 usec\nrounds: 992"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 761.7457770977599,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006572463974489766",
+            "extra": "mean: 1.312773933332437 msec\nrounds: 750"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 378.96591321458874,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009129665977824737",
+            "extra": "mean: 2.638759754188636 msec\nrounds: 179"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1115.218674860703,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001972172591922558",
+            "extra": "mean: 896.6851278068002 usec\nrounds: 1158"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1084.4700071311795,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002489593916163266",
+            "extra": "mean: 922.1094114399406 usec\nrounds: 1451"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1166.5678770142893,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001767278832403946",
+            "extra": "mean: 857.215443442003 usec\nrounds: 1220"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1397.524840453397,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004366664585789084",
+            "extra": "mean: 715.5507874017977 usec\nrounds: 1016"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1392.3037667104963,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004438860870651489",
+            "extra": "mean: 718.2340692524546 usec\nrounds: 361"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1193.9441329559704,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008203416435971562",
+            "extra": "mean: 837.5601273103099 usec\nrounds: 974"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1903.9795209337353,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000030441620901099285",
+            "extra": "mean: 525.2157331553584 usec\nrounds: 1499"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 145.44209343362985,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00039338367721970785",
+            "extra": "mean: 6.87558860294 msec\nrounds: 136"
           }
         ]
       }
