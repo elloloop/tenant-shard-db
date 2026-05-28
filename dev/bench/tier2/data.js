@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779858693347,
+  "lastUpdate": 1779981606082,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -9288,6 +9288,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0003196613211296421",
             "extra": "mean: 7.024647445944836 msec\nrounds: 148"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87a789a6d36b2952bccf461981b16b38dee73a18",
+          "message": "chore(deps): bump golang from 1.25-bookworm to 1.26-bookworm (#575)\n\nBumps golang from 1.25-bookworm to 1.26-bookworm.\n\n---\nupdated-dependencies:\n- dependency-name: golang\n  dependency-version: 1.26-bookworm\n  dependency-type: direct:production\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-05-28T15:17:26Z",
+          "tree_id": "db51a7859409bbd4b8254be68c6723191505f711",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/87a789a6d36b2952bccf461981b16b38dee73a18"
+        },
+        "date": 1779981604901,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2528.132401632386,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003481292505229423",
+            "extra": "mean: 395.5489037497844 usec\nrounds: 1174"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1721.0887651951114,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009204850486923059",
+            "extra": "mean: 581.0275566389133 usec\nrounds: 1024"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 891.723629690085,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004353077408857386",
+            "extra": "mean: 1.12142368633603 msec\nrounds: 915"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 424.4512267974421,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006356538583147124",
+            "extra": "mean: 2.3559832952897155 msec\nrounds: 403"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1196.644218605417,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019683276788813415",
+            "extra": "mean: 835.6702722931395 usec\nrounds: 1469"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1128.7430248536762,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023501183535990233",
+            "extra": "mean: 885.941244358639 usec\nrounds: 1551"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1209.7399753402153,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018814606802360326",
+            "extra": "mean: 826.623919506975 usec\nrounds: 1056"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1535.9731436998802,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006256203498247304",
+            "extra": "mean: 651.0530500495482 usec\nrounds: 1019"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1546.8642053672804,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008689581788706554",
+            "extra": "mean: 646.4691577516751 usec\nrounds: 374"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1337.7307071201299,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004853929801543331",
+            "extra": "mean: 747.5346081819432 usec\nrounds: 1100"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2078.969315401432,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003965350399348218",
+            "extra": "mean: 481.00758033887007 usec\nrounds: 1587"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 137.86328751246657,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004628157062472899",
+            "extra": "mean: 7.253562700001426 msec\nrounds: 130"
           }
         ]
       }
