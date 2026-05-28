@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779983317625,
+  "lastUpdate": 1779983621433,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -9720,6 +9720,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0005553697464393858",
             "extra": "mean: 6.484963595744134 msec\nrounds: 141"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "49699333+dependabot[bot]@users.noreply.github.com",
+            "name": "dependabot[bot]",
+            "username": "dependabot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9892bea7a7e663e149752b402090b148961756aa",
+          "message": "chore(deps): bump the go-sdk group across 1 directory with 2 updates (#617)\n\nBumps the go-sdk group with 2 updates in the /sdk/go/entdb directory: [connectrpc.com/connect](https://github.com/connectrpc/connect-go) and [google.golang.org/grpc](https://github.com/grpc/grpc-go).\n\n\nUpdates `connectrpc.com/connect` from 1.19.2 to 1.20.0\n- [Release notes](https://github.com/connectrpc/connect-go/releases)\n- [Changelog](https://github.com/connectrpc/connect-go/blob/main/RELEASE.md)\n- [Commits](https://github.com/connectrpc/connect-go/compare/v1.19.2...v1.20.0)\n\nUpdates `google.golang.org/grpc` from 1.80.0 to 1.81.1\n- [Release notes](https://github.com/grpc/grpc-go/releases)\n- [Commits](https://github.com/grpc/grpc-go/compare/v1.80.0...v1.81.1)\n\n---\nupdated-dependencies:\n- dependency-name: connectrpc.com/connect\n  dependency-version: 1.20.0\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-sdk\n- dependency-name: google.golang.org/grpc\n  dependency-version: 1.81.1\n  dependency-type: direct:production\n  update-type: version-update:semver-minor\n  dependency-group: go-sdk\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>\nCo-authored-by: dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-05-28T15:51:09Z",
+          "tree_id": "19f2c324e7afbe6bebc24dba520917d9fccaf679",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/9892bea7a7e663e149752b402090b148961756aa"
+        },
+        "date": 1779983619932,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2974.507258353399,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003139313004380456",
+            "extra": "mean: 336.1901360945312 usec\nrounds: 1183"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2001.8035153275728,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000045324805232129166",
+            "extra": "mean: 499.5495273852395 usec\nrounds: 1132"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 999.9725640715317,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013434749788604304",
+            "extra": "mean: 1.0000274366812192 msec\nrounds: 687"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 476.29571196915134,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013552724125983644",
+            "extra": "mean: 2.0995360127549665 msec\nrounds: 392"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1471.199264632086,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001118464193491699",
+            "extra": "mean: 679.7175773807077 usec\nrounds: 1512"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1351.4904971387678,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001646467439622378",
+            "extra": "mean: 739.9238116117677 usec\nrounds: 1619"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1543.457671680536,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001003575186874835",
+            "extra": "mean: 647.8959665354396 usec\nrounds: 1524"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1809.700702684957,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004125219086122523",
+            "extra": "mean: 552.5775607625907 usec\nrounds: 1259"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1758.3180002535735,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003363139934261709",
+            "extra": "mean: 568.725338565485 usec\nrounds: 446"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1462.2145375045661,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000708102473770869",
+            "extra": "mean: 683.8941717175188 usec\nrounds: 1089"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2604.077636041326,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000022882132389649054",
+            "extra": "mean: 384.0131285487259 usec\nrounds: 1867"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 153.67343368800894,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00017108969336937768",
+            "extra": "mean: 6.507305628572217 msec\nrounds: 140"
           }
         ]
       }
