@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779981568489,
+  "lastUpdate": 1779983069528,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -9396,6 +9396,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.001512343527607807",
             "extra": "mean: 8.203750045869679 msec\nrounds: 109"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8fdcef68fc0794aae93ce0c82f8c462f1e72b585",
+          "message": "feat(v2.2.0): single-RTT InsertIfNotExists for single-field and composite unique (#622)\n\nv2.1.x InsertIfNotExists made two round trips on a unique-key\ncollision (commit -> typed UCE -> SDK-side GetNodeByKey) and could\nonly resolve SINGLE-FIELD collisions because composite UCE detail\nhas no companion GetByCompositeKey RPC. v2.2 closes both gaps with\na server-side conflict-resolution path:\n\n  proto/entdb/v1/entdb.proto:\n    - NodeConflictPolicy enum (ERROR=0 default, SKIP=1)\n    - CreateNodeOp.on_conflict (field 13)\n    - ExecuteAtomicResponse.existing_node_ids (field 8) — index-\n      aligned twin of created_node_ids; at any given index exactly\n      one is non-empty.\n\n  applier (server/go/internal/apply/):\n    - applyCreateNode reads op[\"on_conflict\"]. On a typed\n      UNIQUE_VIOLATION + skip, it calls\n      CanonicalStore.LookupNodeIDByUniqueViolation INSIDE THE SAME\n      TXN (no cross-connection race against the just-inserted row),\n      appends the colliding row's id to res.ExistingNodes, returns\n      nil. The batch keeps APPLIED.\n    - Result.ExistingNodes is the index-aligned twin of\n      CreatedNodes; the success branch pads ExistingNodes with \"\"\n      in lockstep so a mixed batch (some SKIPs swallowed, others\n      created) preserves alignment.\n    - AppliedResultEnvelope persists (CreatedNodes, ExistingNodes)\n      into applied_events.failure_json so a retry replay sees the\n      same surface as the first call. Empty envelope on APPLIED is\n      the legacy \"no SKIP happened\" signal; the failure_json\n      column is reused (no schema migration).\n\n  handler (server/go/internal/api/execute_atomic.go):\n    - On wait_applied with APPLIED status, the handler decodes\n      AppliedResultEnvelope and PREFERS the applier-reported\n      (CreatedNodeIDs, ExistingNodeIDs) over the pre-minted UUIDs.\n      Pre-v2.2 batches leave failure_json empty -> legacy path.\n    - Threads NodeConflictPolicy_SKIP from proto into the op map.\n    - Sets ExecuteAtomicResponse.ExistingNodeIds on the response.\n\n  store/unique_violation.go:\n    - LookupNodeIDByUniqueViolation: parses the violated index name\n      to recover the field_id tuple, projects the matching row out\n      via json_extract on payload_json. Works for single-field AND\n      composite (composite is degenerate as N>1 AND-ed clauses).\n\n  Go SDK (sdk/go/entdb/):\n    - NodeConflictPolicy + OnConflict(ConflictSkip) CreateOption.\n    - CommitResult.ExistingNodeIDs index-aligned with CreatedNodeIDs.\n    - Operation.OnConflict threaded to pb.CreateNodeOp.OnConflict.\n    - InsertIfNotExists rewritten: sends SKIP, reads\n      ExistingNodeIDs[0] on success. v2.1.x fallback unchanged\n      (catch UCE -> 2-RTT GetNodeByKey). Single binary works\n      against either server version.\n    - testpb.OAuthIdentity concrete wrapper added (composite-unique\n      fixture).\n\n  Python SDK (sdk/python/entdb_sdk/):\n    - Plan.create accepts on_conflict='skip' (or 'error').\n    - ScopedPlan.create forwards the kwarg.\n    - GrpcCommitResult / CommitResult carry existing_node_ids.\n    - _grpc_client maps on_conflict='skip' to the proto enum.\n    - insert_if_not_exists rewritten with the same v2.2 / v2.1.x\n      fallback semantics as Go.\n\nTests\n-----\n\n  Go integration (sdk/go/entdb/integration_test.go, +97 lines):\n    - InsertIfNotExists_SingleFieldSingleRTT: same sku twice ->\n      second returns first's id WITHOUT a GetNodeByKey round trip.\n    - InsertIfNotExists_CompositeSingleRTT: same (provider, uid)\n      tuple twice -> resolved server-side (the gap v2.1.x couldn't\n      close).\n\n  Python integration:\n    - test_composite_unique_insert_if_not_exists_skip: same composite\n      tuple + on_conflict=SKIP -> existing_node_ids=[first_id],\n      created_node_ids=[''] (index alignment proven on the wire).\n    - existing test_insert_if_not_exists.py cases now exercise the\n      single-RTT path automatically against a v2.2 server.\n\n  Local CI: all four Go modules + Python unit (454) + Python\n  integration (118 including 6 new) + ruff clean.\n\nBackwards compat\n----------------\n\n  - Pre-v2.2 SDKs against a v2.2 server: ignore on_conflict /\n    existing_node_ids, see legacy behaviour.\n  - v2.2 SDKs against a v2.1.x server: on_conflict is silently\n    dropped (unknown proto field), the legacy UCE surfaces, the\n    fallback path in InsertIfNotExists handles it.\n  - Wire shape for batches that never SKIP is byte-identical to\n    pre-v2.2 (existing_node_ids is the proto3-default empty).",
+          "timestamp": "2026-05-28T15:42:32Z",
+          "tree_id": "77b84832bef59c05f1a3c790183fd197f487dc73",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/8fdcef68fc0794aae93ce0c82f8c462f1e72b585"
+        },
+        "date": 1779983068209,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3014.025763810091,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029720467712729098",
+            "extra": "mean: 331.7821672286835 usec\nrounds: 1483"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2004.7100198778412,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004311627141062021",
+            "extra": "mean: 498.82526155126203 usec\nrounds: 1212"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 903.1727299067305,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010426095010021006",
+            "extra": "mean: 1.1072079203534728 msec\nrounds: 791"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 439.0730220967125,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00016071256285040683",
+            "extra": "mean: 2.2775254904632574 msec\nrounds: 367"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1880.6416705629563,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010127236379032496",
+            "extra": "mean: 531.7334054927419 usec\nrounds: 1238"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1836.6479809860532,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012095149404531707",
+            "extra": "mean: 544.4701490718561 usec\nrounds: 1563"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1913.4080912475079,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001319197548843572",
+            "extra": "mean: 522.6276634735133 usec\nrounds: 1566"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1753.1102662532421,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000543110941018455",
+            "extra": "mean: 570.4147760980295 usec\nrounds: 1389"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1739.8582393598138,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000050567044891859157",
+            "extra": "mean: 574.7594702703785 usec\nrounds: 370"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1471.5079901926633,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008696395951394078",
+            "extra": "mean: 679.5749711621144 usec\nrounds: 1179"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2487.325555613394,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000046428486838367325",
+            "extra": "mean: 402.03824454872864 usec\nrounds: 1926"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 150.0478351962684,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004135838709318488",
+            "extra": "mean: 6.664541335714448 msec\nrounds: 140"
           }
         ]
       }
