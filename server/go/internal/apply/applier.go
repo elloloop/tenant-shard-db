@@ -523,11 +523,18 @@ func (a *Applier) applyEvent(ctx context.Context, ev *Event, res *Result) error 
 		}
 	}
 
-	// Record the applied_events row inside the same txn.
+	// Record the applied_events row inside the same txn. v2.2: when
+	// any create_node op in the batch tripped a SKIP swallow (issue
+	// #599), serialise the index-aligned (CreatedNodes, ExistingNodes)
+	// envelope into failure_json so the handler's wait_applied path
+	// and any retry replay see the same surface as the first call.
+	// Empty failure_json on APPLIED is the legacy "no SKIP happened"
+	// signal.
+	resultJSON := encodeAppliedResultEnvelope(res)
 	if _, err := conn.ExecContext(ctx, `
-		INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at, status)
-		VALUES (?, ?, ?, ?, ?)`,
-		ev.TenantID, ev.IdempotencyKey, res.Position.String(), a.now(), store.IdempotencyStatusApplied,
+		INSERT INTO applied_events (tenant_id, idempotency_key, stream_pos, applied_at, status, failure_json)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		ev.TenantID, ev.IdempotencyKey, res.Position.String(), a.now(), store.IdempotencyStatusApplied, resultJSON,
 	); err != nil {
 		return fmt.Errorf("apply: record applied_events: %w", err)
 	}

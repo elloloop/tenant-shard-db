@@ -136,6 +136,8 @@ from .entdb_pb2 import (
     # Full-text search (2026-04-19)
     SearchNodesRequest,
     SearchNodesResponse,
+    # v2.2 single-RTT InsertIfNotExists (#599)
+    NodeConflictPolicy,
 )
 from .entdb_pb2_grpc import EntDBServiceStub
 

@@ -15,57 +15,64 @@ import (
 // existing canonical node id without a second round trip into client
 // code.
 //
-// Mechanics: a single CreateNodeOp is committed with WaitApplied so
-// the server-side outcome is surfaced synchronously. On success the
-// new id is returned (created != ""). When the applier trips a
-// single-field unique constraint the typed *UniqueConstraintError
-// surfaces the (type_id, field_id, value) tuple; the helper follows
-// up with GetNodeByKey on the same connection and returns the
-// existing id (existed != ""). Exactly one of created / existed is
-// non-empty on a non-error return; the caller branches on whichever
-// side it cares about.
+// Wire mechanics by server version:
 //
-// Issue #599. Notes for v2.1.0:
+//   - v2.2+ server (single round trip): the SDK sends
+//     OnConflict(ConflictSkip) on the CreateNodeOp. The applier
+//     swallows the unique violation, looks the colliding row up in the
+//     same txn, and returns its id in
+//     ExecuteAtomicResponse.existing_node_ids. Works for BOTH
+//     single-field and composite unique constraints because the lookup
+//     is driven by the violated index (not by an SDK-visible key
+//     token).
 //
-//   - SINGLE-FIELD unique only. A composite-unique violation (the
-//     v2.x server enforces these atomically; see ADR-030) returns the
-//     raw *UniqueConstraintError without a follow-up lookup —
-//     there is no GetByCompositeKey RPC, so callers needing
-//     composite upsert must query themselves. Tracked for v2.2.
+//   - v2.1.x server (two round trips, fallback): SKIP is unknown to
+//     the older server, which falls back to its legacy
+//     UniqueConstraintError. The SDK catches that, follows up with
+//     GetNodeByKey using the typed (TypeID, FieldID, Value) on the
+//     UCE, and returns the existing id. Composite violations on a
+//     v2.1.x server re-raise the typed error (no GetByCompositeKey
+//     RPC, never shipped); v2.2's server-side SKIP closes that gap.
 //
-//   - The follow-up GetNodeByKey is a SECOND round trip. The truly
-//     atomic insert-if-not-exists (one round trip via a server-side
-//     NodeConflictPolicy_SKIP) is the v2.2 path; this helper closes
-//     the correctness gap (the racy query-then-create) NOW with the
-//     primitives already shipped in v2.0.x.
+// Exactly one of created / existed is non-empty on a non-error return.
+// WaitApplied is forced on so the synchronous outcome is observed
+// regardless of server version (without it, the loser of a v2.1.x
+// race sees a phantom success — issue #606).
 //
-//   - WaitApplied is forced on so the synchronous error path
-//     observes the applier's outcome (without it, the loser sees a
-//     phantom success — issue #606).
+// Issue #599.
 func (s *Scope) InsertIfNotExists(ctx context.Context, idempotencyKey string, msg proto.Message) (created, existed string, err error) {
 	if msg == nil {
 		return "", "", fmt.Errorf("entdb: InsertIfNotExists: msg is nil")
 	}
 	plan := s.PlanWithKey(idempotencyKey)
-	plan.Create(msg)
+	plan.Create(msg, OnConflict(ConflictSkip))
 	res, commitErr := plan.Commit(ctx, WithWaitApplied(true))
 	if commitErr == nil {
+		// v2.2+ single-RTT path. The applier filled exactly one of
+		// the two parallel slots at index 0. ExistingNodeIDs is the
+		// authoritative signal because pre-v2.2 servers never set it,
+		// so a non-empty entry there proves we're talking to a
+		// server that honoured ConflictSkip.
+		if len(res.ExistingNodeIDs) > 0 && res.ExistingNodeIDs[0] != "" {
+			return "", res.ExistingNodeIDs[0], nil
+		}
 		if len(res.CreatedNodeIDs) == 0 {
 			return "", "", fmt.Errorf("entdb: InsertIfNotExists: commit returned no created_node_ids")
 		}
 		return res.CreatedNodeIDs[0], "", nil
 	}
-	// On a typed UniqueConstraintError we know exactly which key
-	// collided; one follow-up GetNodeByKey returns the canonical
-	// existing id. Anything else propagates.
+	// v2.1.x fallback path: SKIP was not honoured; the server
+	// surfaced the legacy *UniqueConstraintError. Do the two-RTT
+	// GetNodeByKey lookup. Anything other than a UCE propagates.
 	var uce *UniqueConstraintError
 	if !errors.As(commitErr, &uce) {
 		return "", "", commitErr
 	}
 	if uce.IsComposite() {
-		// No GetByCompositeKey RPC in v2.x. Surface the typed error
-		// so the caller can do their own composite lookup. Tracked
-		// for v2.2 (issue #599 server-side path).
+		// Composite-unique collision against a v2.1.x server: there
+		// is no GetByCompositeKey RPC, so we cannot resolve the
+		// existing id. Surface the typed error; the v2.2 server-side
+		// path makes this branch unreachable.
 		return "", "", commitErr
 	}
 	node, lookupErr := s.client.transport.GetNodeByKey(

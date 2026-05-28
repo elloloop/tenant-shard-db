@@ -65,6 +65,7 @@ from ._generated import (
     LegalHoldRequest,
     ListSharedWithMeRequest,
     ListUsersRequest,
+    NodeConflictPolicy,
     NodeRef,
     Operation,
     QueryNodesRequest,
@@ -820,6 +821,7 @@ class GrpcCommitResult:
     created_node_ids: list[str]
     applied: bool
     error: str | None
+    existing_node_ids: list[str] = field(default_factory=list)
 
 
 class GrpcClient:
@@ -1228,6 +1230,10 @@ class GrpcClient:
                 success=response.success,
                 receipt=receipt,
                 created_node_ids=list(response.created_node_ids),
+                # v2.2 / issue #599: index-aligned twin used by the
+                # single-RTT InsertIfNotExists path. Empty on pre-v2.2
+                # servers (proto3 default).
+                existing_node_ids=list(response.existing_node_ids),
                 applied=response.applied_status == ReceiptStatus.RECEIPT_STATUS_APPLIED,
                 error=response.error if response.error else None,
             )
@@ -1325,6 +1331,12 @@ class GrpcClient:
                     create_op.storage_mode = _sm_to_proto.get(sm, 0)
                 if create.get("target_user_id"):
                     create_op.target_user_id = create["target_user_id"]
+                # v2.2 / issue #599: NodeConflictPolicy. Plan.create
+                # accepts the string "skip"; everything else maps to
+                # the proto default (ERROR), the pre-v2.2 abort-the-
+                # batch behaviour.
+                if create.get("on_conflict") == "skip":
+                    create_op.on_conflict = NodeConflictPolicy.NODE_CONFLICT_POLICY_SKIP
                 # 2026-04-14 SDK v0.3 — the wire-level ``keys`` map is
                 # retired. Unique values travel inside the regular
                 # payload and are enforced by the server-side unique

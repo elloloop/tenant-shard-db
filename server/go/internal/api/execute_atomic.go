@@ -46,6 +46,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
 
+	"github.com/elloloop/tenant-shard-db/server/go/internal/apply"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/auth"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
@@ -239,6 +240,10 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	// in the SAME transaction is an INVALID_ARGUMENT. Aliases never
 	// span transactions.
 	createdNodeIDs := make([]string, 0)
+	// v2.2: existing_node_ids is empty unless wait_applied surfaces an
+	// AppliedResultEnvelope from the applier showing at least one
+	// SKIPped create. Pre-v2.2 callers see an empty list.
+	var existingNodeIDs []string
 	aliasMap := make(map[string]string)
 	for _, op := range ops {
 		switch op["op"].(string) {
@@ -358,6 +363,22 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 				uniqueViolationDetail = decodeUniqueViolationDetailJSON(rec.FailureJSON)
 			default:
 				appliedStatus = pb.ReceiptStatus_RECEIPT_STATUS_APPLIED
+				// v2.2 single-RTT InsertIfNotExists (#599): if the
+				// applier persisted an AppliedResultEnvelope on
+				// failure_json (because at least one create_node op
+				// in the batch SKIPped a unique violation), prefer
+				// the applier-reported (created, existing) arrays
+				// over the pre-minted UUIDs. Index-aligned with the
+				// create ops in the batch; the empty-string entries
+				// signal "the other side has the real id at this
+				// index". Pre-v2.2 batches leave failure_json empty
+				// on APPLIED, so this is a no-op for legacy callers.
+				if env, ok := apply.DecodeAppliedResultEnvelope(rec.FailureJSON); ok {
+					if len(env.CreatedNodeIDs) == len(createdNodeIDs) {
+						createdNodeIDs = env.CreatedNodeIDs
+					}
+					existingNodeIDs = env.ExistingNodeIDs
+				}
 			}
 		}
 		cancel()
@@ -377,6 +398,7 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 		Success:             appliedStatus != pb.ReceiptStatus_RECEIPT_STATUS_FAILED_PRECONDITION,
 		Receipt:             receipt,
 		CreatedNodeIds:      createdNodeIDs,
+		ExistingNodeIds:     existingNodeIDs,
 		AppliedStatus:       appliedStatus,
 		PreconditionFailure: preFailure,
 	}
@@ -534,6 +556,14 @@ func (s *Server) convertOperations(reg *schema.Registry, operations []*pb.Operat
 			}
 			if tgt := create.GetTargetUserId(); tgt != "" {
 				internal["target_user_id"] = tgt
+			}
+			// v2.2: NodeConflictPolicy. ERROR is the proto default and
+			// the legacy behaviour, so we only thread "skip" through
+			// when the caller explicitly opted into NODE_CONFLICT_POLICY_SKIP.
+			// The applier reads op["on_conflict"] and falls back to
+			// the typed UniqueViolation path when absent. Issue #599.
+			if create.GetOnConflict() == pb.NodeConflictPolicy_NODE_CONFLICT_POLICY_SKIP {
+				internal["on_conflict"] = "skip"
 			}
 			out = append(out, internal)
 

@@ -608,3 +608,100 @@ func newSchemaClientForIINE(t *testing.T, ctx context.Context) *DbClient {
 	t.Cleanup(func() { _ = c.Close() })
 	return c
 }
+
+// TestIntegration_InsertIfNotExists_SingleFieldSingleRTT pins the v2.2
+// single-RTT path against a v2.2 server: a unique-key collision on a
+// single-field constraint is resolved by NodeConflictPolicy_SKIP in
+// ONE round trip; the SDK reads existing_node_ids[0] from the response
+// without a follow-up GetNodeByKey. Compared against
+// TestIntegration_InsertIfNotExists_ResolvesConflict (v2.1.x fallback
+// path), this proves the helper picks the SKIP branch when the server
+// supports it. Issue #599.
+func TestIntegration_InsertIfNotExists_SingleFieldSingleRTT(t *testing.T) {
+	ctx := context.Background()
+	c := newSchemaClientForIINE(t, ctx)
+	scope := c.Tenant(itTenant).Actor(UserActor("e2e-runner"))
+
+	p1 := testpb.NewProductMsg()
+	p1.SetFields("IINE-1rtt-sku-1", "Widget", 100)
+	firstID, existed, err := scope.InsertIfNotExists(ctx, "iine-1rtt-1a", p1)
+	if err != nil {
+		t.Fatalf("first InsertIfNotExists: %v", err)
+	}
+	if firstID == "" || existed != "" {
+		t.Fatalf("first call: created=%q existed=%q", firstID, existed)
+	}
+
+	// Second writer with the SAME sku. The v2.2 server resolves to the
+	// existing id in the SAME atomic commit (no UCE round trip, no
+	// follow-up GetNodeByKey).
+	p2 := testpb.NewProductMsg()
+	p2.SetFields("IINE-1rtt-sku-1", "Other Name", 999)
+	created2, resolved, err := scope.InsertIfNotExists(ctx, "iine-1rtt-1b", p2)
+	if err != nil {
+		t.Fatalf("second InsertIfNotExists: %v", err)
+	}
+	if created2 != "" {
+		t.Fatalf("second call should NOT create on a v2.2 server; created=%q", created2)
+	}
+	if resolved != firstID {
+		t.Fatalf("resolved = %q, want %q (the first winner)", resolved, firstID)
+	}
+}
+
+// TestIntegration_InsertIfNotExists_CompositeSingleRTT pins the v2.2
+// composite path — the gap v2.1.0 explicitly did NOT close. A second
+// write with the same (provider, provider_user_id) tuple is resolved
+// server-side via the composite-unique index without any client-side
+// follow-up. Issue #599 v2.2 / ADR-030.
+func TestIntegration_InsertIfNotExists_CompositeSingleRTT(t *testing.T) {
+	ctx := context.Background()
+	c := newSchemaClientForIINEWithComposite(t, ctx)
+	scope := c.Tenant(itTenant).Actor(UserActor("e2e-runner"))
+
+	o1 := testpb.NewOAuthIdentityMsg()
+	o1.SetFields("google", "uid-iine-comp-1")
+	firstID, existed, err := scope.InsertIfNotExists(ctx, "iine-comp-1a", o1)
+	if err != nil {
+		t.Fatalf("first InsertIfNotExists: %v", err)
+	}
+	if firstID == "" || existed != "" {
+		t.Fatalf("first call: created=%q existed=%q", firstID, existed)
+	}
+
+	// Second writer with the SAME tuple. v2.1.x would have returned
+	// the composite UCE (no GetByCompositeKey RPC); v2.2 resolves via
+	// the server-side SKIP path because the lookup is driven by the
+	// violated index, not by an SDK key token.
+	o2 := testpb.NewOAuthIdentityMsg()
+	o2.SetFields("google", "uid-iine-comp-1")
+	created2, resolved, err := scope.InsertIfNotExists(ctx, "iine-comp-1b", o2)
+	if err != nil {
+		t.Fatalf("second InsertIfNotExists (composite): %v", err)
+	}
+	if created2 != "" {
+		t.Fatalf("composite second call should NOT create; created=%q", created2)
+	}
+	if resolved != firstID {
+		t.Fatalf("composite resolved = %q, want %q", resolved, firstID)
+	}
+}
+
+// newSchemaClientForIINEWithComposite registers BOTH testpb.Product
+// (type 201, single-field unique) AND testpb.OAuthIdentity (type 202,
+// composite unique on (provider, provider_user_id)) on the client.
+// The v2.2 composite test needs the latter; the existing single-field
+// tests use the simpler single-type helper above.
+func newSchemaClientForIINEWithComposite(t *testing.T, ctx context.Context) *DbClient {
+	t.Helper()
+	addr := itClient.transport.(*grpcTransport).address
+	c, err := NewClient(addr, WithSchema(testpb.NewProductMsg(), testpb.NewOAuthIdentityMsg()))
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	if err := c.Connect(ctx); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}

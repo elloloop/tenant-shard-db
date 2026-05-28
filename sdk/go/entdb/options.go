@@ -202,6 +202,32 @@ type createConfig struct {
 	targetUserID string
 	alias        string
 	id           string
+	onConflict   NodeConflictPolicy
+}
+
+// NodeConflictPolicy is the wire-aligned policy carried on
+// CreateNodeOp for the v2.2 single-RTT InsertIfNotExists path (issue
+// #599). Default ConflictError mirrors the pre-v2.2 behaviour — a
+// tripped unique index aborts the batch and surfaces a typed
+// *UniqueConstraintError.
+type NodeConflictPolicy int32
+
+const (
+	// ConflictError aborts the batch on a unique violation. Default.
+	ConflictError NodeConflictPolicy = 0
+	// ConflictSkip swallows the violation server-side and returns the
+	// pre-existing row's id in CommitResult.ExistingNodeIDs at the
+	// op's index. Powers InsertIfNotExists's single-RTT path.
+	ConflictSkip NodeConflictPolicy = 1
+)
+
+// OnConflict sets the unique-violation policy for a create. v2.2 /
+// issue #599. Pre-v2.2 servers ignore the option and surface the
+// legacy *UniqueConstraintError; the SDK helpers using SKIP detect
+// that and fall back to the v2.1.x two-RTT GetNodeByKey lookup so
+// the same SDK release works against either server version.
+func OnConflict(p NodeConflictPolicy) CreateOption {
+	return func(c *createConfig) { c.onConflict = p }
 }
 
 // CreateOption configures a single Plan.Create call.

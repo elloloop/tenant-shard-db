@@ -150,3 +150,62 @@ async def test_composite_unique_distinct_tuples_both_apply(stub) -> None:
         idem=f"d-{uid}-2",
     )
     assert r2.success, r2.error
+
+
+# ---------------------------------------------------------------------------
+# v2.2 / issue #599 — single-RTT InsertIfNotExists for composite unique
+# ---------------------------------------------------------------------------
+
+
+async def test_composite_unique_insert_if_not_exists_skip(stub) -> None:
+    """A second insert with the same (provider, provider_user_id)
+    tuple, opting into ``on_conflict=skip``, resolves to the first
+    writer's id in ONE round trip — no follow-up GetByCompositeKey
+    needed (which doesn't exist in any released wire). v2.1.x
+    couldn't resolve composite collisions; v2.2's server-side SKIP
+    does because the lookup is keyed off the violated index, not an
+    SDK-visible key token.
+    """
+    uid = uuid.uuid4().hex[:8]
+    r1 = await _create_oauth(
+        stub,
+        provider="google",
+        provider_user_id=f"skp-{uid}",
+        email=f"skp1-{uid}@x.com",
+        idem=f"skp-{uid}-1",
+    )
+    assert r1.success, r1.error
+    first_id = r1.created_node_ids[0]
+    assert first_id, "first create must mint a node id"
+
+    # Second writer with the same composite tuple, on_conflict=skip.
+    # The applier swallows the violation and returns the existing id
+    # in existing_node_ids[0]. created_node_ids[0] is "" at the same
+    # slot (index-aligned).
+    op = pb.CreateNodeOp(
+        type_id=OAUTH_TYPE_ID,
+        id=f"oauth-{uuid.uuid4().hex[:8]}",
+        typed_data={
+            1: pb.EntValue(string_value="google"),
+            2: pb.EntValue(string_value=f"skp-{uid}"),
+            3: pb.EntValue(string_value=f"skp2-{uid}@x.com"),
+        },
+        on_conflict=pb.NodeConflictPolicy.NODE_CONFLICT_POLICY_SKIP,
+    )
+    req = pb.ExecuteAtomicRequest(
+        context=_ctx(),
+        idempotency_key=f"skp-{uid}-2",
+        operations=[pb.Operation(create_node=op)],
+        wait_applied=True,
+        wait_timeout_ms=5000,
+    )
+    r2 = await stub.ExecuteAtomic(req)
+    assert r2.success, r2.error
+    assert list(r2.existing_node_ids) == [first_id], (
+        f"expected existing_node_ids=[{first_id!r}], got {list(r2.existing_node_ids)!r}"
+    )
+    # The created-side slot is empty at the same index — exactly one
+    # of the two parallel arrays carries the id.
+    assert list(r2.created_node_ids) == [""], (
+        f"expected created_node_ids=[''], got {list(r2.created_node_ids)!r}"
+    )

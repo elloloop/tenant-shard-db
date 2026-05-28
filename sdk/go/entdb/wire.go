@@ -269,6 +269,7 @@ func operationsToProto(ops []Operation) ([]*pb.Operation, error) {
 				Acl:          aclToProto(op.ACL),
 				StorageMode:  storageModeToProto(op.StorageMode),
 				TargetUserId: op.TargetUserID,
+				OnConflict:   pb.NodeConflictPolicy(op.OnConflict),
 			}}
 		case OpUpdateNode:
 			patch, err := mapToStruct(op.Patch)

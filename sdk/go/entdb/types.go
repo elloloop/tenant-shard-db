@@ -98,8 +98,18 @@ type CommitResult struct {
 	Success        bool     `json:"success"`
 	Receipt        *Receipt `json:"receipt,omitempty"`
 	CreatedNodeIDs []string `json:"created_node_ids,omitempty"`
-	Applied        bool     `json:"applied"`
-	Error          string   `json:"error,omitempty"`
+	// ExistingNodeIDs is the index-aligned twin of CreatedNodeIDs for
+	// create ops that carried OnConflict(ConflictSkip). At index i:
+	//
+	//   CreatedNodeIDs[i] != ""  / ExistingNodeIDs[i] == "" — created
+	//   CreatedNodeIDs[i] == ""  / ExistingNodeIDs[i] != "" — SKIP
+	//       swallowed a unique violation; the id is the pre-existing
+	//       row's. Empty / absent for batches that don't opt into
+	//       SKIP, and from pre-v2.2 servers regardless. v2.2 single-RTT
+	//       InsertIfNotExists, issue #599.
+	ExistingNodeIDs []string `json:"existing_node_ids,omitempty"`
+	Applied         bool     `json:"applied"`
+	Error           string   `json:"error,omitempty"`
 	// CommittedOffset is the WAL stream position at which this write
 	// was recorded (shortcut for Receipt.StreamPosition; empty when no
 	// receipt was returned). Pass it to [DbClient.WaitForCommit] /
@@ -229,6 +239,14 @@ type Operation struct {
 	// selects the server default; the server clamps to its own hard
 	// ceiling. Ignored for other op types.
 	Limit int `json:"limit,omitempty"`
+
+	// OnConflict carries the unique-violation policy for OpCreateNode
+	// (v2.2 / issue #599). Default ConflictError matches the pre-v2.2
+	// abort-the-batch behaviour; ConflictSkip turns the violation
+	// into a server-side lookup that surfaces the colliding row's id
+	// in CommitResult.ExistingNodeIDs. Only valid on OpCreateNode;
+	// ignored for other op types.
+	OnConflict NodeConflictPolicy `json:"on_conflict,omitempty"`
 }
 
 // Precondition is a single-field equality predicate evaluated by the
