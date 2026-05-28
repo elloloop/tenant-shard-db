@@ -19,7 +19,7 @@
 # =============================================================================
 # Builder stage — compile the binary with CGO disabled
 # =============================================================================
-FROM golang:1.25-bookworm AS builder
+FROM golang:1.26-bookworm AS builder
 
 WORKDIR /src
 
