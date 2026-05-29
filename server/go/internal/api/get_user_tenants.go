@@ -74,7 +74,7 @@ func (s *Server) GetUserTenants(
 			}
 			err = nil
 		}
-		metrics.RecordGRPCRequest(grpcMethodGetUserTenants, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodGetUserTenants, outcome, time.Since(start))
 	}()
 
 	// Trusted-actor resolution. The result is intentionally not used

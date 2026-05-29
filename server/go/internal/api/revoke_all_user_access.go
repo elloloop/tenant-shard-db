@@ -86,7 +86,7 @@ func (s *Server) RevokeAllUserAccess(
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(revokeAllUserAccessMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, revokeAllUserAccessMethod, status, time.Since(start))
 	}()
 
 	// Required-field validation BEFORE auth.

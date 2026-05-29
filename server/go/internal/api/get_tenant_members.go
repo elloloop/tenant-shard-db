@@ -56,7 +56,7 @@ func (s *Server) GetTenantMembers(
 	start := time.Now()
 
 	if s.global == nil {
-		metrics.RecordGRPCRequest(getTenantMembersMethod, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "error", time.Since(start))
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 
@@ -64,11 +64,11 @@ func (s *Server) GetTenantMembers(
 	// tenant_id, and the SDK contract tests rely on the exact
 	// INVALID_ARGUMENT messages.
 	if req.GetActor() == "" {
-		metrics.RecordGRPCRequest(getTenantMembersMethod, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
 	}
 	if req.GetTenantId() == "" {
-		metrics.RecordGRPCRequest(getTenantMembersMethod, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
 	}
 
@@ -85,7 +85,7 @@ func (s *Server) GetTenantMembers(
 		// globalstore failure; SDK callers cannot distinguish "no
 		// members" from "DB blew up". Flagged in the EPIC's
 		// open-questions for tightening.
-		metrics.RecordGRPCRequest(getTenantMembersMethod, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "error", time.Since(start))
 		return &pb.GetTenantMembersResponse{Members: []*pb.TenantMemberInfo{}}, nil
 	}
 
@@ -98,6 +98,6 @@ func (s *Server) GetTenantMembers(
 			JoinedAt: m.JoinedAt,
 		})
 	}
-	metrics.RecordGRPCRequest(getTenantMembersMethod, "ok", time.Since(start))
+	metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "ok", time.Since(start))
 	return &pb.GetTenantMembersResponse{Members: out}, nil
 }

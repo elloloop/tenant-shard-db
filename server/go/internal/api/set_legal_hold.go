@@ -71,7 +71,7 @@ func (s *Server) SetLegalHold(
 	start := time.Now()
 	resultStatus := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(grpcMethodSetLegalHold, resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodSetLegalHold, resultStatus, time.Since(start))
 	}()
 
 	// Optional-store guard. Returns UNIMPLEMENTED when the global_store

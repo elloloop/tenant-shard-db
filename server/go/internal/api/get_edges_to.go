@@ -56,7 +56,7 @@ func (s *Server) GetEdgesTo(
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(grpcMethodGetEdgesTo, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodGetEdgesTo, outcome, time.Since(start))
 	}()
 
 	tenantID := req.GetContext().GetTenantId()

@@ -43,6 +43,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -77,7 +78,7 @@ const (
 func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest) (*pb.ExecuteAtomicResponse, error) {
 	start := time.Now()
 	outcome := "ok"
-	defer func() { metrics.RecordGRPCRequest(executeAtomicMethod, outcome, time.Since(start)) }()
+	defer func() { metrics.RecordGRPCRequest(ctx, executeAtomicMethod, outcome, time.Since(start)) }()
 
 	if s.producer == nil || s.topic == "" {
 		outcome = "error"
@@ -300,6 +301,11 @@ func (s *Server) ExecuteAtomic(ctx context.Context, req *pb.ExecuteAtomicRequest
 	headers := map[string][]byte{
 		wal.HeaderIdempotencyKey: []byte(idem),
 	}
+	// Carry the request's W3C trace context onto the WAL record so the
+	// applier can continue this trace when it materialises the event on
+	// its own goroutine/context later (ADR-033 §5). No-op when the
+	// request is untraced (no traceparent on ctx).
+	otel.GetTextMapPropagator().Inject(ctx, wal.HeaderCarrier(headers))
 	pos, err := s.producer.Append(ctx, s.topic, tenantID, payloadBytes, headers)
 	if err != nil {
 		// In-band INTERNAL channel — gRPC status stays OK, error_code

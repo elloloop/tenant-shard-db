@@ -8,15 +8,25 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
+
+// applierTracerName names the tracer used for apply-side spans that
+// continue an originating request's trace across the async WAL boundary
+// (ADR-033 §5).
+const applierTracerName = "entdb-applier"
 
 // Options configures a new Applier. Required fields: Store, Consumer,
 // Topic, GroupID. Global is required for wal.ScopeGlobal records; an
@@ -64,6 +74,22 @@ type Options struct {
 	// worker pool; the cap never exceeds the number of distinct tenants
 	// in the batch.
 	MaxApplyConcurrency int
+
+	// TransientPollBackoff is the base backoff between retries of a
+	// transient WAL poll error (issue #627). Capped-exponential up to
+	// 30s. Defaults to 1s. A transient poll error (idle-connection EOF,
+	// network timeout, broker rebalance) is retried rather than crashing
+	// the process.
+	TransientPollBackoff time.Duration
+
+	// MaxTransientPollStreak caps consecutive transient poll errors
+	// before the applier gives up and exits. 0 (default) retries
+	// indefinitely — a transient error must never crash the process; a
+	// persistent broker outage is surfaced via warn logs + the
+	// entdb_applier_transient_poll_errors_total metric, not a crash
+	// loop. Set >0 to force an exit after N consecutive transient
+	// failures.
+	MaxTransientPollStreak int
 }
 
 // Applier is the WAL consumer that materialises TransactionEvents into
@@ -95,6 +121,9 @@ type Applier struct {
 	fanoutHook   func(ctx context.Context, ev *Event, res *Result)
 	haltOnPoison bool
 	maxApplyConc int
+
+	transientBackoff   time.Duration
+	maxTransientStreak int
 
 	// running is non-zero when the Run loop has started. Used by
 	// Stop to skip the wait-for-loop-exit path when Run never started.
@@ -142,20 +171,26 @@ func New(opts Options) (*Applier, error) {
 	if maxConc < 1 {
 		maxConc = 1
 	}
+	transientBackoff := opts.TransientPollBackoff
+	if transientBackoff <= 0 {
+		transientBackoff = time.Second
+	}
 	return &Applier{
-		store:        opts.Store,
-		global:       opts.Global,
-		consumer:     opts.Consumer,
-		topic:        opts.Topic,
-		groupID:      opts.GroupID,
-		batchSize:    batch,
-		pollTimeout:  pollTO,
-		nowFn:        nowFn,
-		fanoutHook:   opts.FanoutHook,
-		haltOnPoison: halt,
-		maxApplyConc: maxConc,
-		stopCh:       make(chan struct{}),
-		doneCh:       make(chan struct{}),
+		store:              opts.Store,
+		global:             opts.Global,
+		consumer:           opts.Consumer,
+		topic:              opts.Topic,
+		groupID:            opts.GroupID,
+		batchSize:          batch,
+		pollTimeout:        pollTO,
+		nowFn:              nowFn,
+		fanoutHook:         opts.FanoutHook,
+		haltOnPoison:       halt,
+		maxApplyConc:       maxConc,
+		transientBackoff:   transientBackoff,
+		maxTransientStreak: opts.MaxTransientPollStreak,
+		stopCh:             make(chan struct{}),
+		doneCh:             make(chan struct{}),
 	}, nil
 }
 
@@ -171,6 +206,10 @@ func (a *Applier) Run(ctx context.Context) error {
 	}
 	defer close(a.doneCh)
 
+	// transientStreak counts consecutive transient poll errors so the
+	// backoff grows and (optionally) the MaxTransientPollStreak cap can
+	// fire. Reset on any successful poll.
+	transientStreak := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -187,8 +226,36 @@ func (a *Applier) Run(ctx context.Context) error {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return err
 			}
+			// Transient backend errors (idle-connection EOF, network
+			// timeouts, broker rebalances/leader elections) must NOT
+			// crash the process (issue #627): on managed Kafka surfaces
+			// such as Azure Event Hubs they recur on idle traffic and
+			// previously forced a full restart each time. Back off and
+			// retry; only hard-fatal errors stop the loop. A persistent
+			// outage is surfaced via warn logs + the
+			// entdb_applier_transient_poll_errors_total metric, and (if
+			// configured) the MaxTransientPollStreak cap.
+			if wal.IsTransient(err) {
+				transientStreak++
+				metrics.IncApplierTransientPollError()
+				if a.maxTransientStreak > 0 && transientStreak >= a.maxTransientStreak {
+					return fmt.Errorf("apply: poll batch: giving up after %d consecutive transient errors: %w", transientStreak, err)
+				}
+				wait := a.transientBackoffFor(transientStreak)
+				slog.WarnContext(ctx, "applier: transient WAL poll error; backing off and retrying",
+					"streak", transientStreak, "backoff", wait.String(), "error", err.Error())
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-a.stopCh:
+					return nil
+				case <-time.After(wait):
+				}
+				continue
+			}
 			return fmt.Errorf("apply: poll batch: %w", err)
 		}
+		transientStreak = 0
 		if len(records) == 0 {
 			continue
 		}
@@ -196,6 +263,25 @@ func (a *Applier) Run(ctx context.Context) error {
 			return err
 		}
 	}
+}
+
+// transientBackoffFor returns the capped-exponential backoff for the
+// given consecutive transient-error streak: base, 2×base, 4×base, …
+// capped at 30s. base is Options.TransientPollBackoff (default 1s).
+func (a *Applier) transientBackoffFor(streak int) time.Duration {
+	const maxBackoff = 30 * time.Second
+	base := a.transientBackoff
+	if base <= 0 {
+		base = time.Second
+	}
+	wait := base
+	for i := 1; i < streak && wait < maxBackoff; i++ {
+		wait *= 2
+	}
+	if wait > maxBackoff {
+		wait = maxBackoff
+	}
+	return wait
 }
 
 // processBatch applies one poll batch with cross-tenant parallelism
@@ -380,6 +466,20 @@ func (a *Applier) Stop() {
 // opens a BatchTxn, dispatches every op, and finalises with the
 // idempotency probe (inside-txn check).
 func (a *Applier) applyRecord(ctx context.Context, rec Record) Result {
+	// Continue the originating request's trace across the async WAL
+	// boundary (ADR-033 §5): extract the W3C context the ExecuteAtomic
+	// handler injected into the record headers. An apply span is started
+	// ONLY when the event was actually traced, so untraced events never
+	// spawn root traces on the hot apply path.
+	if len(rec.Headers) > 0 {
+		ctx = otel.GetTextMapPropagator().Extract(ctx, wal.HeaderCarrier(rec.Headers))
+		if trace.SpanContextFromContext(ctx).IsValid() {
+			var span trace.Span
+			ctx, span = otel.Tracer(applierTracerName).Start(ctx, "applier.apply")
+			defer span.End()
+		}
+	}
+
 	res := Result{Position: rec.Position}
 	ev, err := wal.DecodeEvent(rec.Value)
 	if err != nil {

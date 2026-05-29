@@ -32,6 +32,14 @@ dependencies = [
     "protobuf>=4.25.0",
 ]
 
+# Optional W3C trace-context propagation (ADR-033 §6). Without this the
+# SDK never injects a traceparent; with an active OpenTelemetry span it
+# propagates the trace to the server. Install: pip install "entdb-sdk[tracing]".
+[project.optional-dependencies]
+tracing = [
+    "opentelemetry-api>=1.20.0",
+]
+
 [project.scripts]
 entdb = "entdb_sdk.cli:main"
 

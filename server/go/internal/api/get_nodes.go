@@ -84,7 +84,7 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	start := time.Now()
 	resultStatus := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(getNodesMethod, resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getNodesMethod, resultStatus, time.Since(start))
 	}()
 
 	tenantID := req.GetContext().GetTenantId()

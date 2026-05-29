@@ -72,7 +72,7 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	start := time.Now()
 	resultStatus := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(getNodeByKeyMethod, resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getNodeByKeyMethod, resultStatus, time.Since(start))
 	}()
 
 	// 1. Tenant gate. UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND

@@ -70,7 +70,7 @@ func (s *Server) ExportUserData(
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(exportUserDataMethod, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, exportUserDataMethod, outcome, time.Since(start))
 	}()
 
 	// Configuration gate.

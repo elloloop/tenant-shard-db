@@ -48,10 +48,10 @@ func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthRes
 	resultStatus := "ok"
 	defer func() {
 		if r := recover(); r != nil {
-			metrics.RecordGRPCRequest("Health", "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, "Health", "error", time.Since(start))
 			panic(r)
 		}
-		metrics.RecordGRPCRequest("Health", resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, "Health", resultStatus, time.Since(start))
 	}()
 
 	components := make(map[string]string, 4)

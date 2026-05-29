@@ -67,7 +67,7 @@ func (s *Server) RemoveTenantMember(
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(removeTenantMemberMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, removeTenantMemberMethod, status, time.Since(start))
 	}()
 
 	// Registry-less deployment guard.

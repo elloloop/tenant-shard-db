@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -18,7 +19,7 @@ func TestRecordGRPCRequestIncrementsCounterAndHistogram(t *testing.T) {
 	beforeCount := testutil.ToFloat64(grpcRequests.WithLabelValues(method, statusOK))
 	beforeHist := histogramSampleCount(t, grpcLatency.WithLabelValues(method))
 
-	RecordGRPCRequest(method, statusOK, 50*time.Millisecond)
+	RecordGRPCRequest(context.Background(), method, statusOK, 50*time.Millisecond)
 
 	afterCount := testutil.ToFloat64(grpcRequests.WithLabelValues(method, statusOK))
 	if afterCount-beforeCount != 1 {
@@ -37,9 +38,9 @@ func TestRecordGRPCRequestSeparatesStatusLabels(t *testing.T) {
 	beforeOK := testutil.ToFloat64(grpcRequests.WithLabelValues(method, "OK"))
 	beforeErr := testutil.ToFloat64(grpcRequests.WithLabelValues(method, "INTERNAL"))
 
-	RecordGRPCRequest(method, "OK", time.Millisecond)
-	RecordGRPCRequest(method, "OK", time.Millisecond)
-	RecordGRPCRequest(method, "INTERNAL", time.Millisecond)
+	RecordGRPCRequest(context.Background(), method, "OK", time.Millisecond)
+	RecordGRPCRequest(context.Background(), method, "OK", time.Millisecond)
+	RecordGRPCRequest(context.Background(), method, "INTERNAL", time.Millisecond)
 
 	if got := testutil.ToFloat64(grpcRequests.WithLabelValues(method, "OK")) - beforeOK; got != 2 {
 		t.Errorf("OK delta = %v, want 2", got)

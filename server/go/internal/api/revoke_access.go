@@ -99,7 +99,7 @@ func (s *Server) RevokeAccess(
 	start := time.Now()
 	statusLabel := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(revokeAccessMethod, statusLabel, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, revokeAccessMethod, statusLabel, time.Since(start))
 	}()
 
 	// Required-arg validation. Empty actor / tenant_id / node_id /

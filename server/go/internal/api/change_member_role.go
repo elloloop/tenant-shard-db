@@ -53,23 +53,23 @@ func (s *Server) ChangeMemberRole(
 	start := time.Now()
 
 	if s.global == nil {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 	}
 	if req.GetActor() == "" {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
 	}
 	if req.GetTenantId() == "" {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
 	}
 	if req.GetUserId() == "" {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "user_id is required")
 	}
 	if req.GetNewRole() == "" {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "new_role is required")
 	}
 
@@ -83,11 +83,11 @@ func (s *Server) ChangeMemberRole(
 		// Caller must be a tenant-level admin/owner to mutate roles.
 		callerRole, err := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
-			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 			return nil, errs.Internal(ctx, "list tenant members", err)
 		}
 		if callerRole != "owner" && callerRole != "admin" {
-			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 			return nil, errs.Errorf(codes.PermissionDenied,
 				"Only tenant admins can change member roles")
 		}
@@ -95,7 +95,7 @@ func (s *Server) ChangeMemberRole(
 
 	members, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
 	if err != nil {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, errs.Internal(ctx, "list tenant members", err)
 	}
 	var targetJoinedAt int64
@@ -120,7 +120,7 @@ func (s *Server) ChangeMemberRole(
 			}
 		}
 		if targetIsOwner && ownerCount == 1 {
-			metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 			return nil, errs.Errorf(codes.FailedPrecondition,
 				"cannot demote the last owner of tenant %q", req.GetTenantId())
 		}
@@ -136,7 +136,7 @@ func (s *Server) ChangeMemberRole(
 
 	if !targetFound {
 		// Soft failure: gRPC OK, response.success=false.
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "ok", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "ok", time.Since(start))
 		return &pb.ChangeMemberRoleResponse{Success: false, Error: "Member not found"}, nil
 	}
 	if targetJoinedAt == 0 {
@@ -151,10 +151,10 @@ func (s *Server) ChangeMemberRole(
 		"joined_at": targetJoinedAt,
 	})
 	if err != nil {
-		metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "error", time.Since(start))
 		return nil, err
 	}
 
-	metrics.RecordGRPCRequest(grpcMethodChangeMemberRole, "ok", time.Since(start))
+	metrics.RecordGRPCRequest(ctx, grpcMethodChangeMemberRole, "ok", time.Since(start))
 	return &pb.ChangeMemberRoleResponse{Success: true}, nil
 }

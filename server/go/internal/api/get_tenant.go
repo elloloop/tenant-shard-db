@@ -51,7 +51,7 @@ func (s *Server) GetTenant(ctx context.Context, req *pb.GetTenantRequest) (resp 
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(getTenantMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getTenantMethod, status, time.Since(start))
 	}()
 
 	// Defensive: registry not configured. No test pins this path but it

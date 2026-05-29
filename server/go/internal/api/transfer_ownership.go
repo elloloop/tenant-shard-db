@@ -93,7 +93,7 @@ func (s *Server) TransferOwnership(
 	start := time.Now()
 	statusLabel := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(grpcMethodTransferOwnership, statusLabel, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodTransferOwnership, statusLabel, time.Since(start))
 	}()
 
 	// 1. Validation. Required-arg checks per spec §"Wire contract".

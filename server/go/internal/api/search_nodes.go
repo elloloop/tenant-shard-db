@@ -76,7 +76,7 @@ func (s *Server) SearchNodes(
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(grpcMethodSearchNodes, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodSearchNodes, outcome, time.Since(start))
 	}()
 
 	// 1. Tenant gate (UNAVAILABLE / FAILED_PRECONDITION / NOT_FOUND /

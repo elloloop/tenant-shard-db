@@ -38,7 +38,7 @@ func (s *Server) GetReceiptStatus(ctx context.Context, req *pb.GetReceiptStatusR
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(grpcMethodGetReceiptStatus, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodGetReceiptStatus, outcome, time.Since(start))
 	}()
 
 	// Panic safety: collapses every runtime fault — including programmer

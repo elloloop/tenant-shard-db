@@ -105,7 +105,7 @@ func (s *Server) ListSharedWithMe(
 	start := time.Now()
 	statusLabel := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(listSharedWithMeMethod, statusLabel, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, listSharedWithMeMethod, statusLabel, time.Since(start))
 	}()
 
 	tenantID := req.GetContext().GetTenantId()

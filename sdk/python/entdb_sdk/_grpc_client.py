@@ -95,6 +95,7 @@ from ._generated import (
     UpdateUserRequest,
     WaitForOffsetRequest,
 )
+from ._tracing import inject_trace_context
 
 
 def _value_from_python(v: Any) -> Value:
@@ -957,10 +958,17 @@ class GrpcClient:
         return self._stub
 
     def _build_metadata(self) -> list[tuple[str, str]]:
-        """Build gRPC call metadata including authentication."""
+        """Build gRPC call metadata: authentication + W3C trace context.
+
+        Every RPC funnels through here, so injecting the caller's active
+        trace context (traceparent/tracestate) here propagates it on ALL
+        methods uniformly (ADR-033 §6). No-op without OpenTelemetry / an
+        active span.
+        """
         metadata: list[tuple[str, str]] = []
         if self._api_key:
             metadata.append(("authorization", f"Bearer {self._api_key}"))
+        inject_trace_context(metadata)
         return metadata
 
     def _make_context(self, tenant_id: str, actor: str, trace_id: str = "") -> RequestContext:

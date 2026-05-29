@@ -58,7 +58,7 @@ func (s *Server) FreezeUser(ctx context.Context, req *pb.FreezeUserRequest) (*pb
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(freezeUserMethod, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, freezeUserMethod, outcome, time.Since(start))
 	}()
 
 	// Configuration gate.

@@ -44,7 +44,7 @@ func (s *Server) GetMailbox(ctx context.Context, req *pb.GetMailboxRequest) (*pb
 	)
 	defer func() {
 		if r := recover(); r != nil {
-			metrics.RecordGRPCRequest("GetMailbox", "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, "GetMailbox", "error", time.Since(start))
 			resp = emptyMailboxResponse()
 			err = nil
 		}
@@ -52,11 +52,11 @@ func (s *Server) GetMailbox(ctx context.Context, req *pb.GetMailboxRequest) (*pb
 
 	tenantID := req.GetContext().GetTenantId()
 	if cerr := s.checkTenant(ctx, tenantID); cerr != nil {
-		metrics.RecordGRPCRequest("GetMailbox", "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, "GetMailbox", "error", time.Since(start))
 		return nil, cerr
 	}
 
-	metrics.RecordGRPCRequest("GetMailbox", "ok", time.Since(start))
+	metrics.RecordGRPCRequest(ctx, "GetMailbox", "ok", time.Since(start))
 	resp = emptyMailboxResponse()
 	return resp, err
 }

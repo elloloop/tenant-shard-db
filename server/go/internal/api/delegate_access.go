@@ -67,21 +67,21 @@ func (s *Server) DelegateAccess(
 
 	// 1. Tenant gate (sharding + region pinning).
 	if err := s.checkTenant(ctx, req.GetTenantId()); err != nil {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return nil, err
 	}
 
 	// 2. Required-field validation.
 	if req.GetTenantId() == "" {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
 	}
 	if req.GetFromUser() == "" {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "from_user is required")
 	}
 	if req.GetToUser() == "" {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return nil, errs.Errorf(codes.InvalidArgument, "to_user is required")
 	}
 
@@ -95,16 +95,16 @@ func (s *Server) DelegateAccess(
 	//    hold tenant role "owner" or "admin".
 	if !(trusted.IsSystem() || trusted.IsAdmin()) {
 		if s.global == nil {
-			metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 			return nil, errs.Errorf(codes.Unimplemented, "Tenant registry not configured")
 		}
 		role, err := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
 		if err != nil {
-			metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 			return nil, err
 		}
 		if role != "owner" && role != "admin" {
-			metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+			metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 			return nil, errs.Errorf(codes.PermissionDenied,
 				"Only tenant owner or admin can delegate access")
 		}
@@ -115,7 +115,7 @@ func (s *Server) DelegateAccess(
 	//    WAL); without them we soft-fail rather than wire-error so the
 	//    SDK shape stays parsable.
 	if s.store == nil || s.producer == nil {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return &pb.DelegateAccessResponse{
 			Success: false,
 			Error:   "DelegateAccess: store/wal not configured",
@@ -128,7 +128,7 @@ func (s *Server) DelegateAccess(
 	//    inflate the actual grant count.
 	nodeIDs, err := listNodesByOwner(ctx, s, req.GetTenantId(), req.GetFromUser())
 	if err != nil {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return &pb.DelegateAccessResponse{
 			Success: false,
 			Error:   fmt.Sprintf("DelegateAccess: list owner nodes: %v", err),
@@ -161,7 +161,7 @@ func (s *Server) DelegateAccess(
 
 	idemKey, err := newDelegateIdempotencyKey()
 	if err != nil {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return &pb.DelegateAccessResponse{
 			Success: false,
 			Error:   fmt.Sprintf("DelegateAccess: idempotency key: %v", err),
@@ -177,7 +177,7 @@ func (s *Server) DelegateAccess(
 	}
 	value, err := event.Encode()
 	if err != nil {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return &pb.DelegateAccessResponse{
 			Success: false,
 			Error:   fmt.Sprintf("DelegateAccess: encode event: %v", err),
@@ -186,7 +186,7 @@ func (s *Server) DelegateAccess(
 
 	headers := map[string][]byte{wal.HeaderIdempotencyKey: []byte(idemKey)}
 	if _, err := s.producer.Append(ctx, s.walTopic(), req.GetTenantId(), value, headers); err != nil {
-		metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "error", time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "error", time.Since(start))
 		return &pb.DelegateAccessResponse{
 			Success: false,
 			Error:   fmt.Sprintf("DelegateAccess: wal append: %v", err),
@@ -201,7 +201,7 @@ func (s *Server) DelegateAccess(
 	// echoes the request. Pinned by sdk/go/entdb/admin_test.go:291-333.
 	resp.ExpiresAt = expiresAt
 
-	metrics.RecordGRPCRequest(grpcMethodDelegateAccess, "ok", time.Since(start))
+	metrics.RecordGRPCRequest(ctx, grpcMethodDelegateAccess, "ok", time.Since(start))
 	return resp, nil
 }
 

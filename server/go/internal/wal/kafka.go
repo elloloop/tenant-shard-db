@@ -41,6 +41,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -691,6 +693,54 @@ func (c *saramaConsumer) ConsumeClaim(
 	}
 }
 
+// isTransientConsumerErr reports whether a sarama consumer error is
+// operationally transient (retryable) rather than deployment-fatal.
+// Idle-connection reaping (io.EOF), network read/write timeouts, broker
+// rebalances, and leader elections are transient and recur against
+// managed Kafka surfaces (notably Azure Event Hubs, which reaps idle
+// consumer sockets); auth failures and a genuinely-missing topic are
+// not. See issue #627.
+func isTransientConsumerErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	if errors.Is(err, sarama.ErrOutOfBrokers) ||
+		errors.Is(err, sarama.ErrUnknownTopicOrPartition) ||
+		errors.Is(err, sarama.ErrNotLeaderForPartition) ||
+		errors.Is(err, sarama.ErrLeaderNotAvailable) ||
+		errors.Is(err, sarama.ErrBrokerNotAvailable) ||
+		errors.Is(err, sarama.ErrNetworkException) ||
+		errors.Is(err, sarama.ErrRequestTimedOut) {
+		return true
+	}
+	// sarama surfaces broker/transport errors wrapped in a
+	// *ConsumerError that does not Unwrap to its cause on older versions;
+	// recurse into the cause so io.EOF / net timeouts nested inside one
+	// are still classified.
+	var ce *sarama.ConsumerError
+	if errors.As(err, &ce) && ce != nil && ce.Err != nil && ce.Err != err {
+		return isTransientConsumerErr(ce.Err)
+	}
+	return false
+}
+
+// wrapPollErr wraps a consumer poll error under ErrWal, additionally
+// tagging it ErrTransient when it is operationally transient so the
+// applier retries with backoff instead of exiting the process (#627).
+func wrapPollErr(err error) error {
+	if isTransientConsumerErr(err) {
+		return fmt.Errorf("%w: %w: kafka poll: %v", ErrWal, ErrTransient, err)
+	}
+	return fmt.Errorf("%w: kafka poll: %v", ErrWal, err)
+}
+
 // poll drains up to maxRecords from c.msgs, blocking up to timeout.
 func (c *saramaConsumer) poll(ctx context.Context, maxRecords int, timeout time.Duration) ([]Record, error) {
 	deadline := time.NewTimer(timeout)
@@ -708,7 +758,7 @@ func (c *saramaConsumer) poll(ctx context.Context, maxRecords int, timeout time.
 			if err == nil {
 				continue
 			}
-			return nil, fmt.Errorf("%w: kafka poll: %v", ErrWal, err)
+			return nil, wrapPollErr(err)
 		case msg, ok := <-c.msgs:
 			if !ok {
 				return out, nil
