@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1779987251856,
+  "lastUpdate": 1780095238994,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -10044,6 +10044,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0013903673945219962",
             "extra": "mean: 7.715345726561296 msec\nrounds: 128"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6f2cdfbafbc83b0efd893f0b8163cd1b5099df79",
+          "message": "feat(observability): W3C traceparent across logs/traces/metrics + fix applier transient-error crash-loop (#627) (#628)\n\n* feat(observability): accept incoming W3C traceparent across logs, traces, metrics; fix applier transient-error crash-loop (#627)\n\nServer (ADR-033): an otelgrpc StatsHandler + global W3C TraceContext+Baggage\npropagator extract an incoming traceparent on every RPC; opt-in OTLP span\nexport (--otlp-endpoint, off by default) with an always-on TracerProvider so a\ntrace_id is available for correlation regardless of export; a structured slog\ndefault stamps trace_id/span_id onto context-aware logs; a per-request\naccess-log interceptor emits one trace-tagged line per RPC\n(method/grpc_code/latency_ms); trace_id exemplars on entdb_grpc_latency_seconds\nwith an OpenMetrics /metrics endpoint; the request trace context rides WAL\nrecord headers so the applier continues the trace across the async apply\nboundary.\n\nSDKs (Go + Python, shipped together): each injects the caller's active span as\na W3C traceparent on every RPC via the per-call metadata path; a no-op when\nthere is no active OpenTelemetry span, so non-OTel consumers are unaffected.\nGo adds WithoutTracePropagation to opt out.\n\nfix(#627): apply.Applier.Run classified every consumer.PollBatch error as\nfatal, crash-looping the process on transient Kafka errors (idle-connection\nEOF, network timeouts, broker rebalances) — a recurring outage against the\nAzure Event Hubs Kafka surface. Add wal.ErrTransient + wal.IsTransient and a\nKafka transient-error classifier, and make the applier retry transient poll\nerrors with capped-exponential backoff (configurable, optional\nMaxTransientPollStreak cap) instead of exiting. New metric\nentdb_applier_transient_poll_errors_total. Surfacing tests fail pre-fix, pass\npost-fix.\n\nDesign records: ADR-034 (deferred S3/object-store restore, #625), ADR-035\n(deferred schema-catalog persistence in SQLite, #626).\n\n* test(observability): skip Python traceparent test without OpenTelemetry; install opentelemetry-sdk in the CI unit-test job\n\nThe new tests/python/unit/test_trace_propagation.py imported opentelemetry at\nmodule top, but the Unit Tests job installs the SDK without its optional\n[tracing] extra, so collection failed there. Guard with pytest.importorskip\nand install opentelemetry-sdk in that job so the test actually runs.",
+          "timestamp": "2026-05-29T23:51:49+01:00",
+          "tree_id": "c0f5f5bc2de5519b1bb5d09b83ae7484b740efa1",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/6f2cdfbafbc83b0efd893f0b8163cd1b5099df79"
+        },
+        "date": 1780095238445,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2976.6639429381785,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000795538856970111",
+            "extra": "mean: 335.94655600018086 usec\nrounds: 1250"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1967.576272546636,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000564635956925822",
+            "extra": "mean: 508.23950967130696 usec\nrounds: 1034"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 989.0561803272748,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009878632186366829",
+            "extra": "mean: 1.0110649120751705 msec\nrounds: 853"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 437.4619184807224,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001582010620643517",
+            "extra": "mean: 2.2859132595425375 msec\nrounds: 393"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1766.459588570399,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012083703604483345",
+            "extra": "mean: 566.1040911834858 usec\nrounds: 1656"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1798.1180211217581,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001326037437481544",
+            "extra": "mean: 556.1370211818181 usec\nrounds: 1794"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1794.9233405173272,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010913887754769599",
+            "extra": "mean: 557.126857413188 usec\nrounds: 1585"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1591.0131554589414,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006953844561561842",
+            "extra": "mean: 628.5303151447176 usec\nrounds: 898"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1593.1585444143866,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004828258310117717",
+            "extra": "mean: 627.6839197868911 usec\nrounds: 374"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1357.8311646084182,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008721377929830072",
+            "extra": "mean: 736.46858760116 usec\nrounds: 1113"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2387.2706560327515,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006487362219031704",
+            "extra": "mean: 418.8884060853973 usec\nrounds: 1709"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 126.60639456713831,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00019812232593697602",
+            "extra": "mean: 7.898495201754667 msec\nrounds: 114"
           }
         ]
       }
