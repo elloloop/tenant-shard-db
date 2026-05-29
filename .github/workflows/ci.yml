@@ -97,7 +97,8 @@ jobs:
           uv pip install -e ./sdk/python \
             "pytest>=8.0.0" "pytest-asyncio>=0.23.0" "pytest-cov>=4.1.0" \
             "pytest-timeout>=2.2.0" "ruff>=0.15.0" "httpx>=0.26.0" \
-            "grpcio-tools>=1.60.0" pytest-xdist==3.5.0
+            "grpcio-tools>=1.60.0" pytest-xdist==3.5.0 \
+            "opentelemetry-sdk>=1.20.0"
 
       - name: Run unit tests (parallel)
         run: uv run pytest tests/python/unit -v -n auto --cov=entdb_sdk --cov-report=xml

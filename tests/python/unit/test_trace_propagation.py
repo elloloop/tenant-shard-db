@@ -9,10 +9,18 @@ methods uniformly.
 
 from __future__ import annotations
 
-from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
+import pytest
 
 from entdb_sdk._tracing import inject_trace_context
+
+# OpenTelemetry is the SDK's OPTIONAL [tracing] extra; skip these tests
+# when it isn't installed (e.g. a minimal CI unit-test env) rather than
+# failing collection. The no-otel behaviour (injection is a no-op) is the
+# SDK's contract and is covered by the SDK shipping without this extra.
+pytest.importorskip("opentelemetry.sdk.trace")
+
+from opentelemetry import trace  # noqa: E402  (after importorskip guard)
+from opentelemetry.sdk.trace import TracerProvider  # noqa: E402
 
 
 def _tracer() -> trace.Tracer:
