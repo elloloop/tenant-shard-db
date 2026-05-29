@@ -53,7 +53,7 @@ func (s *Server) ArchiveTenant(
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(archiveTenantMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, archiveTenantMethod, status, time.Since(start))
 	}()
 
 	// Optional-store guard. Aborts with UNIMPLEMENTED when the global_store

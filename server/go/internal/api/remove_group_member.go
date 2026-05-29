@@ -83,7 +83,7 @@ func (s *Server) RemoveGroupMember(
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(removeGroupMemberMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, removeGroupMemberMethod, status, time.Since(start))
 	}()
 
 	tenantID := req.GetContext().GetTenantId()

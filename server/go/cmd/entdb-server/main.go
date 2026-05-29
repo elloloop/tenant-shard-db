@@ -21,7 +21,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/api"
@@ -31,6 +33,7 @@ import (
 	entcrypto "github.com/elloloop/tenant-shard-db/server/go/internal/crypto"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/gdpr"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/globalstore"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/observability"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
@@ -131,6 +134,14 @@ func main() {
 	archiveBatchBytes := flag.Int("archive-batch-bytes", 10<<20, "approximate maximum uncompressed bytes per archive object")
 	archivePollTimeout := flag.Duration("archive-poll-timeout", time.Second, "how long the archive sidecar polls for WAL records")
 	archiveRetryBackoff := flag.Duration("archive-retry-backoff", 5*time.Second, "retry backoff after archive poll/write failures")
+	// Observability (ADR-033). Incoming W3C traceparent is honored on
+	// every RPC regardless of these flags; they only control span EXPORT
+	// and log format. Span export is OFF unless --otlp-endpoint (or the
+	// standard OTEL_EXPORTER_OTLP_ENDPOINT env) is set, mirroring how
+	// --metrics-addr defaults the scrape endpoint off.
+	otlpEndpoint := flag.String("otlp-endpoint", "", "OTLP/gRPC endpoint for trace span export (host:port or URL); empty disables export. Incoming traceparent is honored regardless. Also honors OTEL_EXPORTER_OTLP_ENDPOINT.")
+	otlpInsecure := flag.Bool("otlp-insecure", false, "disable transport security for the OTLP exporter (local collectors only)")
+	logFormat := flag.String("log-format", "text", "structured log format: text | json")
 	flag.Parse()
 
 	if strings.TrimSpace(*dataDir) == "" {
@@ -154,6 +165,26 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Install the observability pipeline early: a structured slog default
+	// that stamps trace_id/span_id onto request-path logs, the global W3C
+	// propagator that lets the gRPC StatsHandler parse an incoming
+	// traceparent, and (opt-in) an OTLP span exporter (ADR-033).
+	obsShutdown, err := observability.Init(ctx, observability.Config{
+		OTLPEndpoint: *otlpEndpoint,
+		OTLPInsecure: *otlpInsecure,
+		LogFormat:    *logFormat,
+	})
+	if err != nil {
+		log.Fatalf("entdb-server: observability init: %v", err)
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		if err := obsShutdown(shutdownCtx); err != nil {
+			log.Printf("entdb-server: observability shutdown: %v", err)
+		}
+	}()
 
 	var masterKey []byte
 	encryptionConfigured := *encryptionRequired ||
@@ -463,6 +494,25 @@ func main() {
 	if err != nil {
 		log.Fatalf("entdb-server: TLS config: %v", err)
 	}
+
+	// Trace context extraction (ADR-033): the otelgrpc StatsHandler runs
+	// the global W3C propagator over incoming metadata, so an upstream
+	// traceparent becomes the parent of this server's span and a valid
+	// SpanContext rides the request ctx into handlers, the store, logs,
+	// and metric exemplars. Installed at the transport level so it wraps
+	// the auth interceptors too.
+	grpcServerOpts = append(grpcServerOpts, grpc.StatsHandler(otelgrpc.NewServerHandler()))
+
+	// Per-request access log (ADR-033): one structured line per RPC
+	// carrying method/status/latency, auto-stamped with trace_id/span_id
+	// by the trace-correlating slog handler. Registered FIRST so it is
+	// the outermost interceptor and records the final status of every
+	// request, including auth rejections.
+	grpcServerOpts = append(grpcServerOpts,
+		grpc.ChainUnaryInterceptor(observability.AccessLogUnaryInterceptor()),
+		grpc.ChainStreamInterceptor(observability.AccessLogStreamInterceptor()),
+	)
+
 	if tlsEnabled {
 		grpcServerOpts = append(grpcServerOpts,
 			grpc.ChainUnaryInterceptor(auth.MTLSPeerIdentityUnaryInterceptor()),
@@ -534,7 +584,9 @@ func main() {
 	var metricsSrv *http.Server
 	if strings.TrimSpace(*metricsAddr) != "" {
 		mux := http.NewServeMux()
-		mux.Handle("/metrics", promhttp.Handler())
+		// OpenMetrics exposition so trace_id exemplars on
+		// entdb_grpc_latency_seconds (ADR-033) are scrapeable.
+		mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{EnableOpenMetrics: true}))
 		metricsSrv = &http.Server{
 			Addr:              strings.TrimSpace(*metricsAddr),
 			Handler:           mux,

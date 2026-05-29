@@ -80,7 +80,7 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	start := time.Now()
 	resultStatus := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(getNodeMethod, resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getNodeMethod, resultStatus, time.Since(start))
 	}()
 
 	if s.store == nil {

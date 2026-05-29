@@ -506,6 +506,13 @@ func WithUnaryClientInterceptors(interceptors ...grpc.UnaryClientInterceptor) Cl
     interceptors are also installed, for example node redirect handling,
     these interceptors run first and wrap the full outbound RPC.
 
+func WithoutTracePropagation() ClientOption
+    WithoutTracePropagation disables the SDK-owned interceptor that injects the
+    caller's active W3C trace context (traceparent) into outgoing gRPC metadata.
+    Propagation is ON by default and is a no-op when there is no active
+    OpenTelemetry span, so this is only needed to suppress propagation entirely.
+    See ADR-033 §6.
+
 type CommitOption func(*commitOpts)
     CommitOption configures a single Plan.Commit / ExecuteAtomic call. Pass
     values to Plan.Commit as variadic args:

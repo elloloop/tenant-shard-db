@@ -45,7 +45,7 @@ func (s *Server) CreateTenant(ctx context.Context, req *pb.CreateTenantRequest) 
 	start := time.Now()
 	resultStatus := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest("CreateTenant", resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, "CreateTenant", resultStatus, time.Since(start))
 	}()
 
 	// Step 1a: globalstore must be wired.

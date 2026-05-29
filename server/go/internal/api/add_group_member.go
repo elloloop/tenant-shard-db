@@ -79,7 +79,7 @@ func (s *Server) AddGroupMember(
 	start := time.Now()
 	statusLabel := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest("AddGroupMember", statusLabel, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, "AddGroupMember", statusLabel, time.Since(start))
 	}()
 
 	if s.producer == nil {

@@ -40,6 +40,11 @@ type clientConfig struct {
 	unaryClientInterceptors []grpc.UnaryClientInterceptor
 	// streamClientInterceptors are caller-supplied stream interceptors.
 	streamClientInterceptors []grpc.StreamClientInterceptor
+	// disableTracePropagation turns off the SDK-owned interceptor that
+	// injects the caller's active W3C trace context (traceparent) into
+	// outgoing gRPC metadata. Propagation is ON by default and is a
+	// no-op when the caller has no active OpenTelemetry span. ADR-033 §6.
+	disableTracePropagation bool
 }
 
 // defaultConfig returns a clientConfig with sensible defaults.
@@ -155,6 +160,17 @@ func WithNodeResolver(r NodeResolver) ClientOption {
 func WithBaseDomain(baseDomain string) ClientOption {
 	return func(c *clientConfig) {
 		c.nodeResolver = &DNSTemplateResolver{BaseDomain: baseDomain}
+	}
+}
+
+// WithoutTracePropagation disables the SDK-owned interceptor that
+// injects the caller's active W3C trace context (traceparent) into
+// outgoing gRPC metadata. Propagation is ON by default and is a no-op
+// when there is no active OpenTelemetry span, so this is only needed to
+// suppress propagation entirely. See ADR-033 §6.
+func WithoutTracePropagation() ClientOption {
+	return func(c *clientConfig) {
+		c.disableTracePropagation = true
 	}
 }
 

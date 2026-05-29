@@ -57,7 +57,7 @@ func (s *Server) UpdateUser(ctx context.Context, req *pb.UpdateUserRequest) (*pb
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(updateUserMethod, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, updateUserMethod, outcome, time.Since(start))
 	}()
 
 	// Configuration gate.

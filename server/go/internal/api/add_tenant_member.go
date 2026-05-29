@@ -72,7 +72,7 @@ func (s *Server) AddTenantMember(
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest("AddTenantMember", status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, "AddTenantMember", status, time.Since(start))
 	}()
 
 	if s.global == nil {

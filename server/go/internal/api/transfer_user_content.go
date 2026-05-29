@@ -98,7 +98,7 @@ func (s *Server) TransferUserContent(
 	start := time.Now()
 	statusLabel := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(transferUserContentMethod, statusLabel, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, transferUserContentMethod, statusLabel, time.Since(start))
 	}()
 
 	//  dependency guard. A node booted without a globalstore can

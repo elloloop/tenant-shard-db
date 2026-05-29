@@ -47,7 +47,11 @@ logs/
 .env
 .env.local
 .claude/worktrees/
+.antigravitycli/
 
 # Private notes / red-team review drafts. Never commit.
 /report.md
 /review_prompt.txt
+
+# Built server binary (go build ./cmd/entdb-server)
+/server/go/entdb-server

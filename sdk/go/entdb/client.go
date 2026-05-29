@@ -350,6 +350,13 @@ func (t *grpcTransport) Connect(_ context.Context) error {
 	if interceptor := redirectInterceptor(t.config.nodeResolver, t.redirectCache); interceptor != nil {
 		chain = append(chain, interceptor)
 	}
+	// Innermost SDK-owned interceptor: inject the caller's active W3C
+	// trace context onto the outgoing request so the server continues
+	// the same trace (ADR-033 §6). Placed last so it runs closest to the
+	// wire and re-injects on every retry attempt; no-op without a span.
+	if !t.config.disableTracePropagation {
+		chain = append(chain, traceparentUnaryInterceptor())
+	}
 	if len(chain) > 0 {
 		opts = append(opts, grpc.WithChainUnaryInterceptor(chain...))
 	}

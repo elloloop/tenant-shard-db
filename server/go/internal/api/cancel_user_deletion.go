@@ -51,7 +51,7 @@ func (s *Server) CancelUserDeletion(ctx context.Context, req *pb.CancelUserDelet
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(cancelUserDeletionMethod, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, cancelUserDeletionMethod, outcome, time.Since(start))
 	}()
 
 	// Configuration gate.

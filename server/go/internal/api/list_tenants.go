@@ -67,7 +67,7 @@ func (s *Server) ListTenants(
 	start := time.Now()
 	stat := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(listTenantsMethod, stat, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, listTenantsMethod, stat, time.Since(start))
 	}()
 
 	// Swallow panics → empty + OK. PERMISSION_DENIED returns through

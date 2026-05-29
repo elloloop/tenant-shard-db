@@ -12,9 +12,11 @@
 package metrics
 
 import (
+	"context"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // latencyBuckets is the histogram bucket layout used by gRPC latency
@@ -50,9 +52,22 @@ func init() {
 // way out. It increments the per-(method,status) counter and observes the
 // per-method latency histogram. The Prometheus client is cheap so we always
 // record; an HTTP scrape endpoint is wired separately.
-func RecordGRPCRequest(method, status string, duration time.Duration) {
+//
+// When ctx carries a sampled OpenTelemetry span (an incoming traceparent,
+// ADR-033), the latency observation is recorded with a trace_id exemplar so
+// a slow request on a dashboard links straight to its trace. Exemplars are
+// only attached for sampled spans (an unsampled/absent trace is observed
+// without one).
+func RecordGRPCRequest(ctx context.Context, method, status string, duration time.Duration) {
 	grpcRequests.WithLabelValues(method, status).Inc()
-	grpcLatency.WithLabelValues(method).Observe(duration.Seconds())
+	obs := grpcLatency.WithLabelValues(method)
+	if eo, ok := obs.(prometheus.ExemplarObserver); ok {
+		if sc := trace.SpanContextFromContext(ctx); sc.IsValid() && sc.IsSampled() {
+			eo.ObserveWithExemplar(duration.Seconds(), prometheus.Labels{"trace_id": sc.TraceID().String()})
+			return
+		}
+	}
+	obs.Observe(duration.Seconds())
 }
 
 // Collectors returns the package's collectors. Tests use this to register

@@ -52,7 +52,7 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 	start := time.Now()
 	resultStatus := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(getUserMethod, resultStatus, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getUserMethod, resultStatus, time.Since(start))
 	}()
 
 	// Guard the optional global_store dep. Returns

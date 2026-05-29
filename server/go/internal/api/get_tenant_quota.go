@@ -48,7 +48,7 @@ func (s *Server) GetTenantQuota(
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(grpcMethodGetTenantQuota, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, grpcMethodGetTenantQuota, outcome, time.Since(start))
 	}()
 
 	tenantID := req.GetTenantId()

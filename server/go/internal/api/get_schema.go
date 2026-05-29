@@ -44,14 +44,14 @@ const getSchemaMethod = "GetSchema"
 // GetSchema returns the in-memory schema registry as a typed
 // google.protobuf.Struct plus its post-freeze fingerprint. See file
 // header for the swallow-all-errors-as-OK contract.
-func (s *Server) GetSchema(_ context.Context, req *pb.GetSchemaRequest) (resp *pb.GetSchemaResponse, err error) {
+func (s *Server) GetSchema(ctx context.Context, req *pb.GetSchemaRequest) (resp *pb.GetSchemaResponse, err error) {
 	start := time.Now()
 	status := "ok"
 	defer func() {
 		// Single emission point: emit metric whether we exited
 		// normally or via recover. status is mutated on the
 		// degraded path below.
-		metrics.RecordGRPCRequest(getSchemaMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, getSchemaMethod, status, time.Since(start))
 	}()
 
 	defer func() {

@@ -54,7 +54,7 @@ func (s *Server) CreateUser(ctx context.Context, req *pb.CreateUserRequest) (*pb
 	start := time.Now()
 	outcome := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(createUserMethod, outcome, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, createUserMethod, outcome, time.Since(start))
 	}()
 
 	if s.global == nil {

@@ -53,7 +53,7 @@ func (s *Server) ListUsers(
 	start := time.Now()
 	statusLabel := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest("ListUsers", statusLabel, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, "ListUsers", statusLabel, time.Since(start))
 	}()
 
 	if s.global == nil {

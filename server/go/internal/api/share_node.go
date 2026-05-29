@@ -95,7 +95,7 @@ func (s *Server) ShareNode(
 	start := time.Now()
 	status := "ok"
 	defer func() {
-		metrics.RecordGRPCRequest(shareNodeMethod, status, time.Since(start))
+		metrics.RecordGRPCRequest(ctx, shareNodeMethod, status, time.Since(start))
 	}()
 
 	// Optional-deps guard. The WAL producer is mandatory for ShareNode
