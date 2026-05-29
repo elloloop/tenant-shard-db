@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780096747720,
+  "lastUpdate": 1780097840115,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -10368,6 +10368,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0002797898423381414",
             "extra": "mean: 6.380863638459835 msec\nrounds: 130"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c00f3b94a2429ecafb8b797baa8e128efb1d7863",
+          "message": "fix(store): invalidate per-tenant index cache on transaction rollback (#629) (#633)\n\nThe applier crashed with \"no such table: fts_tXXXX\" when writing an\nFTS-searchable type after a prior batch that created that type's FTS table\nrolled back. SQLite's DDL is transactional, so a ROLLBACK reverts the\nCREATE VIRTUAL TABLE, but the process-local index \"done\" cache\n(EnsureFTSIndexConn) eagerly recorded the table as present and was never\ninvalidated — so the next batch cache-hit, skipped re-creating the table,\nand the INSERT hit a missing table, fatally exiting the applier.\n\nBatchTxn.Rollback now calls CanonicalStore.ClearCacheForTenant, dropping\nall (unique/composite/query/FTS) index-cache entries for the tenant. All\nindex DDL is CREATE ... IF NOT EXISTS, so re-creation on the next write is a\nsafe no-op for indexes that survived earlier committed transactions.\n\nTests: a store-level test and an end-to-end applier test, both of which\nfail pre-fix and pass post-fix; full store+apply suites green under -race.\n\nCloses #629.",
+          "timestamp": "2026-05-30T00:34:52+01:00",
+          "tree_id": "ccda6cbf65076527a2e3fd8702bf266737d15aba",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/c00f3b94a2429ecafb8b797baa8e128efb1d7863"
+        },
+        "date": 1780097839541,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2351.782859084612,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000044587991963146734",
+            "extra": "mean: 425.20932412494557 usec\nrounds: 1086"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1547.5780469070837,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000779876172319505",
+            "extra": "mean: 646.1709650111363 usec\nrounds: 886"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 849.8986632422892,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00044471711155397414",
+            "extra": "mean: 1.1766108634470458 msec\nrounds: 725"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 396.71689013746095,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004944014893152674",
+            "extra": "mean: 2.520689249337238 msec\nrounds: 377"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1073.539025076963,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0021272633387519695",
+            "extra": "mean: 931.4985078705537 usec\nrounds: 1207"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1033.4599310195508,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0024581195110894797",
+            "extra": "mean: 967.6233881786387 usec\nrounds: 1252"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1149.917197074385,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018436800081072266",
+            "extra": "mean: 869.6278328076111 usec\nrounds: 1268"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1318.1456751705834,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002252387062870331",
+            "extra": "mean: 758.6414907218721 usec\nrounds: 970"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1293.8759296082442,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008347145221341426",
+            "extra": "mean: 772.8716309783866 usec\nrounds: 439"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1162.8358311873806,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005334422507456079",
+            "extra": "mean: 859.9666205494307 usec\nrounds: 983"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1867.0753952239368,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003463209455925401",
+            "extra": "mean: 535.5970104678393 usec\nrounds: 1433"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 128.7973425080683,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001506167273738667",
+            "extra": "mean: 7.764135350365296 msec\nrounds: 137"
           }
         ]
       }
