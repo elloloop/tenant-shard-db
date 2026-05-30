@@ -13,18 +13,13 @@
 //     (tests/python/integration/test_grpc_contract.py:208) only
 //     asserts `fingerprint != "" || HasField("schema")`, so the
 //     empty-but-OK response is the documented degraded path.
-//   - Optional req.TenantId drives a data-driven fallback when the
-//     registry is empty: we synthesise placeholder type entries from
-//     distinct type_ids observed in that tenant's SQLite. The
-//     canonicalstore doesn't expose GetDistinctTypeIDs yet, so the
-//     fallback is a no-op here and surfaces as an empty-Struct response.
-//     This matches the contract pin and is flagged for the canonicalstore
-//     follow-up.
-//
-// Known latent bug (not fixed here): req.TenantId is read without
-// cross-checking the caller's authenticated tenant binding, leaking
-// distinct type_ids across tenants. See spec "Open questions / risks"
-// — flagged as follow-up.
+//   - Pure serializer of the process-wide schema registry. As of
+//     ADR-035 that registry is catalog-backed (loaded from each
+//     tenant's SQLite schema_catalog on tenant open), so it is durably
+//     correct after a restart instead of booting empty. The old
+//     empty-registry SQLite fallback (which never had a backing store
+//     method) has been removed. The optional req.type_id filter still
+//     applies. req.TenantId is currently unused.
 
 package api
 
@@ -83,18 +78,11 @@ func (s *Server) GetSchema(ctx context.Context, req *pb.GetSchemaRequest) (resp 
 		return &pb.GetSchemaResponse{Fingerprint: ""}, nil
 	}
 
-	// Data-driven fallback when the registry is empty and the caller
-	// provided a tenant_id. The canonicalstore does not yet expose
-	// GetDistinctTypeIDs; until it does, this path degrades to an
-	// empty-Struct result — well within the contract pin (fingerprint
-	// or schema field present; an empty Struct still counts as "schema
-	// field present"). Flagged for the canonicalstore follow-up.
-	_ = mapHasTypes(schemaMap)
-	_ = req.GetTenantId()
-
-	// type_id filter. Applied after the fallback so the
-	// node_types/edge_types maps reflect either registry contents or
-	// the fallback synthesis (today: just registry contents).
+	// type_id filter. With ADR-035 the registry is catalog-backed (loaded
+	// from per-tenant SQLite on tenant open), so it is durably correct
+	// after a restart and GetSchema is a pure serializer of it — the old
+	// empty-registry SQLite fallback (which never had a backing store
+	// method) is gone.
 	if req.GetTypeId() != 0 {
 		schemaMap = filterByTypeID(schemaMap, req.GetTypeId())
 	}
@@ -146,19 +134,6 @@ func (s *Server) snapshotSchemaMap() (map[string]any, error) {
 		m["edge_types"] = []any{}
 	}
 	return m, nil
-}
-
-// mapHasTypes reports whether the snapshot contains any node or edge
-// type entries. Used to decide whether to fall back to the per-tenant
-// SQLite distinct-type read.
-func mapHasTypes(m map[string]any) bool {
-	if nt, ok := m["node_types"].([]any); ok && len(nt) > 0 {
-		return true
-	}
-	if et, ok := m["edge_types"].([]any); ok && len(et) > 0 {
-		return true
-	}
-	return false
 }
 
 // filterByTypeID applies the optional req.type_id filter.

@@ -137,6 +137,21 @@ CREATE TABLE IF NOT EXISTS acl_inherit (
 CREATE INDEX IF NOT EXISTS idx_inherit_from
     ON acl_inherit(inherit_from);
 
+-- schema_catalog is the durable per-tenant copy of the schema registry
+-- (node/edge type definitions), written in the SAME applier transaction
+-- as the register_schema op and loaded into the process-global registry
+-- on tenant open. It makes the registry survive a restart that does not
+-- replay the WAL (e.g. a normal Kafka restart resuming from the committed
+-- offset), instead of booting empty (ADR-035 / #624 / #626). CREATE ...
+-- IF NOT EXISTS makes this a transparent in-place migration.
+CREATE TABLE IF NOT EXISTS schema_catalog (
+    kind       TEXT    NOT NULL,   -- 'node' | 'edge'
+    type_id    INTEGER NOT NULL,   -- node type_id or edge edge_id
+    def_json   TEXT    NOT NULL,   -- per-type canonical JSON definition
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (kind, type_id)
+);
+
 INSERT OR IGNORE INTO schema_version (version, applied_at)
     VALUES (1, strftime('%s', 'now') * 1000);
 `
