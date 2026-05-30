@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/elloloop/tenant-shard-db/server/go/internal/schema"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 )
 
 // applyRegisterSchema materializes a "register_schema" op (SELF-DESCRIBING
@@ -77,6 +78,17 @@ func (a *Applier) applyRegisterSchema(ctx context.Context, tx *BatchTxn, ev *Eve
 		if err := a.store.EnsureFieldIndexesTx(ctx, tx, nt.TypeID); err != nil {
 			return fmt.Errorf("apply register_schema: ensure indexes t%d: %w", nt.TypeID, err)
 		}
+		// Persist the type into the per-tenant schema_catalog on the SAME
+		// txn connection, so it commits atomically with the indexes,
+		// applied_events, and applied_offsets — and survives a restart
+		// that does not replay the WAL (ADR-035 / #624).
+		defJSON, err := store.MarshalCatalogDef(nt)
+		if err != nil {
+			return fmt.Errorf("apply register_schema: marshal node type_id %d: %w", nt.TypeID, err)
+		}
+		if err := a.store.UpsertCatalogTx(ctx, tx, store.CatalogKindNode, nt.TypeID, defJSON); err != nil {
+			return fmt.Errorf("apply register_schema: persist node type_id %d: %w", nt.TypeID, err)
+		}
 	}
 	for i := range edgeDefs {
 		et := &edgeDefs[i]
@@ -85,6 +97,13 @@ func (a *Applier) applyRegisterSchema(ctx context.Context, tx *BatchTxn, ev *Eve
 				return &SchemaConflict{Detail: err.Error()}
 			}
 			return fmt.Errorf("%w: register_schema edge edge_id %d: %v", ErrPoisonEvent, et.EdgeID, err)
+		}
+		defJSON, err := store.MarshalCatalogDef(et)
+		if err != nil {
+			return fmt.Errorf("apply register_schema: marshal edge_id %d: %w", et.EdgeID, err)
+		}
+		if err := a.store.UpsertCatalogTx(ctx, tx, store.CatalogKindEdge, et.EdgeID, defJSON); err != nil {
+			return fmt.Errorf("apply register_schema: persist edge_id %d: %w", et.EdgeID, err)
 		}
 	}
 	return nil

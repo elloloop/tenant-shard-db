@@ -1,8 +1,36 @@
 # ADR-035: Persist the schema catalog in SQLite (registry as a cache, not a WAL rebuild)
 
-**Status:** Proposed
-**Decided:** —
+**Status:** Accepted
+**Decided:** 2026-05-30
 **Tags:** schema, storage, recovery, registry, durability
+
+**Implementation:** per-tenant `schema_catalog` table
+(`server/go/internal/store/schema.go`); `UpsertCatalogTx` +
+`LoadCatalogInto` + `MarshalCatalogDef`
+(`server/go/internal/store/catalog.go`); atomic write in the apply txn
+(`server/go/internal/apply/ops_register_schema.go`); load-once-per-tenant
+on `OpenTenant`/`dbAuto` (`server/go/internal/store/canonical.go`);
+GetSchema reduced to a pure registry serializer
+(`server/go/internal/api/get_schema.go`). Fixes #624; closes #626.
+
+**Decided refinements vs the original proposal:**
+- **Catalog home = per-tenant SQLite** (resolves the open question
+  below). `register_schema` is always tenant-scoped and runs inside the
+  per-tenant `BatchTxn`, so a per-tenant `schema_catalog` row is atomic
+  with the indexes it describes and the `applied_events`/`applied_offsets`
+  rows — atomicity a globalstore catalog could not give. The process-wide
+  registry is keyed by `type_id`, so it is reconstructed identically by
+  replaying each tenant's catalog.
+- **Load strategy = lazy, load-once-per-tenant on open.** The catalog is
+  replayed into the registry the first time a tenant is opened (apply path
+  via `OpenTenant`, read/write paths via `dbAuto`), so the registry warms
+  as the server processes traffic post-restart — fixing the #624 read
+  failures with **zero boot-time change**. The eager all-tenant boot-scan
+  the proposal floated (to warm GetSchema before any traffic) is
+  **deliberately deferred**: opening every tenant DB at boot risks
+  startup latency + file-descriptor pressure at scale. It is a future
+  opt-in flag; the lazy load already makes GetSchema correct as soon as
+  any tenant is touched.
 
 **Supersedes/refines:** the boot mechanics of
 [ADR-031](031-self-describing-name-free-schema.md) (self-describing,
@@ -84,6 +112,28 @@ for schema.
   Rejected: a side file is a second source of truth that can drift from
   SQLite; the catalog belongs in the same transactional store as the
   indexes it describes.
+
+## Known asymmetry (accepted)
+
+`applyRegisterSchema` mutates the **process-global in-memory registry**
+(`RegisterOrVerifyNode/Edge` publish a new snapshot) *before* the
+`BatchTxn` commits. If a single multi-type `register_schema` op
+establishes an earlier type and then a later type **conflicts**, the
+batch rolls back — reverting the earlier type's catalog row and indexes —
+but the in-memory registry keeps the earlier type. So the live process
+registry can briefly hold a type whose durable state (catalog + indexes)
+was rolled back.
+
+This non-transactional registry mutation is **pre-existing** (it predates
+this ADR). Promoting the catalog to the durable source of truth makes the
+**durable** side the more-correct one: on the next restart the registry is
+reloaded from the committed catalog and the phantom type is dropped, and
+every write is self-describing so the next write of that type
+re-establishes it consistently. The asymmetry is therefore self-healing
+and is accepted rather than fixed here; making the in-memory mutation
+all-or-nothing (validate every type before any publish) is a separate,
+optional hardening. The catalog and the physical indexes never diverge —
+only registry-vs-durable, transiently.
 
 ## Open questions
 
