@@ -70,7 +70,7 @@ func newMailboxFixture(t *testing.T) *fixture {
 	if err := cs.OpenTenant(context.Background(), testTenant); err != nil {
 		t.Fatalf("OpenTenant: %v", err)
 	}
-	return &fixture{t: t, wal: w, store: cs, global: gs, applier: a}
+	return &fixture{t: t, wal: w, store: cs, global: gs, applier: a, dir: dir}
 }
 
 func mkMailboxCreate(id, targetUser, subject string) map[string]any {
