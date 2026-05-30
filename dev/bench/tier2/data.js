@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780097872187,
+  "lastUpdate": 1780102094171,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -10584,6 +10584,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0005295101071207643",
             "extra": "mean: 6.306627801524938 msec\nrounds: 131"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "156413c7955b166b47deab2059c5aebccb391f0c",
+          "message": "feat(store): persist schema catalog in SQLite so the registry survives a no-replay restart (#626, #624) (#634)\n\nThe process-wide schema registry was in-memory and rebuilt only by\nreplaying register_schema WAL ops, so a normal Kafka restart resuming from\nthe committed offset booted it EMPTY: reads of types not re-written since\nthe restart failed \"unknown type_id\" (#624) and GetSchema returned empty.\n\nMake SQLite the durable source of truth (ADR-035). Each register_schema op\nnow UPSERTs its node/edge type definitions into a per-tenant schema_catalog\ntable on the SAME applier transaction (atomic with the type's indexes,\napplied_events and applied_offsets). The catalog is replayed into the\nregistry the first time a tenant is opened (OpenTenant/dbAuto), so the\nregistry is rebuilt from durable local state independent of the WAL/Kafka\noffset. GetSchema becomes a pure serializer of the now-durable registry;\nits dead empty-registry fallback is removed.\n\nschema_catalog is added as CREATE TABLE IF NOT EXISTS (transparent in-place\nmigration); existing tenants self-heal on the first post-upgrade write. The\neager all-tenant boot-scan is deferred (boot cost) — the lazy load warms the\nregistry as tenants are touched.\n\nTests: store-level (persist->reload across restart, canonical round-trip\nidempotency, rollback atomicity, upsert idempotency, edge) and an\nend-to-end applier restart test, all of which fail pre-fix and pass\npost-fix. Principal-engineer reviewed.\n\nCloses #624, #626.",
+          "timestamp": "2026-05-30T01:45:37+01:00",
+          "tree_id": "77ccb17d2ff52c6e6d5657b82d728b6111c75754",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/156413c7955b166b47deab2059c5aebccb391f0c"
+        },
+        "date": 1780102093395,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2190.8955246063965,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000044143428036470594",
+            "extra": "mean: 456.4343615516099 usec\nrounds: 1134"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1388.7532461930982,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010655402870780119",
+            "extra": "mean: 720.0703240415365 usec\nrounds: 861"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 738.1309087706311,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005565264178683387",
+            "extra": "mean: 1.354773236180444 msec\nrounds: 597"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 381.5000454622339,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006650999075308498",
+            "extra": "mean: 2.621231666665669 msec\nrounds: 171"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1028.288706310664,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001775341249354095",
+            "extra": "mean: 972.4895293150117 usec\nrounds: 1211"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 973.1423930248033,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0023043893002532316",
+            "extra": "mean: 1.0275988459322132 msec\nrounds: 1389"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1035.9529439409994,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019117327488600206",
+            "extra": "mean: 965.2948098161427 usec\nrounds: 1141"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1261.7767657330073,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004609665531880799",
+            "extra": "mean: 792.533217568852 usec\nrounds: 979"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1268.6340094561303,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007331615688542976",
+            "extra": "mean: 788.2494025433741 usec\nrounds: 236"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1122.0639916309797,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006207509473468028",
+            "extra": "mean: 891.214768015545 usec\nrounds: 1013"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1774.2026189149956,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003652152306155784",
+            "extra": "mean: 563.6334820718193 usec\nrounds: 1506"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 147.6584095531125,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00038302607656342413",
+            "extra": "mean: 6.772387722626131 msec\nrounds: 137"
           }
         ]
       }
