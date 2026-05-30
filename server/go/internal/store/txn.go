@@ -116,6 +116,17 @@ func (b *BatchTxn) Rollback() error {
 	}
 	b.done = true
 	defer b.cleanup()
+	// SQLite's DDL is transactional: this ROLLBACK reverts any index DDL
+	// (CREATE VIRTUAL TABLE / CREATE INDEX) executed in this batch. The
+	// process-local index cache must therefore be invalidated for this
+	// tenant, or a later write would cache-hit, skip re-creating the
+	// now-missing table, and crash the applier with "no such table"
+	// (issue #629). All index DDL is IF NOT EXISTS, so re-creation on the
+	// next write is a safe no-op for indexes that survived earlier
+	// committed transactions.
+	if b.store != nil {
+		b.store.ClearCacheForTenant(b.tenantID)
+	}
 	if _, err := b.conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
 		return fmt.Errorf("store: rollback batch: %w", err)
 	}

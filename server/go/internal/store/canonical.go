@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -83,6 +84,13 @@ type CanonicalStore struct {
 	nowFn      func() int64
 	indexCache *indexCache
 
+	// catalogMu guards catalogLoaded. catalogLoaded records tenants whose
+	// persisted schema_catalog has already been replayed into the
+	// registry (ADR-035), so the load runs once per tenant rather than on
+	// every open.
+	catalogMu     sync.Mutex
+	catalogLoaded map[string]struct{}
+
 	// offsetMu guards offsetCond / appliedOffsets. Reads and writes of
 	// the offset map both go through this mutex.
 	offsetMu        sync.Mutex
@@ -119,6 +127,7 @@ func New(opts Options) (*CanonicalStore, error) {
 		registry:       opts.Registry,
 		nowFn:          nowFn,
 		indexCache:     newIndexCache(),
+		catalogLoaded:  map[string]struct{}{},
 		appliedOffsets: map[string]int64{},
 		preCommitHook:  opts.preCommitHook,
 	}
@@ -130,8 +139,39 @@ func New(opts Options) (*CanonicalStore, error) {
 // schema DDL, and applies the production PRAGMAs. Idempotent: a second
 // call for the same tenant_id is a fast O(1) lookup.
 func (s *CanonicalStore) OpenTenant(ctx context.Context, tenantID string) error {
-	_, err := s.pool.open(ctx, tenantID)
-	return err
+	if _, err := s.pool.open(ctx, tenantID); err != nil {
+		return err
+	}
+	s.loadCatalogOnce(ctx, tenantID)
+	return nil
+}
+
+// loadCatalogOnce replays the tenant's persisted schema_catalog into the
+// process-global registry the FIRST time the tenant is opened — the fix
+// for the registry booting empty after a restart that did not replay the
+// WAL (ADR-035 / #624). A load failure is logged and retried on the next
+// open rather than failing the open: a missing or partial catalog must
+// not take the server down (it degrades to the pre-ADR-035
+// self-heal-on-first-write behaviour). Idempotent under concurrency —
+// RegisterOrVerify* makes a double load a no-op.
+func (s *CanonicalStore) loadCatalogOnce(ctx context.Context, tenantID string) {
+	if s.registry == nil {
+		return
+	}
+	s.catalogMu.Lock()
+	_, done := s.catalogLoaded[tenantID]
+	s.catalogMu.Unlock()
+	if done {
+		return
+	}
+	if err := s.LoadCatalogInto(ctx, tenantID, s.registry); err != nil {
+		slog.WarnContext(ctx, "store: schema catalog load failed; registry may be incomplete until a write re-registers",
+			"tenant_id", tenantID, "error", err.Error())
+		return
+	}
+	s.catalogMu.Lock()
+	s.catalogLoaded[tenantID] = struct{}{}
+	s.catalogMu.Unlock()
 }
 
 // CloseTenant closes the per-tenant DB handle. Idempotent.
@@ -190,6 +230,7 @@ func (s *CanonicalStore) dbAuto(ctx context.Context, tenantID string) (*sql.DB, 
 	if err != nil {
 		return nil, nil, err
 	}
+	s.loadCatalogOnce(ctx, tenantID)
 	return e.db, e, nil
 }
 

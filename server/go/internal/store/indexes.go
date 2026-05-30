@@ -34,6 +34,36 @@ func newIndexCache() *indexCache {
 	}
 }
 
+// ClearCacheForTenant drops every process-local index-cache entry for
+// tenantID's database file (unique, composite, query, and FTS).
+//
+// It MUST be called whenever a write transaction that may have created
+// index DDL rolls back: SQLite's DDL is transactional, so a ROLLBACK
+// reverts any CREATE INDEX / CREATE VIRTUAL TABLE executed in that
+// transaction, but the eager "done" cache would otherwise still report
+// the index as present — causing a later write to skip re-creating a
+// now-missing table and hit "no such table" (issue #629). Re-creation on
+// the next write is safe because all index DDL is CREATE ... IF NOT
+// EXISTS, so entries for indexes that survived in earlier committed
+// transactions are simply re-established as a no-op.
+func (s *CanonicalStore) ClearCacheForTenant(tenantID string) {
+	dbPath := s.pool.dbPath(tenantID)
+	s.indexCache.mu.Lock()
+	defer s.indexCache.mu.Unlock()
+	for _, done := range []map[indexKey]struct{}{
+		s.indexCache.uniqueDone,
+		s.indexCache.compositeDone,
+		s.indexCache.queryDone,
+		s.indexCache.ftsDone,
+	} {
+		for k := range done {
+			if k.dbPath == dbPath {
+				delete(done, k)
+			}
+		}
+	}
+}
+
 // EnsureUniqueIndex creates a partial unique expression index for each
 // (type_id, field_id) pair on demand. Idempotent at both the SQL level
 // (IF NOT EXISTS) and the in-memory cache level.
@@ -288,7 +318,10 @@ func queryIndexDDL(typeID int32, fid uint32) string {
 // the constraint unenforced. CREATE ... IF NOT EXISTS against an
 // already-committed index is a cheap metadata-only check, so re-running
 // the DDL per first-touch is correct and inexpensive. FTS tables are
-// NOT created here — the applier maintains those via fts.go.
+// NOT created here — the applier maintains those via fts.go, where
+// EnsureFTSIndexConn DOES cache; that cached in-txn path is kept
+// rollback-safe by ClearCacheForTenant, which BatchTxn.Rollback invokes
+// for exactly this reason (issue #629).
 //
 // No-ops when no schema.Registry is configured (raw-CRUD test paths).
 func (s *CanonicalStore) EnsureFieldIndexesTx(ctx context.Context, tx *BatchTxn, typeID int32) error {

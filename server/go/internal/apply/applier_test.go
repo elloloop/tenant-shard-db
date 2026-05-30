@@ -33,6 +33,7 @@ type fixture struct {
 	store   *store.CanonicalStore
 	global  *globalstore.GlobalStore
 	applier *apply.Applier
+	dir     string // RootDir, so a test can reopen the same data dir
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -70,7 +71,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatalf("OpenTenant: %v", err)
 	}
 
-	return &fixture{t: t, wal: w, store: cs, global: gs, applier: a}
+	return &fixture{t: t, wal: w, store: cs, global: gs, applier: a, dir: dir}
 }
 
 // appendEvent JSON-encodes ev and appends it to the WAL under the

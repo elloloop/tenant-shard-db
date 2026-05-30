@@ -129,3 +129,57 @@ uvx ruff@0.15.7 format --check .                        # format
 - GDPR: `user_id` (e.g. `"alice"`) vs `tenant_principal` (e.g. `"user:alice"`) — translate at the gRPC boundary, never deeper.
 - ACL grants use the `Permission` enum, not raw strings.
 - Actors use `Actor.user("bob")` / `Actor.group("admins")`, not `"user:bob"` strings.
+
+## How I expect you to write code
+
+**No shortcuts. "Simple" never means "sloppy."** A small diff that hardcodes,
+duplicates, or skips a test isn't simpler — it's deferred cost.
+
+1. **Fix causes, not symptoms.** Find the root cause before fixing. If you're
+   applying a workaround, say so explicitly and explain why. Never swallow an
+   exception or silence an error to make a problem disappear.
+
+2. **Think about consequences.** Before changing shared or widely-used code,
+   trace its callers and the invariants they rely on. A fix that's locally
+   correct but breaks something elsewhere — now or later — is not a fix.
+
+3. **SOLID, sensibly.** One responsibility per class/widget/function. Separate
+   pure logic from I/O so it can be tested. Inject dependencies that cross a
+   boundary so they're mockable. Don't add abstractions for things that don't
+   cross a boundary.
+
+4. **DRY about knowledge, not appearance.** Don't duplicate a rule or decision.
+   Code that merely looks similar but changes for different reasons stays
+   separate. When unsure, prefer duplication over a premature/wrong abstraction.
+
+5. **No hardcoded values.** No magic numbers or strings inline — give them
+   names. Environment/tenant/feature-specific values go in typed config in
+   application code, never scattered literals, never the database.
+
+6. **Readable & maintainable.** Clear names, short flat functions, early
+   returns over deep nesting. Comments explain *why*, not *what*. Match the
+   existing style of the file you're editing.
+
+7. **Testable, and prove it.** Ship a test for behavior you add or change. If
+   something is hard to test, that's a design smell — restructure until it
+   isn't. "Works but can't be tested" means it isn't done.
+
+A change is done only when: the cause (not a symptom) is fixed, no new hardcoded
+values, a test covers it, and the analyzer/formatter are clean.
+
+---
+
+## Project facts
+
+> Keep these current as the repo evolves; only write what you've confirmed.
+
+- **Setup command:** `cd server/go && go mod download`; Python — `uv venv && uv pip install -e ./sdk/python` (add the `[tracing]` extra for OpenTelemetry).
+- **Analyze/lint command:** `go vet ./...` in each of the four Go modules (`server/go`, `sdk/go/entdb`, `tests/contract`, `tools/protoc-gen-entdb-keys`); `uvx ruff@0.15.7 check .`
+- **Test command (all):** `cd server/go && go test ./...`; `cd sdk/go/entdb && go test ./...`; `go test ./...` in `tests/contract` and `tools/protoc-gen-entdb-keys`; `python -m pytest tests/python/integration/ -q`; e2e: `bash tests/python/e2e/run-e2e.sh`.
+- **Test command (single file/test):** Go — `go test ./internal/<pkg>/ -run TestName -v`; Python — `python -m pytest tests/python/unit/test_x.py -q` (or `-k name`).
+- **Format command:** Go — `gofmt -w` / `go fmt ./...`; Python — `uvx ruff@0.15.7 format .`
+- **Run an app:** `cd server/go && go run ./cmd/entdb-server --data-dir <dir>` (gRPC on :50051; `--metrics-addr` and `--otlp-endpoint` are opt-in). Console: the `entdb-console` Go binary (ADR-021).
+- **Repo layout:** four Go modules — `server/go` (gRPC server, source of truth), `sdk/go/entdb` (Go SDK, module path `.../sdk/go/entdb/v2`), `tests/contract`, `tools/protoc-gen-entdb-keys`; `sdk/python/entdb_sdk` (Python SDK, PyPI `entdb-sdk`); `proto/` (wire contract); `tests/python/{integration,e2e,benchmarks}`; `docs/adr/` (design decisions).
+- **State management / data layer conventions:** per-tenant SQLite is the tenant data boundary (ADR-001/014); event-sourced via a single WAL topic — handlers append, ONLY the applier writes SQLite (ADR-016); the schema registry (`internal/schema`) is in-memory and self-describing per ADR-031. Store methods are `ctx`-first; multi-op writes commit atomically through `BatchTxn`.
+- **Generated files NOT to hand-edit:** `server/go/internal/pb/` and the SDK protobuf stubs (`sdk/go/entdb/internal/pb`, `sdk/python/entdb_sdk/_generated`); `docs/generated/` — regenerate via `python scripts/generate_api_docs.py` using the go.mod-pinned Go 1.25 (a newer local Go makes the Docs Coverage CI gate flag `sdk-go.md` stale).
+- **Other gotchas worth recording:** run the FULL local CI incl. e2e before `git push` (don't rely on GitHub CI to catch failures); Python + Go SDK changes ship in ONE PR; a release is tag `vX.Y.Z` on `main` → `docker/metadata-action` strips the leading `v`, so the image publishes as `:X.Y.Z`; design decisions live in `docs/adr/`, never restated here (per ADR-019).
