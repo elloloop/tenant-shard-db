@@ -11,6 +11,11 @@ import (
 // guard: when the interceptor has installed a trusted Identity, the
 // claim from the request payload MUST be ignored, even if it tries to
 // upgrade to system: or admin:.
+//
+// A system:/admin: prefix on the trusted Subject is honoured ONLY on a
+// server-minted carrier (API key / session); see
+// Test_Authoritative_SecureBehavior_Finding2 in
+// audit_privilege_escalation_test.go for the OAuth/mTLS no-elevation rule.
 func TestAuthoritative_TrustedWinsOverClaim(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -31,14 +36,17 @@ func TestAuthoritative_TrustedWinsOverClaim(t *testing.T) {
 			want:    User("alice"),
 		},
 		{
-			name:    "system identity preserved",
+			name:    "system identity preserved (server-minted carrier)",
 			trusted: Identity{Method: MethodAPIKey, Subject: "system:gdpr-worker"},
 			claimed: User("eve"),
 			want:    System("gdpr-worker"),
 		},
 		{
-			name:    "admin identity preserved",
-			trusted: Identity{Method: MethodOAuth, Subject: "admin:root"},
+			// admin: is honoured because the carrier is an API key, which
+			// only an operator can mint. The same subject over OAuth/mTLS
+			// must NOT elevate -- see the no-elevation test below.
+			name:    "admin identity preserved (server-minted carrier)",
+			trusted: Identity{Method: MethodAPIKey, Subject: "admin:root"},
 			claimed: User("eve"),
 			want:    Admin("root"),
 		},

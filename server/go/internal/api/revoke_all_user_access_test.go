@@ -209,7 +209,7 @@ func TestRevokeAllUserAccess_AdminHappyPath(t *testing.T) {
 	// Cross-tenant shared_index: 2 rows in acme + 1 in another tenant.
 	// The handler must clean only the acme rows.
 	ctx := auth.WithIdentity(context.Background(), auth.Identity{
-		Method:  auth.MethodOAuth,
+		Method:  auth.MethodAPIKey,
 		Subject: "admin:root",
 	})
 	if err := f.global.AddShared(ctx, target, tenantID, "doc1", "read"); err != nil {
@@ -271,7 +271,7 @@ func TestRevokeAllUserAccess_WALEventCarriesSharedIndexCleanup(t *testing.T) {
 	}
 
 	ctx := auth.WithIdentity(context.Background(), auth.Identity{
-		Method:  auth.MethodOAuth,
+		Method:  auth.MethodAPIKey,
 		Subject: "admin:root",
 	})
 	if _, err := f.srv.RevokeAllUserAccess(ctx, &pb.RevokeAllUserAccessRequest{
@@ -380,7 +380,7 @@ func TestRevokeAllUserAccess_NoGrantsIdempotent(t *testing.T) {
 	}
 
 	ctx := auth.WithIdentity(context.Background(), auth.Identity{
-		Method:  auth.MethodOAuth,
+		Method:  auth.MethodAPIKey,
 		Subject: "system:admin",
 	})
 
@@ -426,7 +426,7 @@ func TestRevokeAllUserAccess_RequiredFields(t *testing.T) {
 	t.Parallel()
 	f := newRevokeAllFixture(t)
 	ctx := auth.WithIdentity(context.Background(), auth.Identity{
-		Method:  auth.MethodOAuth,
+		Method:  auth.MethodAPIKey,
 		Subject: "admin:root",
 	})
 
