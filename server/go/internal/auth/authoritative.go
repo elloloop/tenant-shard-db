@@ -21,12 +21,24 @@ import "context"
 //     actor: "system:admin" in the request body, and we MUST NOT
 //     honour the body claim.
 //
-//     The trusted Subject is normalised to an Actor:
-//     - If it already starts with user:, system:, or admin:, ParseActor
-//     gives us the right kind verbatim.
-//     - Otherwise it is wrapped as user:<subject>. A JWT
-//     sub: "alice" becomes user:alice; a session for
-//     user_id: "user:alice" stays user:alice.
+//     The trusted Subject is normalised to an Actor, but the privilege
+//     class is derived from the *trust anchor* (Identity.Method), NEVER
+//     from a prefix the credential itself chose:
+//     - A user: prefix is always honoured -- it confers no privilege
+//     beyond being that user.
+//     - A system: / admin: prefix is honoured ONLY when the Method is one
+//     the server itself mints (API key / session, see
+//     methodAttestsPrefix). On those carriers a "system:gdpr-worker"
+//     subject was set by an operator and is trustworthy.
+//     - For externally-asserted methods (OAuth JWT sub/email, mTLS client
+//     cert) the subject is attacker-influenceable -- self-service signup,
+//     email-as-subject, a cert minted for an unrelated workload -- so any
+//     system:/admin:/group: prefix is wrapped down to user:<subject>. A
+//     JWT sub "alice" becomes user:alice; a forged sub "admin:root"
+//     becomes the powerless user user:admin:root. (Promotion of an
+//     OAuth/mTLS principal to system/admin must go through an explicit,
+//     operator-configured mapping -- tracked as a follow-up, not a prefix
+//     the caller can type.)
 //
 //  2. If no trusted Identity is on ctx (interceptor disabled, unit tests,
 //     or no-auth deployment mode), claimed is returned unchanged. This
@@ -49,16 +61,45 @@ func Authoritative(ctx context.Context, claimed Actor) Actor {
 	if !ok {
 		return claimed
 	}
-	// Subject may already be a prefixed actor string ("user:alice",
-	// "system:gdpr-worker") -- common when the credential carrier is a
-	// session for a tenant_principal value. Try ParseActor first so we
-	// preserve the kind.
-	if parsed := ParseActor(id.Subject); parsed.Kind() == KindUser ||
-		parsed.Kind() == KindSystem ||
-		parsed.Kind() == KindAdmin {
+	parsed := ParseActor(id.Subject)
+	// A user: prefix is always safe to honour regardless of method: it
+	// names a user and confers no elevated privilege.
+	if parsed.Kind() == KindUser {
 		return parsed
 	}
-	// No recognised prefix -- wrap as user:<subject>. Handles the JWT
-	// sub: "alice" -> user:alice case.
+	// A system: / admin: prefix is honoured ONLY on a server-minted carrier
+	// (API key / session). On an externally-asserted carrier (OAuth / mTLS)
+	// the subject is attacker-influenceable, so a privileged prefix must NOT
+	// elevate -- it is wrapped down to a plain user identity below. group:
+	// is never a caller identity and always wraps to a user too.
+	if methodAttestsPrefix(id.Method) &&
+		(parsed.Kind() == KindSystem || parsed.Kind() == KindAdmin) {
+		return parsed
+	}
+	// Everything else -- a bare subject ("alice"), a forged privileged
+	// prefix over OAuth/mTLS ("admin:root"), or a group: subject -- wraps as
+	// user:<subject>. The raw subject is kept intact so distinct principals
+	// stay distinct (a forged "admin:root" becomes user:"admin:root", which
+	// cannot collide with the genuine user:root).
 	return User(id.Subject)
+}
+
+// methodAttestsPrefix reports whether the authentication method that
+// produced an Identity is one EntDB itself mints, and may therefore be
+// trusted to carry a privileged (system:/admin:) actor prefix in its
+// Subject.
+//
+// API keys and sessions are issued by the server / operator, so a
+// "system:gdpr-worker" subject on one of them was set by us and is
+// trustworthy. OAuth (JWT sub/email) and mTLS (client cert) subjects are
+// asserted by an external IdP or presented by the caller, who can often
+// choose them, so their prefixes confer no privilege. Anything
+// unrecognised defaults to untrusted (the safe default).
+func methodAttestsPrefix(method string) bool {
+	switch method {
+	case MethodAPIKey, MethodSession:
+		return true
+	default:
+		return false
+	}
 }

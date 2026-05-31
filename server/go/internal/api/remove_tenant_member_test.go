@@ -201,10 +201,12 @@ func TestRemoveTenantMember_IdempotentNonMember(t *testing.T) {
 
 	srv := api.New(api.WithGlobalStore(gs))
 
-	// admin caller bypasses the role gate via the system: prefix on
-	// the trusted Identity.
+	// admin caller bypasses the role gate via the system: prefix on the
+	// trusted Identity. The carrier must be a server-minted credential
+	// (API key); a system:/admin: prefix is NOT honoured over OAuth/mTLS
+	// (finding #2 — privilege comes from the trust anchor, not the subject).
 	ctx := auth.WithIdentity(context.Background(), auth.Identity{
-		Method:  auth.MethodOAuth,
+		Method:  auth.MethodAPIKey,
 		Subject: "system:admin",
 	})
 

@@ -26,6 +26,14 @@ func IdentityFromPeerCertificate(ctx context.Context) (Identity, bool) {
 // IdentityFromCertificate maps a verified client certificate to an EntDB
 // trusted Identity. URI SANs are preferred, then DNS SANs, email SANs,
 // CommonName, and finally the full subject DN.
+//
+// The subject is emitted with a user: prefix. A client certificate proves
+// WHICH workload connected, not that the workload is privileged: chaining
+// to the trusted CA must not by itself confer system/admin. Authoritative
+// therefore resolves an mTLS identity to a plain user actor (mTLS is not a
+// server-minted carrier per methodAttestsPrefix). Elevating a specific
+// certificate to system/admin must go through an explicit, operator-
+// configured mapping, not a hardcoded prefix on every leaf.
 func IdentityFromCertificate(cert *x509.Certificate) (Identity, bool) {
 	if cert == nil {
 		return Identity{}, false
@@ -48,7 +56,7 @@ func IdentityFromCertificate(cert *x509.Certificate) (Identity, bool) {
 	}
 	return Identity{
 		Method:  MethodMTLS,
-		Subject: "system:" + subject,
+		Subject: "user:" + subject,
 		Metadata: map[string]any{
 			"subject_dn":    cert.Subject.String(),
 			"serial_number": cert.SerialNumber.String(),

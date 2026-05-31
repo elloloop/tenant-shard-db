@@ -28,11 +28,15 @@ func TestIdentityFromCertificatePrefersURISAN(t *testing.T) {
 	if !ok {
 		t.Fatal("IdentityFromCertificate ok=false, want true")
 	}
-	if id.Method != MethodMTLS || id.Subject != "system:spiffe://entdb/ns/prod/sa/ingestor" {
-		t.Fatalf("identity = %+v, want mTLS spiffe system subject", id)
+	if id.Method != MethodMTLS || id.Subject != "user:spiffe://entdb/ns/prod/sa/ingestor" {
+		t.Fatalf("identity = %+v, want mTLS spiffe user subject", id)
 	}
-	if got := Authoritative(WithIdentity(context.Background(), id), User("alice")); got != System("spiffe://entdb/ns/prod/sa/ingestor") {
-		t.Fatalf("Authoritative = %v, want SPIFFE system actor", got)
+	// A client cert proves which workload connected, not that it is
+	// privileged: Authoritative resolves it to a plain user actor, never
+	// system/admin (finding #2). Operator-configured elevation is a
+	// separate, explicit mechanism.
+	if got := Authoritative(WithIdentity(context.Background(), id), User("alice")); got != User("spiffe://entdb/ns/prod/sa/ingestor") {
+		t.Fatalf("Authoritative = %v, want SPIFFE user actor (no cert auto-elevation)", got)
 	}
 }
 
@@ -58,7 +62,7 @@ func TestMTLSUnaryInterceptorInstallsPeerIdentity(t *testing.T) {
 	if !ok {
 		t.Fatal("IdentityFromContext ok=false, want true")
 	}
-	if id.Method != MethodMTLS || id.Subject != "system:billing-worker" {
+	if id.Method != MethodMTLS || id.Subject != "user:billing-worker" {
 		t.Fatalf("identity = %+v, want billing-worker mTLS identity", id)
 	}
 }
