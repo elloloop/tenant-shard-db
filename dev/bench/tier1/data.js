@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780137636282,
+  "lastUpdate": 1780266642872,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -11016,6 +11016,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0010097649196637163",
             "extra": "mean: 7.612360511628399 msec\nrounds: 129"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d0711fa45943277ddec00370f65d71c649773c09",
+          "message": "security(auth): derive actor privilege from auth method, not subject prefix (#636)\n\nCloses the privilege-escalation finding #2: Authoritative() honored a system:/admin: prefix on the credential subject regardless of auth method, and mtls.go hardcoded system: on every client cert. Privilege now derives from the trust anchor (Identity.Method) — honored only on server-minted carriers (API key/session); OAuth/mTLS subjects wrap to user:. Activates the two finding-#2 regression gates. Also folds in a ruff check+format fix for test_acid_e2e.py (lint breakage left over from #631 that reddened the Lint gate). Part of the security-audit epic #637.",
+          "timestamp": "2026-05-31T23:28:51+01:00",
+          "tree_id": "0889d447c8ebb4def4b365311dc338bbf176562b",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/d0711fa45943277ddec00370f65d71c649773c09"
+        },
+        "date": 1780266641487,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3665.823048437628,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004862388057197959",
+            "extra": "mean: 272.7900356309341 usec\nrounds: 1291"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 2247.8509134690426,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006230929368914234",
+            "extra": "mean: 444.86936122321805 usec\nrounds: 1243"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 1060.211611098623,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010657414302063718",
+            "extra": "mean: 943.2079308806758 usec\nrounds: 897"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 482.284186932676,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013123044415927943",
+            "extra": "mean: 2.073466282110539 msec\nrounds: 436"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1995.49487433616,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010994574384866259",
+            "extra": "mean: 501.1288241633141 usec\nrounds: 1763"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1986.1625331454854,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012958696797662738",
+            "extra": "mean: 503.4834678994272 usec\nrounds: 1947"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 2060.6457305964773,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011333204285823617",
+            "extra": "mean: 485.2847751323749 usec\nrounds: 1890"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 2039.0728664145904,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007651141927056628",
+            "extra": "mean: 490.4189626917811 usec\nrounds: 1367"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 2039.5751099309082,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009060454247127359",
+            "extra": "mean: 490.29819746813615 usec\nrounds: 395"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1639.9496771019533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009222169107986087",
+            "extra": "mean: 609.7748083143356 usec\nrounds: 1299"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2871.932773063264,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007508603760444354",
+            "extra": "mean: 348.1975655486458 usec\nrounds: 1968"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 117.7639651672283,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019527964358083936",
+            "extra": "mean: 8.491561901639185 msec\nrounds: 122"
           }
         ]
       }
