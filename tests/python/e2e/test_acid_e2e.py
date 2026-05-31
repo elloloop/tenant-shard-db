@@ -8,14 +8,16 @@ behaviors from a client perspective using the high-level Python SDK client.
 from __future__ import annotations
 
 import uuid
-import pytest
-import e2e_schema_pb2 as pb
-from entdb_sdk.errors import UniqueConstraintError, PreconditionFailedError
 
+import e2e_schema_pb2 as pb
+import pytest
+
+from entdb_sdk.errors import PreconditionFailedError, UniqueConstraintError
 
 # =============================================================================
 # Atomicity Tests (All-or-Nothing)
 # =============================================================================
+
 
 async def test_acid_atomicity_precondition_failure(scope) -> None:
     """Verifies that a plan containing a mismatching precondition rolls back completely."""
@@ -41,7 +43,9 @@ async def test_acid_atomicity_precondition_failure(scope) -> None:
 
     # The node created in Op 1 must NOT exist in the database (rolled back)
     nodes = await scope.query(pb.User, filter={"email": email})
-    assert len(nodes) == 0, f"Atomicity violation: node with email {email} was created despite plan failure!"
+    assert len(nodes) == 0, (
+        f"Atomicity violation: node with email {email} was created despite plan failure!"
+    )
 
 
 async def test_acid_atomicity_unique_violation(scope) -> None:
@@ -78,12 +82,15 @@ async def test_acid_atomicity_unique_violation(scope) -> None:
 
     # Verify that the OK product node was NOT committed (rolled back)
     nodes = await scope.query(pb.Product, filter={"sku": distinct_sku})
-    assert len(nodes) == 0, f"Atomicity violation: SKU {distinct_sku} was committed despite unique violation!"
+    assert len(nodes) == 0, (
+        f"Atomicity violation: SKU {distinct_sku} was committed despite unique violation!"
+    )
 
 
 # =============================================================================
 # Consistency Tests (Schema Constraints)
 # =============================================================================
+
 
 async def test_acid_consistency_unique_key(scope) -> None:
     """Verifies that the database preserves consistency by enforcing field-level uniqueness."""
@@ -101,7 +108,7 @@ async def test_acid_consistency_unique_key(scope) -> None:
     p2.create(pb.Product(sku=sku, name="Product 2", price=10.0))
     with pytest.raises(UniqueConstraintError) as exc_info:
         await p2.commit(wait_applied=True)
-    
+
     assert exc_info.value.type_id == 8002
     assert exc_info.value.field_id == 1
     assert exc_info.value.value == sku
@@ -110,6 +117,7 @@ async def test_acid_consistency_unique_key(scope) -> None:
 # =============================================================================
 # Isolation Tests (Lost Update OCC)
 # =============================================================================
+
 
 async def test_acid_isolation_lost_update_precondition(scope) -> None:
     """Verifies that optimistic concurrency control prevents write-write lost updates."""
@@ -140,7 +148,7 @@ async def test_acid_isolation_lost_update_precondition(scope) -> None:
     plan_b.update(node_id, pb.User(email="new-b@x.com"), precondition=("email", orig_email))
     with pytest.raises(PreconditionFailedError) as exc_info:
         await plan_b.commit(wait_applied=True)
-    
+
     assert exc_info.value.field == "1"
     assert exc_info.value.expected == orig_email
     assert exc_info.value.observed == "new-a@x.com"
