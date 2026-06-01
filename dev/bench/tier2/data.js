@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780341866731,
+  "lastUpdate": 1780341868652,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -12096,6 +12096,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0001345062363361138",
             "extra": "mean: 6.817766341467592 msec\nrounds: 123"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3b13a99a83a1396a229782aa04174455e0e35f79",
+          "message": "security(payload): validate field kinds at ingress + heal poisoned reads (#651)\n\nCloses #643. coerceForKind now rejects wrong wire types for String/Reference/Boolean/Float (consistent with Bytes/Integer/Timestamp/Enum); goToEntValue degrades a kind-mismatch instead of erroring so an already-poisoned row never bricks QueryNodes. Closes a durable tenant-wide DoS. Strict typed-ingress (TypedToPayload) tracked as follow-up. Part of epic #637.",
+          "timestamp": "2026-06-01T20:21:51+01:00",
+          "tree_id": "b6778ce36ec4343d1778a07b0fb7342f8d67da49",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/3b13a99a83a1396a229782aa04174455e0e35f79"
+        },
+        "date": 1780341866675,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2233.5507918389126,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000036978828029846835",
+            "extra": "mean: 447.71759999990263 usec\nrounds: 1005"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1481.7246976587376,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00006940043547261216",
+            "extra": "mean: 674.8892028189128 usec\nrounds: 922"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 728.6186952177118,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007766764754873555",
+            "extra": "mean: 1.3724599801837358 msec\nrounds: 656"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 384.45588131445356,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007849669223285564",
+            "extra": "mean: 2.6010786896561524 msec\nrounds: 377"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1053.7772888368943,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001763237664993684",
+            "extra": "mean: 948.9671210353652 usec\nrounds: 1198"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 954.9091828507123,
+            "unit": "iter/sec",
+            "range": "stddev: 0.002425365470155753",
+            "extra": "mean: 1.0472200057964434 msec\nrounds: 1380"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1052.8983400095947,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0018359525131062906",
+            "extra": "mean: 949.7593091379433 usec\nrounds: 1171"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1322.5907334235117,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008350272450006061",
+            "extra": "mean: 756.091793726326 usec\nrounds: 1052"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1332.9289568010192,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000456208130198595",
+            "extra": "mean: 750.2275308055152 usec\nrounds: 422"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1163.0034806953704,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005517891708170705",
+            "extra": "mean: 859.8426544708971 usec\nrounds: 984"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 1751.4537550918633,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007869823491731559",
+            "extra": "mean: 570.9542698988076 usec\nrounds: 1382"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 151.98005154689798,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00024533142235172635",
+            "extra": "mean: 6.579810901639417 msec\nrounds: 122"
           }
         ]
       }
