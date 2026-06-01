@@ -369,6 +369,11 @@ jobs:
       - uses: bufbuild/buf-setup-action@v1
         with:
           version: '1.66.0'
+          # Authenticate buf's install-time GitHub API calls. Without a token
+          # the action uses the runner's shared unauthenticated IP quota and
+          # intermittently fails the Proto Drift Guard with "API rate limit
+          # exceeded" (seen on PR #636).
+          github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Regenerate server proto stubs
         run: |
