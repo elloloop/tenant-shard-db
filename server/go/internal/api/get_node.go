@@ -105,6 +105,14 @@ func (s *Server) GetNode(ctx context.Context, req *pb.GetNodeRequest) (*pb.GetNo
 	//    (privilege-escalation guard, commit fece3fb).
 	actor := auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
 
+	// 2a. Mailbox privacy boundary (#639): a target_user-scoped read is
+	//     allowed only for that user or an admin/system actor. An ordinary
+	//     member naming another user is denied here, before any read.
+	if err := authorizeMailboxScope(actor, req.GetTargetUser()); err != nil {
+		resultStatus = "error"
+		return nil, err
+	}
+
 	// 3. Make sure the per-tenant DB exists. CheckTenant has already
 	//    vetted the tenant id; this just lazy-creates the
 	//    tenant_<id>.db file and is a precondition for both the

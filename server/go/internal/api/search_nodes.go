@@ -133,6 +133,16 @@ func (s *Server) SearchNodes(
 		return nil, errs.Errorf(errs.Code(err), "SearchNodes: open tenant: %v", err)
 	}
 
+	// Mailbox privacy boundary (#639): resolve the trusted actor up front and
+	// gate the target_user scope BEFORE the FTS search runs, so an ordinary
+	// member cannot search another user's private mailbox. Reused by the ACL
+	// post-filter below.
+	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	if err := authorizeMailboxScope(trusted, req.GetTargetUser()); err != nil {
+		outcome = "error"
+		return nil, err
+	}
+
 	// Page size: prefer the AIP-158 page_size, fall back to the legacy
 	// limit, then the default. ADR-029 carve-out: SearchNodes keeps
 	// OFFSET paging because FTS5 `rank` is computed by the MATCH and is
@@ -194,8 +204,8 @@ func (s *Server) SearchNodes(
 
 	// 5. ACL post-filter — only when the actor is classified
 	//    "cross_tenant". In-tenant members and system actors see the
-	//    unfiltered set (see spec line 42).
-	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	//    unfiltered set (see spec line 42). `trusted` was resolved above
+	//    (mailbox-scope gate).
 	if s.isCrossTenantReader(ctx, tenantID, trusted) {
 		rows = filterNodesByActor(rows, trusted)
 	}

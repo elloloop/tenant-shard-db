@@ -73,6 +73,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/errs"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/wal"
 )
 
@@ -177,6 +178,24 @@ func (s *Server) ShareNode(
 		// via the soft-fail shape; the metric label is "error".
 		status = "error"
 		return &pb.ShareNodeResponse{Success: false, Error: err.Error()}, nil
+	}
+
+	// 4a. #639: refuse to share a USER_MAILBOX node. Mailbox nodes are private
+	//     to one user and must not enter the ACL/sharing system at all —
+	//     sharing one would let it egress to other principals/tenants via
+	//     node_access / shared_index (and ListSharedWithMe). This is the root
+	//     prevention; the read paths also defensively exclude mailbox nodes.
+	//     The owner reaches their mailbox via the target_user-scoped reads, not
+	//     by sharing. Soft-fail parity (OK + success=false).
+	if s.store != nil {
+		if n, gerr := s.store.GetNode(ctx, tenantID, nodeID); gerr == nil && n != nil &&
+			n.StorageMode == int32(store.StorageModeUserMailbox) {
+			status = "denied"
+			return &pb.ShareNodeResponse{
+				Success: false,
+				Error:   "cannot share a USER_MAILBOX node; mailbox nodes are private to their owner",
+			}, nil
+		}
 	}
 
 	// 5. Build the WAL op envelope. Field defaults:

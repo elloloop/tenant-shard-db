@@ -80,6 +80,15 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	claimedActor := auth.ParseActor(req.GetContext().GetActor())
 	trustedAuthActor := auth.Authoritative(ctx, claimedActor)
 
+	// Mailbox privacy boundary (#639): a target_user-scoped query is allowed
+	// only for that user or an admin/system actor. Enforce it explicitly here
+	// rather than relying solely on the per-row ACL post-filter below, so the
+	// boundary is robust even if that filter changes.
+	if err := authorizeMailboxScope(trustedAuthActor, req.GetTargetUser()); err != nil {
+		resultStatus = "error"
+		return nil, err
+	}
+
 	if s.store == nil {
 		resultStatus = "error"
 		return nil, errs.Errorf(codes.Unimplemented, "canonical store not configured")
@@ -218,10 +227,20 @@ func (s *Server) QueryNodes(ctx context.Context, req *pb.QueryNodesRequest) (*pb
 	// flows through the same code path: VisibleNodeIDs honours owner_actor
 	// matches, tenant:* grants, and direct user/group node_visibility
 	// rows.
-	nodes, err = s.applyQueryACLFilter(ctx, tenantID, trustedAuthActor, nodes)
-	if err != nil {
-		resultStatus = "error"
-		return nil, err
+	//
+	// #639: skip this generic post-filter for a mailbox-scoped read. The
+	// authorizeMailboxScope gate above already proved the caller owns this
+	// mailbox (or is admin/system) and the store restricted the result to that
+	// user's USER_MAILBOX nodes. The generic visibility path now EXCLUDES
+	// USER_MAILBOX (GetVisibleNodeIDs, #639), so running it here would wrongly
+	// drop the owner's own mailbox rows. Mailbox authorization is the scope
+	// gate, not the ACL/visibility table.
+	if req.GetTargetUser() == "" {
+		nodes, err = s.applyQueryACLFilter(ctx, tenantID, trustedAuthActor, nodes)
+		if err != nil {
+			resultStatus = "error"
+			return nil, err
+		}
 	}
 
 	// Convert store.Node -> pb.Node. Payload stays id-keyed on the wire;

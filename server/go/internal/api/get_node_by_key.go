@@ -56,6 +56,7 @@ import (
 	"github.com/elloloop/tenant-shard-db/server/go/internal/metrics"
 	"github.com/elloloop/tenant-shard-db/server/go/internal/payload"
 	pb "github.com/elloloop/tenant-shard-db/server/go/internal/pb"
+	"github.com/elloloop/tenant-shard-db/server/go/internal/store"
 	"google.golang.org/protobuf/types/known/structpb"
 )
 
@@ -135,6 +136,20 @@ func (s *Server) GetNodeByKey(ctx context.Context, req *pb.GetNodeByKeyRequest) 
 	}
 	if node == nil {
 		// In-band miss. status=ok.
+		return &pb.GetNodeByKeyResponse{Found: false}, nil
+	}
+
+	// Mailbox privacy boundary (#639 / #568): a USER_MAILBOX node is private
+	// to its owning user and reachable ONLY through the explicit target_user
+	// mailbox scope (GetNode/GetNodes/QueryNodes/SearchNodes, gated by
+	// authorizeMailboxScope). GetNodeByKey has no target_user to authorize
+	// against, and the unique-key value (e.g. an email address) is exactly the
+	// kind of guessable identifier a mailbox unique field holds — so a mailbox
+	// node must be INVISIBLE here, the same Found=false a plain by-id read
+	// returns for a mailbox node (get_node.go). Note the per-node ACL check
+	// below would NOT catch this: mailbox nodes derive privacy from
+	// storage-mode scoping, not ACL entries, so they carry an empty ACL.
+	if node.StorageMode == int32(store.StorageModeUserMailbox) {
 		return &pb.GetNodeByKeyResponse{Found: false}, nil
 	}
 

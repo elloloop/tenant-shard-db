@@ -277,6 +277,13 @@ func (s *Server) mergeSharedWithMe(ctx context.Context, tenantID, actorStr strin
 					}
 					continue
 				}
+				// #639: a USER_MAILBOX node is private to its owner and must
+				// never egress via shared-with-me. The per-tenant SQL already
+				// excludes it, but the cross-tenant source resolves through the
+				// unfiltered GetNode — skip mailbox nodes here too.
+				if n.StorageMode == int32(store.StorageModeUserMailbox) {
+					continue
+				}
 				candidates = append(candidates, sharedMergeRow{node: n, ts: e.SharedAt})
 			}
 		}
@@ -348,6 +355,11 @@ func (s *Server) listSharedWithMeLegacy(ctx context.Context, tenantID, actorStr 
 						log.Printf("ListSharedWithMe: skip stale shared_index (%s/%s): %v",
 							e.SourceTenant, e.NodeID, err)
 					}
+					continue
+				}
+				// #639: never egress a USER_MAILBOX node via shared-with-me
+				// (see the keyset path above).
+				if n.StorageMode == int32(store.StorageModeUserMailbox) {
 					continue
 				}
 				nodes = append(nodes, n)
