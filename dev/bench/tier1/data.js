@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780314200641,
+  "lastUpdate": 1780334917422,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -11556,6 +11556,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0009146256240511823",
             "extra": "mean: 7.461681823008701 msec\nrounds: 113"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c1df9ee3c48227f30c02ee1a3b5d4c8ed0fe54bf",
+          "message": "security(api): enforce the USER_MAILBOX privacy boundary across all read paths (#648)\n\nCloses #639. A USER_MAILBOX node is now reachable only via the explicit target_user scope authorized to the owning user (or admin/system). Closes the bypass across GetNode/GetNodes/QueryNodes/SearchNodes (authorizeMailboxScope), GetNodeByKey, GetConnectedNodes + ListSharedWithMe (store chokepoint GetVisibleNodeIDs excludes USER_MAILBOX, + cross-tenant resolution filter), ShareNode (refuses mailbox nodes), and ExportUserData (subject arm). Found+closed over three adversarial-review rounds. Part of security-audit epic #637.",
+          "timestamp": "2026-06-01T18:26:42+01:00",
+          "tree_id": "b0e9b0c3ea70502b89d44b615ce16e791db0c4d0",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/c1df9ee3c48227f30c02ee1a3b5d4c8ed0fe54bf"
+        },
+        "date": 1780334916407,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 3027.2147667834274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003239712783545662",
+            "extra": "mean: 330.33665499146326 usec\nrounds: 1713"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1962.9487214158084,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004346785559808365",
+            "extra": "mean: 509.4376582994659 usec\nrounds: 1235"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 877.9660293026228,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00011506827840176618",
+            "extra": "mean: 1.138996232911551 msec\nrounds: 790"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 432.48108518673064,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012516515801278076",
+            "extra": "mean: 2.312239851063623 msec\nrounds: 423"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1774.5815278574257,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012219592324897558",
+            "extra": "mean: 563.5131349571574 usec\nrounds: 1519"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1790.4909192295822,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00013275452443864248",
+            "extra": "mean: 558.5060439347455 usec\nrounds: 1525"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1813.0069454522757,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00012625856561702763",
+            "extra": "mean: 551.5698671251027 usec\nrounds: 1746"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1690.526647153927,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004766286104414952",
+            "extra": "mean: 591.5316399676647 usec\nrounds: 1236"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1656.5834018259193,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000869526314749419",
+            "extra": "mean: 603.6520702174005 usec\nrounds: 413"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1436.8289519993748,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000058345757700488504",
+            "extra": "mean: 695.977067143922 usec\nrounds: 1117"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2351.6688052903683,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004124186360957148",
+            "extra": "mean: 425.2299463897199 usec\nrounds: 1828"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 137.61909862280626,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005941660724518666",
+            "extra": "mean: 7.266433293106018 msec\nrounds: 116"
           }
         ]
       }
