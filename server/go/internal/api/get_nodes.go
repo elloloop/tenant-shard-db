@@ -99,6 +99,14 @@ func (s *Server) GetNodes(ctx context.Context, req *pb.GetNodesRequest) (*pb.Get
 	// (documented unit-test / no-auth fallback).
 	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetContext().GetActor()))
 
+	// Mailbox privacy boundary (#639): a target_user-scoped batch is allowed
+	// only for that user or an admin/system actor. Deny here, before any I/O,
+	// so an ordinary member cannot read another user's mailbox in bulk.
+	if err := authorizeMailboxScope(trusted, req.GetTargetUser()); err != nil {
+		resultStatus = "error"
+		return nil, err
+	}
+
 	// Batch-size cap. Reject BEFORE any I/O so a hostile / buggy
 	// caller cannot cause work to start.
 	if len(req.GetNodeIds()) > maxBatchNodeIDs {

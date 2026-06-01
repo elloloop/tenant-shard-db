@@ -90,16 +90,25 @@ func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string,
 	visPh := strings.Repeat("?,", len(visIDs))
 	visPh = visPh[:len(visPh)-1]
 
+	// #639: USER_MAILBOX nodes are private to their owning user and reachable
+	// ONLY through the explicit target_user mailbox scope. They must never
+	// surface through generic ACL visibility — owner_actor / node_visibility /
+	// tenant:* — which backs GetConnectedNodes, ListSharedWithMe, and the
+	// QueryNodes cross-tenant post-filter. Excluding storage_mode==USER_MAILBOX
+	// here is the single store-layer chokepoint for that invariant (the
+	// mailbox-scoped reads use GetMailboxNode / SearchMailboxNodes, which do
+	// not go through this method).
 	q := fmt.Sprintf(`
 		SELECT DISTINCT n.node_id FROM nodes n
 		LEFT JOIN node_visibility v
 		    ON v.tenant_id = n.tenant_id AND v.node_id = n.node_id
 		WHERE n.tenant_id = ? AND n.node_id IN (%s)
 		  AND ( n.owner_actor IN (%s)
-		     OR v.principal IN (%s) )`,
+		     OR v.principal IN (%s) )
+		  AND n.storage_mode <> ?`,
 		nodePh, actorPh, visPh,
 	)
-	args := make([]any, 0, 1+len(nodeIDs)+len(actorIDs)+len(visIDs))
+	args := make([]any, 0, 2+len(nodeIDs)+len(actorIDs)+len(visIDs))
 	args = append(args, tenantID)
 	for _, id := range nodeIDs {
 		args = append(args, id)
@@ -110,6 +119,7 @@ func (s *CanonicalStore) GetVisibleNodeIDs(ctx context.Context, tenantID string,
 	for _, v := range visIDs {
 		args = append(args, v)
 	}
+	args = append(args, int32(StorageModeUserMailbox))
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: GetVisibleNodeIDs: %w", err)
@@ -179,14 +189,18 @@ func (s *CanonicalStore) ListSharedWithMePaged(ctx context.Context, tenantID str
 		  AND na.actor_id IN (%s)
 		  AND na.permission != 'deny'
 		  AND (na.expires_at IS NULL OR na.expires_at > ?)
+		  AND n.storage_mode <> ?
 		GROUP BY n.node_id`, ph,
 	)
-	args := make([]any, 0, 6+len(actorIDs))
+	args := make([]any, 0, 7+len(actorIDs))
 	args = append(args, tenantID)
 	for _, a := range actorIDs {
 		args = append(args, a)
 	}
-	args = append(args, s.now())
+	// #639: a USER_MAILBOX node must never egress through shared-with-me, even
+	// if it somehow acquired a node_access grant — mailbox privacy is not ACL-
+	// based.
+	args = append(args, s.now(), int32(StorageModeUserMailbox))
 	// Keyset seek (ADR-029): resume strictly after the cursor tuple in the
 	// effective DESC order (granted_at, source_tenant, node_id). The
 	// source_tenant for every per-tenant row is tenantID itself, so the
@@ -253,15 +267,17 @@ func (s *CanonicalStore) ListSharedWithMe(ctx context.Context, tenantID string, 
 		  AND na.actor_id IN (%s)
 		  AND na.permission != 'deny'
 		  AND (na.expires_at IS NULL OR na.expires_at > ?)
+		  AND n.storage_mode <> ?
 		ORDER BY na.granted_at DESC, n.node_id DESC
 		LIMIT ? OFFSET ?`, ph,
 	)
-	args := make([]any, 0, 4+len(actorIDs))
+	args := make([]any, 0, 5+len(actorIDs))
 	args = append(args, tenantID)
 	for _, a := range actorIDs {
 		args = append(args, a)
 	}
-	args = append(args, s.now(), limit, offset)
+	// #639: exclude USER_MAILBOX (mailbox privacy is not ACL/grant based).
+	args = append(args, s.now(), int32(StorageModeUserMailbox), limit, offset)
 	rows, err := db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: ListSharedWithMe: %w", err)

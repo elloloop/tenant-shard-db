@@ -837,7 +837,7 @@ func (s *CanonicalStore) ExportUserData(
 	}
 	rows, err := db.QueryContext(ctx, `
 		SELECT node_id, type_id, payload_json,
-		       created_at, updated_at, owner_actor
+		       created_at, updated_at, owner_actor, storage_mode
 		FROM nodes WHERE tenant_id = ?`,
 		tenantID,
 	)
@@ -848,10 +848,10 @@ func (s *CanonicalStore) ExportUserData(
 	for rows.Next() {
 		var (
 			nodeID, payloadJSON, owner string
-			typeID                     int32
+			typeID, storageMode        int32
 			createdAt, updatedAt       int64
 		)
-		if err := rows.Scan(&nodeID, &typeID, &payloadJSON, &createdAt, &updatedAt, &owner); err != nil {
+		if err := rows.Scan(&nodeID, &typeID, &payloadJSON, &createdAt, &updatedAt, &owner, &storageMode); err != nil {
 			return out, fmt.Errorf("store: ExportUserData scan: %w", err)
 		}
 
@@ -882,7 +882,15 @@ func (s *CanonicalStore) ExportUserData(
 
 		isOwner := owner == principal
 		isSubject := false
-		if hasSubjectField {
+		// #639: a USER_MAILBOX node is private to its owning user and must not
+		// be pulled into another user's export via the subject field. It is
+		// included ONLY when the export principal OWNS it (isOwner — their own
+		// mailbox, i.e. GDPR portability of their own data); it is NEVER matched
+		// by subject. Otherwise bob's private mailbox node that names alice as
+		// its data subject would egress to alice (or an admin running alice's
+		// export). Subject-access to mailbox content about a user, if ever
+		// wanted, needs a deliberate owner-aware mechanism, not this scan.
+		if hasSubjectField && storageMode != int32(StorageModeUserMailbox) {
 			// Strip the `user:` prefix from `principal` before
 			// comparing to the subject field value (which stores the
 			// bare user_id, e.g. "alice", not the principal form).

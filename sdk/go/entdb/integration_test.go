@@ -399,11 +399,15 @@ func TestIntegration_GetEdgesFromAutoFollowsRealCursor(t *testing.T) {
 }
 
 // TestIntegration_MailboxReadAndPrivacy proves USER_MAILBOX writes are
-// readable via the mailbox scope and excluded from an ordinary tenant
-// read (#568), end-to-end through the real server via the Go SDK.
+// readable via the mailbox scope by the OWNING user, excluded from an
+// ordinary tenant read (#568), and NOT readable by a different non-owner
+// caller (#639) — end-to-end through the real server via the Go SDK.
 func TestIntegration_MailboxReadAndPrivacy(t *testing.T) {
 	ctx := context.Background()
-	const mailUser = "mailbox-user-1"
+	// #639: a USER_MAILBOX node is readable only by its owning user (or an
+	// admin/system actor). itActor is "user:e2e-runner", so the mailbox owner
+	// is "e2e-runner" and itActor reads its OWN mailbox.
+	const mailUser = "e2e-runner"
 
 	res, err := itClient.transport.ExecuteAtomic(ctx, itTenant, itActor, "it-mailbox",
 		[]Operation{{
@@ -434,6 +438,12 @@ func TestIntegration_MailboxReadAndPrivacy(t *testing.T) {
 	}
 	if n != nil {
 		t.Fatalf("mailbox-private node leaked into a tenant read: %+v", n)
+	}
+
+	// Privacy (#639): a DIFFERENT non-owner caller must NOT read the mailbox
+	// node. eve names e2e-runner's mailbox scope and must be denied.
+	if _, derr := itClient.transport.GetMailboxNode(ctx, itTenant, "user:eve", mailUser, itUserType, "mbox-1"); derr == nil {
+		t.Fatal("cross-user mailbox read must be denied (#639): user:eve read e2e-runner's mailbox node")
 	}
 }
 
