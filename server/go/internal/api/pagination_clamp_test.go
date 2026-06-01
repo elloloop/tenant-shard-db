@@ -103,7 +103,7 @@ func TestListUsers_OversizedLimitClampedToMax(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{
-		Actor: "user:admin",
+		Actor: "system:admin", // #640: ListUsers is admin/system only
 		Limit: 10_000_000,
 	})
 	if err != nil {
@@ -135,8 +135,8 @@ func TestListUsers_NegativeLimitCoercedToDefault(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{
-		Actor: "user:admin",
-		Limit: -1, // pre-fix: flowed through as SQLite "unlimited"
+		Actor: "system:admin", // #640: ListUsers is admin/system only
+		Limit: -1,             // pre-fix: flowed through as SQLite "unlimited"
 	})
 	if err != nil {
 		t.Fatalf("ListUsers(limit=-1): %v", err)

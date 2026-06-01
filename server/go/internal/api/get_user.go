@@ -76,12 +76,14 @@ func (s *Server) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.GetUs
 		return nil, errs.Errorf(codes.InvalidArgument, "user_id is required")
 	}
 
-	// Resolve trusted identity from ctx. The result is intentionally
-	// unused for any authorization decision (this RPC has none) -- the
-	// call exists so a future tightening to self-or-admin has a single
-	// chokepoint to bind against, and so we explicitly honour the
-	// trusted-actor pattern documented in CLAUDE.md / commit fece3fb.
-	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	// #640: a user's profile (email + name) is readable only by that user or
+	// an admin/system actor — not by any authenticated stranger. The denial
+	// is independent of whether user_id exists, so it is not an existence
+	// oracle.
+	if trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor())); !isSelfOrAdmin(trusted, req.GetUserId()) {
+		resultStatus = "error"
+		return nil, errs.Errorf(codes.PermissionDenied, "actor may only read their own profile")
+	}
 
 	// Read globalstore.user_registry. (nil, nil) on miss.
 	user, err := s.global.GetUser(ctx, req.GetUserId())

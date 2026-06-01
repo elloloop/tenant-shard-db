@@ -93,7 +93,7 @@ func TestGetUser_MissingUser(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.GetUser(context.Background(), &pb.GetUserRequest{
-		Actor:  "user:alice",
+		Actor:  "system:admin", // #640: registry read requires self-or-admin
 		UserId: "ghost",
 	})
 	if err != nil {

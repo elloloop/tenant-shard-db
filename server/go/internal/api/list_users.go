@@ -65,10 +65,14 @@ func (s *Server) ListUsers(
 		return nil, errs.Errorf(codes.InvalidArgument, "actor is required")
 	}
 
-	// Trusted-actor invariant: rebind from ctx even though no privilege
-	// check consumes it today. Keeps the privilege-escalation guard wired
-	// for a future capability gate (see commit fece3fb / CLAUDE.md).
-	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	// #640: ListUsers paginates the deployment-wide user_registry (no tenant
+	// scope — the registry has no tenant column), so it is restricted to
+	// admin/system actors, the same class as ListTenants. A non-privileged
+	// caller cannot enumerate every user / email in the deployment.
+	if trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor())); !(trusted.IsAdmin() || trusted.IsSystem()) {
+		statusLabel = "error"
+		return nil, errs.Errorf(codes.PermissionDenied, "ListUsers requires an admin or system actor")
+	}
 
 	statusFilter := req.GetStatus()
 	if statusFilter == "" {

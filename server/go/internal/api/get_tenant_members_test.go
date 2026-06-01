@@ -39,7 +39,7 @@ func TestGetTenantMembers_EmptyTenant(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		Actor:    "user:alice",
+		Actor:    "system:admin", // #640: roster read requires member-or-admin
 		TenantId: "acme",
 	})
 	if err != nil {
@@ -73,7 +73,7 @@ func TestGetTenantMembers_SingleMember(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		Actor:    "user:alice",
+		Actor:    "system:admin", // #640: roster read requires member-or-admin
 		TenantId: "acme",
 	})
 	if err != nil {
@@ -121,7 +121,7 @@ func TestGetTenantMembers_MultipleMembers(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		Actor:    "user:alice",
+		Actor:    "system:admin", // #640: roster read requires member-or-admin
 		TenantId: "acme",
 	})
 	if err != nil {
@@ -158,7 +158,7 @@ func TestGetTenantMembers_UnknownTenant(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.GetTenantMembers(context.Background(), &pb.GetTenantMembersRequest{
-		Actor:    "user:alice",
+		Actor:    "system:admin", // #640: roster read requires member-or-admin
 		TenantId: "ghost",
 	})
 	if err != nil {

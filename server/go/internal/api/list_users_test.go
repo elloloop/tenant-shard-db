@@ -40,7 +40,7 @@ func TestListUsers_EmptyRegistry(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	resp, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
-		Actor: "user:u1",
+		Actor: "system:admin",
 	})
 	if err != nil {
 		t.Fatalf("ListUsers: unexpected error: %v", err)
@@ -140,7 +140,7 @@ func TestListUsers_DefaultStatusApplied(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	// No status -> default: status="active".
-	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:u1"})
+	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "system:admin"})
 	if err != nil {
 		t.Fatalf("ListUsers: unexpected error: %v", err)
 	}
@@ -153,7 +153,7 @@ func TestListUsers_DefaultStatusApplied(t *testing.T) {
 
 	// Explicit status="deleted" should now surface ghost.
 	resp, err = srv.ListUsers(ctx, &pb.ListUsersRequest{
-		Actor:  "user:u1",
+		Actor:  "system:admin",
 		Status: "deleted",
 	})
 	if err != nil {
@@ -187,7 +187,7 @@ func TestListUsers_DefaultLimitApplied(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	// limit unset (zero) -> default 100.
-	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:u1"})
+	resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "system:admin"})
 	if err != nil {
 		t.Fatalf("ListUsers: unexpected error: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestListUsers_DefaultLimitApplied(t *testing.T) {
 	// Explicit larger limit returns all rows — proves no hidden cap and
 	// that the previous result was bounded by the default, not the data.
 	resp, err = srv.ListUsers(ctx, &pb.ListUsersRequest{
-		Actor: "user:u1",
+		Actor: "system:admin",
 		Limit: 200,
 	})
 	if err != nil {
@@ -249,7 +249,7 @@ func TestListUsers_GlobalStoreUnconfigured(t *testing.T) {
 	srv := api.New() // no WithGlobalStore — global == nil.
 
 	_, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
-		Actor: "user:u1",
+		Actor: "system:admin",
 	})
 	if err == nil {
 		t.Fatalf("ListUsers: expected UNIMPLEMENTED, got nil")
@@ -276,7 +276,7 @@ func TestListUsers_InternalErrorSurfaced(t *testing.T) {
 	srv := api.New(api.WithGlobalStore(gs))
 
 	_, err := srv.ListUsers(context.Background(), &pb.ListUsersRequest{
-		Actor: "user:u1",
+		Actor: "system:admin",
 	})
 	if status.Code(err) != codes.Internal {
 		t.Fatalf("ListUsers on broken store: code = %s, want Internal (%v)", status.Code(err), err)
@@ -306,7 +306,7 @@ func TestListUsers_KeysetPagesAllUsers(t *testing.T) {
 			t.Fatal("pagination did not terminate")
 		}
 		resp, err := srv.ListUsers(ctx, &pb.ListUsersRequest{
-			Actor: "user:admin", PageSize: 10, PageToken: token,
+			Actor: "system:admin", PageSize: 10, PageToken: token,
 		})
 		if err != nil {
 			t.Fatalf("ListUsers: %v", err)
@@ -340,7 +340,7 @@ func TestListUsers_KeysetRejectsCrossFilterToken(t *testing.T) {
 		}
 	}
 	srv := api.New(api.WithGlobalStore(gs))
-	first, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:admin", Status: "active", PageSize: 5})
+	first, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "system:admin", Status: "active", PageSize: 5})
 	if err != nil {
 		t.Fatalf("ListUsers: %v", err)
 	}
@@ -348,7 +348,7 @@ func TestListUsers_KeysetRejectsCrossFilterToken(t *testing.T) {
 		t.Fatal("expected a next_page_token")
 	}
 	_, err = srv.ListUsers(ctx, &pb.ListUsersRequest{
-		Actor: "user:admin", Status: "deleted", PageSize: 5, PageToken: first.GetNextPageToken(),
+		Actor: "system:admin", Status: "deleted", PageSize: 5, PageToken: first.GetNextPageToken(),
 	})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("cross-filter token: code = %s, want InvalidArgument (%v)", status.Code(err), err)
