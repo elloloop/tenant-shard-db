@@ -107,40 +107,42 @@ func goToEntValue(f *schema.FieldDef, raw any) (*pb.EntValue, error) {
 	if f == nil {
 		return inferEntValue(raw)
 	}
+	// #643 read-heal: ingress (coerceForKind) now rejects a wrong-typed value
+	// for these kinds, so a kind-mismatch reaching the read path can only be a
+	// row poisoned BEFORE that fix (or one written through the typed path,
+	// which carries its own concrete type). Rather than fail the whole node —
+	// which aborts the entire QueryNodes page for the type, a durable
+	// tenant-wide DoS — degrade per-field to the value's inferred type so the
+	// row stays readable for repair. New writes can no longer get here.
 	switch f.Kind {
 	case schema.KindInteger, schema.KindTimestamp:
 		n, err := anyToInt64(raw)
 		if err != nil {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field_id %d (%s): %v", f.FieldID, f.Kind, err)
+			return inferEntValue(raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_IntValue{IntValue: n}}, nil
 	case schema.KindFloat:
 		d, err := anyToFloat64(raw)
 		if err != nil {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field_id %d (float): %v", f.FieldID, err)
+			return inferEntValue(raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_DoubleValue{DoubleValue: d}}, nil
 	case schema.KindBoolean:
 		b, ok := raw.(bool)
 		if !ok {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field_id %d (bool): got %T", f.FieldID, raw)
+			return inferEntValue(raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_BoolValue{BoolValue: b}}, nil
 	case schema.KindBytes:
 		b, err := anyToBytes(raw)
 		if err != nil {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field_id %d (bytes): %v", f.FieldID, err)
+			return inferEntValue(raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_BytesValue{BytesValue: b}}, nil
 	case schema.KindString, schema.KindEnum, schema.KindReference:
 		s, ok := raw.(string)
 		if !ok {
-			return nil, errs.Errorf(codes.InvalidArgument,
-				"payload: field_id %d (%s): got %T", f.FieldID, f.Kind, raw)
+			return inferEntValue(raw)
 		}
 		return &pb.EntValue{V: &pb.EntValue_StringValue{StringValue: s}}, nil
 	default:
