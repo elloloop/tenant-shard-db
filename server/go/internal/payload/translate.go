@@ -264,7 +264,36 @@ func coerceForKind(f *schema.FieldDef, v *structpb.Value) (any, error) {
 				f.FieldID, v.Kind)
 		}
 		return s.StringValue, nil
+	case schema.KindString, schema.KindReference:
+		// #643: reject a non-string on a STRING/REFERENCE field at ingress,
+		// the same way BYTES/INTEGER/TIMESTAMP/ENUM already do. Previously
+		// these fell through to the permissive default below, so a number
+		// could be stored and then permanently fail every schema-aware read.
+		s, ok := v.Kind.(*structpb.Value_StringValue)
+		if !ok {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"payload: field_id %d (%s) requires a string, got %T",
+				f.FieldID, f.Kind, v.Kind)
+		}
+		return s.StringValue, nil
+	case schema.KindBoolean:
+		b, ok := v.Kind.(*structpb.Value_BoolValue)
+		if !ok {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"payload: field_id %d (bool) requires a boolean, got %T",
+				f.FieldID, v.Kind)
+		}
+		return b.BoolValue, nil
+	case schema.KindFloat:
+		n, ok := v.Kind.(*structpb.Value_NumberValue)
+		if !ok {
+			return nil, errs.Errorf(codes.InvalidArgument,
+				"payload: field_id %d (float) requires a number, got %T",
+				f.FieldID, v.Kind)
+		}
+		return n.NumberValue, nil
 	default:
+		// JSON + list kinds remain dynamically typed (ADR-028): pass through.
 		return v.AsInterface(), nil
 	}
 }
