@@ -3,7 +3,8 @@
 **Status:** Accepted
 **Decided:** original ADR date predates current convention; revised
 2026-05-16 to match shipped reality (v1.13.0 closed the major
-encryption + TLS gaps)
+encryption + TLS gaps); amended 2026-06-01 (finding #638: per-tenant
+keys are now random, not master-derived — see the crypto-shred section)
 **Tags:** security, compliance, encryption, gdpr, hipaa, soc2
 **Implementation:** `server/go/internal/{crypto,gdpr,auth}/` + the
 CLI flags on `cmd/entdb-server/`
@@ -39,8 +40,9 @@ Key hierarchy (`server/go/internal/crypto/{key_manager,master_key,tenant_key_vau
 
 ```
 Master Key  — provisioned out-of-band (KMS / Vault / file)
-  └── Tenant Key (derived per tenant, wrapped under master,
-                  persisted in the tenant_key_vault table in global.db)
+  └── Tenant Key (RANDOM 256-bit DEK per tenant, wrapped under master,
+                  persisted in the tenant_key_vault table in global.db;
+                  see the #638 amendment — keys were formerly DERIVED)
         └── SQLite file encrypted at PRAGMA-key open time
 ```
 
@@ -90,6 +92,43 @@ Worker that processes the deletion queue at the configured cadence
 -gdpr-worker-interval=1m
 -crypto-shred-delete-files=false
 ```
+
+#### Amendment (2026-06-01, finding #638): per-tenant keys are RANDOM, not derived
+
+The original implementation derived each tenant DEK deterministically as
+`HKDF-SHA256(masterKey, "entdb-tenant-key:"+tenantID)` with no salt and no
+random material, and crypto-shred only nulled the master-wrapped copy in
+`tenant_key_vault`. Because the DEK was a pure function of two values the
+server always holds (the master key and the tenant id), a "shredded"
+tenant's key was trivially re-derivable offline, and the at-rest data was
+**not actually destroyed** — the Article-17 guarantee above did not hold.
+
+**Fix.** Provision a **random 256-bit DEK** with `crypto/rand` at first
+touch and persist ONLY the master-key-wrapped copy (AES-256-GCM, AAD =
+tenant id). Nulling that copy on shred now destroys the sole copy of the
+key, so the shred is irreversible.
+
+**Migration.** Tenants minted before this change still wrap a derived key.
+They are migrated by an idempotent, crash-safe operator command —
+`entdb-server --migrate-tenant-keys` (preview with
+`--migrate-tenant-keys-dry-run`) — which, per tenant: generates a random
+DEK, stages it in the vault (preserving the old key as `prev_wrapped_key`,
+`key_origin='rekeying'`), re-encrypts the tenant database in place via
+SQLCipher `PRAGMA rekey`, then finalizes (`key_origin='random'`, previous
+key dropped). A crash at any point is resumable — a `'rekeying'` row is
+detected on the next run and the re-key re-driven idempotently. Run it
+offline (server stopped) so no pooled handle holds a tenant DB open.
+`key_origin` (`derived`|`random`|`rekeying`) on `tenant_key_vault`
+distinguishes migrated tenants; pre-#638 rows default to `derived`.
+
+**Caveats (tracked).** Vault-less mode (`KeyManager` with no vault — a
+dev/test convenience) cannot persist a random key, so it necessarily keeps
+the derived key and its crypto-shred is non-durable (in-memory only; not a
+production posture). Separately, the WAL / S3 audit archive still holds
+plaintext payloads encrypted only by the operator KMS key, not the
+per-tenant key, so shredding the tenant key does not yet render the
+archived copy unreadable — that is finding #644 and must ship before the
+"unrecoverable on the S3 archive" claim above is fully true.
 
 ### Encryption in transit — **Shipped (v1.13.0)**
 

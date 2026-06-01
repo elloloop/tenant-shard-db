@@ -64,6 +64,8 @@ func main() {
 	legalHoldLiftWorkerEnabled := flag.Bool("legal-hold-lift-worker-enabled", true, "run the durable legal_hold_lift_queue worker that lifts S3 Object Lock legal hold on a released tenant's already-archived objects (EPIC #511 Gap 1); only does work when -archive-enabled")
 	legalHoldLiftWorkerInterval := flag.Duration("legal-hold-lift-worker-interval", time.Minute, "how often the legal-hold-lift worker drains the pending-lift queue")
 	cryptoShredDeleteFiles := flag.Bool("crypto-shred-delete-files", false, "delete tenant .db/-wal/-shm files after key shred")
+	migrateTenantKeys := flag.Bool("migrate-tenant-keys", false, "re-key all legacy derived-key tenants to fresh random keys (crypto-shred remediation, #638) then exit; requires encryption-at-rest. Run as an offline step with the server stopped.")
+	migrateTenantKeysDryRun := flag.Bool("migrate-tenant-keys-dry-run", false, "list the tenants --migrate-tenant-keys would re-key, then exit; makes no changes")
 	walBackend := flag.String("wal-backend", "memory", "WAL backend: memory | kafka | kinesis | pubsub | sqs | servicebus | eventhubs")
 	walTopic := flag.String("wal-topic", "entdb-wal", "WAL topic name")
 	walGroup := flag.String("wal-group", "entdb-applier", "WAL consumer group id")
@@ -244,6 +246,31 @@ func main() {
 	}
 	defer func() { _ = canonical.Close() }()
 	srvOpts = append(srvOpts, api.WithStore(canonical))
+
+	// #638 crypto-shred remediation: optional offline re-key of legacy
+	// derived-key tenants to fresh random keys. Runs to completion and exits;
+	// never part of normal startup. Idempotent + crash-safe (resumes an
+	// interrupted run), so it is safe to re-invoke.
+	if *migrateTenantKeys || *migrateTenantKeysDryRun {
+		if keyManager == nil {
+			log.Fatalf("entdb-server: --migrate-tenant-keys requires encryption-at-rest (set --kms-provider/--kms-key-id or --encryption-required)")
+		}
+		if *migrateTenantKeysDryRun {
+			ids, err := keyManager.DerivedTenantIDs(ctx)
+			if err != nil {
+				log.Fatalf("entdb-server: migrate-tenant-keys dry-run: %v", err)
+			}
+			log.Printf("entdb-server: migrate-tenant-keys dry-run: %d tenant(s) on a legacy derived key need re-keying: %v", len(ids), ids)
+			return
+		}
+		report, err := keyManager.MigrateDerivedTenants(ctx, canonical.RekeyTenantDB)
+		if err != nil {
+			log.Fatalf("entdb-server: migrate-tenant-keys failed (safe to re-run; it resumes): %v", err)
+		}
+		log.Printf("entdb-server: migrate-tenant-keys complete: re-keyed %d, recovered %d (rekeyed=%v recovered=%v)",
+			len(report.Rekeyed), len(report.Recovered), report.Rekeyed, report.Recovered)
+		return
+	}
 
 	// WAL backend wiring. memory: in-process, lost on restart (dev /
 	// short-running tests). kafka: Kafka/Redpanda; production-grade,
