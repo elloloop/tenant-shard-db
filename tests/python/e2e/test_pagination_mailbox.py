@@ -63,10 +63,15 @@ async def test_edges_out_auto_follows_complete_set(db_client, fresh_tenant, acto
 
 
 async def test_mailbox_read_and_tenant_privacy(db_client, fresh_tenant, actor) -> None:
-    """A USER_MAILBOX node is visible via the mailbox scope and EXCLUDED
-    from an ordinary tenant read (#568 privacy boundary)."""
+    """A USER_MAILBOX node is visible to its OWNING user via the mailbox
+    scope and EXCLUDED from an ordinary tenant read (#568 privacy boundary).
+
+    #639: the mailbox scope is authorized only for the owning user (or an
+    admin/system actor), so the owner reads their OWN mailbox here — the
+    mailbox user is the caller's own id, not an arbitrary third user.
+    """
     scope = db_client.tenant(fresh_tenant).actor(actor)
-    mailbox_user = "mail-user-1"
+    mailbox_user = actor.removeprefix("user:")  # owner reads their own mailbox
 
     plan = scope.plan()
     plan.create(pb.User(email="tenant@x", name="Tenant Node"), as_="tenant_node")
