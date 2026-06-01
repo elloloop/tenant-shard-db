@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1780266740293,
+  "lastUpdate": 1780312854820,
   "repoUrl": "https://github.com/elloloop/tenant-shard-db",
   "entries": {
     "Benchmark": [
@@ -11232,6 +11232,114 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0005187443811202373",
             "extra": "mean: 6.474414223775552 msec\nrounds: 143"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "arun88m@gmail.com",
+            "name": "Arun Saragadam",
+            "username": "iarunsaragadam"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "50d922cb21211d39a31838989ff1e02f7746289d",
+          "message": "security(crypto): random per-tenant DEKs + crash-safe re-key migration (#647)\n\nCloses #638. Per-tenant SQLCipher DEKs are now random (crypto/rand) with only the master-wrapped copy persisted, so crypto-shred is irreversible. Existing derived-key tenants are migrated by the idempotent, crash-safe operator command 'entdb-server --migrate-tenant-keys' (SQLCipher PRAGMA rekey; never runs on boot). ADR-011 amended. Part of the security-audit epic #637.",
+          "timestamp": "2026-06-01T12:18:28+01:00",
+          "tree_id": "bedab236e31485761d05a0a794b9f52012f2cbfb",
+          "url": "https://github.com/elloloop/tenant-shard-db/commit/50d922cb21211d39a31838989ff1e02f7746289d"
+        },
+        "date": 1780312853775,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_health",
+            "value": 2791.400529909869,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000037931499632754196",
+            "extra": "mean: 358.24310745985593 usec\nrounds: 1126"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_node",
+            "value": 1791.2552203875123,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00007014412926878957",
+            "extra": "mean: 558.2677379629154 usec\nrounds: 1080"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_nodes_batch",
+            "value": 882.4080128721571,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0001431253133180876",
+            "extra": "mean: 1.1332626012144786 msec\nrounds: 494"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_query_nodes",
+            "value": 431.65144982708915,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00024997425335406784",
+            "extra": "mean: 2.316683982876879 msec\nrounds: 292"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node",
+            "value": 1336.4115128504695,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0014883327996668176",
+            "extra": "mean: 748.2725121598751 usec\nrounds: 1398"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_create_node_and_edge",
+            "value": 1215.2942066367664,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0019091803762664565",
+            "extra": "mean: 822.8460191276838 usec\nrounds: 1307"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_execute_atomic_update_node",
+            "value": 1425.2493660420987,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001205590279430566",
+            "extra": "mean: 701.6316048446937 usec\nrounds: 1321"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_from",
+            "value": 1528.6289204788038,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004660226366268562",
+            "extra": "mean: 654.1810027294104 usec\nrounds: 1099"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_edges_to",
+            "value": 1543.4857517743492,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004215151592522568",
+            "extra": "mean: 647.884179591828 usec\nrounds: 490"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_get_connected_nodes",
+            "value": 1294.2810304373486,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00008355802994675504",
+            "extra": "mean: 772.6297276118554 usec\nrounds: 1072"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_search_nodes",
+            "value": 2214.39418357646,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000348542216247344",
+            "extra": "mean: 451.590781540486 usec\nrounds: 1506"
+          },
+          {
+            "name": "tests/python/benchmarks/bench_entdb.py::test_entdb_mailbox_like_list",
+            "value": 160.33562394520635,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000497369722822774",
+            "extra": "mean: 6.236917132912043 msec\nrounds: 158"
           }
         ]
       }
