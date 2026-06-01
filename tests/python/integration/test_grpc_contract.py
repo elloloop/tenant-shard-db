@@ -273,8 +273,10 @@ CONTRACT_CASES: list[dict] = [
         "check": lambda r: r.found is True and r.user.user_id == "alice",
     },
     {
+        # #640: GetUser is self-or-admin gated, so a missing-user read uses an
+        # admin caller (a stranger now gets PERMISSION_DENIED, not found=False).
         "rpc": "GetUser",
-        "build": lambda: pb.GetUserRequest(actor=ALICE, user_id="ghost"),
+        "build": lambda: pb.GetUserRequest(actor=ADMIN, user_id="ghost"),
         "mode": "not_found",
         "check": lambda r: r.found is False,
     },

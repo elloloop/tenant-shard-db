@@ -77,12 +77,13 @@ func (s *Server) GetUserTenants(
 		metrics.RecordGRPCRequest(ctx, grpcMethodGetUserTenants, outcome, time.Since(start))
 	}()
 
-	// Trusted-actor resolution. The result is intentionally not used
-	// for an authz decision; the call exists so the interceptor's
-	// identity always wins over any payload-claimed actor (defence in
-	// depth — see the spec's "privilege-boundary gap" note and the
-	// comment block above).
-	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	// #640: a user's tenant graph (which tenants they belong to) is readable
+	// only by that user or an admin/system actor, not by any authenticated
+	// stranger.
+	if trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor())); !isSelfOrAdmin(trusted, req.GetUserId()) {
+		outcome = "error"
+		return nil, status.Error(codes.PermissionDenied, "actor may only read their own tenant memberships")
+	}
 
 	rows, qerr := s.global.GetUserTenants(ctx, req.GetUserId())
 	if qerr != nil {

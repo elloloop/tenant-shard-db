@@ -72,12 +72,23 @@ func (s *Server) GetTenantMembers(
 		return nil, errs.Errorf(codes.InvalidArgument, "tenant_id is required")
 	}
 
-	// Trusted-actor rebinding. No-op on the response today (no
-	// membership gate), but consistent with the rest of the
-	// surface and the privilege-escalation fix in #168. The rebound
-	// actor is intentionally unused; we keep the call as documentation
-	// and to match the canonical handler shape.
-	_ = auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	// #640: a tenant's roster (every member's user_id + role) is readable only
+	// by a member of that tenant or an admin/system actor — not by an
+	// authenticated stranger from another tenant. A non-member is denied
+	// before the read; lookupMemberRole("") naturally covers an unknown tenant
+	// (no membership row) too.
+	trusted := auth.Authoritative(ctx, auth.ParseActor(req.GetActor()))
+	if !(trusted.IsAdmin() || trusted.IsSystem()) {
+		role, rerr := s.lookupMemberRole(ctx, req.GetTenantId(), trusted.ID())
+		if rerr != nil {
+			metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "error", time.Since(start))
+			return nil, errs.Errorf(codes.Internal, "GetTenantMembers: membership check failed")
+		}
+		if role == "" {
+			metrics.RecordGRPCRequest(ctx, getTenantMembersMethod, "error", time.Since(start))
+			return nil, errs.Errorf(codes.PermissionDenied, "actor is not a member of this tenant")
+		}
+	}
 
 	rows, err := s.global.GetTenantMembers(ctx, req.GetTenantId())
 	if err != nil {

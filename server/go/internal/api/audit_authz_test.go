@@ -15,8 +15,8 @@
 //   #640 (synthesis rank #4, HIGH) registry-read RPCs resolve then DISCARD the
 //      trusted actor (get_tenant_members.go:80 does `_ = auth.Authoritative(
 //      ...)`) with no authz gate. Any authenticated low-privilege caller dumps
-//      any tenant's roster / any user's PII / the whole user registry. NOT yet
-//      fixed — the demonstration tests pass and the gates stay skipped.
+//      any tenant's roster / any user's PII / the whole user registry. now
+//      gated (this change) — the gates below are active.
 //
 // These tests stand up their own server wiring (newAuthzTestServer) so we own
 // the globalstore handle and can register tenant members — the shared
@@ -410,70 +410,30 @@ func TestListSharedWithMe_ExcludesMailbox_Finding3(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------
-// Finding #640 — registry-read RPCs have no authz gate (NOT yet fixed).
+// Finding #640 (FIXED): registry-read RPCs are now gated. GetUser /
+// GetUserTenants require self-or-admin; GetTenantMembers requires
+// membership-or-admin; ListUsers requires an admin/system actor.
 // -----------------------------------------------------------------------
 
-// TestGetTenantMembers_NoAuthzGate_DemonstratesFinding4 proves a non-member,
-// non-admin caller can dump a tenant's full roster.
-//
-// FINDING #4 (HIGH/security): registry-read RPCs resolve then DISCARD the
-// actor with no authz gate.
-// File: internal/api/get_tenant_members.go:80 — `_ = auth.Authoritative(
-//
-//	ctx, auth.ParseActor(req.GetActor()))`. The rebound actor is thrown
-//	away; there is no membership/admin check before the
-//	globalstore.GetTenantMembers read.
-//
-// WHY WRONG: user:mallory is neither a member of "acme" nor an admin, yet she
-//
-//	retrieves the complete member roster (every user_id + role) — a direct
-//	PII / org-structure disclosure.
-//
-// REGRESSION: when finding #4 is fixed this assertion must flip — see the
-//
-//	_SecureBehavior gate.
-func TestGetTenantMembers_NoAuthzGate_DemonstratesFinding4(t *testing.T) {
-	srv, _, gs, tenantID := newAuthzTestServer(t)
-	ctx := context.Background()
-	addMember(t, gs, tenantID, "alice")
-	addMember(t, gs, tenantID, "bob")
-	// mallory is deliberately NOT added as a member.
-
-	resp, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		TenantId: tenantID,
-		Actor:    "user:mallory",
-	})
-	if err != nil {
-		t.Fatalf("GetTenantMembers(mallory): unexpected err: %v", err)
-	}
-	// CURRENT (buggy) behaviour: a stranger reads the whole roster.
-	if len(resp.GetMembers()) != 2 {
-		t.Fatalf("expected the CURRENT leak: non-member mallory reads the full 2-member roster; got %d members", len(resp.GetMembers()))
-	}
-}
-
-// TestGetTenantMembers_NoAuthzGate_SecureBehavior_Finding4 is the gate.
+// TestGetTenantMembers_NoAuthzGate_SecureBehavior_Finding4 verifies a
+// non-member, non-admin caller is denied while a member and an admin still
+// read the roster.
 func TestGetTenantMembers_NoAuthzGate_SecureBehavior_Finding4(t *testing.T) {
-	t.Skip("finding #4 (registry-read RPCs have no authz gate) not yet fixed — unblock this gate when the fix lands")
-
 	srv, _, gs, tenantID := newAuthzTestServer(t)
 	ctx := context.Background()
 	addMember(t, gs, tenantID, "alice")
 	addMember(t, gs, tenantID, "bob")
 
 	// Stranger must be denied.
-	_, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		TenantId: tenantID,
-		Actor:    "user:mallory",
-	})
-	if status.Code(err) != codes.PermissionDenied {
+	if _, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
+		TenantId: tenantID, Actor: "user:mallory",
+	}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("non-member mallory: want PermissionDenied, got %v", err)
 	}
 
-	// A member of the tenant can still read the roster.
+	// A member can still read the roster.
 	memResp, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		TenantId: tenantID,
-		Actor:    "user:alice",
+		TenantId: tenantID, Actor: "user:alice",
 	})
 	if err != nil || len(memResp.GetMembers()) != 2 {
 		t.Fatalf("member alice must still read the roster: members=%d err=%v", len(memResp.GetMembers()), err)
@@ -481,85 +441,78 @@ func TestGetTenantMembers_NoAuthzGate_SecureBehavior_Finding4(t *testing.T) {
 
 	// An admin can still read the roster.
 	admResp, err := srv.GetTenantMembers(ctx, &pb.GetTenantMembersRequest{
-		TenantId: tenantID,
-		Actor:    "system:test",
+		TenantId: tenantID, Actor: "system:test",
 	})
 	if err != nil || len(admResp.GetMembers()) != 2 {
 		t.Fatalf("admin must still read the roster: members=%d err=%v", len(admResp.GetMembers()), err)
 	}
 }
 
-// TestGetUser_NoAuthzGate_DemonstratesFinding4 proves any authenticated caller
-// can read any user's profile PII.
-//
-// FINDING #4 (HIGH/security): registry-read RPCs have no authz gate.
-// File: internal/api/get_user.go:84 — `_ = auth.Authoritative(...)`; the
-//
-//	handler header itself documents "Any authenticated actor may read any
-//	user's profile. NO self/admin gate."
-//
-// WHY WRONG: user:mallory reads bob's email + name with no relationship to bob
-//
-//	— a PII disclosure to any authenticated stranger.
-//
-// REGRESSION: when finding #4 is fixed this assertion must flip — see the
-//
-//	_SecureBehavior gate.
-func TestGetUser_NoAuthzGate_DemonstratesFinding4(t *testing.T) {
-	srv, _, gs, _ := newAuthzTestServer(t)
-	ctx := context.Background()
-	if _, err := gs.CreateUser(ctx, "bob", "bob@example.com", "Bob Secret"); err != nil {
-		t.Fatalf("CreateUser(bob): %v", err)
-	}
-
-	resp, err := srv.GetUser(ctx, &pb.GetUserRequest{
-		Actor:  "user:mallory", // unrelated stranger
-		UserId: "bob",
-	})
-	if err != nil {
-		t.Fatalf("GetUser(mallory -> bob): unexpected err: %v", err)
-	}
-	// CURRENT (buggy) behaviour: stranger reads bob's PII.
-	if !resp.GetFound() || resp.GetUser().GetEmail() != "bob@example.com" {
-		t.Fatalf("expected the CURRENT leak: stranger reads bob's email; found=%v email=%q",
-			resp.GetFound(), resp.GetUser().GetEmail())
-	}
-}
-
-// TestGetUser_NoAuthzGate_SecureBehavior_Finding4 is the gate.
+// TestGetUser_NoAuthzGate_SecureBehavior_Finding4 verifies a stranger cannot
+// read another user's profile PII; self and admin still can.
 func TestGetUser_NoAuthzGate_SecureBehavior_Finding4(t *testing.T) {
-	t.Skip("finding #4 (registry-read RPCs have no authz gate) not yet fixed — unblock this gate when the fix lands")
-
 	srv, _, gs, _ := newAuthzTestServer(t)
 	ctx := context.Background()
 	if _, err := gs.CreateUser(ctx, "bob", "bob@example.com", "Bob Secret"); err != nil {
 		t.Fatalf("CreateUser(bob): %v", err)
 	}
 
-	// Unrelated stranger must be denied another user's PII.
-	_, err := srv.GetUser(ctx, &pb.GetUserRequest{
-		Actor:  "user:mallory",
-		UserId: "bob",
-	})
-	if status.Code(err) != codes.PermissionDenied {
+	if _, err := srv.GetUser(ctx, &pb.GetUserRequest{
+		Actor: "user:mallory", UserId: "bob",
+	}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("stranger mallory reading bob: want PermissionDenied, got %v", err)
 	}
 
-	// Self-read still works.
-	self, err := srv.GetUser(ctx, &pb.GetUserRequest{
-		Actor:  "user:bob",
-		UserId: "bob",
-	})
+	self, err := srv.GetUser(ctx, &pb.GetUserRequest{Actor: "user:bob", UserId: "bob"})
 	if err != nil || !self.GetFound() {
 		t.Fatalf("bob must still read his own profile: found=%v err=%v", self.GetFound(), err)
 	}
 
-	// Admin still works.
-	adm, err := srv.GetUser(ctx, &pb.GetUserRequest{
-		Actor:  "system:test",
-		UserId: "bob",
-	})
+	adm, err := srv.GetUser(ctx, &pb.GetUserRequest{Actor: "system:test", UserId: "bob"})
 	if err != nil || !adm.GetFound() {
 		t.Fatalf("admin must still read bob's profile: found=%v err=%v", adm.GetFound(), err)
+	}
+}
+
+// TestGetUserTenants_NoAuthzGate_SecureBehavior_Finding4 verifies a stranger
+// cannot enumerate another user's tenant graph; self and admin can.
+func TestGetUserTenants_NoAuthzGate_SecureBehavior_Finding4(t *testing.T) {
+	srv, _, gs, tenantID := newAuthzTestServer(t)
+	ctx := context.Background()
+	addMember(t, gs, tenantID, "bob")
+
+	if _, err := srv.GetUserTenants(ctx, &pb.GetUserTenantsRequest{
+		Actor: "user:mallory", UserId: "bob",
+	}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("stranger mallory reading bob's tenants: want PermissionDenied, got %v", err)
+	}
+
+	if _, err := srv.GetUserTenants(ctx, &pb.GetUserTenantsRequest{
+		Actor: "user:bob", UserId: "bob",
+	}); err != nil {
+		t.Fatalf("bob must still read his own tenant memberships: %v", err)
+	}
+
+	if _, err := srv.GetUserTenants(ctx, &pb.GetUserTenantsRequest{
+		Actor: "system:test", UserId: "bob",
+	}); err != nil {
+		t.Fatalf("admin must still read bob's tenant memberships: %v", err)
+	}
+}
+
+// TestListUsers_NoAuthzGate_SecureBehavior_Finding4 verifies ListUsers is
+// admin/system only — a non-privileged caller cannot enumerate the registry.
+func TestListUsers_NoAuthzGate_SecureBehavior_Finding4(t *testing.T) {
+	srv, _, gs, _ := newAuthzTestServer(t)
+	ctx := context.Background()
+	if _, err := gs.CreateUser(ctx, "bob", "bob@example.com", "Bob"); err != nil {
+		t.Fatalf("CreateUser(bob): %v", err)
+	}
+
+	if _, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "user:mallory", Limit: 10}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("non-admin ListUsers: want PermissionDenied, got %v", err)
+	}
+	if _, err := srv.ListUsers(ctx, &pb.ListUsersRequest{Actor: "system:test", Limit: 10}); err != nil {
+		t.Fatalf("admin ListUsers must succeed: %v", err)
 	}
 }
