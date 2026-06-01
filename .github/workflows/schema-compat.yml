@@ -31,13 +31,13 @@ jobs:
     name: Schema Compatibility Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # We always need Go for entdb-server (the live source for
       # `--from-server`). entdb-schema is preferred from a release
       # binary, with a source-build fallback that also needs Go, so
       # set it up unconditionally for simplicity.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.25'
           cache-dependency-path: server/go/go.sum
