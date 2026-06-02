@@ -18,9 +18,30 @@ no tenant_id. The probe is server-global, not per-tenant.
 `HealthResponse`:
 | Field | Tag | Type | Notes |
 |------|-----|------|------|
-| `healthy` | 1 | `bool` | True iff `wal == "healthy"` AND `storage == "healthy"` (other component keys are informational, do NOT gate `healthy`). |
+| `healthy` | 1 | `bool` | True iff `wal == "healthy"` AND `storage == "healthy"` AND the applier readiness probe (when wired) reports healthy (issue #653). The `node_id`/`assigned_tenants` info keys are informational and do NOT gate `healthy`. |
 | `version` | 2 | `string` | Server semver. Python returns hard-coded `"1.0.0"` (see `server/go/internal/api/health.go`). Go port should read from build-stamped var (`-ldflags -X main.version=...`); contract test only requires non-empty (`test_grpc_contract.py:201`). |
-| `components` | 3 | `map<string,string>` | Always contains `wal` and `storage`. Adds `node_id` and `assigned_tenants` only when sharding is multi-node. |
+| `components` | 3 | `map<string,string>` | Always contains `wal`, `storage`, and `applier`. Adds `node_id` and `assigned_tenants` only when sharding is multi-node. |
+
+### `applier` component (issue #653)
+
+The WAL applier materialises writes asynchronously (ADR-016); a *stalled*
+applier keeps ACK'ing writes it never applies (the root cause behind #650)
+while otherwise looking like a healthy idle server. `components["applier"]`
+surfaces its state so the stall is observable:
+
+| Value | Meaning | Gates `healthy`? |
+|-------|---------|------------------|
+| `idle` | caught up, no batch in flight | no |
+| `applying` | a batch is in flight and making forward progress | no |
+| `stalled` | a batch has gone `>= --applier-stall-threshold` without committing a record | **yes** (`healthy=false`) |
+| `exited` | the applier loop has returned (poison halt or fatal error) | **yes** (`healthy=false`) |
+| `unknown` | the readiness probe is not wired, or it panicked (fails open) | no |
+
+Gating is **opt-in**: `--applier-stall-threshold` defaults to `0`, which
+disables `stalled` gating (the component + metrics still emit). An `exited`
+applier always gates regardless of the threshold, since a dead applier is
+unambiguously broken. The same signal is exposed over HTTP at `/readyz` on
+the `--metrics-addr` listener (200 ready / 503 stalled-or-exited).
 
 ## Auth
 
@@ -46,12 +67,20 @@ no tenant_id. The probe is server-global, not per-tenant.
 3. Set `components["storage"] = "healthy"` unconditionally. (Python does not
    actually probe SQLite; Go port should preserve this — adding a real probe
    would be a behavior change; track as future work.)
+3a. Applier readiness (issue #653): if `s.applierReadiness` is wired
+   (non-nil), call `probeApplier` and set `components["applier"]` to the
+   returned state; otherwise set `"unknown"`. The probe is panic-guarded and
+   FAILS OPEN — a panic yields `"unknown"` + healthy, so a buggy probe can
+   never take the whole server unhealthy. The wired probe gates `healthy`
+   only when it reports unhealthy (`stalled`/`exited`).
 4. If `sharding != nil && sharding.IsMultiNode()`:
    - `components["node_id"] = sharding.NodeID`
    - `components["assigned_tenants"] = strings.Join(sortedSlice(sharding.AssignedTenants), ",")`
-5. Compute `healthy = components["wal"]=="healthy" && components["storage"]=="healthy"`
+5. Compute `healthy = components["wal"]=="healthy" && components["storage"]=="healthy" && applierHealthy`
    (the `node_id`/`assigned_tenants` keys MUST NOT count against health — this
-   is the regression pinned by `test_cron_fixes.py:116-147`).
+   is the regression pinned by `test_cron_fixes.py:116-147`; `applierHealthy`
+   is true when the probe is unwired, so the legacy wal+storage contract is
+   preserved for servers that do not wire it).
 6. Record metric `record_grpc_request("Health", "ok"|"error", elapsed)`.
 7. Return `HealthResponse{healthy, version, components}`.
 
@@ -79,9 +108,14 @@ Each is a new package under `server/go/internal/...` unless noted.
 - `metrics` — `RecordGRPCRequest(method, status string, dur time.Duration)` (mirrors `metrics.py:103`). Required.
 - `version` — package-level `Version string` set via `-ldflags`. Required.
 
+Allowed leaf deps (telemetry/introspection only): `pb`, `metrics`, `version`.
+
 NOT used by this RPC and MUST NOT be imported: `auth`, `acl`, `apply`,
 `canonicalstore`, `globalstore`, `schema`, `errs`, `quota`, `crypto`, `audit`.
 Importing any of them is a code-smell signal that the handler is doing too much.
+The `applier` component (issue #653) does NOT import `apply`: the handler holds
+an injected `func() (state string, healthy bool)` closure (wired in `main.go`
+from the applier's progress signal), keeping the api package decoupled.
 
 ## Other-RPC deps
 

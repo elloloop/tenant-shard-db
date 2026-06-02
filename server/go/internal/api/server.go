@@ -50,6 +50,15 @@ type Server struct {
 	// Registry + Resolver + Checker + Filter so per-server wiring is
 	// in one place; handlers prefer it when present.
 	aclEnforcer *acl.Enforcer
+
+	// applierReadiness, when wired, lets the Health RPC report the WAL
+	// applier's liveness (issue #653). It returns the applier state
+	// string ("applying"/"idle"/"stalled"/"exited") and whether that
+	// state is healthy. main.go builds the closure from the applier's
+	// progress signal + the (opt-in) stall threshold; the api package
+	// stays decoupled from the apply package. nil => component "unknown",
+	// never gating healthy.
+	applierReadiness func() (state string, healthy bool)
 }
 
 // Option is a functional-options configurator for New.
@@ -115,6 +124,17 @@ func WithEnforcer(e *acl.Enforcer) Option {
 // Off by default. See docs/go-port/rpcs/DeleteUser.md.
 func WithLegalHoldOnDelete(enabled bool) Option {
 	return func(srv *Server) { srv.legalHoldOnDelete = enabled }
+}
+
+// WithApplierReadiness wires a readiness probe for the WAL applier
+// (issue #653). The closure returns the applier's state string and
+// whether it is healthy; the Health RPC surfaces the state in
+// components["applier"] and, when unhealthy, flips healthy=false so a
+// stalled (or exited) applier becomes an alertable / restart-triggering
+// condition instead of a silent stall. Off by default (component
+// "unknown", never gating) so the api package needs no apply dependency.
+func WithApplierReadiness(fn func() (state string, healthy bool)) Option {
+	return func(srv *Server) { srv.applierReadiness = fn }
 }
 
 // New constructs a Server. Dependencies wired via opts are stored
