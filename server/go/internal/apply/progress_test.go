@@ -30,7 +30,18 @@ func TestApplierState_StalledFor(t *testing.T) {
 		// is the false-positive the per-record progress signal prevents.
 		{"slow but progressing (commit 0.5s ago)", now - 500, now - 30_000, 500 * time.Millisecond},
 		{"progressing (commit just now)", now, now - 30_000, 0},
+		// Committed THEN wedged: batch started 100s ago, committed a record
+		// 90s ago, then blocked -> the wedge clock runs from the last commit
+		// (ref = lastProgress, newer than applyingSince) = 90s, which DOES
+		// exceed a 60s threshold. Distinct from slow-but-progressing.
+		{"committed then wedged (last commit 90s ago)", now - 90_000, now - 100_000, 90 * time.Second},
+		// lastProgress exactly == applyingSince: ref stays at applyingSince
+		// (the `LastProgressMilli > ref` branch does not fire).
+		{"last commit equals batch start", now - 5_000, now - 5_000, 5 * time.Second},
 		{"clock skew (since in future)", now - 1_000, now + 1_000, 0},
+		// Backward clock step: now is before the reference -> 0 (no negative
+		// duration).
+		{"backward clock skew (now before commit)", now + 2_000, now - 1_000, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -114,6 +125,30 @@ func TestApplier_Readiness(t *testing.T) {
 			if rd.State != applierStateExited || !rd.Stalled {
 				t.Fatalf("threshold=%v: got %+v, want exited/stalled", th, rd)
 			}
+		}
+	})
+
+	t.Run("exited beats a batch still in-flight", func(t *testing.T) {
+		// exited transitions while a batch is mid-apply -> exited wins.
+		rd := newApplier(now-10_000, true).Readiness(now, time.Minute)
+		if rd.State != applierStateExited || !rd.Stalled {
+			t.Fatalf("got %+v, want exited (overrides in-flight)", rd)
+		}
+	})
+
+	t.Run("stall gate is inclusive at exactly the threshold", func(t *testing.T) {
+		// stalledFor == threshold must gate (the spec is `>=`). applyingSince
+		// is now-60_000 and lastProgress is older, so stalledFor == 60s.
+		rd := newApplier(now-60_000, false).Readiness(now, time.Minute)
+		if rd.State != applierStateStalled || !rd.Stalled {
+			t.Fatalf("got %+v, want stalled at the exact boundary (>=)", rd)
+		}
+	})
+
+	t.Run("negative threshold disables gating", func(t *testing.T) {
+		rd := newApplier(now-1_000_000, false).Readiness(now, -100*time.Millisecond)
+		if rd.State != applierStateApplying || rd.Stalled {
+			t.Fatalf("got %+v, want applying/not-stalled (threshold<=0)", rd)
 		}
 	})
 }
