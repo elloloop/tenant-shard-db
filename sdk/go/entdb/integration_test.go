@@ -59,6 +59,10 @@ const (
 // itClient is the live SDK client bound to the booted server.
 var itClient *DbClient
 
+// itMetricsAddr is the host:port of the booted server's Prometheus +
+// /readyz HTTP listener (--metrics-addr), used by the readiness e2e test.
+var itMetricsAddr string
+
 func TestMain(m *testing.M) { os.Exit(runIntegration(m)) }
 
 func runIntegration(m *testing.M) int {
@@ -98,6 +102,17 @@ func runIntegration(m *testing.M) int {
 	}
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
+	// Enable the Prometheus + /readyz HTTP listener on a second free port so
+	// the readiness e2e (TestIntegration_ReadyzAndApplierMetrics, #653) can
+	// exercise the full wiring on a real booted server. Additive: existing
+	// gRPC tests ignore it.
+	metricsPort, err := freePort()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "integration:", err)
+		return 1
+	}
+	itMetricsAddr = fmt.Sprintf("127.0.0.1:%d", metricsPort)
+
 	// EMPTY BOOT (ADR-031). The server starts with no schema, tenant,
 	// or users; bootstrapIntegrationContract provisions them through the
 	// gRPC API below — same path a real client would use, mirror of the
@@ -106,6 +121,7 @@ func runIntegration(m *testing.M) int {
 		"--addr", addr,
 		"--data-dir", filepath.Join(tmp, "data"),
 		"--wal-backend", "memory",
+		"--metrics-addr", itMetricsAddr,
 	)
 	srv.Stdout, srv.Stderr = os.Stderr, os.Stderr
 	if err := srv.Start(); err != nil {
