@@ -1,6 +1,7 @@
 module github.com/elloloop/tenant-shard-db/server/go
 
 go 1.25.8
+toolchain go1.25.11
 
 require (
 	cloud.google.com/go/pubsub v1.50.2
