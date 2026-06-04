@@ -39,7 +39,8 @@ type storagePinger interface {
 //   - No WAL append, no store write, no global_store read. Strictly
 //     read-only, in-memory introspection.
 //   - `healthy` is true iff components["wal"] == "healthy" AND
-//     components["storage"] == "healthy". The multi-node info keys
+//     components["storage"] == "healthy" AND (the applier readiness probe,
+//     when wired, reports healthy — issue #653). The multi-node info keys
 //     (node_id, assigned_tenants) are informational and MUST NOT gate
 //     healthy.
 //   - Always returns OK; an internal panic is the only path to INTERNAL.
@@ -77,13 +78,28 @@ func (s *Server) Health(ctx context.Context, _ *pb.HealthRequest) (*pb.HealthRes
 		components["storage"] = probeStorage(ctx, s.store)
 	}
 
+	// Applier readiness (#653). The WAL applier materialises writes
+	// asynchronously (ADR-016); a STALLED applier keeps ACK'ing writes it
+	// never applies — the prod failure behind #650 — while looking like a
+	// healthy idle server. When the readiness probe is wired (main.go,
+	// from the applier's progress signal), surface its state in
+	// components["applier"] and gate healthy on it so a stall/exit becomes
+	// an alertable, restart-triggering condition. Unwired => "unknown" and
+	// never gating (preserves the legacy wal+storage contract).
+	applierHealthy := true
+	if s.applierReadiness == nil {
+		components["applier"] = "unknown"
+	} else {
+		components["applier"], applierHealthy = probeApplier(s.applierReadiness)
+	}
+
 	// Multi-node sharding info keys (node_id, assigned_tenants) are not
 	// emitted yet — no Go sharding package is wired. Crucially, when they
 	// DO land, they MUST be appended to `components` AFTER the `healthy`
 	// gate below — the info keys MUST NOT count against health. Regression
 	// pinned by TestHealth_MultiNodeInfoKeysDoNotGateHealth.
 
-	healthy := components["wal"] == "healthy" && components["storage"] == "healthy"
+	healthy := components["wal"] == "healthy" && components["storage"] == "healthy" && applierHealthy
 
 	return &pb.HealthResponse{
 		Healthy:    healthy,
@@ -114,6 +130,19 @@ func probeWAL(p any) (result string) {
 		return "healthy"
 	}
 	return "unhealthy"
+}
+
+// probeApplier runs the wired applier-readiness closure (#653), guarding
+// against a panic in the probe. On panic it fails OPEN (state "unknown",
+// healthy=true) so a bug in the readiness wiring can never take the whole
+// server unhealthy — the apply-progress metrics remain the durable signal.
+func probeApplier(fn func() (string, bool)) (state string, healthy bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			state, healthy = "unknown", true
+		}
+	}()
+	return fn()
 }
 
 // probeStorage returns the storage component string. Caller must

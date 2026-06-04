@@ -84,6 +84,15 @@ func main() {
 	applyConcurrency := flag.Int("apply-concurrency", 1,
 		"max distinct tenants applied in parallel per WAL poll batch "+
 			"(1 = strictly serial / pre-#140, the default; 0 = runtime.GOMAXPROCS; N>1 = opt-in parallel)")
+	applierStallThreshold := flag.Duration("applier-stall-threshold", 0,
+		"how long the WAL applier may go WITHOUT committing a record (while a batch is in-flight) before it is "+
+			"reported STALLED (issue #653/#650). This is a no-forward-progress budget, not a batch-duration cap: "+
+			"a batch that keeps committing records is never flagged. 0 (default, landed dark) = stall GATING "+
+			"disabled — the apply-progress metrics + Health 'applier' component still emit, but a stall never "+
+			"flips Health healthy=false. Set >0 (e.g. 60s) so a wedged applier (which keeps ACK'ing writes it "+
+			"never materialises) fails the Health/readiness probe and becomes alertable / restart-triggering "+
+			"instead of silently stalling. NOTE: an EXITED (dead) applier ALWAYS reports unhealthy regardless of "+
+			"this value, so process death is always surfaced.")
 	// Kafka/Redpanda-specific knobs. Defaults match the legacy
 	// KAFKA_BROKERS env-var convention so the cross-impl e2e stack
 	// can swap targets without re-jiggering compose env-vars.
@@ -444,6 +453,16 @@ func main() {
 	if err != nil {
 		log.Fatalf("entdb-server: applier: %v", err)
 	}
+	// Wire the applier's readiness into the Health RPC (#653). The closure
+	// maps the applier's apply-progress signal + the (opt-in) stall
+	// threshold into the (state, healthy) shape the api package consumes,
+	// keeping api decoupled from the apply package. A stalled/exited
+	// applier flips Health healthy=false so a silent stall becomes an
+	// alertable / restart-triggering condition.
+	srvOpts = append(srvOpts, api.WithApplierReadiness(func() (string, bool) {
+		rd := applier.Readiness(time.Now().UnixMilli(), *applierStallThreshold)
+		return rd.State, !rd.Stalled
+	}))
 	effectiveApplyConc := *applyConcurrency
 	if effectiveApplyConc <= 0 {
 		effectiveApplyConc = runtime.GOMAXPROCS(0)
@@ -614,6 +633,13 @@ func main() {
 		// OpenMetrics exposition so trace_id exemplars on
 		// entdb_grpc_latency_seconds (ADR-033) are scrapeable.
 		mux.Handle("/metrics", promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{EnableOpenMetrics: true}))
+		// Applier readiness probe (#653) for HTTP-based orchestrators.
+		// Handler logic is extracted to applierReadyzHandler (readyz.go) so
+		// it is unit-testable; here we only bind it to the live applier.
+		mux.HandleFunc("/readyz", applierReadyzHandler(func() (bool, string) {
+			rd := applier.Readiness(time.Now().UnixMilli(), *applierStallThreshold)
+			return rd.Stalled, rd.State
+		}))
 		metricsSrv = &http.Server{
 			Addr:              strings.TrimSpace(*metricsAddr),
 			Handler:           mux,
@@ -628,7 +654,7 @@ func main() {
 				log.Printf("entdb-server: metrics endpoint exited: %v", err)
 			}
 		}()
-		log.Printf("entdb-server: Prometheus metrics on %s/metrics", metricsSrv.Addr)
+		log.Printf("entdb-server: Prometheus metrics on %s/metrics, applier readiness on %s/readyz", metricsSrv.Addr, metricsSrv.Addr)
 	}
 
 	stop := make(chan os.Signal, 1)

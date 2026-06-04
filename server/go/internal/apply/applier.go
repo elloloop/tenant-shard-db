@@ -131,6 +131,12 @@ type Applier struct {
 	stopOnce sync.Once
 	stopCh   chan struct{}
 	doneCh   chan struct{}
+
+	// prog is the apply-progress signal for readiness checks (#653).
+	// exited is set when Run returns, so a dead applier reports
+	// not-ready before the supervisor tears the process down.
+	prog   progress
+	exited atomic.Bool
 }
 
 // New constructs an Applier. Required: Store, Consumer, Topic, GroupID.
@@ -196,6 +202,46 @@ func New(opts Options) (*Applier, error) {
 
 func (a *Applier) now() int64 { return a.nowFn() }
 
+// markBoot seeds the apply-progress signal at Run start so the
+// last-progress gauge is not 0 (which would make `time() - last_progress`
+// look like an enormous stall before the first batch). The applier starts
+// idle (nothing in-flight).
+func (a *Applier) markBoot() {
+	now := a.now()
+	a.prog.markProgress(now)
+	metrics.SetApplierLastProgress(float64(now) / 1000.0)
+	metrics.SetApplierApplyInProgressSince(0)
+}
+
+// markApplyStart records that a poll batch has begun applying. Called at
+// processBatch entry, in the serial Run goroutine, BEFORE any per-tenant
+// transaction is opened — so a batch that then blocks in SQLite still
+// shows an in-flight timestamp that ages into a stall.
+func (a *Applier) markApplyStart() {
+	now := a.now()
+	a.prog.markApplyingSince(now)
+	metrics.SetApplierApplyInProgressSince(float64(now) / 1000.0)
+}
+
+// markApplyIdle records that the applier is no longer applying a batch
+// (the batch committed, or halted and Run is exiting). Deferred at
+// processBatch so it fires on every exit path.
+func (a *Applier) markApplyIdle() {
+	a.prog.markIdle()
+	metrics.SetApplierApplyInProgressSince(0)
+}
+
+// markRecordCommitted records progress for one committed record. Called
+// from finalizeBatch (the single serial commit loop) after the offset is
+// committed, so last-progress tracks the most recent committed record
+// even within a long batch.
+func (a *Applier) markRecordCommitted() {
+	now := a.now()
+	a.prog.markProgress(now)
+	metrics.SetApplierLastProgress(float64(now) / 1000.0)
+	metrics.IncApplierRecordsApplied()
+}
+
 // Run is the consumer loop. It blocks until ctx is cancelled, Stop is
 // called, or a poison event halts the consumer (when halt-on-poison is
 // true). On halt-on-poison the offset is NOT advanced past the failing
@@ -205,6 +251,13 @@ func (a *Applier) Run(ctx context.Context) error {
 		return ErrApplierClosed
 	}
 	defer close(a.doneCh)
+	// Mark the applier dead when Run returns (poison halt, fatal poll
+	// error, or graceful shutdown) so readiness probes report not-ready
+	// in the window before the supervisor tears the process down (#653).
+	defer a.exited.Store(true)
+	// Seed the apply-progress signal so last-progress is non-zero before
+	// the first batch.
+	a.markBoot()
 
 	// transientStreak counts consecutive transient poll errors so the
 	// backoff grows and (optionally) the MaxTransientPollStreak cap can
@@ -311,7 +364,25 @@ func (a *Applier) transientBackoffFor(streak int) time.Duration {
 // the in-txn idempotency probe SKIPs them — identical to the
 // pre-#140 "dropped on the floor, re-delivered after restart"
 // contract, just generalised across tenants.
-func (a *Applier) processBatch(ctx context.Context, records []Record) error {
+func (a *Applier) processBatch(ctx context.Context, records []Record) (err error) {
+	// Mark the batch in-flight for stall detection (#653). markApplyStart
+	// runs BEFORE any per-tenant txn opens, so a batch that blocks in
+	// SQLite still shows an aging in-flight timestamp.
+	a.markApplyStart()
+	defer func() {
+		// Any non-nil return from processBatch means Run is about to exit
+		// (a poison halt under halt-on-poison, or a fatal commit/persist
+		// error). Flip `exited` BEFORE clearing the in-flight marker so a
+		// concurrent readiness probe can never observe a transient healthy
+		// "idle" state in the window between this return and Run's own
+		// deferred exited.Store (#653 review). On success (err == nil) the
+		// applier stays alive and just goes idle until the next batch.
+		if err != nil {
+			a.exited.Store(true)
+		}
+		a.markApplyIdle()
+	}()
+
 	n := len(records)
 
 	// Decode the tenant routing key for every record up front, in
@@ -432,7 +503,13 @@ func (a *Applier) finalizeBatch(ctx context.Context, records []Record, results [
 		}
 		// Best-effort post-commit fan-out + shared_index.
 		a.fanout(ctx, decodeOrZero(rec), &res)
+
+		// Apply-progress signal (#653): the offset for this record is now
+		// committed, so record progress. Done per-record so last-progress
+		// advances even within a long batch.
+		a.markRecordCommitted()
 	}
+	metrics.IncApplierBatchesApplied()
 	return nil
 }
 
