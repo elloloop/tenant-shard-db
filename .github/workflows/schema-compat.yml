@@ -39,7 +39,7 @@ jobs:
       # set it up unconditionally for simplicity.
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: '1.25.11'
           cache-dependency-path: server/go/go.sum
 
       # Prefer the released `entdb-schema` binary so this workflow
