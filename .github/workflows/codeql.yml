@@ -1,12 +1,13 @@
-# CodeQL — semantic SAST for Go + Python.
+# CodeQL — semantic SAST for Go, Python, and GitHub Actions workflows.
 #
 # Complements Trivy (package-manifest scan) and govulncheck (Go call-
 # graph CVE scan) by catching bug PATTERNS those tools don't see:
 # tainted-flow SQLi, hard-coded credentials, missing error-checking
-# patterns, command injection, etc.
+# patterns, command injection — plus workflow script-injection and
+# unpinned / over-permissioned Actions (the `actions` extractor).
 #
 # Runs:
-#   - on every PR touching Go or Python source
+#   - on every PR touching Go or Python source, or a workflow file
 #   - weekly on the default branch (catches new query packs)
 #
 # Findings land in the Security tab; high/critical block PRs via the
@@ -22,7 +23,9 @@ on:
     paths:
       - '**/*.go'
       - '**/*.py'
-      - '.github/workflows/codeql.yml'
+      # Any workflow change re-runs the `actions` analysis (script-
+      # injection, unpinned actions, over-broad permissions).
+      - '.github/workflows/**'
   schedule:
     # Mondays 06:00 UTC. Independent of PR traffic so a newly-shipped
     # CodeQL query pack runs against the current main.
@@ -41,12 +44,25 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, python]
+        include:
+          # Go is compiled, so it uses tracing autobuild for accurate
+          # dataflow. The autobuilder discovers and extracts all four
+          # modules (sdk/go/entdb, server/go, tests/contract,
+          # tools/protoc-gen-entdb-keys) — verified in the run log.
+          - language: go
+            build-mode: autobuild
+          # Non-compiled surfaces extract without a build.
+          - language: python
+            build-mode: none
+          # GitHub Actions workflow SAST (script-injection, unpinned
+          # actions, over-broad permissions); no build step.
+          - language: actions
+            build-mode: none
     steps:
       - uses: actions/checkout@v4
 
-      # Go toolchain matches the go.mod-pinned version so build-mode
-      # autobuild succeeds for all four modules.
+      # Go toolchain matches the go.mod-pinned version so autobuild
+      # compiles cleanly across all four modules.
       - if: matrix.language == 'go'
         uses: actions/setup-go@v5
         with:
@@ -57,12 +73,16 @@ jobs:
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
           # security-extended adds queries beyond the default suite
           # (taint-tracking, security-quality, etc.). Worth the extra
           # ~2 min of analyze time on a repo this size.
           queries: security-extended
 
-      - name: Autobuild
+      # Only the compiled language needs a build; the build-mode: none
+      # languages (python, actions) are extracted directly.
+      - if: matrix.build-mode == 'autobuild'
+        name: Autobuild
         uses: github/codeql-action/autobuild@v3
 
       - name: Analyze
