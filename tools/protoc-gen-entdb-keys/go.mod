@@ -1,6 +1,7 @@
 module github.com/elloloop/tenant-shard-db/tools/protoc-gen-entdb-keys/v2
 
 go 1.25.0
+
 toolchain go1.25.11
 
-require google.golang.org/protobuf v1.36.11
+require google.golang.org/protobuf v1.36.12
